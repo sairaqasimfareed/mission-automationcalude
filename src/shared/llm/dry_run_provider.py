@@ -3,39 +3,51 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 
-from src.shared.llm.models import LLMProvider
-from src.shared.llm.providers import LLMProviderAdapter
+from src.shared.llm.models import LLMProvider, LLMUsage
+from src.shared.llm.providers import (
+    LLMProviderAdapter,
+    LLMProviderResponse,
+)
+from src.shared.llm.request import LLMRequest
 
 
 class DryRunProviderAdapter(LLMProviderAdapter):
-    """Local provider used for testing without API calls or cost."""
+    """Deterministic provider used during dry-run development."""
 
     provider = LLMProvider.OPENAI
 
-    def __init__(
-        self,
-        *,
-        response_text: str = "Dry-run response",
-        response_json: dict | None = None,
-    ) -> None:
-        self.response_text = response_text
-        self.response_json = response_json
-
     def create_operation(
         self,
-        *,
-        model: str,
-        prompt: str,
-        system_prompt: str | None = None,
-    ) -> Callable[[], str]:
-        """
-        Return a local callable instead of making a real provider request.
-        """
+        request: LLMRequest,
+    ) -> Callable[[], LLMProviderResponse]:
+        def operation() -> LLMProviderResponse:
+            if request.expect_json:
+                content = json.dumps(
+                    {
+                        "dry_run": True,
+                        "provider": request.provider.value,
+                        "model": request.model,
+                        "prompt_version": request.prompt_version,
+                    }
+                )
+            else:
+                content = (
+                    f"Dry-run response from "
+                    f"{request.provider.value}/{request.model}"
+                )
 
-        def operation() -> str:
-            if self.response_json is not None:
-                return json.dumps(self.response_json)
-
-            return self.response_text
+            return LLMProviderResponse(
+                content=content,
+                usage=LLMUsage(
+                    input_tokens=10,
+                    output_tokens=10,
+                    total_tokens=20,
+                    estimated_cost_usd=0.0,
+                ),
+                provider_request_id="dry-run-request",
+                metadata={
+                    "dry_run": True,
+                },
+            )
 
         return operation

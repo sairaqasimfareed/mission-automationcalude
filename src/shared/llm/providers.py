@@ -2,8 +2,32 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from typing import Any
 
-from src.shared.llm.models import LLMProvider
+from pydantic import Field
+
+from src.models.base import MissionBaseModel
+from src.shared.llm.models import (
+    LLMProvider,
+    LLMUsage,
+)
+from src.shared.llm.request import LLMRequest
+
+
+class LLMProviderResponse(MissionBaseModel):
+    """Normalized raw response returned by one LLM adapter."""
+
+    content: str
+
+    usage: LLMUsage = Field(
+        default_factory=LLMUsage,
+    )
+
+    provider_request_id: str | None = None
+
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+    )
 
 
 class LLMProviderAdapter(ABC):
@@ -14,55 +38,42 @@ class LLMProviderAdapter(ABC):
     @abstractmethod
     def create_operation(
         self,
-        *,
-        model: str,
-        prompt: str,
-        system_prompt: str | None = None,
-    ) -> Callable[[], str]:
-        """
-        Return a callable that performs the provider API request.
+        request: LLMRequest,
+    ) -> Callable[[], LLMProviderResponse]:
+        """Create one provider operation."""
 
-        The returned callable will later be executed by LLMGateway,
-        so retry, circuit-breaker, logging, and JSON handling remain centralized.
-        """
         raise NotImplementedError
 
 
-class OpenAIProviderAdapter(LLMProviderAdapter):
-    """OpenAI adapter skeleton. Real API integration will be added later."""
-
-    provider = LLMProvider.OPENAI
-
-    def create_operation(
-        self,
-        *,
-        model: str,
-        prompt: str,
-        system_prompt: str | None = None,
-    ) -> Callable[[], str]:
-        def operation() -> str:
-            raise NotImplementedError(
-                "OpenAI API integration has not been configured yet."
-            )
-
-        return operation
-
-
 class AnthropicProviderAdapter(LLMProviderAdapter):
-    """Anthropic adapter skeleton. Real API integration will be added later."""
+    """Anthropic adapter skeleton."""
 
     provider = LLMProvider.ANTHROPIC
 
     def create_operation(
         self,
-        *,
-        model: str,
-        prompt: str,
-        system_prompt: str | None = None,
-    ) -> Callable[[], str]:
-        def operation() -> str:
+        request: LLMRequest,
+    ) -> Callable[[], LLMProviderResponse]:
+        def operation() -> LLMProviderResponse:
             raise NotImplementedError(
-                "Anthropic API integration has not been configured yet."
+                "Anthropic API integration is not configured."
+            )
+
+        return operation
+
+
+class GeminiProviderAdapter(LLMProviderAdapter):
+    """Gemini adapter skeleton."""
+
+    provider = LLMProvider.GEMINI
+
+    def create_operation(
+        self,
+        request: LLMRequest,
+    ) -> Callable[[], LLMProviderResponse]:
+        def operation() -> LLMProviderResponse:
+            raise NotImplementedError(
+                "Gemini API integration is not configured."
             )
 
         return operation
