@@ -5,7 +5,9 @@ from src.models.research import (
     ResearchSource,
     ResearchStatus,
 )
-from src.shared.llm.dry_run_provider import DryRunProviderAdapter
+from src.shared.llm.dry_run_provider import (
+    DryRunProviderAdapter,
+)
 from src.shared.llm.gateway import LLMGateway
 from src.shared.llm.models import LLMProvider
 from src.shared.llm.request import LLMRequest
@@ -24,20 +26,19 @@ class ResearchAgent:
             )
         )
 
-        self.provider = DryRunProviderAdapter(
-            response_text=(
-                "Underground cities were historically built for "
-                "protection, trade, and survival."
-            )
-        )
+        self.provider = DryRunProviderAdapter()
 
-    def research(self, topic: str) -> ResearchResult:
+    def research(
+        self,
+        topic: str,
+    ) -> ResearchResult:
         request = LLMRequest(
             provider=LLMProvider.OPENAI,
             model="dry-run-model",
             prompt=topic,
             system_prompt=(
-                "You are an expert research assistant for long-form " "YouTube videos."
+                "You are an expert research assistant for "
+                "long-form YouTube videos."
             ),
             prompt_version="research_prompt_v1.0.0",
             metadata={
@@ -47,9 +48,7 @@ class ResearchAgent:
         )
 
         operation = self.provider.create_operation(
-            model=request.model,
-            prompt=request.prompt,
-            system_prompt=request.system_prompt,
+            request
         )
 
         result = self.gateway.call(
@@ -66,9 +65,21 @@ class ResearchAgent:
                 "Underground cities provided protection.",
                 "Many contained homes and food storage.",
             ],
-            interesting_angles=["Why entire civilizations disappeared underground."],
-            potential_hooks=["A hidden city existed beneath people's feet."],
-            risk_notes=["Historical claims should be fact-checked."],
+            interesting_angles=[
+                (
+                    "Why entire civilizations disappeared "
+                    "underground."
+                )
+            ],
+            potential_hooks=[
+                (
+                    "A hidden city existed beneath "
+                    "people's feet."
+                )
+            ],
+            risk_notes=[
+                "Historical claims should be fact-checked."
+            ],
             sources=[
                 ResearchSource(
                     title="Dry Run Knowledge Base",
