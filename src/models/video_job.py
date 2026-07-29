@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pydantic import Field, model_validator
 
+from src.models.asset_state import SceneAssetState
 from src.models.audio_timeline import AudioTimeline
 from src.models.base import MissionBaseModel
 from src.models.enums import (
@@ -58,6 +59,9 @@ class VideoJob(MissionBaseModel):
     originality_review: OriginalityResult | None = None
 
     scenes: list[Scene] = Field(default_factory=list)
+    scene_asset_states: list[SceneAssetState] = Field(
+        default_factory=list
+    )
     video_clips: list[VideoClip] = Field(default_factory=list)
 
     audio_timeline: AudioTimeline | None = None
@@ -105,6 +109,28 @@ class VideoJob(MissionBaseModel):
             if self.script.status != ScriptStatus.APPROVED:
                 raise ValueError(
                     "Scene planning requires an approved script."
+                )
+
+        if self.scene_asset_states and not self.scenes:
+            raise ValueError(
+                "Scene asset states cannot exist without scenes."
+            )
+
+        if self.scene_asset_states:
+            scene_numbers = {
+                scene.scene_number
+                for scene in self.scenes
+            }
+
+            state_numbers = {
+                state.scene_number
+                for state in self.scene_asset_states
+            }
+
+            if not state_numbers.issubset(scene_numbers):
+                raise ValueError(
+                    "Every scene asset state must reference "
+                    "an existing scene number."
                 )
 
         if self.video_clips and not self.scenes:
