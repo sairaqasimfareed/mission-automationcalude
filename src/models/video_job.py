@@ -12,6 +12,7 @@ from src.models.enums import (
 from src.models.originality import OriginalityResult
 from src.models.policy import PolicyComplianceReport
 from src.models.research import ResearchResult, ResearchStatus
+from src.models.scene import Scene
 from src.models.script import Script, ScriptStatus
 
 
@@ -34,6 +35,7 @@ class VideoJob(MissionBaseModel):
     research: ResearchResult | None = None
     script: Script | None = None
     originality_review: OriginalityResult | None = None
+    scenes: list[Scene] = Field(default_factory=list)
     policy_report: PolicyComplianceReport | None = None
 
     retry_count: int = 0
@@ -42,7 +44,7 @@ class VideoJob(MissionBaseModel):
 
     @model_validator(mode="after")
     def validate_workflow_state(self) -> "VideoJob":
-        """Prevent obviously invalid workflow states."""
+        """Prevent invalid workflow states."""
 
         if self.script is not None:
             if self.research is None:
@@ -64,6 +66,17 @@ class VideoJob(MissionBaseModel):
             if self.script.status != ScriptStatus.APPROVED:
                 raise ValueError(
                     "Originality review requires an approved script."
+                )
+
+        if self.scenes:
+            if self.script is None:
+                raise ValueError(
+                    "Scenes cannot exist without a script."
+                )
+
+            if self.script.status != ScriptStatus.APPROVED:
+                raise ValueError(
+                    "Scene planning requires an approved script."
                 )
 
         if self.policy_report is not None:

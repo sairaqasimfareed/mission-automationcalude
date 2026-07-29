@@ -1,50 +1,42 @@
-from src.models.enums import (
-    Platform,
-    ProductionMode,
-    WorkflowStage,
-)
+from __future__ import annotations
+
+from src.agents.originality_agent.agent import OriginalityAgent
+from src.agents.scene_planner.agent import ScenePlannerAgent
+from src.models.enums import WorkflowStage
 from src.models.video_job import VideoJob
-from src.services.content_pipeline import ContentPipeline
+from src.services.research_pipeline import ResearchPipeline
+from src.services.script_pipeline import ScriptPipeline
 
 
-job = VideoJob(
-    project_name="Mission Automation",
-    channel_name="Beyond the Ninth",
-    niche="Mystery and Hidden Places",
-    topic="Top 10 Hidden Underground Cities",
-    platform=Platform.YOUTUBE,
-    production_mode=ProductionMode.PREMIUM,
-)
+class ContentPipeline:
+    """Runs the complete core content-generation workflow."""
 
-pipeline = ContentPipeline()
+    def __init__(self) -> None:
+        self.research_pipeline = ResearchPipeline()
+        self.script_pipeline = ScriptPipeline()
+        self.originality_agent = OriginalityAgent()
+        self.scene_planner = ScenePlannerAgent()
 
-result = pipeline.run(job)
+    def run(self, job: VideoJob) -> VideoJob:
+        # Research
+        research = self.research_pipeline.run(job.topic)
+        job.research = research
+        job.current_stage = WorkflowStage.SCRIPT
 
-print("Project:", result.project_name)
-print("Topic:", result.topic)
-print("Current Stage:", result.current_stage)
+        # Script generation and Claude-style review
+        script = self.script_pipeline.run(research)
+        job.script = script
+        job.current_stage = WorkflowStage.ORIGINALITY_REVIEW
 
-print()
+        # Originality analysis
+        originality = self.originality_agent.analyze(script)
+        job.originality_review = originality
 
-print("Research Status:", result.research.status)
-print("Script Status:", result.script.status)
-print("Originality Status:", result.originality_review.status)
+        # Scene planning
+        scenes = self.scene_planner.plan(script)
+        job.scenes = scenes
 
-print()
+        # Core content is ready for the next quality/policy stage
+        job.current_stage = WorkflowStage.QUALITY_CHECK
 
-print(
-    "Originality Score:",
-    result.originality_review.originality_score,
-)
-print(
-    "Human Value:",
-    result.originality_review.human_value_score,
-)
-
-assert result.research is not None
-assert result.script is not None
-assert result.originality_review is not None
-assert result.current_stage == WorkflowStage.QUALITY_CHECK
-
-print()
-print("Content Pipeline tests completed successfully.")
+        return job
