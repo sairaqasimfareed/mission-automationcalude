@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pydantic import Field, model_validator
 
+from src.models.audio_timeline import AudioTimeline
 from src.models.base import MissionBaseModel
 from src.models.enums import (
     JobStatus,
@@ -9,11 +10,20 @@ from src.models.enums import (
     ProductionMode,
     WorkflowStage,
 )
+from src.models.media_strategy import (
+    SceneSourceType,
+    VisualStrategy,
+    VoiceStatus,
+    VoiceStrategy,
+)
 from src.models.originality import OriginalityResult
 from src.models.policy import PolicyComplianceReport
+from src.models.render_result import RenderResult
 from src.models.research import ResearchResult, ResearchStatus
 from src.models.scene import Scene
 from src.models.script import Script, ScriptStatus
+from src.models.video_clip import VideoClip
+from src.models.video_timeline import VideoTimeline
 
 
 class VideoJob(MissionBaseModel):
@@ -32,10 +42,28 @@ class VideoJob(MissionBaseModel):
     status: JobStatus = JobStatus.PENDING
     current_stage: WorkflowStage = WorkflowStage.RESEARCH
 
+    visual_strategy: VisualStrategy = VisualStrategy.HYBRID
+    default_visual_source: SceneSourceType = (
+        SceneSourceType.MANUAL_UPLOAD
+    )
+    maximum_visual_budget: float = 0.0
+
+    voice_strategy: VoiceStrategy = VoiceStrategy.MANUAL_UPLOAD
+    voice_status: VoiceStatus = VoiceStatus.PENDING
+    voice_file: str | None = None
+    voice_provider: str | None = None
+
     research: ResearchResult | None = None
     script: Script | None = None
     originality_review: OriginalityResult | None = None
+
     scenes: list[Scene] = Field(default_factory=list)
+    video_clips: list[VideoClip] = Field(default_factory=list)
+
+    audio_timeline: AudioTimeline | None = None
+    video_timeline: VideoTimeline | None = None
+    render_result: RenderResult | None = None
+
     policy_report: PolicyComplianceReport | None = None
 
     retry_count: int = 0
@@ -44,7 +72,7 @@ class VideoJob(MissionBaseModel):
 
     @model_validator(mode="after")
     def validate_workflow_state(self) -> "VideoJob":
-        """Prevent invalid workflow states."""
+        """Prevent invalid workflow and media states."""
 
         if self.script is not None:
             if self.research is None:
@@ -77,6 +105,50 @@ class VideoJob(MissionBaseModel):
             if self.script.status != ScriptStatus.APPROVED:
                 raise ValueError(
                     "Scene planning requires an approved script."
+                )
+
+        if self.video_clips and not self.scenes:
+            raise ValueError(
+                "Video clips cannot exist without planned scenes."
+            )
+
+        if (
+            self.voice_strategy == VoiceStrategy.MANUAL_UPLOAD
+            and self.voice_status == VoiceStatus.READY
+            and not self.voice_file
+        ):
+            raise ValueError(
+                "Manual voiceover cannot be READY without a file."
+            )
+
+        if (
+            self.voice_strategy == VoiceStrategy.AUTO_GENERATE
+            and self.voice_status == VoiceStatus.READY
+            and not self.voice_file
+        ):
+            raise ValueError(
+                "Generated voiceover cannot be READY without a file."
+            )
+
+        if self.audio_timeline is not None and not self.voice_file:
+            raise ValueError(
+                "Audio timeline requires a voiceover file."
+            )
+
+        if self.video_timeline is not None and not self.video_clips:
+            raise ValueError(
+                "Video timeline requires ready video clips."
+            )
+
+        if self.render_result is not None:
+            if self.video_timeline is None:
+                raise ValueError(
+                    "Render result requires a video timeline."
+                )
+
+            if self.audio_timeline is None:
+                raise ValueError(
+                    "Render result requires an audio timeline."
                 )
 
         if self.policy_report is not None:
