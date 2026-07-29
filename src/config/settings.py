@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     # Environment
     ENVIRONMENT: str = "development"
     DEBUG: bool = True
+    MISSION_AUTOMATION_DRY_RUN: bool = True
 
     # Rendering
     DEFAULT_RENDER_ENGINE: str = "ffmpeg"
