@@ -61,3 +61,59 @@ class VisualStrategy(str, Enum):
     IMAGE_TO_VIDEO = "image_to_video"
     HYBRID = "hybrid"
     AI_VIDEO = "ai_video"
+
+
+class VoiceStrategy(str, Enum):
+    """Supported voice generation strategies."""
+
+    AUTO_GENERATE = "auto_generate"
+    MANUAL_UPLOAD = "manual_upload"
+
+
+class VoiceGender(str, Enum):
+    """Preferred narration voice."""
+
+    MALE = "male"
+    FEMALE = "female"
+    NEUTRAL = "neutral"
+
+
+class NarrationStyle(str, Enum):
+    """Preferred narration style."""
+
+    NATURAL = "natural"
+    DOCUMENTARY = "documentary"
+    STORYTELLING = "storytelling"
+    DRAMATIC = "dramatic"
+    CONVERSATIONAL = "conversational"
+
+
+class SubtitleMode(str, Enum):
+    """Subtitle generation mode."""
+
+    NONE = "none"
+    AUTO_GENERATE = "auto_generate"
+    MANUAL_UPLOAD = "manual_upload"
+
+
+class MusicStrategy(str, Enum):
+    """Supported background-music sourcing strategies."""
+
+    AUTO_GENERATE = "auto_generate"
+    MANUAL_UPLOAD = "manual_upload"
+    STOCK_LIBRARY = "stock_library"
+    NONE = "none"
+
+
+class MusicMood(str, Enum):
+    """Preferred background-music mood."""
+
+    CINEMATIC = "cinematic"
+    DRAMATIC = "dramatic"
+    MYSTERIOUS = "mysterious"
+    EMOTIONAL = "emotional"
+    EPIC = "epic"
+    CALM = "calm"
+    HAPPY = "happy"
+    SAD = "sad"
+    CUSTOM = "custom"

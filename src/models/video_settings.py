@@ -26,13 +26,15 @@ class VideoSettings(MissionBaseModel):
 
     @model_validator(mode="after")
     def validate_video_settings(self) -> "VideoSettings":
+        """Prevent unsupported video-setting combinations."""
+
         if (
             self.aspect_ratio == AspectRatio.PORTRAIT
             and self.resolution == VideoResolution.QHD
         ):
             raise ValueError(
-                "QHD preset is landscape-oriented and cannot be used "
-                "directly with portrait aspect ratio."
+                "QHD preset is landscape-oriented and cannot "
+                "be used directly with portrait aspect ratio."
             )
 
         if (
@@ -40,8 +42,8 @@ class VideoSettings(MissionBaseModel):
             and self.resolution == VideoResolution.UHD_4K
         ):
             raise ValueError(
-                "4K landscape preset cannot be used directly with "
-                "portrait aspect ratio."
+                "4K landscape preset cannot be used directly "
+                "with portrait aspect ratio."
             )
 
         if (
@@ -56,12 +58,22 @@ class VideoSettings(MissionBaseModel):
 
     @property
     def width(self) -> int:
-        return int(self.resolution.value.split("x")[0])
+        """Return the configured output width."""
+
+        return int(
+            self.resolution.value.split("x")[0]
+        )
 
     @property
     def height(self) -> int:
-        return int(self.resolution.value.split("x")[1])
+        """Return the configured output height."""
+
+        return int(
+            self.resolution.value.split("x")[1]
+        )
 
     @property
     def frames_per_second(self) -> int:
+        """Return the configured frame rate."""
+
         return self.frame_rate.value
