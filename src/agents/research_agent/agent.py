@@ -7,6 +7,8 @@ from src.models.research import (
 )
 from src.shared.llm.dry_run_provider import DryRunProviderAdapter
 from src.shared.llm.gateway import LLMGateway
+from src.shared.llm.models import LLMProvider
+from src.shared.llm.request import LLMRequest
 from src.shared.llm.retry import RetryConfig
 
 
@@ -30,16 +32,32 @@ class ResearchAgent:
         )
 
     def research(self, topic: str) -> ResearchResult:
-
-        operation = self.provider.create_operation(
+        request = LLMRequest(
+            provider=LLMProvider.OPENAI,
             model="dry-run-model",
             prompt=topic,
+            system_prompt=(
+                "You are an expert research assistant for long-form "
+                "YouTube videos."
+            ),
+            prompt_version="research_prompt_v1.0.0",
+            metadata={
+                "agent": "ResearchAgent",
+                "workflow": "research",
+            },
+        )
+
+        operation = self.provider.create_operation(
+            model=request.model,
+            prompt=request.prompt,
+            system_prompt=request.system_prompt,
         )
 
         result = self.gateway.call(
-            provider=self.provider.provider,
-            model="dry-run-model",
+            provider=request.provider,
+            model=request.model,
             operation=operation,
+            expect_json=request.expect_json,
         )
 
         return ResearchResult(
@@ -65,6 +83,6 @@ class ResearchAgent:
                 )
             ],
             fact_confidence_score=95,
-            prompt_version="research_prompt_v1.0.0",
+            prompt_version=request.prompt_version,
             status=ResearchStatus.APPROVED,
         )
