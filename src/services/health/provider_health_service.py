@@ -10,7 +10,9 @@ from src.models.provider_profile import (
     ProviderHealthStatus,
     ProviderProfile,
 )
-from src.services.provider_registry import ProviderRegistry
+from src.services.registry.provider_registry import (
+    ProviderRegistry,
+)
 
 
 class ProviderHealthChecker(Protocol):
@@ -85,9 +87,7 @@ class ProviderHealthService:
                 profile_id=profile.profile_id,
                 status=ProviderHealthStatus.MISCONFIGURED,
                 healthy=False,
-                message=(
-                    "Provider profile has no secret reference."
-                ),
+                message="Provider profile has no secret reference.",
             )
 
             self._update_profile_status(

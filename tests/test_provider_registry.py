@@ -3,7 +3,9 @@ from src.models.provider_profile import (
     ProviderHealthStatus,
     ProviderProfile,
 )
-from src.services.provider_registry import ProviderRegistry
+from src.services.registry.provider_registry import (
+    ProviderRegistry,
+)
 
 
 llm_main = ProviderProfile(

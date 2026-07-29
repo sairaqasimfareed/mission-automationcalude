@@ -3,10 +3,12 @@ from src.models.provider_profile import (
     ProviderHealthStatus,
     ProviderProfile,
 )
-from src.services.provider_health_service import (
+from src.services.health.provider_health_service import (
     ProviderHealthService,
 )
-from src.services.provider_registry import ProviderRegistry
+from src.services.registry.provider_registry import (
+    ProviderRegistry,
+)
 
 
 class HealthyChecker:

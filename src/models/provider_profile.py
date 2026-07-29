@@ -76,7 +76,17 @@ class ProviderProfile(MissionBaseModel):
         ge=0.0,
     )
 
+    daily_spent_usd: float = Field(
+        default=0.0,
+        ge=0.0,
+    )
+
     monthly_budget_usd: float = Field(
+        default=0.0,
+        ge=0.0,
+    )
+
+    monthly_spent_usd: float = Field(
         default=0.0,
         ge=0.0,
     )
@@ -178,6 +188,35 @@ class ProviderProfile(MissionBaseModel):
                 "Daily budget cannot exceed monthly budget."
             )
 
+        if (
+            self.daily_budget_usd > 0
+            and self.daily_spent_usd
+            > self.daily_budget_usd
+        ):
+            raise ValueError(
+                "Daily spent amount cannot exceed "
+                "the configured daily budget."
+            )
+
+        if (
+            self.monthly_budget_usd > 0
+            and self.monthly_spent_usd
+            > self.monthly_budget_usd
+        ):
+            raise ValueError(
+                "Monthly spent amount cannot exceed "
+                "the configured monthly budget."
+            )
+
+        if (
+            self.daily_spent_usd
+            > self.monthly_spent_usd
+        ):
+            raise ValueError(
+                "Daily spent amount cannot exceed "
+                "monthly spent amount."
+            )
+
         return self
 
     def supports(self, capability: str) -> bool:
@@ -197,4 +236,30 @@ class ProviderProfile(MissionBaseModel):
                 ProviderHealthStatus.HEALTHY,
                 ProviderHealthStatus.DEGRADED,
             }
+        )
+
+    @property
+    def remaining_daily_budget_usd(self) -> float | None:
+        """Return remaining daily budget, or None when unlimited."""
+
+        if self.daily_budget_usd == 0:
+            return None
+
+        return max(
+            self.daily_budget_usd
+            - self.daily_spent_usd,
+            0.0,
+        )
+
+    @property
+    def remaining_monthly_budget_usd(self) -> float | None:
+        """Return remaining monthly budget, or None when unlimited."""
+
+        if self.monthly_budget_usd == 0:
+            return None
+
+        return max(
+            self.monthly_budget_usd
+            - self.monthly_spent_usd,
+            0.0,
         )
