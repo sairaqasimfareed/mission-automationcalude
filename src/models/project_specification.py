@@ -1,19 +1,18 @@
 from __future__ import annotations
 
-from src.models.base import MissionBaseModel
-
-from src.models.general_settings import GeneralSettings
-from src.models.duration_config import DurationConfig
-from src.models.video_settings import VideoSettings
+from src.models.advanced_settings import AdvancedSettings
 from src.models.audience_settings import AudienceSettings
-from src.models.visual_settings import VisualSettings
-from src.models.voice_settings import VoiceSettings
+from src.models.base import MissionBaseModel
+from src.models.budget_settings import BudgetSettings
+from src.models.duration_config import DurationConfig
+from src.models.general_settings import GeneralSettings
 from src.models.music_settings import MusicSettings
+from src.models.packaging_settings import PackagingSettings
 from src.models.provider_preferences import ProviderPreferences
 from src.models.upload_settings import UploadSettings
-from src.models.packaging_settings import PackagingSettings
-from src.models.budget_settings import BudgetSettings
-from src.models.advanced_settings import AdvancedSettings
+from src.models.video_settings import VideoSettings
+from src.models.visual_settings import VisualSettings
+from src.models.voice_settings import VoiceSettings
 
 
 class ProjectSpecification(MissionBaseModel):

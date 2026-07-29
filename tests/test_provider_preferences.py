@@ -3,7 +3,6 @@ from src.models.provider_preferences import (
     ProviderPreferences,
 )
 
-
 voice_preference = ProviderPreference(
     preferred_profile_id="voice-main",
     fallback_profile_ids=[
@@ -63,9 +62,7 @@ assert preferences.image.preferred_profile_id is None
 
 
 serialized = preferences.model_dump_json()
-restored = ProviderPreferences.model_validate_json(
-    serialized
-)
+restored = ProviderPreferences.model_validate_json(serialized)
 
 assert restored == preferences
 assert restored.schema_version == "1.0"

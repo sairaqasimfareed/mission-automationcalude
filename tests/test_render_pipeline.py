@@ -6,7 +6,6 @@ from src.models.script import (
 )
 from src.services.render_pipeline import RenderPipeline
 
-
 script = Script(
     title="Hidden Underground Cities",
     content=(

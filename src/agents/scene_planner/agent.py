@@ -9,9 +9,7 @@ class ScenePlannerAgent:
 
     def plan(self, script: Script) -> list[Scene]:
         if script.status != ScriptStatus.APPROVED:
-            raise ValueError(
-                "Scene planning requires an approved script."
-            )
+            raise ValueError("Scene planning requires an approved script.")
 
         sentences = [
             sentence.strip()

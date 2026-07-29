@@ -19,10 +19,7 @@ class ManualProvider(VisualSourceProvider):
         return True
 
     def supports(self, scene: Scene) -> bool:
-        return (
-            scene.source_type
-            == self.supported_source_type
-        )
+        return scene.source_type == self.supported_source_type
 
     def acquire(self, scene: Scene) -> VideoClip:
         return VideoClip(
@@ -63,8 +60,6 @@ print("Available sources:", available_sources)
 
 assert clip.provider == "Manual Provider"
 assert clip.status == VideoClipStatus.READY
-assert available_sources == [
-    SceneSourceType.MANUAL_UPLOAD
-]
+assert available_sources == [SceneSourceType.MANUAL_UPLOAD]
 
 print("Visual Asset Router tests completed successfully.")

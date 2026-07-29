@@ -2,7 +2,6 @@ from pydantic import ValidationError
 
 from src.models.advanced_settings import AdvancedSettings
 
-
 settings = AdvancedSettings()
 
 print("Dry run:", settings.dry_run)
@@ -53,13 +52,9 @@ try:
         maximum_stage_retries=3,
     )
 except ValidationError:
-    print(
-        "Retry count with disabled retry successfully blocked."
-    )
+    print("Retry count with disabled retry successfully blocked.")
 else:
-    raise AssertionError(
-        "Disabled retry must require zero retries."
-    )
+    raise AssertionError("Disabled retry must require zero retries.")
 
 
 try:
@@ -70,9 +65,7 @@ try:
 except ValidationError:
     print("Dry-run upload successfully blocked.")
 else:
-    raise AssertionError(
-        "Dry-run mode must skip upload."
-    )
+    raise AssertionError("Dry-run mode must skip upload.")
 
 
 try:
@@ -82,13 +75,9 @@ try:
         require_upload_confirmation=False,
     )
 except ValidationError:
-    print(
-        "Upload without confirmation successfully blocked."
-    )
+    print("Upload without confirmation successfully blocked.")
 else:
-    raise AssertionError(
-        "Active upload must require confirmation."
-    )
+    raise AssertionError("Active upload must require confirmation.")
 
 
 try:
@@ -97,19 +86,13 @@ try:
         allow_partial_output=True,
     )
 except ValidationError:
-    print(
-        "Contradictory partial output successfully blocked."
-    )
+    print("Contradictory partial output successfully blocked.")
 else:
-    raise AssertionError(
-        "Partial output cannot stop on first failure."
-    )
+    raise AssertionError("Partial output cannot stop on first failure.")
 
 
 serialized = settings.model_dump_json()
-restored = AdvancedSettings.model_validate_json(
-    serialized
-)
+restored = AdvancedSettings.model_validate_json(serialized)
 
 assert restored == settings
 assert restored.schema_version == "1.0"

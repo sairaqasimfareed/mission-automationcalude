@@ -6,7 +6,6 @@ from src.models.specification_enums import (
     MusicStrategy,
 )
 
-
 settings = MusicSettings()
 
 print("Strategy:", settings.strategy)
@@ -60,9 +59,7 @@ else:
 
 serialized = settings.model_dump_json()
 
-restored = MusicSettings.model_validate_json(
-    serialized
-)
+restored = MusicSettings.model_validate_json(serialized)
 
 assert restored == settings
 

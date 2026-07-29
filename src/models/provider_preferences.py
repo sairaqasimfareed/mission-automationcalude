@@ -38,30 +38,12 @@ class ProviderPreferences(MissionBaseModel):
 
     schema_version: str = "1.0"
 
-    llm: ProviderPreference = Field(
-        default_factory=ProviderPreference
-    )
-    video: ProviderPreference = Field(
-        default_factory=ProviderPreference
-    )
-    voice: ProviderPreference = Field(
-        default_factory=ProviderPreference
-    )
-    image: ProviderPreference = Field(
-        default_factory=ProviderPreference
-    )
-    stock_video: ProviderPreference = Field(
-        default_factory=ProviderPreference
-    )
-    stock_image: ProviderPreference = Field(
-        default_factory=ProviderPreference
-    )
-    music: ProviderPreference = Field(
-        default_factory=ProviderPreference
-    )
-    sound_effects: ProviderPreference = Field(
-        default_factory=ProviderPreference
-    )
-    upload: ProviderPreference = Field(
-        default_factory=ProviderPreference
-    )
+    llm: ProviderPreference = Field(default_factory=ProviderPreference)
+    video: ProviderPreference = Field(default_factory=ProviderPreference)
+    voice: ProviderPreference = Field(default_factory=ProviderPreference)
+    image: ProviderPreference = Field(default_factory=ProviderPreference)
+    stock_video: ProviderPreference = Field(default_factory=ProviderPreference)
+    stock_image: ProviderPreference = Field(default_factory=ProviderPreference)
+    music: ProviderPreference = Field(default_factory=ProviderPreference)
+    sound_effects: ProviderPreference = Field(default_factory=ProviderPreference)
+    upload: ProviderPreference = Field(default_factory=ProviderPreference)

@@ -22,9 +22,7 @@ class AssetDecisionService:
         apply_to_remaining_scenes: bool = False,
     ) -> SceneAssetState:
         state.user_decision = decision
-        state.apply_decision_to_remaining_scenes = (
-            apply_to_remaining_scenes
-        )
+        state.apply_decision_to_remaining_scenes = apply_to_remaining_scenes
         state.errors.clear()
 
         if decision == AssetUserDecision.USE_LOCAL:
@@ -42,22 +40,16 @@ class AssetDecisionService:
             state.selected_source = SceneSourceType.MANUAL_UPLOAD
             state.selected_candidate = None
             state.manual_upload_path = manual_upload_path
-            state.status = (
-                AssetWorkflowStatus.WAITING_FOR_MANUAL_UPLOAD
-            )
+            state.status = AssetWorkflowStatus.WAITING_FOR_MANUAL_UPLOAD
 
         elif decision == AssetUserDecision.IMAGE_TO_VIDEO:
             state.selected_source = SceneSourceType.IMAGE_TO_VIDEO
             state.selected_candidate = None
             state.image_prompt = image_prompt
-            state.status = (
-                AssetWorkflowStatus.IMAGE_TO_VIDEO_REQUIRED
-            )
+            state.status = AssetWorkflowStatus.IMAGE_TO_VIDEO_REQUIRED
 
         else:
-            raise ValueError(
-                f"Unsupported asset decision: {decision}"
-            )
+            raise ValueError(f"Unsupported asset decision: {decision}")
 
         return state
 
@@ -73,20 +65,12 @@ class AssetDecisionService:
             )
 
         if selected_candidate_index is None:
-            raise ValueError(
-                "A local candidate index is required."
-            )
+            raise ValueError("A local candidate index is required.")
 
-        if not 0 <= selected_candidate_index < len(
-            state.local_candidates
-        ):
-            raise IndexError(
-                "Selected local candidate index is invalid."
-            )
+        if not 0 <= selected_candidate_index < len(state.local_candidates):
+            raise IndexError("Selected local candidate index is invalid.")
 
-        candidate = state.local_candidates[
-            selected_candidate_index
-        ]
+        candidate = state.local_candidates[selected_candidate_index]
 
         state.selected_source = SceneSourceType.LOCAL_LIBRARY
         state.selected_candidate = candidate

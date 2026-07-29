@@ -14,7 +14,6 @@ from src.services.selection.provider_selection_service import (
     ProviderSelectionService,
 )
 
-
 llm_main = ProviderProfile(
     profile_id="llm-main",
     display_name="LLM Main",
@@ -98,10 +97,7 @@ print(
     preferred_result.selected_profile.profile_id,
 )
 
-assert (
-    preferred_result.selected_profile.profile_id
-    == "llm-main"
-)
+assert preferred_result.selected_profile.profile_id == "llm-main"
 assert preferred_result.used_preferred_profile is True
 assert preferred_result.used_fallback_profile is False
 
@@ -124,10 +120,7 @@ print(
     fallback_result.selected_profile.profile_id,
 )
 
-assert (
-    fallback_result.selected_profile.profile_id
-    == "llm-backup"
-)
+assert fallback_result.selected_profile.profile_id == "llm-backup"
 assert fallback_result.used_fallback_profile is True
 assert len(fallback_result.warnings) == 1
 
@@ -144,10 +137,7 @@ print(
     automatic_result.selected_profile.profile_id,
 )
 
-assert (
-    automatic_result.selected_profile.profile_id
-    == "llm-main"
-)
+assert automatic_result.selected_profile.profile_id == "llm-main"
 
 
 try:
@@ -158,13 +148,9 @@ try:
         )
     )
 except ValueError:
-    print(
-        "Missing capability selection successfully blocked."
-    )
+    print("Missing capability selection successfully blocked.")
 else:
-    raise AssertionError(
-        "Missing capability should not produce a provider."
-    )
+    raise AssertionError("Missing capability should not produce a provider.")
 
 
 try:
@@ -179,13 +165,9 @@ try:
         )
     )
 except ValueError:
-    print(
-        "Unavailable locked provider successfully blocked."
-    )
+    print("Unavailable locked provider successfully blocked.")
 else:
-    raise AssertionError(
-        "Locked unavailable provider should fail."
-    )
+    raise AssertionError("Locked unavailable provider should fail.")
 
 
 try:
@@ -199,15 +181,9 @@ try:
         )
     )
 except ValueError:
-    print(
-        "Wrong-category locked provider successfully blocked."
-    )
+    print("Wrong-category locked provider successfully blocked.")
 else:
-    raise AssertionError(
-        "Wrong-category locked provider should fail."
-    )
+    raise AssertionError("Wrong-category locked provider should fail.")
 
 
-print(
-    "Provider Selection Service tests completed successfully."
-)
+print("Provider Selection Service tests completed successfully.")

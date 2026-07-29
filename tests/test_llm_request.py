@@ -1,7 +1,6 @@
 from src.shared.llm.models import LLMProvider
 from src.shared.llm.request import LLMRequest
 
-
 request = LLMRequest(
     provider=LLMProvider.OPENAI,
     model="test-model",

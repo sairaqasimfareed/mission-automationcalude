@@ -5,18 +5,13 @@ from src.models.audience_settings import (
     AudienceSettings,
 )
 
-
 settings = AudienceSettings(
     language=" English ",
     target_country=" United States ",
-    target_audience=(
-        "Adults interested in history and mystery"
-    ),
+    target_audience=("Adults interested in history and mystery"),
     age_group=AudienceAgeGroup.ADULTS,
     localization_enabled=True,
-    localization_notes=(
-        "Use natural American English and familiar references."
-    ),
+    localization_notes=("Use natural American English and familiar references."),
     cultural_requirements=[
         "American English",
         "Respectful historical context",
@@ -68,9 +63,7 @@ try:
 except ValidationError:
     print("Empty language successfully blocked.")
 else:
-    raise AssertionError(
-        "An empty language should not be accepted."
-    )
+    raise AssertionError("An empty language should not be accepted.")
 
 
 try:
@@ -82,15 +75,11 @@ try:
 except ValidationError:
     print("Empty target country successfully blocked.")
 else:
-    raise AssertionError(
-        "An empty target country should not be accepted."
-    )
+    raise AssertionError("An empty target country should not be accepted.")
 
 
 serialized = settings.model_dump_json()
-restored = AudienceSettings.model_validate_json(
-    serialized
-)
+restored = AudienceSettings.model_validate_json(serialized)
 
 assert restored == settings
 assert restored.schema_version == "1.0"

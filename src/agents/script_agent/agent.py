@@ -31,9 +31,7 @@ class ScriptAgent:
 
     def generate(self, research: ResearchResult) -> Script:
         if research.status != ResearchStatus.APPROVED:
-            raise ValueError(
-                "Script generation requires approved research."
-            )
+            raise ValueError("Script generation requires approved research.")
 
         request = LLMRequest(
             provider=LLMProvider.OPENAI,

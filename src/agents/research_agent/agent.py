@@ -37,8 +37,7 @@ class ResearchAgent:
             model="dry-run-model",
             prompt=topic,
             system_prompt=(
-                "You are an expert research assistant for long-form "
-                "YouTube videos."
+                "You are an expert research assistant for long-form " "YouTube videos."
             ),
             prompt_version="research_prompt_v1.0.0",
             metadata={
@@ -67,15 +66,9 @@ class ResearchAgent:
                 "Underground cities provided protection.",
                 "Many contained homes and food storage.",
             ],
-            interesting_angles=[
-                "Why entire civilizations disappeared underground."
-            ],
-            potential_hooks=[
-                "A hidden city existed beneath people's feet."
-            ],
-            risk_notes=[
-                "Historical claims should be fact-checked."
-            ],
+            interesting_angles=["Why entire civilizations disappeared underground."],
+            potential_hooks=["A hidden city existed beneath people's feet."],
+            risk_notes=["Historical claims should be fact-checked."],
             sources=[
                 ResearchSource(
                     title="Dry Run Knowledge Base",

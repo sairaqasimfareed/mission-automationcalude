@@ -2,11 +2,8 @@ from src.pipeline.pipeline_stage import (
     PipelineStageName,
     PipelineStageStatus,
 )
-
 from src.pipeline.pipeline_state import PipelineState
-
 from src.pipeline.stage_result import StageResult
-
 
 state = PipelineState(
     current_stage=PipelineStageName.SCRIPT,

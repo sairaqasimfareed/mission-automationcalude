@@ -45,14 +45,12 @@ class VideoClip(MissionBaseModel):
     metadata: dict = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def validate_clip_source(self) -> "VideoClip":
+    def validate_clip_source(self) -> VideoClip:
         """Ensure a ready clip has a usable file or URL."""
 
         if self.source_type == SceneSourceType.AI_GENERATE:
             if self.source_status != SceneSourceStatus.DISABLED:
-                raise ValueError(
-                    "AI-generated video clips must remain disabled."
-                )
+                raise ValueError("AI-generated video clips must remain disabled.")
 
         if self.status == VideoClipStatus.READY:
             if not self.local_file and not self.source_url:

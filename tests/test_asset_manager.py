@@ -11,7 +11,6 @@ from src.services.local_asset_search_service import (
     LocalAssetSearchService,
 )
 
-
 asset_index = AssetIndex(
     assets=[
         IndexedAsset(
@@ -50,9 +49,7 @@ matching_scene = Scene(
     status=SceneStatus.READY,
 )
 
-matching_state = manager.search_local_assets(
-    matching_scene
-)
+matching_state = manager.search_local_assets(matching_scene)
 
 print("Matching status:", matching_state.status)
 print(
@@ -60,10 +57,7 @@ print(
     len(matching_state.local_candidates),
 )
 
-assert (
-    matching_state.status
-    == AssetWorkflowStatus.LOCAL_RESULTS_AVAILABLE
-)
+assert matching_state.status == AssetWorkflowStatus.LOCAL_RESULTS_AVAILABLE
 assert len(matching_state.local_candidates) == 1
 
 
@@ -76,9 +70,7 @@ missing_scene = Scene(
     status=SceneStatus.READY,
 )
 
-missing_state = manager.search_local_assets(
-    missing_scene
-)
+missing_state = manager.search_local_assets(missing_scene)
 
 print("Missing status:", missing_state.status)
 print(
@@ -87,10 +79,7 @@ print(
 )
 print("Warnings:", missing_state.warnings)
 
-assert (
-    missing_state.status
-    == AssetWorkflowStatus.WAITING_FOR_USER_DECISION
-)
+assert missing_state.status == AssetWorkflowStatus.WAITING_FOR_USER_DECISION
 assert len(missing_state.local_candidates) == 0
 assert len(missing_state.warnings) == 1
 

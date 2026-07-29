@@ -69,12 +69,8 @@ class SceneAssetState(MissionBaseModel):
     local_search_query: str | None = None
     stock_search_query: str | None = None
 
-    local_candidates: list[AssetCandidate] = Field(
-        default_factory=list
-    )
-    stock_candidates: list[AssetCandidate] = Field(
-        default_factory=list
-    )
+    local_candidates: list[AssetCandidate] = Field(default_factory=list)
+    stock_candidates: list[AssetCandidate] = Field(default_factory=list)
 
     user_decision: AssetUserDecision | None = None
     selected_source: SceneSourceType | None = None

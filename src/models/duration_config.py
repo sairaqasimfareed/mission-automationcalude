@@ -31,26 +31,22 @@ class DurationConfig(MissionBaseModel):
     )
 
     @model_validator(mode="after")
-    def validate_duration(self) -> "DurationConfig":
+    def validate_duration(self) -> DurationConfig:
         if self.mode == DurationMode.EXACT:
             if self.target_duration_seconds is None:
                 raise ValueError(
-                    "Exact duration mode requires "
-                    "target_duration_seconds."
+                    "Exact duration mode requires " "target_duration_seconds."
                 )
 
             if self.target_duration_seconds <= 0:
-                raise ValueError(
-                    "Target duration must be greater than zero."
-                )
+                raise ValueError("Target duration must be greater than zero.")
 
             if (
                 self.minimum_duration_seconds is not None
                 or self.maximum_duration_seconds is not None
             ):
                 raise ValueError(
-                    "Exact duration mode cannot include "
-                    "minimum or maximum duration."
+                    "Exact duration mode cannot include " "minimum or maximum duration."
                 )
 
         if self.mode == DurationMode.RANGE:
@@ -65,28 +61,17 @@ class DurationConfig(MissionBaseModel):
                 )
 
             if self.minimum_duration_seconds <= 0:
-                raise ValueError(
-                    "Minimum duration must be greater than zero."
-                )
+                raise ValueError("Minimum duration must be greater than zero.")
 
             if self.maximum_duration_seconds <= 0:
-                raise ValueError(
-                    "Maximum duration must be greater than zero."
-                )
+                raise ValueError("Maximum duration must be greater than zero.")
 
-            if (
-                self.minimum_duration_seconds
-                > self.maximum_duration_seconds
-            ):
-                raise ValueError(
-                    "Minimum duration cannot exceed "
-                    "maximum duration."
-                )
+            if self.minimum_duration_seconds > self.maximum_duration_seconds:
+                raise ValueError("Minimum duration cannot exceed " "maximum duration.")
 
             if self.target_duration_seconds is not None:
                 raise ValueError(
-                    "Range duration mode cannot include "
-                    "target_duration_seconds."
+                    "Range duration mode cannot include " "target_duration_seconds."
                 )
 
         return self
@@ -103,11 +88,7 @@ class DurationConfig(MissionBaseModel):
         assert self.maximum_duration_seconds is not None
 
         return round(
-            (
-                self.minimum_duration_seconds
-                + self.maximum_duration_seconds
-            )
-            / 2
+            (self.minimum_duration_seconds + self.maximum_duration_seconds) / 2
         )
 
     def is_within_allowed_duration(
@@ -122,35 +103,15 @@ class DurationConfig(MissionBaseModel):
         if self.mode == DurationMode.EXACT:
             assert self.target_duration_seconds is not None
 
-            lower_bound = (
-                self.target_duration_seconds
-                - self.tolerance_seconds
-            )
-            upper_bound = (
-                self.target_duration_seconds
-                + self.tolerance_seconds
-            )
+            lower_bound = self.target_duration_seconds - self.tolerance_seconds
+            upper_bound = self.target_duration_seconds + self.tolerance_seconds
 
-            return (
-                lower_bound
-                <= actual_duration_seconds
-                <= upper_bound
-            )
+            return lower_bound <= actual_duration_seconds <= upper_bound
 
         assert self.minimum_duration_seconds is not None
         assert self.maximum_duration_seconds is not None
 
-        lower_bound = (
-            self.minimum_duration_seconds
-            - self.tolerance_seconds
-        )
-        upper_bound = (
-            self.maximum_duration_seconds
-            + self.tolerance_seconds
-        )
+        lower_bound = self.minimum_duration_seconds - self.tolerance_seconds
+        upper_bound = self.maximum_duration_seconds + self.tolerance_seconds
 
-        return (
-            lower_bound
-            <= actual_duration_seconds
-            <= upper_bound
-        )
+        return lower_bound <= actual_duration_seconds <= upper_bound

@@ -9,7 +9,6 @@ from src.services.registry.provider_registry import (
     ProviderRegistry,
 )
 
-
 limited_profile = ProviderProfile(
     profile_id="video-main",
     display_name="Video Main",
@@ -86,13 +85,9 @@ print(
 assert reserved_profile.daily_spent_usd == 5.0
 assert reserved_profile.monthly_spent_usd == 23.0
 
-assert service.remaining_daily_budget(
-    "video-main"
-) == 5.0
+assert service.remaining_daily_budget("video-main") == 5.0
 
-assert service.remaining_monthly_budget(
-    "video-main"
-) == 77.0
+assert service.remaining_monthly_budget("video-main") == 77.0
 
 
 released_profile = service.release(
@@ -114,15 +109,21 @@ assert adjusted_profile.daily_spent_usd == 3.5
 assert adjusted_profile.monthly_spent_usd == 21.5
 
 
-assert service.is_budget_available(
-    profile_id="video-main",
-    estimated_cost_usd=2.0,
-) is True
+assert (
+    service.is_budget_available(
+        profile_id="video-main",
+        estimated_cost_usd=2.0,
+    )
+    is True
+)
 
-assert service.is_budget_available(
-    profile_id="video-main",
-    estimated_cost_usd=7.0,
-) is False
+assert (
+    service.is_budget_available(
+        profile_id="video-main",
+        estimated_cost_usd=7.0,
+    )
+    is False
+)
 
 
 unlimited_result = service.check_request(
@@ -143,9 +144,7 @@ try:
 except ValueError:
     print("Negative estimated cost successfully blocked.")
 else:
-    raise AssertionError(
-        "Negative estimated cost should fail."
-    )
+    raise AssertionError("Negative estimated cost should fail.")
 
 
 try:
@@ -156,11 +155,7 @@ try:
 except ValueError:
     print("Invalid budget release successfully blocked.")
 else:
-    raise AssertionError(
-        "Releasing more than recorded spending should fail."
-    )
+    raise AssertionError("Releasing more than recorded spending should fail.")
 
 
-print(
-    "Provider Budget Service tests completed successfully."
-)
+print("Provider Budget Service tests completed successfully.")

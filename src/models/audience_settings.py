@@ -49,13 +49,9 @@ class AudienceSettings(MissionBaseModel):
         max_length=1000,
     )
 
-    cultural_requirements: list[str] = Field(
-        default_factory=list
-    )
+    cultural_requirements: list[str] = Field(default_factory=list)
 
-    excluded_topics: list[str] = Field(
-        default_factory=list
-    )
+    excluded_topics: list[str] = Field(default_factory=list)
 
     @field_validator(
         "language",
@@ -70,9 +66,7 @@ class AudienceSettings(MissionBaseModel):
         value = value.strip()
 
         if not value:
-            raise ValueError(
-                "Audience text fields cannot be empty."
-            )
+            raise ValueError("Audience text fields cannot be empty.")
 
         return value
 

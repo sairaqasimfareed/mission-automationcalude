@@ -5,7 +5,6 @@ from src.models.duration_config import (
     DurationMode,
 )
 
-
 exact_config = DurationConfig(
     mode=DurationMode.EXACT,
     target_duration_seconds=600,
@@ -50,9 +49,7 @@ try:
 except ValidationError:
     print("Missing exact duration successfully blocked.")
 else:
-    raise AssertionError(
-        "Exact mode without target duration should fail."
-    )
+    raise AssertionError("Exact mode without target duration should fail.")
 
 
 try:
@@ -64,9 +61,7 @@ try:
 except ValidationError:
     print("Invalid duration range successfully blocked.")
 else:
-    raise AssertionError(
-        "Minimum duration above maximum should fail."
-    )
+    raise AssertionError("Minimum duration above maximum should fail.")
 
 
 try:
@@ -78,9 +73,7 @@ try:
 except ValidationError:
     print("Mixed duration configuration successfully blocked.")
 else:
-    raise AssertionError(
-        "Exact mode must not include range values."
-    )
+    raise AssertionError("Exact mode must not include range values.")
 
 
 serialized = exact_config.model_dump_json()

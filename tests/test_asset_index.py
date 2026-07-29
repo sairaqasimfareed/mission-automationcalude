@@ -5,7 +5,6 @@ from src.models.asset_index import (
     IndexedAssetType,
 )
 
-
 index = AssetIndex()
 
 video_asset = IndexedAsset(

@@ -6,7 +6,6 @@ from src.models.script import (
     ScriptStatus,
 )
 
-
 script = Script(
     title="Top 10 Hidden Underground Cities",
     content="This is a draft script for testing.",

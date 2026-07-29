@@ -5,7 +5,6 @@ from src.providers.image_to_video_provider import (
     ImageToVideoProvider,
 )
 
-
 scene = Scene(
     scene_number=1,
     title="Opening",

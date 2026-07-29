@@ -38,41 +38,24 @@ class AdvancedSettings(MissionBaseModel):
     @model_validator(mode="after")
     def validate_advanced_settings(
         self,
-    ) -> "AdvancedSettings":
+    ) -> AdvancedSettings:
         """Prevent contradictory advanced configuration."""
 
-        if (
-            not self.retry_failed_stages
-            and self.maximum_stage_retries != 0
-        ):
+        if not self.retry_failed_stages and self.maximum_stage_retries != 0:
             raise ValueError(
                 "maximum_stage_retries must be 0 when "
                 "retry_failed_stages is disabled."
             )
 
-        if (
-            self.dry_run
-            and not self.skip_upload
-        ):
-            raise ValueError(
-                "Dry-run mode requires upload to be skipped."
-            )
+        if self.dry_run and not self.skip_upload:
+            raise ValueError("Dry-run mode requires upload to be skipped.")
 
-        if (
-            not self.skip_upload
-            and not self.require_upload_confirmation
-        ):
-            raise ValueError(
-                "Active upload requires explicit upload confirmation."
-            )
+        if not self.skip_upload and not self.require_upload_confirmation:
+            raise ValueError("Active upload requires explicit upload confirmation.")
 
-        if (
-            self.allow_partial_output
-            and self.stop_on_stage_failure
-        ):
+        if self.allow_partial_output and self.stop_on_stage_failure:
             raise ValueError(
-                "Partial output requires stop_on_stage_failure "
-                "to be disabled."
+                "Partial output requires stop_on_stage_failure " "to be disabled."
             )
 
         return self

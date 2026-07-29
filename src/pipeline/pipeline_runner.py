@@ -34,9 +34,7 @@ class PipelineRunner:
             self._stages,
             start=1,
         ):
-            context.pipeline_state.current_stage = (
-                stage.stage_name
-            )
+            context.pipeline_state.current_stage = stage.stage_name
 
             stage.before_execute(context)
 
@@ -51,9 +49,7 @@ class PipelineRunner:
                 result,
             )
 
-            context.pipeline_state.overall_progress = int(
-                index * 100 / total
-            )
+            context.pipeline_state.overall_progress = int(index * 100 / total)
 
             results.append(result)
 

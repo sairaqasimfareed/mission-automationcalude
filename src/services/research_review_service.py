@@ -27,16 +27,12 @@ class ResearchReviewService:
                 "Research contains too few verified facts."
             )
 
-            research.claude_suggested_changes.append(
-                "Add more high-confidence facts."
-            )
+            research.claude_suggested_changes.append("Add more high-confidence facts.")
 
             return research
 
         research.status = ResearchStatus.APPROVED
 
-        research.claude_review_notes.append(
-            "Research passed the quality review."
-        )
+        research.claude_review_notes.append("Research passed the quality review.")
 
         return research

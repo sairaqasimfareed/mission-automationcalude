@@ -3,7 +3,6 @@ from src.shared.llm.gateway import LLMGateway
 from src.shared.llm.models import LLMCallStatus
 from src.shared.llm.retry import RetryConfig
 
-
 gateway = LLMGateway(
     retry_config=RetryConfig(
         max_attempts=2,
@@ -13,9 +12,7 @@ gateway = LLMGateway(
 )
 
 
-text_adapter = DryRunProviderAdapter(
-    response_text="This is a local dry-run script."
-)
+text_adapter = DryRunProviderAdapter(response_text="This is a local dry-run script.")
 
 text_operation = text_adapter.create_operation(
     model="dry-run-model",

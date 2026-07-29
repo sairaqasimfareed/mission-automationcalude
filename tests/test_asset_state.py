@@ -6,7 +6,6 @@ from src.models.asset_state import (
 )
 from src.models.media_strategy import SceneSourceType
 
-
 candidate = AssetCandidate(
     title="Ancient Tunnel Clip",
     source_type=SceneSourceType.LOCAL_LIBRARY,
@@ -48,9 +47,7 @@ print("Decision:", state.user_decision)
 print("Selected source:", state.selected_source)
 print("Selected file:", state.selected_candidate.file_path)
 
-assert state.status == (
-    AssetWorkflowStatus.WAITING_FOR_USER_DECISION
-)
+assert state.status == (AssetWorkflowStatus.WAITING_FOR_USER_DECISION)
 assert state.user_decision == AssetUserDecision.USE_LOCAL
 assert state.selected_source == SceneSourceType.LOCAL_LIBRARY
 assert state.selected_candidate is not None

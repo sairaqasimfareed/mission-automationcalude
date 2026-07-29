@@ -3,7 +3,6 @@ from pydantic import ValidationError
 from src.models.enums import ProductionMode
 from src.models.policy import PolicyComplianceReport, RiskLevel
 
-
 # Premium Mode → Allowed
 premium_report = PolicyComplianceReport(
     source_mode=ProductionMode.PREMIUM,
@@ -34,8 +33,6 @@ except ValidationError as error:
     print("✅ Invalid Quick Mode state successfully blocked.")
     print(error.errors()[0]["msg"])
 else:
-    raise AssertionError(
-        "Quick Mode was incorrectly allowed to become upload-ready."
-    )
+    raise AssertionError("Quick Mode was incorrectly allowed to become upload-ready.")
 
 print("Policy compliance tests completed successfully.")

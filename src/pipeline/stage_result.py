@@ -30,7 +30,4 @@ class StageResult(MissionBaseModel):
 
     @property
     def successful(self) -> bool:
-        return (
-            self.status
-            == PipelineStageStatus.COMPLETED
-        )
+        return self.status == PipelineStageStatus.COMPLETED

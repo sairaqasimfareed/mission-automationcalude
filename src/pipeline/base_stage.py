@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from src.pipeline.stage_context import StageContext
-from src.pipeline.stage_result import StageResult
 from src.pipeline.pipeline_stage import (
     PipelineStageName,
 )
+from src.pipeline.stage_context import StageContext
+from src.pipeline.stage_result import StageResult
 
 
 class BasePipelineStage(ABC):

@@ -19,14 +19,13 @@ from src.services.manager.provider_manager import (
 from src.services.registry.provider_registry import (
     ProviderRegistry,
 )
-from src.services.selection.provider_selection_service import (
-    ProviderSelectionService,
-)
 from src.services.secrets.provider_secret_manager import (
     InMemorySecretStore,
     ProviderSecretManager,
 )
-
+from src.services.selection.provider_selection_service import (
+    ProviderSelectionService,
+)
 
 store = InMemorySecretStore()
 
@@ -60,13 +59,9 @@ registry = ProviderRegistry(
     ]
 )
 
-selection_service = ProviderSelectionService(
-    registry
-)
+selection_service = ProviderSelectionService(registry)
 
-budget_service = ProviderBudgetService(
-    registry
-)
+budget_service = ProviderBudgetService(registry)
 
 factory = ProviderFactory(
     registry=registry,
@@ -94,15 +89,9 @@ assert isinstance(
     LLMProvider,
 )
 
-assert (
-    provider.instance.profile_id
-    == "openai-main"
-)
+assert provider.instance.profile_id == "openai-main"
 
-assert (
-    provider.api_key
-    == "sk-test-123456789"
-)
+assert provider.api_key == "sk-test-123456789"
 
 
 preferred = manager.get_provider(
@@ -125,15 +114,9 @@ try:
         estimated_cost_usd=100.0,
     )
 except ValueError:
-    print(
-        "Budget protection works."
-    )
+    print("Budget protection works.")
 else:
-    raise AssertionError(
-        "Budget validation should fail."
-    )
+    raise AssertionError("Budget validation should fail.")
 
 
-print(
-    "Provider Manager tests completed successfully."
-)
+print("Provider Manager tests completed successfully.")

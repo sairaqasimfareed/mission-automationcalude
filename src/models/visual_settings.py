@@ -46,7 +46,7 @@ class VisualSettings(MissionBaseModel):
     )
 
     @model_validator(mode="after")
-    def validate_visual_settings(self) -> "VisualSettings":
+    def validate_visual_settings(self) -> VisualSettings:
         """Prevent contradictory visual configuration states."""
 
         if (
@@ -54,8 +54,7 @@ class VisualSettings(MissionBaseModel):
             and not self.prefer_local_assets
         ):
             raise ValueError(
-                "Local Library strategy requires "
-                "prefer_local_assets to be enabled."
+                "Local Library strategy requires " "prefer_local_assets to be enabled."
             )
 
         if (
@@ -63,8 +62,7 @@ class VisualSettings(MissionBaseModel):
             and not self.allow_stock_search
         ):
             raise ValueError(
-                "Stock Footage strategy requires "
-                "allow_stock_search to be enabled."
+                "Stock Footage strategy requires " "allow_stock_search to be enabled."
             )
 
         if (
@@ -72,8 +70,7 @@ class VisualSettings(MissionBaseModel):
             and not self.allow_manual_upload
         ):
             raise ValueError(
-                "Manual Upload strategy requires "
-                "allow_manual_upload to be enabled."
+                "Manual Upload strategy requires " "allow_manual_upload to be enabled."
             )
 
         if (
@@ -90,31 +87,24 @@ class VisualSettings(MissionBaseModel):
             and not self.allow_ai_video_generation
         ):
             raise ValueError(
-                "AI Video strategy requires "
-                "allow_ai_video_generation to be enabled."
+                "AI Video strategy requires " "allow_ai_video_generation to be enabled."
             )
 
-        if (
-            self.strategy == VisualStrategy.HYBRID
-            and not any(
-                [
-                    self.prefer_local_assets,
-                    self.allow_stock_search,
-                    self.allow_manual_upload,
-                    self.allow_image_to_video,
-                    self.allow_ai_video_generation,
-                ]
-            )
+        if self.strategy == VisualStrategy.HYBRID and not any(
+            [
+                self.prefer_local_assets,
+                self.allow_stock_search,
+                self.allow_manual_upload,
+                self.allow_image_to_video,
+                self.allow_ai_video_generation,
+            ]
         ):
             raise ValueError(
-                "Hybrid strategy requires at least one "
-                "enabled visual source."
+                "Hybrid strategy requires at least one " "enabled visual source."
             )
 
         if not self.local_asset_directory.strip():
-            raise ValueError(
-                "local_asset_directory cannot be empty."
-            )
+            raise ValueError("local_asset_directory cannot be empty.")
 
         if (
             self.default_transition_duration_seconds

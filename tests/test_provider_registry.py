@@ -7,7 +7,6 @@ from src.services.registry.provider_registry import (
     ProviderRegistry,
 )
 
-
 llm_main = ProviderProfile(
     profile_id="llm-main",
     display_name="LLM Main",
@@ -83,14 +82,9 @@ assert registry.count == 4
 assert registry.contains("llm-main")
 assert registry.get("llm-main") == llm_main
 
-llm_profiles = registry.list_by_category(
-    ProviderCategory.LLM
-)
+llm_profiles = registry.list_by_category(ProviderCategory.LLM)
 
-assert [
-    profile.profile_id
-    for profile in llm_profiles
-] == [
+assert [profile.profile_id for profile in llm_profiles] == [
     "llm-main",
     "llm-backup",
     "llm-disabled",
@@ -102,10 +96,7 @@ enabled_llm_profiles = registry.list_by_category(
     enabled_only=True,
 )
 
-assert [
-    profile.profile_id
-    for profile in enabled_llm_profiles
-] == [
+assert [profile.profile_id for profile in enabled_llm_profiles] == [
     "llm-main",
     "llm-backup",
 ]
@@ -116,10 +107,7 @@ usable_llm_profiles = registry.list_by_category(
     usable_only=True,
 )
 
-assert [
-    profile.profile_id
-    for profile in usable_llm_profiles
-] == [
+assert [profile.profile_id for profile in usable_llm_profiles] == [
     "llm-main",
     "llm-backup",
 ]
@@ -130,10 +118,7 @@ structured_profiles = registry.find_supporting(
     "STRUCTURED_JSON",
 )
 
-assert [
-    profile.profile_id
-    for profile in structured_profiles
-] == [
+assert [profile.profile_id for profile in structured_profiles] == [
     "llm-main",
 ]
 
@@ -143,9 +128,7 @@ try:
 except ValueError:
     print("Duplicate profile successfully blocked.")
 else:
-    raise AssertionError(
-        "Duplicate profile registration should fail."
-    )
+    raise AssertionError("Duplicate profile registration should fail.")
 
 
 replacement = llm_main.model_copy(
@@ -160,10 +143,7 @@ registry.register(
     replace=True,
 )
 
-assert (
-    registry.get("llm-main").display_name
-    == "Updated LLM Main"
-)
+assert registry.get("llm-main").display_name == "Updated LLM Main"
 
 
 removed = registry.unregister("llm-disabled")
@@ -178,9 +158,7 @@ try:
 except KeyError:
     print("Missing profile successfully blocked.")
 else:
-    raise AssertionError(
-        "Missing profile lookup should fail."
-    )
+    raise AssertionError("Missing profile lookup should fail.")
 
 
 print("Provider Registry tests completed successfully.")

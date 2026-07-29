@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Protocol
 
 from pydantic import Field
@@ -35,9 +35,7 @@ class ProviderHealthResult(MissionBaseModel):
 
     message: str = ""
 
-    checked_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc)
-    )
+    checked_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     latency_ms: int | None = Field(
         default=None,
@@ -104,10 +102,7 @@ class ProviderHealthService:
                 profile_id=profile.profile_id,
                 status=ProviderHealthStatus.UNHEALTHY,
                 healthy=False,
-                message=(
-                    "Provider health check failed: "
-                    f"{type(exc).__name__}"
-                ),
+                message=("Provider health check failed: " f"{type(exc).__name__}"),
                 metadata={
                     "error_type": type(exc).__name__,
                 },
@@ -121,9 +116,7 @@ class ProviderHealthService:
             return result
 
         status = (
-            ProviderHealthStatus.HEALTHY
-            if healthy
-            else ProviderHealthStatus.UNHEALTHY
+            ProviderHealthStatus.HEALTHY if healthy else ProviderHealthStatus.UNHEALTHY
         )
 
         result = ProviderHealthResult(

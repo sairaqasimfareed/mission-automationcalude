@@ -5,7 +5,6 @@ from src.models.audio_track import (
     AudioTrackType,
 )
 
-
 voice = AudioTrack(
     track_type=AudioTrackType.VOICEOVER,
     source_file="voice.wav",

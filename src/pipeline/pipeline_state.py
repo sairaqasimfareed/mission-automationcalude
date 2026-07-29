@@ -26,13 +26,9 @@ class PipelineState(MissionBaseModel):
     @property
     def completed_stages(self) -> int:
         return sum(
-            stage.status == PipelineStageStatus.COMPLETED
-            for stage in self.stages
+            stage.status == PipelineStageStatus.COMPLETED for stage in self.stages
         )
 
     @property
     def failed(self) -> bool:
-        return any(
-            stage.status == PipelineStageStatus.FAILED
-            for stage in self.stages
-        )
+        return any(stage.status == PipelineStageStatus.FAILED for stage in self.stages)

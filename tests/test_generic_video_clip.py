@@ -9,7 +9,6 @@ from src.models.video_clip import (
     VideoClipStatus,
 )
 
-
 manual_clip = VideoClip(
     scene_number=1,
     source_type=SceneSourceType.MANUAL_UPLOAD,
@@ -79,9 +78,7 @@ try:
 except ValidationError:
     print("Ready clip without file successfully blocked.")
 else:
-    raise AssertionError(
-        "A ready clip without a file should not be allowed."
-    )
+    raise AssertionError("A ready clip without a file should not be allowed.")
 
 assert manual_clip.status == VideoClipStatus.READY
 assert stock_clip.license_type == "royalty_free"

@@ -4,7 +4,6 @@ from src.models.audio_track import (
     AudioTrackType,
 )
 
-
 voice_track = AudioTrack(
     track_type=AudioTrackType.VOICEOVER,
     source_file="outputs/audio/voiceover.wav",

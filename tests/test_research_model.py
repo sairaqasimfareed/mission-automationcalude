@@ -4,7 +4,6 @@ from src.models.research import (
     ResearchStatus,
 )
 
-
 source = ResearchSource(
     title="Example Research Article",
     url="https://example.com/research",
@@ -16,9 +15,7 @@ source = ResearchSource(
 
 research = ResearchResult(
     topic="Top 10 Hidden Underground Cities",
-    research_summary=(
-        "A structured research summary for testing the Research Agent."
-    ),
+    research_summary=("A structured research summary for testing the Research Agent."),
     key_facts=[
         "Some underground cities were built for protection.",
         "Several contain tunnels, homes, and storage areas.",
@@ -27,12 +24,8 @@ research = ResearchResult(
         "Why entire communities moved underground.",
         "How these cities survived without modern technology.",
     ],
-    potential_hooks=[
-        "Beneath ordinary streets lie cities built to disappear."
-    ],
-    risk_notes=[
-        "Historical dates must be verified before script generation."
-    ],
+    potential_hooks=["Beneath ordinary streets lie cities built to disappear."],
+    risk_notes=["Historical dates must be verified before script generation."],
     sources=[source],
     fact_confidence_score=85,
     prompt_version="research_prompt_v1.0.0",

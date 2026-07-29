@@ -100,10 +100,7 @@ class LocalAssetScanner:
             return IndexedAssetType.SOUND_EFFECT
 
         if extension in self.MUSIC_EXTENSIONS:
-            if "sfx" in {
-                part.lower()
-                for part in file_path.parts
-            }:
+            if "sfx" in {part.lower() for part in file_path.parts}:
                 return IndexedAssetType.SOUND_EFFECT
 
             return IndexedAssetType.MUSIC
@@ -137,12 +134,6 @@ class LocalAssetScanner:
     def _build_keywords(
         file_path: Path,
     ) -> list[str]:
-        words = (
-            file_path.stem
-            .lower()
-            .replace("-", " ")
-            .replace("_", " ")
-            .split()
-        )
+        words = file_path.stem.lower().replace("-", " ").replace("_", " ").split()
 
         return sorted(set(words))

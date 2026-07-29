@@ -2,7 +2,6 @@ from src.agents.scene_planner.agent import ScenePlannerAgent
 from src.models.scene import SceneStatus
 from src.models.script import Script, ScriptStatus
 
-
 script = Script(
     title="Top 10 Hidden Underground Cities",
     content=(

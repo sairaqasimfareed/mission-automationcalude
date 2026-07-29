@@ -40,10 +40,7 @@ class StockFootageProvider(VisualSourceProvider):
         self,
         scene: Scene,
     ) -> bool:
-        return (
-            scene.source_type
-            == self.supported_source_type
-        )
+        return scene.source_type == self.supported_source_type
 
     def acquire(
         self,
@@ -58,9 +55,7 @@ class StockFootageProvider(VisualSourceProvider):
         )
 
         if not results:
-            raise ValueError(
-                "No stock footage was found."
-            )
+            raise ValueError("No stock footage was found.")
 
         asset = results[0]
 

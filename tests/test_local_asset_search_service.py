@@ -9,7 +9,6 @@ from src.services.local_asset_search_service import (
     LocalAssetSearchService,
 )
 
-
 asset_index = AssetIndex(
     assets=[
         IndexedAsset(
@@ -66,12 +65,8 @@ asset_index = AssetIndex(
 scene = Scene(
     scene_number=1,
     title="Hidden Underground City",
-    narration=(
-        "The camera enters an ancient stone tunnel beneath the city."
-    ),
-    visual_prompt=(
-        "Cinematic ancient underground tunnel and stone corridor"
-    ),
+    narration=("The camera enters an ancient stone tunnel beneath the city."),
+    visual_prompt=("Cinematic ancient underground tunnel and stone corridor"),
     estimated_duration_seconds=8,
     status=SceneStatus.READY,
 )
@@ -89,9 +84,7 @@ for result in results:
 
 assert len(results) == 1
 assert results[0].title == "Ancient Underground Tunnel"
-assert results[0].file_path == (
-    "assets/videos/local/ancient_tunnel.mp4"
-)
+assert results[0].file_path == ("assets/videos/local/ancient_tunnel.mp4")
 assert results[0].score > 0
 
 print("Local Asset Search Service tests completed successfully.")

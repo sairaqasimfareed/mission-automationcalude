@@ -1,26 +1,20 @@
 from src.models.video_job import VideoJob
-
 from src.pipeline.base_stage import (
     BasePipelineStage,
 )
-
 from src.pipeline.pipeline_runner import (
     PipelineRunner,
 )
-
 from src.pipeline.pipeline_stage import (
     PipelineStageName,
     PipelineStageStatus,
 )
-
 from src.pipeline.pipeline_state import (
     PipelineState,
 )
-
 from src.pipeline.stage_context import (
     StageContext,
 )
-
 from src.pipeline.stage_result import (
     StageResult,
 )
@@ -110,13 +104,8 @@ print(
 
 assert len(results) == 2
 
-assert (
-    context.pipeline_state.overall_progress
-    == 100
-)
+assert context.pipeline_state.overall_progress == 100
 
 print()
 
-print(
-    "Pipeline Runner tests completed successfully."
-)
+print("Pipeline Runner tests completed successfully.")

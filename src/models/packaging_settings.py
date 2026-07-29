@@ -46,35 +46,26 @@ class PackagingSettings(MissionBaseModel):
     @model_validator(mode="after")
     def validate_packaging_settings(
         self,
-    ) -> "PackagingSettings":
+    ) -> PackagingSettings:
         """Prevent contradictory packaging configuration."""
 
         if not self.enabled:
             if self.require_title_approval:
-                raise ValueError(
-                    "Disabled packaging cannot require "
-                    "title approval."
-                )
+                raise ValueError("Disabled packaging cannot require " "title approval.")
 
             if self.require_thumbnail_approval:
                 raise ValueError(
-                    "Disabled packaging cannot require "
-                    "thumbnail approval."
+                    "Disabled packaging cannot require " "thumbnail approval."
                 )
 
             if self.require_final_packaging_approval:
                 raise ValueError(
-                    "Disabled packaging cannot require "
-                    "final packaging approval."
+                    "Disabled packaging cannot require " "final packaging approval."
                 )
 
-        if (
-            self.thumbnail_variant_count == 0
-            and self.require_thumbnail_approval
-        ):
+        if self.thumbnail_variant_count == 0 and self.require_thumbnail_approval:
             raise ValueError(
-                "Thumbnail approval requires at least one "
-                "thumbnail variant."
+                "Thumbnail approval requires at least one " "thumbnail variant."
             )
 
         return self

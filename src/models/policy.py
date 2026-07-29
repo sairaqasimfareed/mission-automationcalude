@@ -31,12 +31,7 @@ class PolicyComplianceReport(MissionBaseModel):
     def prevent_quick_mode_upload(self) -> "PolicyComplianceReport":
         """Quick Mode output can never be marked upload-ready."""
 
-        if (
-            self.source_mode == ProductionMode.QUICK
-            and self.upload_readiness
-        ):
-            raise ValueError(
-                "Quick Mode content cannot be marked as upload-ready."
-            )
+        if self.source_mode == ProductionMode.QUICK and self.upload_readiness:
+            raise ValueError("Quick Mode content cannot be marked as upload-ready.")
 
         return self

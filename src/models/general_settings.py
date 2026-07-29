@@ -52,9 +52,7 @@ class GeneralSettings(MissionBaseModel):
         value = value.strip()
 
         if not value:
-            raise ValueError(
-                "Field cannot be empty."
-            )
+            raise ValueError("Field cannot be empty.")
 
         return value
 

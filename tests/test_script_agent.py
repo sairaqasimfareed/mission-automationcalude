@@ -5,7 +5,6 @@ from src.models.research import (
 )
 from src.models.script import ScriptStatus
 
-
 research = ResearchResult(
     topic="Top 10 Hidden Underground Cities",
     research_summary=(

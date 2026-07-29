@@ -3,7 +3,6 @@ from src.services.asset_search_service import (
     AssetType,
 )
 
-
 service = AssetSearchService()
 
 results = service.search(
@@ -27,6 +26,4 @@ assert results[0].asset_type == AssetType.VIDEO
 
 assert results[0].provider == "Dry Run"
 
-print(
-    "Asset Search Service tests completed successfully."
-)
+print("Asset Search Service tests completed successfully.")

@@ -33,8 +33,6 @@ class StageContext(MissionBaseModel):
         name: str,
     ) -> Any:
         if name not in self.services:
-            raise KeyError(
-                f"Service is not available in stage context: {name}"
-            )
+            raise KeyError(f"Service is not available in stage context: {name}")
 
         return self.services[name]

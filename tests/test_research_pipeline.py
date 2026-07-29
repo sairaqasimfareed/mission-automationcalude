@@ -1,12 +1,9 @@
 from src.models.research import ResearchStatus
 from src.services.research_pipeline import ResearchPipeline
 
-
 pipeline = ResearchPipeline()
 
-result = pipeline.run(
-    "Top 10 Hidden Underground Cities"
-)
+result = pipeline.run("Top 10 Hidden Underground Cities")
 
 print("Topic:", result.topic)
 print("Final status:", result.status)

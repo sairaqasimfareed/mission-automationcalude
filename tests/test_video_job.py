@@ -22,12 +22,10 @@ from src.models.script import (
 )
 from src.models.video_job import VideoJob
 
-
 research = ResearchResult(
     topic="Top 10 Hidden Underground Cities",
     research_summary=(
-        "Underground cities were built for protection, "
-        "survival, and trade."
+        "Underground cities were built for protection, " "survival, and trade."
     ),
     key_facts=[
         "Several underground cities contain homes.",
@@ -39,10 +37,7 @@ research = ResearchResult(
 
 script = Script(
     title=research.topic,
-    content=(
-        "Beneath ordinary streets, entire cities once "
-        "existed in silence."
-    ),
+    content=("Beneath ordinary streets, entire cities once " "existed in silence."),
     prompt_version="script_prompt_v1.0.0",
     word_count=9,
     estimated_duration_seconds=4,

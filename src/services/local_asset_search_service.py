@@ -80,17 +80,13 @@ class LocalAssetSearchService:
         )
 
         normalized_text = (
-            combined_text.lower()
-            .replace(",", " ")
-            .replace(".", " ")
-            .replace("-", " ")
+            combined_text.lower().replace(",", " ").replace(".", " ").replace("-", " ")
         )
 
         return {
             word
             for word in normalized_text.split()
-            if len(word) >= 3
-            and word not in cls.STOP_WORDS
+            if len(word) >= 3 and word not in cls.STOP_WORDS
         }
 
     @staticmethod
@@ -107,16 +103,9 @@ class LocalAssetSearchService:
             *asset.keywords,
         ]
 
-        searchable_text = " ".join(
-            value.lower()
-            for value in searchable_values
-        )
+        searchable_text = " ".join(value.lower() for value in searchable_values)
 
-        matched_terms = {
-            term
-            for term in search_terms
-            if term in searchable_text
-        }
+        matched_terms = {term for term in search_terms if term in searchable_text}
 
         if not matched_terms:
             return 0.0
@@ -128,9 +117,7 @@ class LocalAssetSearchService:
 
         return round(
             min(
-                base_score
-                + resolution_bonus
-                + reuse_bonus,
+                base_score + resolution_bonus + reuse_bonus,
                 1.0,
             ),
             4,

@@ -4,7 +4,6 @@ from src.shared.llm.models import (
     LLMProvider,
 )
 
-
 success_result = LLMCallResult(
     status=LLMCallStatus.SUCCESS,
     provider=LLMProvider.OPENAI,

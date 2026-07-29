@@ -28,28 +28,16 @@ class SceneDecisionPropagationService:
             state.user_decision = decision
 
             if decision == AssetUserDecision.SEARCH_STOCK:
-                state.selected_source = (
-                    SceneSourceType.STOCK_FOOTAGE
-                )
-                state.status = (
-                    AssetWorkflowStatus.SEARCHING_STOCK
-                )
+                state.selected_source = SceneSourceType.STOCK_FOOTAGE
+                state.status = AssetWorkflowStatus.SEARCHING_STOCK
 
             elif decision == AssetUserDecision.MANUAL_UPLOAD:
-                state.selected_source = (
-                    SceneSourceType.MANUAL_UPLOAD
-                )
-                state.status = (
-                    AssetWorkflowStatus.WAITING_FOR_MANUAL_UPLOAD
-                )
+                state.selected_source = SceneSourceType.MANUAL_UPLOAD
+                state.status = AssetWorkflowStatus.WAITING_FOR_MANUAL_UPLOAD
 
             elif decision == AssetUserDecision.IMAGE_TO_VIDEO:
-                state.selected_source = (
-                    SceneSourceType.IMAGE_TO_VIDEO
-                )
-                state.status = (
-                    AssetWorkflowStatus.IMAGE_TO_VIDEO_REQUIRED
-                )
+                state.selected_source = SceneSourceType.IMAGE_TO_VIDEO
+                state.status = AssetWorkflowStatus.IMAGE_TO_VIDEO_REQUIRED
 
             updated += 1
 

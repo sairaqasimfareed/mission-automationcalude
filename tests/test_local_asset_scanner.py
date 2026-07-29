@@ -3,7 +3,6 @@ from pathlib import Path
 from src.models.asset_index import IndexedAssetType
 from src.services.local_asset_scanner import LocalAssetScanner
 
-
 test_root = Path("assets/test_scanner")
 
 video_dir = test_root / "videos"

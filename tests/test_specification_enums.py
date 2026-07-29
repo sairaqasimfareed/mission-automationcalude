@@ -6,7 +6,6 @@ from src.models.specification_enums import (
     VideoType,
 )
 
-
 print("Video type:", VideoType.DOCUMENTARY)
 print("Resolution:", VideoResolution.FULL_HD)
 print("Aspect ratio:", AspectRatio.LANDSCAPE)

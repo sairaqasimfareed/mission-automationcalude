@@ -4,7 +4,6 @@ from src.shared.llm.providers import (
     OpenAIProviderAdapter,
 )
 
-
 openai_adapter = OpenAIProviderAdapter()
 anthropic_adapter = AnthropicProviderAdapter()
 

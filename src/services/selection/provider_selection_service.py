@@ -59,20 +59,13 @@ class ProviderSelectionService:
 
         preference = request.preference
 
-        if (
-            preference is not None
-            and preference.preferred_profile_id is not None
-        ):
-            preferred_id = (
-                preference.preferred_profile_id.strip()
-            )
+        if preference is not None and preference.preferred_profile_id is not None:
+            preferred_id = preference.preferred_profile_id.strip()
 
             preferred_profile = self._get_candidate(
                 profile_id=preferred_id,
                 category=request.category,
-                required_capability=(
-                    request.required_capability
-                ),
+                required_capability=(request.required_capability),
                 considered=considered,
             )
 
@@ -95,19 +88,12 @@ class ProviderSelectionService:
                     "unavailable or incompatible."
                 )
 
-        if (
-            request.allow_fallback
-            and preference is not None
-        ):
-            for fallback_id in (
-                preference.fallback_profile_ids
-            ):
+        if request.allow_fallback and preference is not None:
+            for fallback_id in preference.fallback_profile_ids:
                 fallback_profile = self._get_candidate(
                     profile_id=fallback_id,
                     category=request.category,
-                    required_capability=(
-                        request.required_capability
-                    ),
+                    required_capability=(request.required_capability),
                     considered=considered,
                 )
 
@@ -163,11 +149,8 @@ class ProviderSelectionService:
         if not profile.usable:
             return None
 
-        if (
-            required_capability is not None
-            and not profile.supports(
-                required_capability
-            )
+        if required_capability is not None and not profile.supports(
+            required_capability
         ):
             return None
 

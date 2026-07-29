@@ -6,7 +6,6 @@ from src.models.provider_profile import (
     ProviderProfile,
 )
 
-
 profile = ProviderProfile(
     profile_id="openai-main",
     display_name="OpenAI Main",
@@ -90,13 +89,9 @@ try:
         enabled=True,
     )
 except ValidationError:
-    print(
-        "Enabled profile without secret successfully blocked."
-    )
+    print("Enabled profile without secret successfully blocked.")
 else:
-    raise AssertionError(
-        "Enabled profile must require a secret reference."
-    )
+    raise AssertionError("Enabled profile must require a secret reference.")
 
 
 try:
@@ -111,9 +106,7 @@ try:
 except ValidationError:
     print("Invalid provider budget successfully blocked.")
 else:
-    raise AssertionError(
-        "Daily budget above monthly budget should fail."
-    )
+    raise AssertionError("Daily budget above monthly budget should fail.")
 
 
 try:
@@ -129,9 +122,7 @@ try:
 except ValidationError:
     print("Daily overspend successfully blocked.")
 else:
-    raise AssertionError(
-        "Daily spent amount above budget should fail."
-    )
+    raise AssertionError("Daily spent amount above budget should fail.")
 
 
 try:
@@ -146,9 +137,7 @@ try:
 except ValidationError:
     print("Monthly overspend successfully blocked.")
 else:
-    raise AssertionError(
-        "Monthly spent amount above budget should fail."
-    )
+    raise AssertionError("Monthly spent amount above budget should fail.")
 
 
 try:
@@ -163,9 +152,7 @@ try:
 except ValidationError:
     print("Invalid spending order successfully blocked.")
 else:
-    raise AssertionError(
-        "Daily spent amount cannot exceed monthly spent amount."
-    )
+    raise AssertionError("Daily spent amount cannot exceed monthly spent amount.")
 
 
 serialized = profile.model_dump_json()

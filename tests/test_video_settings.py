@@ -8,7 +8,6 @@ from src.models.specification_enums import (
 )
 from src.models.video_settings import VideoSettings
 
-
 settings = VideoSettings(
     resolution=VideoResolution.FULL_HD,
     aspect_ratio=AspectRatio.LANDSCAPE,
@@ -60,9 +59,7 @@ try:
 except ValidationError:
     print("Draft HDR configuration successfully blocked.")
 else:
-    raise AssertionError(
-        "HDR should not be accepted in Draft mode."
-    )
+    raise AssertionError("HDR should not be accepted in Draft mode.")
 
 
 serialized = settings.model_dump_json()

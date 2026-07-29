@@ -4,7 +4,6 @@ from src.models.upload_settings import (
     UploadVisibility,
 )
 
-
 settings = UploadSettings()
 
 print(settings.platform)
@@ -22,21 +21,13 @@ scheduled = UploadSettings(
     scheduled_publish_datetime="2026-08-10T09:00:00Z",
 )
 
-assert (
-    scheduled.visibility
-    == UploadVisibility.SCHEDULED
-)
+assert scheduled.visibility == UploadVisibility.SCHEDULED
 
-assert (
-    scheduled.scheduled_publish_datetime
-    == "2026-08-10T09:00:00Z"
-)
+assert scheduled.scheduled_publish_datetime == "2026-08-10T09:00:00Z"
 
 serialized = settings.model_dump_json()
 
-restored = UploadSettings.model_validate_json(
-    serialized
-)
+restored = UploadSettings.model_validate_json(serialized)
 
 assert restored == settings
 

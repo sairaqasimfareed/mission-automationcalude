@@ -1,7 +1,7 @@
 from src.shared.exceptions import (
+    BudgetExceededError,
     ScriptGenerationError,
     VideoGenerationError,
-    BudgetExceededError,
 )
 
 try:

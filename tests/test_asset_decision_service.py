@@ -9,7 +9,6 @@ from src.services.asset_decision_service import (
     AssetDecisionService,
 )
 
-
 candidate = AssetCandidate(
     title="Ancient Tunnel",
     source_type=SceneSourceType.LOCAL_LIBRARY,
@@ -43,10 +42,7 @@ print(
 )
 
 assert local_result.status == AssetWorkflowStatus.READY
-assert (
-    local_result.selected_source
-    == SceneSourceType.LOCAL_LIBRARY
-)
+assert local_result.selected_source == SceneSourceType.LOCAL_LIBRARY
 assert local_result.selected_candidate is not None
 
 
@@ -64,14 +60,8 @@ stock_result = service.apply_decision(
 print("Stock decision:", stock_result.user_decision)
 print("Stock status:", stock_result.status)
 
-assert (
-    stock_result.status
-    == AssetWorkflowStatus.SEARCHING_STOCK
-)
-assert (
-    stock_result.selected_source
-    == SceneSourceType.STOCK_FOOTAGE
-)
+assert stock_result.status == AssetWorkflowStatus.SEARCHING_STOCK
+assert stock_result.selected_source == SceneSourceType.STOCK_FOOTAGE
 
 
 manual_state = SceneAssetState(
@@ -93,14 +83,8 @@ print(
     manual_result.apply_decision_to_remaining_scenes,
 )
 
-assert (
-    manual_result.status
-    == AssetWorkflowStatus.WAITING_FOR_MANUAL_UPLOAD
-)
-assert (
-    manual_result.selected_source
-    == SceneSourceType.MANUAL_UPLOAD
-)
+assert manual_result.status == AssetWorkflowStatus.WAITING_FOR_MANUAL_UPLOAD
+assert manual_result.selected_source == SceneSourceType.MANUAL_UPLOAD
 assert manual_result.apply_decision_to_remaining_scenes is True
 
 
@@ -120,13 +104,7 @@ print("Image decision:", image_result.user_decision)
 print("Image status:", image_result.status)
 print("Image prompt:", image_result.image_prompt)
 
-assert (
-    image_result.status
-    == AssetWorkflowStatus.IMAGE_TO_VIDEO_REQUIRED
-)
-assert (
-    image_result.selected_source
-    == SceneSourceType.IMAGE_TO_VIDEO
-)
+assert image_result.status == AssetWorkflowStatus.IMAGE_TO_VIDEO_REQUIRED
+assert image_result.selected_source == SceneSourceType.IMAGE_TO_VIDEO
 
 print("Asset Decision Service tests completed successfully.")

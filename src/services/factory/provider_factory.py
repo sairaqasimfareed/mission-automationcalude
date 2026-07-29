@@ -76,12 +76,14 @@ class ProviderFactory:
         self,
         profile_id: str,
     ) -> BaseProvider:
+        """Create one configured runtime provider."""
 
         profile = self.registry.get(profile_id)
 
-        secret = self.secret_manager.resolve_secret(
-            profile.secret_reference
-        )
+        if not profile.secret_reference:
+            raise ValueError("Provider profile has no secret reference.")
+
+        secret = self.secret_manager.resolve_secret(profile.secret_reference)
 
         instance = self._build_instance(profile)
 
@@ -97,15 +99,16 @@ class ProviderFactory:
         if profile.category == ProviderCategory.IMAGE:
             return ImageProvider(instance, secret)
 
-        raise ValueError(
-            f"Unsupported provider category: "
-            f"{profile.category}"
-        )
+        raise ValueError("Unsupported provider category: " f"{profile.category}")
 
     @staticmethod
     def _build_instance(
         profile: ProviderProfile,
     ) -> ProviderInstance:
+        """Build a validated runtime provider instance."""
+
+        if not profile.secret_reference:
+            raise ValueError("Provider profile has no secret reference.")
 
         return ProviderInstance(
             profile_id=profile.profile_id,

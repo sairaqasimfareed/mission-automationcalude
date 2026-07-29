@@ -22,9 +22,6 @@ class VideoTimeline(MissionBaseModel):
     output_file: str | None = None
 
     def calculate_duration(self) -> int:
-        self.total_duration_seconds = sum(
-            clip.duration_seconds
-            for clip in self.clips
-        )
+        self.total_duration_seconds = sum(clip.duration_seconds for clip in self.clips)
 
         return self.total_duration_seconds

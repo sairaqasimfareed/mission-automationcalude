@@ -71,14 +71,8 @@ print("Healthy status:", healthy_result.status)
 print("Healthy message:", healthy_result.message)
 
 assert healthy_result.healthy is True
-assert (
-    healthy_result.status
-    == ProviderHealthStatus.HEALTHY
-)
-assert (
-    registry.get("llm-main").health_status
-    == ProviderHealthStatus.HEALTHY
-)
+assert healthy_result.status == ProviderHealthStatus.HEALTHY
+assert registry.get("llm-main").health_status == ProviderHealthStatus.HEALTHY
 
 
 unhealthy_result = service.check_profile(
@@ -89,14 +83,8 @@ unhealthy_result = service.check_profile(
 print("Unhealthy status:", unhealthy_result.status)
 
 assert unhealthy_result.healthy is False
-assert (
-    unhealthy_result.status
-    == ProviderHealthStatus.UNHEALTHY
-)
-assert (
-    registry.get("llm-main").health_status
-    == ProviderHealthStatus.UNHEALTHY
-)
+assert unhealthy_result.status == ProviderHealthStatus.UNHEALTHY
+assert registry.get("llm-main").health_status == ProviderHealthStatus.UNHEALTHY
 
 
 failure_result = service.check_profile(
@@ -108,14 +96,8 @@ print("Failure status:", failure_result.status)
 print("Failure metadata:", failure_result.metadata)
 
 assert failure_result.healthy is False
-assert (
-    failure_result.status
-    == ProviderHealthStatus.UNHEALTHY
-)
-assert (
-    failure_result.metadata["error_type"]
-    == "TimeoutError"
-)
+assert failure_result.status == ProviderHealthStatus.UNHEALTHY
+assert failure_result.metadata["error_type"] == "TimeoutError"
 
 
 disabled_result = service.check_profile(
@@ -126,10 +108,7 @@ disabled_result = service.check_profile(
 print("Disabled status:", disabled_result.status)
 
 assert disabled_result.healthy is False
-assert (
-    disabled_result.status
-    == ProviderHealthStatus.DISABLED
-)
+assert disabled_result.status == ProviderHealthStatus.DISABLED
 
 
 degraded_result = service.mark_degraded(
@@ -138,14 +117,8 @@ degraded_result = service.mark_degraded(
 )
 
 assert degraded_result.healthy is True
-assert (
-    degraded_result.status
-    == ProviderHealthStatus.DEGRADED
-)
-assert (
-    registry.get("llm-main").health_status
-    == ProviderHealthStatus.DEGRADED
-)
+assert degraded_result.status == ProviderHealthStatus.DEGRADED
+assert registry.get("llm-main").health_status == ProviderHealthStatus.DEGRADED
 
 
 unknown_result = service.mark_unknown(
@@ -153,16 +126,8 @@ unknown_result = service.mark_unknown(
 )
 
 assert unknown_result.healthy is False
-assert (
-    unknown_result.status
-    == ProviderHealthStatus.UNKNOWN
-)
-assert (
-    registry.get("llm-main").health_status
-    == ProviderHealthStatus.UNKNOWN
-)
+assert unknown_result.status == ProviderHealthStatus.UNKNOWN
+assert registry.get("llm-main").health_status == ProviderHealthStatus.UNKNOWN
 
 
-print(
-    "Provider Health Service tests completed successfully."
-)
+print("Provider Health Service tests completed successfully.")

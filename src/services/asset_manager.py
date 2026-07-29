@@ -30,22 +30,14 @@ class AssetManager:
             local_search_query=scene.visual_prompt,
         )
 
-        candidates = self.local_search_service.search_for_scene(
-            scene
-        )
+        candidates = self.local_search_service.search_for_scene(scene)
 
         state.local_candidates = candidates
 
         if candidates:
-            state.status = (
-                AssetWorkflowStatus.LOCAL_RESULTS_AVAILABLE
-            )
+            state.status = AssetWorkflowStatus.LOCAL_RESULTS_AVAILABLE
         else:
-            state.status = (
-                AssetWorkflowStatus.WAITING_FOR_USER_DECISION
-            )
-            state.warnings.append(
-                "No matching local video assets were found."
-            )
+            state.status = AssetWorkflowStatus.WAITING_FOR_USER_DECISION
+            state.warnings.append("No matching local video assets were found.")
 
         return state

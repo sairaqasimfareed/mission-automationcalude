@@ -66,11 +66,7 @@ class AssetIndex(MissionBaseModel):
         results = self.assets
 
         if asset_type is not None:
-            results = [
-                asset
-                for asset in results
-                if asset.asset_type == asset_type
-            ]
+            results = [asset for asset in results if asset.asset_type == asset_type]
 
         if query:
             normalized_query = query.lower()
@@ -79,13 +75,9 @@ class AssetIndex(MissionBaseModel):
                 asset
                 for asset in results
                 if normalized_query in asset.title.lower()
+                or any(normalized_query in tag.lower() for tag in asset.tags)
                 or any(
-                    normalized_query in tag.lower()
-                    for tag in asset.tags
-                )
-                or any(
-                    normalized_query in keyword.lower()
-                    for keyword in asset.keywords
+                    normalized_query in keyword.lower() for keyword in asset.keywords
                 )
             ]
 

@@ -4,7 +4,6 @@ from src.models.packaging_settings import (
     PackagingSettings,
 )
 
-
 settings = PackagingSettings()
 
 print("Packaging enabled:", settings.enabled)
@@ -50,14 +49,9 @@ try:
         enabled=False,
     )
 except ValidationError:
-    print(
-        "Disabled packaging with approval requirements "
-        "successfully blocked."
-    )
+    print("Disabled packaging with approval requirements " "successfully blocked.")
 else:
-    raise AssertionError(
-        "Disabled packaging should not require approval."
-    )
+    raise AssertionError("Disabled packaging should not require approval.")
 
 
 try:
@@ -66,20 +60,13 @@ try:
         require_thumbnail_approval=True,
     )
 except ValidationError:
-    print(
-        "Thumbnail approval without variants "
-        "successfully blocked."
-    )
+    print("Thumbnail approval without variants " "successfully blocked.")
 else:
-    raise AssertionError(
-        "Thumbnail approval requires a thumbnail variant."
-    )
+    raise AssertionError("Thumbnail approval requires a thumbnail variant.")
 
 
 serialized = settings.model_dump_json()
-restored = PackagingSettings.model_validate_json(
-    serialized
-)
+restored = PackagingSettings.model_validate_json(serialized)
 
 assert restored == settings
 assert restored.schema_version == "1.0"

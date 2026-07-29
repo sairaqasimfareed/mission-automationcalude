@@ -25,7 +25,7 @@ class VideoSettings(MissionBaseModel):
     captions_enabled: bool = True
 
     @model_validator(mode="after")
-    def validate_video_settings(self) -> "VideoSettings":
+    def validate_video_settings(self) -> VideoSettings:
         """Prevent unsupported video-setting combinations."""
 
         if (
@@ -46,13 +46,8 @@ class VideoSettings(MissionBaseModel):
                 "with portrait aspect ratio."
             )
 
-        if (
-            self.quality_mode == QualityMode.DRAFT
-            and self.hdr_enabled
-        ):
-            raise ValueError(
-                "HDR cannot be enabled in Draft quality mode."
-            )
+        if self.quality_mode == QualityMode.DRAFT and self.hdr_enabled:
+            raise ValueError("HDR cannot be enabled in Draft quality mode.")
 
         return self
 
@@ -60,17 +55,13 @@ class VideoSettings(MissionBaseModel):
     def width(self) -> int:
         """Return the configured output width."""
 
-        return int(
-            self.resolution.value.split("x")[0]
-        )
+        return int(self.resolution.value.split("x")[0])
 
     @property
     def height(self) -> int:
         """Return the configured output height."""
 
-        return int(
-            self.resolution.value.split("x")[1]
-        )
+        return int(self.resolution.value.split("x")[1])
 
     @property
     def frames_per_second(self) -> int:

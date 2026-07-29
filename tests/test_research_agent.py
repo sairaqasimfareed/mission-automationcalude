@@ -1,11 +1,8 @@
 from src.agents.research_agent.agent import ResearchAgent
 
-
 agent = ResearchAgent()
 
-research = agent.research(
-    "Top 10 Hidden Underground Cities"
-)
+research = agent.research("Top 10 Hidden Underground Cities")
 
 print("Topic:", research.topic)
 print("Summary:", research.research_summary)

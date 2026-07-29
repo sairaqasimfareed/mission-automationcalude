@@ -1,11 +1,10 @@
+from src.models.render_result import RenderStatus
 from src.models.video_clip import (
     VideoClip,
     VideoClipStatus,
 )
 from src.models.video_timeline import VideoTimeline
-from src.models.render_result import RenderStatus
 from src.services.render_service import RenderService
-
 
 timeline = VideoTimeline(
     clips=[

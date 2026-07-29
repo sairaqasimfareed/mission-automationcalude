@@ -9,7 +9,6 @@ from src.models.media_strategy import (
 )
 from src.models.video_job import VideoJob
 
-
 job = VideoJob(
     project_name="Mission Automation",
     channel_name="Beyond the Ninth",
@@ -50,9 +49,7 @@ try:
 except ValidationError:
     print("Manual READY voice without file successfully blocked.")
 else:
-    raise AssertionError(
-        "Manual READY voice without a file should be blocked."
-    )
+    raise AssertionError("Manual READY voice without a file should be blocked.")
 
 
 ready_voice_job = VideoJob(
@@ -68,8 +65,6 @@ ready_voice_job = VideoJob(
 print("Ready voice file:", ready_voice_job.voice_file)
 
 assert ready_voice_job.voice_status == VoiceStatus.READY
-assert ready_voice_job.voice_file == (
-    "assets/audio/manual_voiceover.wav"
-)
+assert ready_voice_job.voice_file == ("assets/audio/manual_voiceover.wav")
 
 print("VideoJob Media Strategy tests completed successfully.")

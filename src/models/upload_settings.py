@@ -33,9 +33,7 @@ class UploadSettings(MissionBaseModel):
 
     platform: UploadPlatform = UploadPlatform.YOUTUBE
 
-    visibility: UploadVisibility = (
-        UploadVisibility.PRIVATE
-    )
+    visibility: UploadVisibility = UploadVisibility.PRIVATE
 
     auto_upload: bool = False
 

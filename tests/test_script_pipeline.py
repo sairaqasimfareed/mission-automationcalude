@@ -2,7 +2,6 @@ from src.models.research import ResearchResult, ResearchStatus
 from src.models.script import ScriptReviewStatus, ScriptStatus
 from src.services.script_pipeline import ScriptPipeline
 
-
 research = ResearchResult(
     topic="Top 10 Hidden Underground Cities",
     research_summary=(

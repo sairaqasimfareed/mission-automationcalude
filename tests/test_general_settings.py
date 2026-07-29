@@ -4,7 +4,6 @@ from src.models.general_settings import (
     GeneralSettings,
 )
 
-
 settings = GeneralSettings(
     project_name="Hidden Cities Project",
     channel_name="History Vault",
@@ -30,11 +29,7 @@ assert settings.tags == [
 
 serialized = settings.model_dump_json()
 
-restored = (
-    GeneralSettings.model_validate_json(
-        serialized
-    )
-)
+restored = GeneralSettings.model_validate_json(serialized)
 
 assert restored == settings
 
@@ -48,9 +43,7 @@ try:
 except ValidationError:
     print("Empty project name blocked.")
 else:
-    raise AssertionError(
-        "Validation failed."
-    )
+    raise AssertionError("Validation failed.")
 
 try:
     GeneralSettings(
@@ -62,10 +55,6 @@ try:
 except ValidationError:
     print("Empty channel blocked.")
 else:
-    raise AssertionError(
-        "Validation failed."
-    )
+    raise AssertionError("Validation failed.")
 
-print(
-    "General Settings tests completed successfully."
-)
+print("General Settings tests completed successfully.")

@@ -44,9 +44,7 @@ class VideoJob(MissionBaseModel):
     current_stage: WorkflowStage = WorkflowStage.RESEARCH
 
     visual_strategy: VisualStrategy = VisualStrategy.HYBRID
-    default_visual_source: SceneSourceType = (
-        SceneSourceType.MANUAL_UPLOAD
-    )
+    default_visual_source: SceneSourceType = SceneSourceType.MANUAL_UPLOAD
     maximum_visual_budget: float = 0.0
 
     voice_strategy: VoiceStrategy = VoiceStrategy.MANUAL_UPLOAD
@@ -59,9 +57,7 @@ class VideoJob(MissionBaseModel):
     originality_review: OriginalityResult | None = None
 
     scenes: list[Scene] = Field(default_factory=list)
-    scene_asset_states: list[SceneAssetState] = Field(
-        default_factory=list
-    )
+    scene_asset_states: list[SceneAssetState] = Field(default_factory=list)
     video_clips: list[VideoClip] = Field(default_factory=list)
 
     audio_timeline: AudioTimeline | None = None
@@ -75,57 +71,37 @@ class VideoJob(MissionBaseModel):
     warnings: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def validate_workflow_state(self) -> "VideoJob":
+    def validate_workflow_state(self) -> VideoJob:
         """Prevent invalid workflow and media states."""
 
         if self.script is not None:
             if self.research is None:
-                raise ValueError(
-                    "A script cannot exist without research."
-                )
+                raise ValueError("A script cannot exist without research.")
 
             if self.research.status != ResearchStatus.APPROVED:
-                raise ValueError(
-                    "A script requires approved research."
-                )
+                raise ValueError("A script requires approved research.")
 
         if self.originality_review is not None:
             if self.script is None:
-                raise ValueError(
-                    "Originality review requires a script."
-                )
+                raise ValueError("Originality review requires a script.")
 
             if self.script.status != ScriptStatus.APPROVED:
-                raise ValueError(
-                    "Originality review requires an approved script."
-                )
+                raise ValueError("Originality review requires an approved script.")
 
         if self.scenes:
             if self.script is None:
-                raise ValueError(
-                    "Scenes cannot exist without a script."
-                )
+                raise ValueError("Scenes cannot exist without a script.")
 
             if self.script.status != ScriptStatus.APPROVED:
-                raise ValueError(
-                    "Scene planning requires an approved script."
-                )
+                raise ValueError("Scene planning requires an approved script.")
 
         if self.scene_asset_states and not self.scenes:
-            raise ValueError(
-                "Scene asset states cannot exist without scenes."
-            )
+            raise ValueError("Scene asset states cannot exist without scenes.")
 
         if self.scene_asset_states:
-            scene_numbers = {
-                scene.scene_number
-                for scene in self.scenes
-            }
+            scene_numbers = {scene.scene_number for scene in self.scenes}
 
-            state_numbers = {
-                state.scene_number
-                for state in self.scene_asset_states
-            }
+            state_numbers = {state.scene_number for state in self.scene_asset_states}
 
             if not state_numbers.issubset(scene_numbers):
                 raise ValueError(
@@ -134,57 +110,39 @@ class VideoJob(MissionBaseModel):
                 )
 
         if self.video_clips and not self.scenes:
-            raise ValueError(
-                "Video clips cannot exist without planned scenes."
-            )
+            raise ValueError("Video clips cannot exist without planned scenes.")
 
         if (
             self.voice_strategy == VoiceStrategy.MANUAL_UPLOAD
             and self.voice_status == VoiceStatus.READY
             and not self.voice_file
         ):
-            raise ValueError(
-                "Manual voiceover cannot be READY without a file."
-            )
+            raise ValueError("Manual voiceover cannot be READY without a file.")
 
         if (
             self.voice_strategy == VoiceStrategy.AUTO_GENERATE
             and self.voice_status == VoiceStatus.READY
             and not self.voice_file
         ):
-            raise ValueError(
-                "Generated voiceover cannot be READY without a file."
-            )
+            raise ValueError("Generated voiceover cannot be READY without a file.")
 
         if self.audio_timeline is not None and not self.voice_file:
-            raise ValueError(
-                "Audio timeline requires a voiceover file."
-            )
+            raise ValueError("Audio timeline requires a voiceover file.")
 
         if self.video_timeline is not None and not self.video_clips:
-            raise ValueError(
-                "Video timeline requires ready video clips."
-            )
+            raise ValueError("Video timeline requires ready video clips.")
 
         if self.render_result is not None:
             if self.video_timeline is None:
-                raise ValueError(
-                    "Render result requires a video timeline."
-                )
+                raise ValueError("Render result requires a video timeline.")
 
             if self.audio_timeline is None:
-                raise ValueError(
-                    "Render result requires an audio timeline."
-                )
+                raise ValueError("Render result requires an audio timeline.")
 
         if self.policy_report is not None:
-            if (
-                self.policy_report.source_mode
-                != self.production_mode
-            ):
+            if self.policy_report.source_mode != self.production_mode:
                 raise ValueError(
-                    "Policy source_mode must match "
-                    "VideoJob production_mode."
+                    "Policy source_mode must match " "VideoJob production_mode."
                 )
 
         return self

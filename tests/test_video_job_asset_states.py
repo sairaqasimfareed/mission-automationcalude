@@ -13,7 +13,6 @@ from src.models.script import (
 )
 from src.models.video_job import VideoJob
 
-
 research = ResearchResult(
     topic="Hidden Underground Cities",
     research_summary="Approved research summary.",
@@ -68,10 +67,7 @@ print("State status:", job.scene_asset_states[0].status)
 
 assert len(job.scenes) == 1
 assert len(job.scene_asset_states) == 1
-assert (
-    job.scene_asset_states[0].scene_number
-    == job.scenes[0].scene_number
-)
+assert job.scene_asset_states[0].scene_number == job.scenes[0].scene_number
 
 
 try:
@@ -94,9 +90,7 @@ try:
 except ValidationError:
     print("Invalid scene asset state successfully blocked.")
 else:
-    raise AssertionError(
-        "A state for a missing scene should be blocked."
-    )
+    raise AssertionError("A state for a missing scene should be blocked.")
 
 
 print("VideoJob Asset State tests completed successfully.")

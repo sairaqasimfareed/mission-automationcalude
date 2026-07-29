@@ -32,10 +32,7 @@ class ManualUploadProvider(VisualSourceProvider):
         self,
         scene: Scene,
     ) -> bool:
-        return (
-            scene.source_type
-            == self.supported_source_type
-        )
+        return scene.source_type == self.supported_source_type
 
     def acquire(
         self,
@@ -43,16 +40,12 @@ class ManualUploadProvider(VisualSourceProvider):
     ) -> VideoClip:
 
         if not scene.manual_file_path:
-            raise ValueError(
-                "Manual upload path is missing."
-            )
+            raise ValueError("Manual upload path is missing.")
 
         file_path = Path(scene.manual_file_path)
 
         if not file_path.exists():
-            raise FileNotFoundError(
-                f"File not found: {file_path}"
-            )
+            raise FileNotFoundError(f"File not found: {file_path}")
 
         return VideoClip(
             scene_number=scene.scene_number,

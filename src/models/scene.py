@@ -31,9 +31,7 @@ class Scene(MissionBaseModel):
     sound_design: str = ""
 
     source_type: SceneSourceType = SceneSourceType.MANUAL_UPLOAD
-    source_status: SceneSourceStatus = (
-        SceneSourceStatus.WAITING_FOR_UPLOAD
-    )
+    source_status: SceneSourceStatus = SceneSourceStatus.WAITING_FOR_UPLOAD
     source_locked: bool = False
 
     stock_query: str | None = None
@@ -42,9 +40,7 @@ class Scene(MissionBaseModel):
     image_prompt: str | None = None
     selected_asset_path: str | None = None
 
-    fallback_sources: list[SceneSourceType] = Field(
-        default_factory=list
-    )
+    fallback_sources: list[SceneSourceType] = Field(default_factory=list)
 
     estimated_cost: float = 0.0
     source_notes: list[str] = Field(default_factory=list)
@@ -53,14 +49,12 @@ class Scene(MissionBaseModel):
     metadata: dict = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def validate_source_configuration(self) -> "Scene":
+    def validate_source_configuration(self) -> Scene:
         """Prevent invalid or disabled source states."""
 
         if self.source_type == SceneSourceType.AI_GENERATE:
             if self.source_status != SceneSourceStatus.DISABLED:
-                raise ValueError(
-                    "AI_GENERATE is reserved and must remain disabled."
-                )
+                raise ValueError("AI_GENERATE is reserved and must remain disabled.")
 
         if (
             self.source_type == SceneSourceType.MANUAL_UPLOAD
@@ -68,32 +62,18 @@ class Scene(MissionBaseModel):
             and self.manual_file_path is None
             and self.source_status == SceneSourceStatus.READY
         ):
-            raise ValueError(
-                "Manual upload cannot be READY without a file path."
-            )
+            raise ValueError("Manual upload cannot be READY without a file path.")
 
-        if (
-            self.source_type == SceneSourceType.STOCK_FOOTAGE
-            and not self.stock_query
-        ):
-            raise ValueError(
-                "Stock footage scenes require a stock_query."
-            )
+        if self.source_type == SceneSourceType.STOCK_FOOTAGE and not self.stock_query:
+            raise ValueError("Stock footage scenes require a stock_query.")
 
         if (
             self.source_type == SceneSourceType.LOCAL_LIBRARY
             and not self.local_library_query
         ):
-            raise ValueError(
-                "Local library scenes require a local_library_query."
-            )
+            raise ValueError("Local library scenes require a local_library_query.")
 
-        if (
-            self.source_type == SceneSourceType.IMAGE_TO_VIDEO
-            and not self.image_prompt
-        ):
-            raise ValueError(
-                "Image-to-video scenes require an image_prompt."
-            )
+        if self.source_type == SceneSourceType.IMAGE_TO_VIDEO and not self.image_prompt:
+            raise ValueError("Image-to-video scenes require an image_prompt.")
 
         return self

@@ -3,7 +3,6 @@ from src.models.render_result import (
     RenderStatus,
 )
 
-
 result = RenderResult(
     success=True,
     output_file="outputs/final_video.mp4",

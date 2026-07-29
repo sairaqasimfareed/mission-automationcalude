@@ -3,7 +3,6 @@ from src.shared.llm.gateway import LLMGateway
 from src.shared.llm.models import LLMCallStatus, LLMProvider
 from src.shared.llm.retry import RetryConfig
 
-
 gateway = LLMGateway(
     retry_config=RetryConfig(
         max_attempts=3,

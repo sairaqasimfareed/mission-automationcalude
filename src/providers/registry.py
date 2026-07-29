@@ -20,9 +20,7 @@ class ProviderRegistry:
         try:
             return self._providers[provider_name]
         except KeyError as error:
-            raise KeyError(
-                f"Provider is not registered: {provider_name}"
-            ) from error
+            raise KeyError(f"Provider is not registered: {provider_name}") from error
 
     def is_registered(self, provider_name: str) -> bool:
         """Return whether a provider is registered."""

@@ -34,8 +34,7 @@ class AudioTimeline(MissionBaseModel):
             return self.total_duration_seconds
 
         self.total_duration_seconds = max(
-            track.start_time_seconds + track.duration_seconds
-            for track in self.tracks
+            track.start_time_seconds + track.duration_seconds for track in self.tracks
         )
 
         return self.total_duration_seconds

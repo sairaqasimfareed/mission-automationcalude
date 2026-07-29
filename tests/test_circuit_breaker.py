@@ -3,7 +3,6 @@ from src.shared.llm.circuit_breaker import (
     CircuitState,
 )
 
-
 breaker = CircuitBreaker(
     failure_threshold=3,
     recovery_timeout_seconds=60,

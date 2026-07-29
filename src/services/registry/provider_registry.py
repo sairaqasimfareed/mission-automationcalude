@@ -30,8 +30,7 @@ class ProviderRegistry:
 
         if existing is not None and not replace:
             raise ValueError(
-                "Provider profile already exists: "
-                f"{profile.profile_id}"
+                "Provider profile already exists: " f"{profile.profile_id}"
             )
 
         self._profiles[profile.profile_id] = profile
@@ -45,10 +44,7 @@ class ProviderRegistry:
         normalized_id = profile_id.strip()
 
         if normalized_id not in self._profiles:
-            raise KeyError(
-                f"Provider profile is not registered: "
-                f"{normalized_id}"
-            )
+            raise KeyError(f"Provider profile is not registered: " f"{normalized_id}")
 
         return self._profiles.pop(normalized_id)
 
@@ -61,10 +57,7 @@ class ProviderRegistry:
         normalized_id = profile_id.strip()
 
         if normalized_id not in self._profiles:
-            raise KeyError(
-                f"Provider profile is not registered: "
-                f"{normalized_id}"
-            )
+            raise KeyError(f"Provider profile is not registered: " f"{normalized_id}")
 
         return self._profiles[normalized_id]
 
@@ -104,17 +97,9 @@ class ProviderRegistry:
         ]
 
         if usable_only:
-            profiles = [
-                profile
-                for profile in profiles
-                if profile.usable
-            ]
+            profiles = [profile for profile in profiles if profile.usable]
         elif enabled_only:
-            profiles = [
-                profile
-                for profile in profiles
-                if profile.enabled
-            ]
+            profiles = [profile for profile in profiles if profile.enabled]
 
         return sorted(
             profiles,
@@ -139,11 +124,7 @@ class ProviderRegistry:
             usable_only=usable_only,
         )
 
-        return [
-            profile
-            for profile in profiles
-            if profile.supports(capability)
-        ]
+        return [profile for profile in profiles if profile.supports(capability)]
 
     @property
     def count(self) -> int:

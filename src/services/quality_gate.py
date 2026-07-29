@@ -29,28 +29,13 @@ class QualityGate:
         if job.script.status != ScriptStatus.APPROVED:
             job.errors.append("Script has not been approved.")
 
-        if (
-            job.originality_review.status
-            != OriginalityStatus.APPROVED
-        ):
-            job.errors.append(
-                "Originality review has not been approved."
-            )
+        if job.originality_review.status != OriginalityStatus.APPROVED:
+            job.errors.append("Originality review has not been approved.")
 
-        if (
-            job.originality_review.originality_score
-            < self.MIN_ORIGINALITY_SCORE
-        ):
-            job.errors.append(
-                "Originality score is too low."
-            )
+        if job.originality_review.originality_score < self.MIN_ORIGINALITY_SCORE:
+            job.errors.append("Originality score is too low.")
 
-        if (
-            job.originality_review.human_value_score
-            < self.MIN_HUMAN_VALUE_SCORE
-        ):
-            job.errors.append(
-                "Human value score is too low."
-            )
+        if job.originality_review.human_value_score < self.MIN_HUMAN_VALUE_SCORE:
+            job.errors.append("Human value score is too low.")
 
         return job

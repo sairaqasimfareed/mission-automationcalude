@@ -42,9 +42,7 @@ class RenderPipeline:
         clips = []
 
         for scene in scenes:
-            clips.append(
-                self.veo_generator.generate(scene)
-            )
+            clips.append(self.veo_generator.generate(scene))
 
         timeline = VideoTimeline(
             clips=clips,

@@ -49,31 +49,23 @@ class MusicSettings(MissionBaseModel):
     duck_under_voice: bool = True
 
     @model_validator(mode="after")
-    def validate_music_settings(self) -> "MusicSettings":
+    def validate_music_settings(self) -> MusicSettings:
 
         if (
             self.strategy == MusicStrategy.MANUAL_UPLOAD
             and self.preferred_provider_profile_id is not None
         ):
-            raise ValueError(
-                "Manual music cannot use an automatic provider."
-            )
+            raise ValueError("Manual music cannot use an automatic provider.")
 
         if (
             self.strategy == MusicStrategy.AUTO_GENERATE
             and self.manual_music_file is not None
         ):
             raise ValueError(
-                "Automatic music generation cannot include "
-                "a manual music file."
+                "Automatic music generation cannot include " "a manual music file."
             )
 
-        if (
-            self.strategy == MusicStrategy.NONE
-            and self.volume != 0.0
-        ):
-            raise ValueError(
-                "Music strategy NONE requires volume to be 0."
-            )
+        if self.strategy == MusicStrategy.NONE and self.volume != 0.0:
+            raise ValueError("Music strategy NONE requires volume to be 0.")
 
         return self

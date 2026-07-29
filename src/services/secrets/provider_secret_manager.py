@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Protocol
 from uuid import uuid4
 
-from pydantic import Field, field_validator
+from pydantic import Field
 
 from src.models.base import MissionBaseModel
 
@@ -59,10 +59,7 @@ class InMemorySecretStore:
         secret_reference: str,
     ) -> str:
         if secret_reference not in self._secrets:
-            raise KeyError(
-                f"Secret reference was not found: "
-                f"{secret_reference}"
-            )
+            raise KeyError(f"Secret reference was not found: " f"{secret_reference}")
 
         return self._secrets[secret_reference]
 
@@ -71,10 +68,7 @@ class InMemorySecretStore:
         secret_reference: str,
     ) -> None:
         if secret_reference not in self._secrets:
-            raise KeyError(
-                f"Secret reference was not found: "
-                f"{secret_reference}"
-            )
+            raise KeyError(f"Secret reference was not found: " f"{secret_reference}")
 
         del self._secrets[secret_reference]
 
@@ -115,18 +109,12 @@ class ProviderSecretManager:
     ) -> ProviderSecretResult:
         """Create and store a new provider secret."""
 
-        normalized_profile_id = self._clean_profile_id(
-            profile_id
-        )
+        normalized_profile_id = self._clean_profile_id(profile_id)
 
-        normalized_secret = self._validate_secret(
-            secret_value
-        )
+        normalized_secret = self._validate_secret(secret_value)
 
         secret_reference = (
-            "secret://providers/"
-            f"{normalized_profile_id}/"
-            f"{uuid4()}"
+            "secret://providers/" f"{normalized_profile_id}/" f"{uuid4()}"
         )
 
         self.secret_store.save(
@@ -136,9 +124,7 @@ class ProviderSecretManager:
 
         return ProviderSecretResult(
             secret_reference=secret_reference,
-            masked_value=self.mask_secret(
-                normalized_secret
-            ),
+            masked_value=self.mask_secret(normalized_secret),
             created=True,
         )
 
@@ -150,22 +136,12 @@ class ProviderSecretManager:
     ) -> ProviderSecretResult:
         """Replace an existing provider secret."""
 
-        normalized_reference = (
-            self._validate_reference(
-                secret_reference
-            )
-        )
+        normalized_reference = self._validate_reference(secret_reference)
 
-        if not self.secret_store.contains(
-            normalized_reference
-        ):
-            raise KeyError(
-                "Cannot replace a secret that does not exist."
-            )
+        if not self.secret_store.contains(normalized_reference):
+            raise KeyError("Cannot replace a secret that does not exist.")
 
-        normalized_secret = self._validate_secret(
-            new_secret_value
-        )
+        normalized_secret = self._validate_secret(new_secret_value)
 
         self.secret_store.save(
             normalized_reference,
@@ -174,9 +150,7 @@ class ProviderSecretManager:
 
         return ProviderSecretResult(
             secret_reference=normalized_reference,
-            masked_value=self.mask_secret(
-                normalized_secret
-            ),
+            masked_value=self.mask_secret(normalized_secret),
             replaced=True,
         )
 
@@ -190,15 +164,9 @@ class ProviderSecretManager:
         This method must only be used inside trusted backend code.
         """
 
-        normalized_reference = (
-            self._validate_reference(
-                secret_reference
-            )
-        )
+        normalized_reference = self._validate_reference(secret_reference)
 
-        return self.secret_store.get(
-            normalized_reference
-        )
+        return self.secret_store.get(normalized_reference)
 
     def delete_secret(
         self,
@@ -206,15 +174,9 @@ class ProviderSecretManager:
     ) -> None:
         """Delete one provider secret."""
 
-        normalized_reference = (
-            self._validate_reference(
-                secret_reference
-            )
-        )
+        normalized_reference = self._validate_reference(secret_reference)
 
-        self.secret_store.delete(
-            normalized_reference
-        )
+        self.secret_store.delete(normalized_reference)
 
     def secret_exists(
         self,
@@ -222,15 +184,9 @@ class ProviderSecretManager:
     ) -> bool:
         """Return whether a secret reference exists."""
 
-        normalized_reference = (
-            self._validate_reference(
-                secret_reference
-            )
-        )
+        normalized_reference = self._validate_reference(secret_reference)
 
-        return self.secret_store.contains(
-            normalized_reference
-        )
+        return self.secret_store.contains(normalized_reference)
 
     def get_masked_secret(
         self,
@@ -238,9 +194,7 @@ class ProviderSecretManager:
     ) -> str:
         """Return a masked representation of a stored secret."""
 
-        secret_value = self.resolve_secret(
-            secret_reference
-        )
+        secret_value = self.resolve_secret(secret_reference)
 
         return self.mask_secret(secret_value)
 
@@ -266,9 +220,7 @@ class ProviderSecretManager:
         )
 
         hidden_length = (
-            len(normalized_secret)
-            - visible_prefix_length
-            - visible_suffix_length
+            len(normalized_secret) - visible_prefix_length - visible_suffix_length
         )
 
         return (
@@ -284,15 +236,10 @@ class ProviderSecretManager:
         normalized_secret = secret_value.strip()
 
         if not normalized_secret:
-            raise ValueError(
-                "Secret value cannot be empty."
-            )
+            raise ValueError("Secret value cannot be empty.")
 
         if len(normalized_secret) < 8:
-            raise ValueError(
-                "Secret value must contain at least "
-                "8 characters."
-            )
+            raise ValueError("Secret value must contain at least " "8 characters.")
 
         return normalized_secret
 
@@ -303,16 +250,10 @@ class ProviderSecretManager:
         normalized_reference = secret_reference.strip()
 
         if not normalized_reference:
-            raise ValueError(
-                "Secret reference cannot be empty."
-            )
+            raise ValueError("Secret reference cannot be empty.")
 
-        if not normalized_reference.startswith(
-            "secret://"
-        ):
-            raise ValueError(
-                "Invalid provider secret reference."
-            )
+        if not normalized_reference.startswith("secret://"):
+            raise ValueError("Invalid provider secret reference.")
 
         return normalized_reference
 
@@ -323,8 +264,6 @@ class ProviderSecretManager:
         normalized_profile_id = profile_id.strip()
 
         if not normalized_profile_id:
-            raise ValueError(
-                "Provider profile ID cannot be empty."
-            )
+            raise ValueError("Provider profile ID cannot be empty.")
 
         return normalized_profile_id

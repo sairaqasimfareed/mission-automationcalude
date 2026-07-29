@@ -64,6 +64,4 @@ print("Output:", clip.local_file)
 assert clip.provider == "Pexels"
 assert clip.status == VideoClipStatus.READY
 
-print(
-    "Stock Footage Provider tests completed successfully."
-)
+print("Stock Footage Provider tests completed successfully.")

@@ -108,9 +108,7 @@ class ProviderProfile(MissionBaseModel):
         le=10,
     )
 
-    health_status: ProviderHealthStatus = (
-        ProviderHealthStatus.UNKNOWN
-    )
+    health_status: ProviderHealthStatus = ProviderHealthStatus.UNKNOWN
 
     capabilities: list[str] = Field(
         default_factory=list,
@@ -133,9 +131,7 @@ class ProviderProfile(MissionBaseModel):
         cleaned = value.strip()
 
         if not cleaned:
-            raise ValueError(
-                "Provider profile text fields cannot be empty."
-            )
+            raise ValueError("Provider profile text fields cannot be empty.")
 
         return cleaned
 
@@ -161,60 +157,40 @@ class ProviderProfile(MissionBaseModel):
     @model_validator(mode="after")
     def validate_provider_profile(
         self,
-    ) -> "ProviderProfile":
+    ) -> ProviderProfile:
         if self.enabled and not self.secret_reference:
             raise ValueError(
-                "An enabled provider profile requires "
-                "a secret_reference."
+                "An enabled provider profile requires " "a secret_reference."
             )
 
-        if (
-            self.health_status
-            == ProviderHealthStatus.DISABLED
-            and self.enabled
-        ):
+        if self.health_status == ProviderHealthStatus.DISABLED and self.enabled:
             raise ValueError(
-                "A disabled provider health state cannot "
-                "be marked as enabled."
+                "A disabled provider health state cannot " "be marked as enabled."
             )
 
         if (
             self.daily_budget_usd > 0
             and self.monthly_budget_usd > 0
-            and self.daily_budget_usd
-            > self.monthly_budget_usd
+            and self.daily_budget_usd > self.monthly_budget_usd
         ):
-            raise ValueError(
-                "Daily budget cannot exceed monthly budget."
-            )
+            raise ValueError("Daily budget cannot exceed monthly budget.")
 
-        if (
-            self.daily_budget_usd > 0
-            and self.daily_spent_usd
-            > self.daily_budget_usd
-        ):
+        if self.daily_budget_usd > 0 and self.daily_spent_usd > self.daily_budget_usd:
             raise ValueError(
-                "Daily spent amount cannot exceed "
-                "the configured daily budget."
+                "Daily spent amount cannot exceed " "the configured daily budget."
             )
 
         if (
             self.monthly_budget_usd > 0
-            and self.monthly_spent_usd
-            > self.monthly_budget_usd
+            and self.monthly_spent_usd > self.monthly_budget_usd
         ):
             raise ValueError(
-                "Monthly spent amount cannot exceed "
-                "the configured monthly budget."
+                "Monthly spent amount cannot exceed " "the configured monthly budget."
             )
 
-        if (
-            self.daily_spent_usd
-            > self.monthly_spent_usd
-        ):
+        if self.daily_spent_usd > self.monthly_spent_usd:
             raise ValueError(
-                "Daily spent amount cannot exceed "
-                "monthly spent amount."
+                "Daily spent amount cannot exceed " "monthly spent amount."
             )
 
         return self
@@ -246,8 +222,7 @@ class ProviderProfile(MissionBaseModel):
             return None
 
         return max(
-            self.daily_budget_usd
-            - self.daily_spent_usd,
+            self.daily_budget_usd - self.daily_spent_usd,
             0.0,
         )
 
@@ -259,7 +234,6 @@ class ProviderProfile(MissionBaseModel):
             return None
 
         return max(
-            self.monthly_budget_usd
-            - self.monthly_spent_usd,
+            self.monthly_budget_usd - self.monthly_spent_usd,
             0.0,
         )

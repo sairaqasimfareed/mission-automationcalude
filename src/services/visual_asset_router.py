@@ -20,9 +20,7 @@ class VisualAssetRouter:
             if provider.supports(scene):
                 return provider.acquire(scene)
 
-        raise ValueError(
-            f"No visual provider found for {scene.source_type.value}."
-        )
+        raise ValueError(f"No visual provider found for {scene.source_type.value}.")
 
     def available_sources(self) -> list[SceneSourceType]:
         """

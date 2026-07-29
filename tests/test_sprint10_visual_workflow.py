@@ -37,16 +37,11 @@ class DummyLocalLibraryProvider(VisualSourceProvider):
         return True
 
     def supports(self, scene: Scene) -> bool:
-        return (
-            scene.source_type
-            == self.supported_source_type
-        )
+        return scene.source_type == self.supported_source_type
 
     def acquire(self, scene: Scene) -> VideoClip:
         if not scene.selected_asset_path:
-            raise ValueError(
-                "Local library asset path is missing."
-            )
+            raise ValueError("Local library asset path is missing.")
 
         return VideoClip(
             scene_number=scene.scene_number,
@@ -65,10 +60,7 @@ asset_index = AssetIndex(
         IndexedAsset(
             asset_type=IndexedAssetType.VIDEO,
             source=IndexedAssetSource.LOCAL_LIBRARY,
-            file_path=(
-                "assets/videos/local/"
-                "ancient_tunnel.mp4"
-            ),
+            file_path=("assets/videos/local/" "ancient_tunnel.mp4"),
             title="Ancient Underground Tunnel",
             provider="Local Library",
             license_type="owned",
@@ -104,10 +96,7 @@ state = asset_manager.search_local_assets(scene)
 print("Search status:", state.status)
 print("Local results:", len(state.local_candidates))
 
-assert (
-    state.status
-    == AssetWorkflowStatus.LOCAL_RESULTS_AVAILABLE
-)
+assert state.status == AssetWorkflowStatus.LOCAL_RESULTS_AVAILABLE
 assert len(state.local_candidates) == 1
 
 decision_service = AssetDecisionService()
@@ -123,9 +112,7 @@ assert state.selected_candidate.file_path is not None
 
 scene.source_type = SceneSourceType.LOCAL_LIBRARY
 scene.local_library_query = scene.visual_prompt
-scene.selected_asset_path = (
-    state.selected_candidate.file_path
-)
+scene.selected_asset_path = state.selected_candidate.file_path
 
 router = VisualAssetRouter(
     providers=[
@@ -140,15 +127,7 @@ print("Provider:", clip.provider)
 print("Clip:", clip.local_file)
 
 assert clip.status == VideoClipStatus.READY
-assert (
-    clip.source_type
-    == SceneSourceType.LOCAL_LIBRARY
-)
-assert clip.local_file == (
-    "assets/videos/local/ancient_tunnel.mp4"
-)
+assert clip.source_type == SceneSourceType.LOCAL_LIBRARY
+assert clip.local_file == ("assets/videos/local/ancient_tunnel.mp4")
 
-print(
-    "Sprint 10 Visual Workflow "
-    "completed successfully."
-)
+print("Sprint 10 Visual Workflow " "completed successfully.")

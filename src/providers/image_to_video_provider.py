@@ -31,10 +31,7 @@ class ImageToVideoProvider(VisualSourceProvider):
         return True
 
     def supports(self, scene: Scene) -> bool:
-        return (
-            scene.source_type
-            == self.supported_source_type
-        )
+        return scene.source_type == self.supported_source_type
 
     def acquire(self, scene: Scene) -> VideoClip:
         prompt = scene.image_prompt or scene.visual_prompt
@@ -45,13 +42,8 @@ class ImageToVideoProvider(VisualSourceProvider):
             duration_seconds=scene.estimated_duration_seconds,
             prompt=prompt,
             provider=self.provider_name,
-            local_file=(
-                "outputs/image_to_video/"
-                f"scene_{scene.scene_number:03}.mp4"
-            ),
+            local_file=("outputs/image_to_video/" f"scene_{scene.scene_number:03}.mp4"),
             source_status=SceneSourceStatus.READY,
             status=VideoClipStatus.READY,
-            warnings=[
-                "Dry-run provider: no real video file was generated."
-            ],
+            warnings=["Dry-run provider: no real video file was generated."],
         )

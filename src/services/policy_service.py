@@ -40,10 +40,7 @@ class PolicyService:
             reused_content_risk = RiskLevel.HIGH
 
         else:
-            if (
-                job.originality_review.status
-                != OriginalityStatus.APPROVED
-            ):
+            if job.originality_review.status != OriginalityStatus.APPROVED:
                 upload_readiness = False
                 notes.append("Originality review has not been approved.")
                 reused_content_risk = RiskLevel.HIGH

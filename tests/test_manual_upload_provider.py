@@ -15,10 +15,7 @@ Path("assets/videos/manual").mkdir(
     exist_ok=True,
 )
 
-dummy_file = (
-    Path("assets/videos/manual")
-    / "scene_001.mp4"
-)
+dummy_file = Path("assets/videos/manual") / "scene_001.mp4"
 
 dummy_file.write_text(
     "dummy video",
@@ -48,6 +45,4 @@ print("Status   :", clip.status)
 assert clip.status == VideoClipStatus.READY
 assert Path(clip.local_file).exists()
 
-print(
-    "Manual Upload Provider tests completed successfully."
-)
+print("Manual Upload Provider tests completed successfully.")

@@ -30,9 +30,7 @@ class AudioMixer:
             )
 
         not_ready_tracks = [
-            track
-            for track in timeline.tracks
-            if track.status != AudioTrackStatus.READY
+            track for track in timeline.tracks if track.status != AudioTrackStatus.READY
         ]
 
         if not_ready_tracks:
@@ -44,8 +42,7 @@ class AudioMixer:
             )
 
         has_voiceover = any(
-            track.track_type == AudioTrackType.VOICEOVER
-            for track in timeline.tracks
+            track.track_type == AudioTrackType.VOICEOVER for track in timeline.tracks
         )
 
         if not has_voiceover:
@@ -69,7 +66,5 @@ class AudioMixer:
             render_time_seconds=time.perf_counter() - started_at,
             duration_seconds=int(duration),
             status=RenderStatus.COMPLETED,
-            warnings=[
-                "Dry-run mixer: no real audio file was generated."
-            ],
+            warnings=["Dry-run mixer: no real audio file was generated."],
         )

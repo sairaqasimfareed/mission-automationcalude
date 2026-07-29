@@ -4,7 +4,6 @@ from src.shared.llm.retry import (
     execute_with_retry,
 )
 
-
 attempt_counter = {"count": 0}
 
 
@@ -55,9 +54,7 @@ except RetryExhaustedError as error:
     print("Retry exhaustion correctly detected.")
     print(error)
 else:
-    raise AssertionError(
-        "RetryExhaustedError was expected but not raised."
-    )
+    raise AssertionError("RetryExhaustedError was expected but not raised.")
 
 
 print("Retry tests completed successfully.")

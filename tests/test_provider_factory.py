@@ -18,7 +18,6 @@ from src.services.secrets.provider_secret_manager import (
     ProviderSecretManager,
 )
 
-
 store = InMemorySecretStore()
 secret_manager = ProviderSecretManager(store)
 
@@ -121,10 +120,6 @@ try:
 except KeyError:
     print("Missing provider successfully blocked.")
 else:
-    raise AssertionError(
-        "Missing provider should fail."
-    )
+    raise AssertionError("Missing provider should fail.")
 
-print(
-    "Provider Factory tests completed successfully."
-)
+print("Provider Factory tests completed successfully.")

@@ -6,7 +6,6 @@ from src.models.media_strategy import (
 )
 from src.models.scene import Scene, SceneStatus
 
-
 manual_scene = Scene(
     scene_number=1,
     title="Manual Veo Clip",
@@ -100,21 +99,13 @@ try:
 except ValidationError:
     print("Invalid AI source state successfully blocked.")
 else:
-    raise AssertionError(
-        "AI_GENERATE should remain disabled."
-    )
+    raise AssertionError("AI_GENERATE should remain disabled.")
 
 
-assert (
-    manual_scene.source_status
-    == SceneSourceStatus.WAITING_FOR_UPLOAD
-)
+assert manual_scene.source_status == SceneSourceStatus.WAITING_FOR_UPLOAD
 assert stock_scene.stock_query == "ancient underground tunnels"
 assert local_scene.local_library_query == "dark stone corridor"
 assert image_scene.image_prompt == "Ancient underground city map"
-assert (
-    disabled_ai_scene.source_status
-    == SceneSourceStatus.DISABLED
-)
+assert disabled_ai_scene.source_status == SceneSourceStatus.DISABLED
 
 print("Scene Source tests completed successfully.")

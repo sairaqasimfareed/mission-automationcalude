@@ -2,7 +2,6 @@ from src.pipeline.pipeline_stage import (
     PipelineStageName,
     PipelineStageStatus,
 )
-
 from src.pipeline.stage_result import (
     StageResult,
 )

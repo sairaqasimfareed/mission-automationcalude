@@ -7,14 +7,12 @@ from src.models.video_clip import (
     VideoClipStatus,
 )
 
-
 clip = VideoClip(
     scene_number=1,
     source_type=SceneSourceType.MANUAL_UPLOAD,
     duration_seconds=8,
     prompt=(
-        "Ultra realistic underground city, cinematic lighting, "
-        "8K, volumetric fog."
+        "Ultra realistic underground city, cinematic lighting, " "8K, volumetric fog."
     ),
     provider="Manual Upload",
     local_file="assets/videos/manual/scene_001.mp4",

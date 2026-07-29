@@ -4,7 +4,6 @@ from src.models.video_clip import (
 )
 from src.models.video_timeline import VideoTimeline
 
-
 clip1 = VideoClip(
     scene_number=1,
     prompt="Scene 1",

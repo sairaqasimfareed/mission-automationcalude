@@ -6,7 +6,6 @@ from src.models.media_strategy import (
     VoiceStrategy,
 )
 
-
 print("Visual strategy:", VisualStrategy.HYBRID)
 print("Manual source:", SceneSourceType.MANUAL_UPLOAD)
 print("Stock source:", SceneSourceType.STOCK_FOOTAGE)

@@ -2,7 +2,6 @@ from src.agents.originality_agent.agent import OriginalityAgent
 from src.models.originality import OriginalityStatus
 from src.models.script import Script, ScriptStatus
 
-
 script = Script(
     title="Top 10 Hidden Underground Cities",
     content=(

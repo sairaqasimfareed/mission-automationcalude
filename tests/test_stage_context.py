@@ -33,9 +33,7 @@ context.add_service(
 
 service = context.get_service("dummy")
 
-context.temporary_data["research_prompt"] = (
-    "Research hidden underground cities."
-)
+context.temporary_data["research_prompt"] = "Research hidden underground cities."
 
 context.user_input["approved"] = True
 
@@ -62,8 +60,6 @@ try:
 except KeyError:
     print("Missing service successfully blocked.")
 else:
-    raise AssertionError(
-        "Missing service should raise KeyError."
-    )
+    raise AssertionError("Missing service should raise KeyError.")
 
 print("Stage Context tests completed successfully.")

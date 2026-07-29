@@ -3,7 +3,6 @@ from pydantic import ValidationError
 from src.models.specification_enums import VisualStrategy
 from src.models.visual_settings import VisualSettings
 
-
 settings = VisualSettings()
 
 print("Strategy:", settings.strategy)
@@ -46,10 +45,7 @@ local_settings = VisualSettings(
     prefer_local_assets=True,
 )
 
-assert (
-    local_settings.strategy
-    == VisualStrategy.LOCAL_LIBRARY
-)
+assert local_settings.strategy == VisualStrategy.LOCAL_LIBRARY
 
 
 stock_settings = VisualSettings(
@@ -57,10 +53,7 @@ stock_settings = VisualSettings(
     allow_stock_search=True,
 )
 
-assert (
-    stock_settings.strategy
-    == VisualStrategy.STOCK_FOOTAGE
-)
+assert stock_settings.strategy == VisualStrategy.STOCK_FOOTAGE
 
 
 try:
@@ -71,9 +64,7 @@ try:
 except ValidationError:
     print("Disabled stock strategy successfully blocked.")
 else:
-    raise AssertionError(
-        "Stock strategy without stock search should fail."
-    )
+    raise AssertionError("Stock strategy without stock search should fail.")
 
 
 try:
@@ -85,8 +76,7 @@ except ValidationError:
     print("Disabled AI video strategy successfully blocked.")
 else:
     raise AssertionError(
-        "AI video strategy should remain blocked "
-        "when generation is disabled."
+        "AI video strategy should remain blocked " "when generation is disabled."
     )
 
 
@@ -102,9 +92,7 @@ try:
 except ValidationError:
     print("Empty hybrid strategy successfully blocked.")
 else:
-    raise AssertionError(
-        "Hybrid strategy requires an enabled source."
-    )
+    raise AssertionError("Hybrid strategy requires an enabled source.")
 
 
 try:
@@ -113,20 +101,13 @@ try:
         default_transition_duration_seconds=8,
     )
 except ValidationError:
-    print(
-        "Invalid transition duration successfully blocked."
-    )
+    print("Invalid transition duration successfully blocked.")
 else:
-    raise AssertionError(
-        "Transition duration must be shorter "
-        "than clip duration."
-    )
+    raise AssertionError("Transition duration must be shorter " "than clip duration.")
 
 
 serialized = settings.model_dump_json()
-restored = VisualSettings.model_validate_json(
-    serialized
-)
+restored = VisualSettings.model_validate_json(serialized)
 
 assert restored == settings
 assert restored.schema_version == "1.0"

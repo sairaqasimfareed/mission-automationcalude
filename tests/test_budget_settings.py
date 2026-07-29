@@ -2,7 +2,6 @@ from pydantic import ValidationError
 
 from src.models.budget_settings import BudgetSettings
 
-
 settings = BudgetSettings()
 
 print(settings.total_budget_usd)
@@ -33,9 +32,7 @@ else:
 
 serialized = settings.model_dump_json()
 
-restored = BudgetSettings.model_validate_json(
-    serialized
-)
+restored = BudgetSettings.model_validate_json(serialized)
 
 assert restored == settings
 

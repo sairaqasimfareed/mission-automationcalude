@@ -7,7 +7,6 @@ from src.models.audio_track import (
 from src.models.render_result import RenderStatus
 from src.services.audio_mixer import AudioMixer
 
-
 timeline = AudioTimeline(
     tracks=[
         AudioTrack(

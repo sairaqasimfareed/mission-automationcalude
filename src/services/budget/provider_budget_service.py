@@ -41,18 +41,12 @@ class ProviderBudgetService:
         """Check whether a provider can afford one request."""
 
         if estimated_cost_usd < 0:
-            raise ValueError(
-                "Estimated request cost cannot be negative."
-            )
+            raise ValueError("Estimated request cost cannot be negative.")
 
         profile = self.registry.get(profile_id)
 
-        remaining_daily = (
-            profile.remaining_daily_budget_usd
-        )
-        remaining_monthly = (
-            profile.remaining_monthly_budget_usd
-        )
+        remaining_daily = profile.remaining_daily_budget_usd
+        remaining_monthly = profile.remaining_monthly_budget_usd
 
         per_request_limit = (
             profile.per_request_budget_usd
@@ -60,52 +54,34 @@ class ProviderBudgetService:
             else None
         )
 
-        if (
-            per_request_limit is not None
-            and estimated_cost_usd > per_request_limit
-        ):
+        if per_request_limit is not None and estimated_cost_usd > per_request_limit:
             return ProviderBudgetCheckResult(
                 profile_id=profile.profile_id,
                 requested_cost_usd=estimated_cost_usd,
                 allowed=False,
-                reason=(
-                    "Estimated cost exceeds the configured "
-                    "per-request budget."
-                ),
+                reason=("Estimated cost exceeds the configured " "per-request budget."),
                 remaining_daily_budget_usd=remaining_daily,
                 remaining_monthly_budget_usd=remaining_monthly,
                 per_request_limit_usd=per_request_limit,
             )
 
-        if (
-            remaining_daily is not None
-            and estimated_cost_usd > remaining_daily
-        ):
+        if remaining_daily is not None and estimated_cost_usd > remaining_daily:
             return ProviderBudgetCheckResult(
                 profile_id=profile.profile_id,
                 requested_cost_usd=estimated_cost_usd,
                 allowed=False,
-                reason=(
-                    "Estimated cost exceeds the remaining "
-                    "daily budget."
-                ),
+                reason=("Estimated cost exceeds the remaining " "daily budget."),
                 remaining_daily_budget_usd=remaining_daily,
                 remaining_monthly_budget_usd=remaining_monthly,
                 per_request_limit_usd=per_request_limit,
             )
 
-        if (
-            remaining_monthly is not None
-            and estimated_cost_usd > remaining_monthly
-        ):
+        if remaining_monthly is not None and estimated_cost_usd > remaining_monthly:
             return ProviderBudgetCheckResult(
                 profile_id=profile.profile_id,
                 requested_cost_usd=estimated_cost_usd,
                 allowed=False,
-                reason=(
-                    "Estimated cost exceeds the remaining "
-                    "monthly budget."
-                ),
+                reason=("Estimated cost exceeds the remaining " "monthly budget."),
                 remaining_daily_budget_usd=remaining_daily,
                 remaining_monthly_budget_usd=remaining_monthly,
                 per_request_limit_usd=per_request_limit,
@@ -141,12 +117,10 @@ class ProviderBudgetService:
         updated_profile = profile.model_copy(
             update={
                 "daily_spent_usd": self._normalize_amount(
-                    profile.daily_spent_usd
-                    + estimated_cost_usd
+                    profile.daily_spent_usd + estimated_cost_usd
                 ),
                 "monthly_spent_usd": self._normalize_amount(
-                    profile.monthly_spent_usd
-                    + estimated_cost_usd
+                    profile.monthly_spent_usd + estimated_cost_usd
                 ),
             }
         )
@@ -166,31 +140,23 @@ class ProviderBudgetService:
         """Release previously reserved provider cost."""
 
         if reserved_cost_usd < 0:
-            raise ValueError(
-                "Released cost cannot be negative."
-            )
+            raise ValueError("Released cost cannot be negative.")
 
         profile = self.registry.get(profile_id)
 
         if reserved_cost_usd > profile.daily_spent_usd:
-            raise ValueError(
-                "Released cost cannot exceed daily spending."
-            )
+            raise ValueError("Released cost cannot exceed daily spending.")
 
         if reserved_cost_usd > profile.monthly_spent_usd:
-            raise ValueError(
-                "Released cost cannot exceed monthly spending."
-            )
+            raise ValueError("Released cost cannot exceed monthly spending.")
 
         updated_profile = profile.model_copy(
             update={
                 "daily_spent_usd": self._normalize_amount(
-                    profile.daily_spent_usd
-                    - reserved_cost_usd
+                    profile.daily_spent_usd - reserved_cost_usd
                 ),
                 "monthly_spent_usd": self._normalize_amount(
-                    profile.monthly_spent_usd
-                    - reserved_cost_usd
+                    profile.monthly_spent_usd - reserved_cost_usd
                 ),
             }
         )
@@ -212,14 +178,10 @@ class ProviderBudgetService:
         """Replace an estimated reservation with the actual cost."""
 
         if reserved_cost_usd < 0:
-            raise ValueError(
-                "Reserved cost cannot be negative."
-            )
+            raise ValueError("Reserved cost cannot be negative.")
 
         if actual_cost_usd < 0:
-            raise ValueError(
-                "Actual cost cannot be negative."
-            )
+            raise ValueError("Actual cost cannot be negative.")
 
         profile = self.release(
             profile_id=profile_id,
@@ -240,9 +202,7 @@ class ProviderBudgetService:
     ) -> float | None:
         """Return remaining daily budget or None when unlimited."""
 
-        return self.registry.get(
-            profile_id
-        ).remaining_daily_budget_usd
+        return self.registry.get(profile_id).remaining_daily_budget_usd
 
     def remaining_monthly_budget(
         self,
@@ -250,9 +210,7 @@ class ProviderBudgetService:
     ) -> float | None:
         """Return remaining monthly budget or None when unlimited."""
 
-        return self.registry.get(
-            profile_id
-        ).remaining_monthly_budget_usd
+        return self.registry.get(profile_id).remaining_monthly_budget_usd
 
     def is_budget_available(
         self,
