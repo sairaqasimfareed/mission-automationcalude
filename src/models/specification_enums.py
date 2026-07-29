@@ -50,3 +50,14 @@ class QualityMode(str, Enum):
     STANDARD = "standard"
     PREMIUM = "premium"
     ULTRA = "ultra"
+
+
+class VisualStrategy(str, Enum):
+    """Supported visual production strategies."""
+
+    LOCAL_LIBRARY = "local_library"
+    MANUAL_UPLOAD = "manual_upload"
+    STOCK_FOOTAGE = "stock_footage"
+    IMAGE_TO_VIDEO = "image_to_video"
+    HYBRID = "hybrid"
+    AI_VIDEO = "ai_video"
