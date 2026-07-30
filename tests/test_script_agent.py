@@ -75,6 +75,7 @@ class SuccessfulLLMService:
             ],
             attempts=[
                 LLMServiceAttempt(
+                    attempt_number=1,
                     profile_id="openai-main",
                     provider_name="OpenAI",
                     model="openai-test-model",
@@ -86,6 +87,7 @@ class SuccessfulLLMService:
                     ),
                 ),
                 LLMServiceAttempt(
+                    attempt_number=2,
                     profile_id="gemini-backup",
                     provider_name="Google Gemini",
                     model="gemini-test-model",

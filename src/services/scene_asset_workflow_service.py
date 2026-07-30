@@ -9,8 +9,15 @@ from src.models.asset_state import (
     AssetWorkflowStatus,
     SceneAssetState,
 )
-from src.models.media_strategy import SceneSourceType
+from src.models.media_strategy import (
+    SceneSourceStatus,
+    SceneSourceType,
+)
 from src.models.scene import Scene
+from src.models.stock_acquisition_request import (
+    StockAcquisitionRequest,
+)
+from src.models.video_clip import VideoClip
 from src.services.asset_decision_service import (
     AssetDecisionService,
 )
@@ -21,6 +28,10 @@ from src.services.asset_search_service import (
 )
 from src.services.manual_upload_service import (
     ManualUploadService,
+    
+)
+from src.services.visual_asset_router import (
+    VisualAssetRouter,
 )
 
 
@@ -41,8 +52,9 @@ class SceneAssetWorkflowService:
         *,
         asset_manager: AssetManager,
         decision_service: AssetDecisionService,
-        asset_search_service: AssetSearchService,
+                asset_search_service: AssetSearchService,
         manual_upload_service: ManualUploadService | None = None,
+        visual_asset_router: VisualAssetRouter | None = None,
         maximum_stock_results: int = 15,
     ) -> None:
         if maximum_stock_results < 1:
@@ -56,6 +68,7 @@ class SceneAssetWorkflowService:
 
         # Optional to preserve older call sites and tests.
         self.manual_upload_service = manual_upload_service
+        self.visual_asset_router = visual_asset_router
 
         self.maximum_stock_results = maximum_stock_results
 
@@ -154,6 +167,247 @@ class SceneAssetWorkflowService:
             )
 
         return updated_state
+    def acquire_selected_stock(
+        self,
+        *,
+        scene: Scene,
+        state: SceneAssetState,
+        project_id: str,
+    ) -> VideoClip | None:
+        """
+        Acquire the approved stock candidate selected for one scene.
+
+        Search and user selection must already be complete before
+        this method is called.
+        """
+
+        router = self.visual_asset_router
+
+        if router is None:
+            configuration_failure = AssetModuleFailure(
+                module_name="stock_acquisition",
+                reason=AssetFailureReason.MODULE_DISABLED,
+                message=(
+                    "Stock acquisition is not configured "
+                    "for this workflow."
+                ),
+                recoverable=True,
+                requires_user_decision=True,
+                recovery_options=[
+                    AssetRecoveryAction.REQUEST_MANUAL_UPLOAD,
+                    AssetRecoveryAction.SKIP_SCENE,
+                    AssetRecoveryAction.DISABLE_MODULE,
+                ],
+            )
+
+            state.record_failure(
+                configuration_failure
+            )
+
+            return None
+
+        normalized_project_id = project_id.strip()
+
+        if not normalized_project_id:
+            project_failure = AssetModuleFailure(
+                module_name="stock_acquisition",
+                reason=AssetFailureReason.UNKNOWN,
+                message=(
+                    "A project ID is required to acquire "
+                    "the selected stock footage."
+                ),
+                recoverable=True,
+                requires_user_decision=True,
+                recovery_options=[
+                    AssetRecoveryAction.RETRY_STOCK_SEARCH,
+                    AssetRecoveryAction.REQUEST_MANUAL_UPLOAD,
+                    AssetRecoveryAction.SKIP_SCENE,
+                ],
+            )
+
+            state.record_failure(
+                project_failure
+            )
+
+            return None
+
+        candidate = state.selected_candidate
+
+        if candidate is None:
+            candidate_failure = AssetModuleFailure(
+                module_name="stock_acquisition",
+                reason=AssetFailureReason.UNKNOWN,
+                message=(
+                    "No selected stock candidate is "
+                    "available for acquisition."
+                ),
+                recoverable=True,
+                requires_user_decision=True,
+                recovery_options=[
+                    AssetRecoveryAction.RETRY_STOCK_SEARCH,
+                    AssetRecoveryAction.REQUEST_MANUAL_UPLOAD,
+                    AssetRecoveryAction.SKIP_SCENE,
+                ],
+            )
+
+            state.record_failure(
+                candidate_failure
+            )
+
+            return None
+
+        if (
+            candidate.source_type
+            != SceneSourceType.STOCK_FOOTAGE
+        ):
+            source_failure = AssetModuleFailure(
+                module_name="stock_acquisition",
+                reason=AssetFailureReason.INVALID_FILE_TYPE,
+                message=(
+                    "The selected asset is not "
+                    "stock footage."
+                ),
+                recoverable=True,
+                requires_user_decision=True,
+                recovery_options=[
+                    AssetRecoveryAction.RETRY_STOCK_SEARCH,
+                    AssetRecoveryAction.REQUEST_MANUAL_UPLOAD,
+                    AssetRecoveryAction.SKIP_SCENE,
+                ],
+            )
+
+            state.record_failure(
+                source_failure
+            )
+
+            return None
+
+        if not candidate.approved:
+            approval_failure = AssetModuleFailure(
+                module_name="stock_acquisition",
+                reason=AssetFailureReason.UNKNOWN,
+                message=(
+                    "Stock footage must be approved "
+                    "before acquisition."
+                ),
+                recoverable=True,
+                requires_user_decision=True,
+                recovery_options=[
+                    AssetRecoveryAction.RETRY_STOCK_SEARCH,
+                    AssetRecoveryAction.REQUEST_MANUAL_UPLOAD,
+                    AssetRecoveryAction.SKIP_SCENE,
+                ],
+            )
+
+            state.record_failure(
+                approval_failure
+            )
+
+            return None
+
+        request = StockAcquisitionRequest(
+            project_id=normalized_project_id,
+            scene=scene,
+            candidate=candidate,
+        )
+
+        state.status = AssetWorkflowStatus.ACQUIRING
+
+        try:
+            clip = router.acquire_selected_stock(
+                request
+            )
+
+        except (ValueError, RuntimeError) as error:
+            acquisition_failure = AssetModuleFailure(
+                module_name="stock_acquisition",
+                reason=AssetFailureReason.UNKNOWN,
+                message=(
+                    "The selected stock footage could "
+                    "not be acquired."
+                ),
+                recoverable=True,
+                requires_user_decision=True,
+                recovery_options=[
+                    AssetRecoveryAction.RETRY_STOCK_SEARCH,
+                    AssetRecoveryAction.REQUEST_MANUAL_UPLOAD,
+                    AssetRecoveryAction.SKIP_SCENE,
+                    AssetRecoveryAction.DISABLE_MODULE,
+                ],
+                error_type=type(error).__name__,
+                metadata={
+                    "details": str(error),
+                },
+            )
+
+            state.record_failure(
+                acquisition_failure
+            )
+
+            return None
+
+        if not clip.local_file:
+            local_file_failure = AssetModuleFailure(
+                module_name="stock_acquisition",
+                reason=AssetFailureReason.FILE_NOT_FOUND,
+                message=(
+                    "Stock acquisition completed without "
+                    "a usable local video file."
+                ),
+                recoverable=True,
+                requires_user_decision=True,
+                recovery_options=[
+                    AssetRecoveryAction.RETRY_STOCK_SEARCH,
+                    AssetRecoveryAction.REQUEST_MANUAL_UPLOAD,
+                    AssetRecoveryAction.SKIP_SCENE,
+                ],
+            )
+
+            state.record_failure(
+                local_file_failure
+            )
+
+            return None
+
+        stored_candidate = candidate.model_copy(
+            update={
+                "file_path": clip.local_file,
+                "approved": True,
+                "metadata": {
+                    **candidate.metadata,
+                    **clip.metadata,
+                },
+            }
+        )
+
+        state.clear_active_failure()
+        state.selected_candidate = stored_candidate
+        state.selected_source = (
+            SceneSourceType.STOCK_FOOTAGE
+        )
+        state.status = AssetWorkflowStatus.READY
+
+        scene.selected_asset_path = clip.local_file
+        scene.source_status = SceneSourceStatus.READY
+        scene.source_locked = True
+
+        scene.metadata = {
+            **scene.metadata,
+            "stock_acquisition": {
+                "provider": clip.provider or "",
+                "source_url": clip.source_url or "",
+                "local_file": clip.local_file,
+                "license_type": clip.license_type or "",
+                "clip_id": str(clip.id),
+            },
+        }
+
+        self._append_unique_warnings(
+            state=state,
+            warnings=clip.warnings,
+        )
+
+        return clip
 
     def _process_manual_upload(
         self,

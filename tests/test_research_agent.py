@@ -69,24 +69,26 @@ class SuccessfulLLMService:
                 "gemini-backup",
             ],
             attempts=[
-                LLMServiceAttempt(
-                    profile_id="openai-main",
-                    provider_name="OpenAI",
-                    model="openai-test-model",
-                    status=(
-                        LLMCallStatus.PROVIDER_ERROR
-                    ),
-                    error_message=(
-                        "Primary provider unavailable."
-                    ),
-                ),
-                LLMServiceAttempt(
-                    profile_id="gemini-backup",
-                    provider_name="Google Gemini",
-                    model="gemini-test-model",
-                    status=LLMCallStatus.SUCCESS,
-                ),
-            ],
+    LLMServiceAttempt(
+        attempt_number=1,
+        profile_id="openai-main",
+        provider_name="OpenAI",
+        model="openai-test-model",
+        status=(
+            LLMCallStatus.PROVIDER_ERROR
+        ),
+        error_message=(
+            "Primary provider unavailable."
+        ),
+    ),
+    LLMServiceAttempt(
+        attempt_number=2,
+        profile_id="gemini-backup",
+        provider_name="Google Gemini",
+        model="gemini-test-model",
+        status=LLMCallStatus.SUCCESS,
+    ),
+],
             used_failover=True,
         )
 
