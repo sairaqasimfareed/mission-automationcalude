@@ -6,134 +6,100 @@ from pathlib import Path
 from src.models.asset_index import (
     AssetIndex,
     IndexedAsset,
-    IndexedAssetSource,
-    IndexedAssetType,
+)
+from src.services.local_asset_library import (
+    LocalAssetLibrary,
 )
 
 
 class LocalAssetScanner:
-    """Scans local asset folders and builds an AssetIndex."""
+    """
+    Backward-compatible scanner built on LocalAssetLibrary.
 
-    VIDEO_EXTENSIONS = {
-        ".mp4",
-        ".mov",
-        ".mkv",
-        ".avi",
-        ".webm",
-    }
-
-    IMAGE_EXTENSIONS = {
-        ".jpg",
-        ".jpeg",
-        ".png",
-        ".webp",
-    }
-
-    MUSIC_EXTENSIONS = {
-        ".mp3",
-        ".wav",
-        ".m4a",
-        ".aac",
-        ".flac",
-    }
-
-    SOUND_EFFECT_EXTENSIONS = {
-        ".ogg",
-    }
+    LocalAssetLibrary owns folder scanning and indexing.
+    This facade adds file hashes and legacy metadata.
+    """
 
     def scan(
         self,
         root_folder: str | Path = "assets",
     ) -> AssetIndex:
-        root_path = Path(root_folder)
+        """Scan one local folder and return an enriched asset index."""
 
-        index = AssetIndex()
+        root_path = Path(root_folder).expanduser()
 
         if not root_path.exists():
-            return index
+            return AssetIndex()
 
-        for file_path in root_path.rglob("*"):
-            if not file_path.is_file():
-                continue
-
-            asset_type = self._detect_asset_type(file_path)
-
-            if asset_type is None:
-                continue
-
-            relative_path = file_path.as_posix()
-
-            index.add(
-                IndexedAsset(
-                    asset_type=asset_type,
-                    source=IndexedAssetSource.LOCAL_LIBRARY,
-                    file_path=relative_path,
-                    title=file_path.stem.replace("_", " "),
-                    provider="Local Library",
-                    license_type="owned",
-                    file_size_bytes=file_path.stat().st_size,
-                    content_hash=self._calculate_hash(file_path),
-                    tags=self._build_tags(file_path),
-                    keywords=self._build_keywords(file_path),
-                    metadata={
-                        "extension": file_path.suffix.lower(),
-                        "parent_folder": file_path.parent.name,
-                    },
-                )
+        if not root_path.is_dir():
+            raise NotADirectoryError(
+                "Local asset scan path is not a directory: "
+                f"{root_path}"
             )
 
-        return index
+        library = LocalAssetLibrary(
+            directories=[
+                root_path,
+            ]
+        )
 
-    def _detect_asset_type(
+        base_index = library.refresh()
+        enriched_index = AssetIndex()
+
+        for asset in base_index.assets:
+            enriched_index.add(
+                self._enrich_asset(asset)
+            )
+
+        return enriched_index
+
+    def _enrich_asset(
         self,
-        file_path: Path,
-    ) -> IndexedAssetType | None:
-        extension = file_path.suffix.lower()
+        asset: IndexedAsset,
+    ) -> IndexedAsset:
+        """Add file hash and local ownership metadata."""
 
-        if extension in self.VIDEO_EXTENSIONS:
-            return IndexedAssetType.VIDEO
+        file_path = Path(asset.file_path)
 
-        if extension in self.IMAGE_EXTENSIONS:
-            return IndexedAssetType.IMAGE
+        content_hash = (
+            self._calculate_hash(file_path)
+            if file_path.exists()
+            else None
+        )
 
-        if extension in self.SOUND_EFFECT_EXTENSIONS:
-            return IndexedAssetType.SOUND_EFFECT
+        metadata = dict(asset.metadata)
 
-        if extension in self.MUSIC_EXTENSIONS:
-            if "sfx" in {part.lower() for part in file_path.parts}:
-                return IndexedAssetType.SOUND_EFFECT
+        metadata.update(
+            {
+                "parent_folder": file_path.parent.name,
+                "scanner": "LocalAssetScanner",
+            }
+        )
 
-            return IndexedAssetType.MUSIC
-
-        return None
+        return asset.model_copy(
+            update={
+                "provider": "Local Library",
+                "license_type": "owned",
+                "content_hash": content_hash,
+                "metadata": metadata,
+            }
+        )
 
     @staticmethod
     def _calculate_hash(
         file_path: Path,
     ) -> str:
+        """Calculate a SHA-256 hash without loading the full file."""
+
         hasher = hashlib.sha256()
 
         with file_path.open("rb") as file:
-            while chunk := file.read(8192):
+            while True:
+                chunk = file.read(8192)
+
+                if not chunk:
+                    break
+
                 hasher.update(chunk)
 
         return hasher.hexdigest()
-
-    @staticmethod
-    def _build_tags(
-        file_path: Path,
-    ) -> list[str]:
-        tags = {
-            file_path.stem.lower().replace("_", " "),
-            file_path.parent.name.lower(),
-        }
-
-        return sorted(tags)
-
-    @staticmethod
-    def _build_keywords(
-        file_path: Path,
-    ) -> list[str]:
-        words = file_path.stem.lower().replace("-", " ").replace("_", " ").split()
-
-        return sorted(set(words))
