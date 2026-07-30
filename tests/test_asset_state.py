@@ -1,56 +1,84 @@
 from src.models.asset_state import (
-    AssetCandidate,
-    AssetUserDecision,
+    AssetFailureReason,
+    AssetModuleFailure,
+    AssetRecoveryAction,
     AssetWorkflowStatus,
     SceneAssetState,
 )
-from src.models.media_strategy import SceneSourceType
 
-candidate = AssetCandidate(
-    title="Ancient Tunnel Clip",
-    source_type=SceneSourceType.LOCAL_LIBRARY,
-    file_path="assets/videos/local/ancient_tunnel.mp4",
-    duration_seconds=8.0,
-    resolution="3840x2160",
-    aspect_ratio="16:9",
-    last_used_at="2026-07-12",
-    usage_count=3,
-    score=0.92,
-    tags=[
-        "underground",
-        "tunnel",
-        "ancient",
-    ],
-)
 
 state = SceneAssetState(
     scene_id="scene-001",
     scene_number=1,
-    status=AssetWorkflowStatus.LOCAL_RESULTS_AVAILABLE,
-    local_search_query="ancient underground tunnel",
-    local_candidates=[candidate],
 )
 
-print("Scene:", state.scene_number)
+assert state.status == AssetWorkflowStatus.PENDING
+assert state.requires_user_decision is False
+assert state.is_terminal is False
+assert state.is_ready is False
+
+
+failure = AssetModuleFailure(
+    module_name="Stock Footage",
+    reason=(
+        AssetFailureReason
+        .STOCK_API_QUOTA_EXHAUSTED
+    ),
+    message=(
+        "Stock footage API credits are exhausted."
+    ),
+    recoverable=True,
+    requires_user_decision=True,
+    recovery_options=[
+        AssetRecoveryAction.REQUEST_MANUAL_UPLOAD,
+        AssetRecoveryAction.RETRY_STOCK_SEARCH,
+        AssetRecoveryAction.SKIP_SCENE,
+        AssetRecoveryAction.DISABLE_MODULE,
+    ],
+    provider_name="Test Stock Provider",
+)
+
+state.record_failure(failure)
+
 print("Status:", state.status)
-print("Local results:", len(state.local_candidates))
-print("Candidate:", state.local_candidates[0].title)
-print("Resolution:", state.local_candidates[0].resolution)
-print("Usage count:", state.local_candidates[0].usage_count)
+print("Failure:", state.active_failure.reason)
+print(
+    "Recovery options:",
+    state.active_failure.recovery_options,
+)
 
-state.status = AssetWorkflowStatus.WAITING_FOR_USER_DECISION
-state.user_decision = AssetUserDecision.USE_LOCAL
-state.selected_source = SceneSourceType.LOCAL_LIBRARY
-state.selected_candidate = candidate
+assert (
+    state.status
+    == AssetWorkflowStatus
+    .WAITING_FOR_RECOVERY_DECISION
+)
 
-print("Decision:", state.user_decision)
-print("Selected source:", state.selected_source)
-print("Selected file:", state.selected_candidate.file_path)
+assert state.requires_user_decision is True
+assert state.active_failure is not None
 
-assert state.status == (AssetWorkflowStatus.WAITING_FOR_USER_DECISION)
-assert state.user_decision == AssetUserDecision.USE_LOCAL
-assert state.selected_source == SceneSourceType.LOCAL_LIBRARY
-assert state.selected_candidate is not None
-assert state.selected_candidate.usage_count == 3
+assert (
+    state.active_failure.reason
+    == AssetFailureReason
+    .STOCK_API_QUOTA_EXHAUSTED
+)
 
-print("Asset State tests completed successfully.")
+assert len(state.recovery_history) == 1
+assert len(state.errors) == 1
+
+
+state.clear_active_failure()
+
+assert state.active_failure is None
+assert state.errors == []
+
+
+state.status = AssetWorkflowStatus.SKIPPED
+state.skipped = True
+
+assert state.is_terminal is True
+assert state.is_ready is False
+
+
+print(
+    "Asset State tests completed successfully."
+)
