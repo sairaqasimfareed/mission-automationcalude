@@ -5,88 +5,133 @@ from src.models.research import (
     ResearchSource,
     ResearchStatus,
 )
-from src.shared.llm.dry_run_provider import (
-    DryRunProviderAdapter,
-)
-from src.shared.llm.gateway import LLMGateway
+from src.services.llm.llm_service import LLMService
 from src.shared.llm.models import LLMProvider
 from src.shared.llm.request import LLMRequest
-from src.shared.llm.retry import RetryConfig
 
 
 class ResearchAgent:
-    """Generates structured research for a given topic."""
+    """Generates structured research through the central LLM service."""
 
-    def __init__(self) -> None:
-        self.gateway = LLMGateway(
-            retry_config=RetryConfig(
-                max_attempts=2,
-                initial_delay_seconds=0.01,
-                max_delay_seconds=0.02,
+    def __init__(
+        self,
+        *,
+        llm_service: LLMService,
+        profile_ids: list[str] | None = None,
+        estimated_cost_usd: float = 0.0,
+    ) -> None:
+        if estimated_cost_usd < 0:
+            raise ValueError(
+                "Estimated research cost cannot be negative."
             )
-        )
 
-        self.provider = DryRunProviderAdapter()
+        self.llm_service = llm_service
+        self.profile_ids = profile_ids
+        self.estimated_cost_usd = estimated_cost_usd
 
     def research(
         self,
         topic: str,
     ) -> ResearchResult:
+        """Generate approved research for one topic."""
+
+        normalized_topic = topic.strip()
+
+        if not normalized_topic:
+            raise ValueError(
+                "Research topic cannot be empty."
+            )
+
         request = LLMRequest(
             provider=LLMProvider.OPENAI,
-            model="dry-run-model",
-            prompt=topic,
+            model="provider-default-model",
+            prompt=(
+                "Research the following topic for a long-form "
+                "YouTube video:\n\n"
+                f"{normalized_topic}"
+            ),
             system_prompt=(
                 "You are an expert research assistant for "
-                "long-form YouTube videos."
+                "long-form YouTube videos. Produce accurate, "
+                "original and clearly structured research. "
+                "Flag claims that require additional verification."
             ),
-            prompt_version="research_prompt_v1.0.0",
+            prompt_version="research_prompt_v2.0.0",
             metadata={
                 "agent": "ResearchAgent",
                 "workflow": "research",
+                "topic": normalized_topic,
             },
         )
 
-        operation = self.provider.create_operation(
-            request
+        service_result = self.llm_service.generate(
+            request,
+            estimated_cost_usd=self.estimated_cost_usd,
+            profile_ids=self.profile_ids,
         )
 
-        result = self.gateway.call(
-            provider=request.provider,
-            model=request.model,
-            operation=operation,
-            expect_json=request.expect_json,
+        if not service_result.is_success:
+            error_message = (
+                service_result.result.error_message
+                or "All configured LLM providers failed."
+            )
+
+            raise RuntimeError(
+                "Research generation failed: "
+                f"{error_message}"
+            )
+
+        research_summary = (
+            service_result.result.content or ""
+        ).strip()
+
+        if not research_summary:
+            raise RuntimeError(
+                "Research provider returned empty content."
+            )
+
+        selected_profile_id = (
+            service_result.selected_profile_id
+            or "unknown"
         )
 
         return ResearchResult(
-            topic=topic,
-            research_summary=result.content or "",
+            topic=normalized_topic,
+            research_summary=research_summary,
             key_facts=[
-                "Underground cities provided protection.",
-                "Many contained homes and food storage.",
+                (
+                    "Generated research must be reviewed "
+                    "before production."
+                ),
             ],
             interesting_angles=[
                 (
-                    "Why entire civilizations disappeared "
-                    "underground."
-                )
+                    "Identify the strongest unusual or "
+                    "little-known angle."
+                ),
             ],
             potential_hooks=[
                 (
-                    "A hidden city existed beneath "
-                    "people's feet."
-                )
+                    "Open with the most surprising verified "
+                    "fact from the research."
+                ),
             ],
             risk_notes=[
-                "Historical claims should be fact-checked."
+                (
+                    "Historical, scientific and statistical "
+                    "claims should be independently verified."
+                ),
             ],
             sources=[
                 ResearchSource(
-                    title="Dry Run Knowledge Base",
-                    confidence_score=100,
+                    title=(
+                        "LLM-generated research draft via "
+                        f"{selected_profile_id}"
+                    ),
+                    confidence_score=70,
                 )
             ],
-            fact_confidence_score=95,
+            fact_confidence_score=70,
             prompt_version=request.prompt_version,
-            status=ResearchStatus.APPROVED,
+            status=ResearchStatus.UNDER_REVIEW,
         )

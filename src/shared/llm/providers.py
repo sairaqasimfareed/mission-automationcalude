@@ -31,7 +31,7 @@ class LLMProviderResponse(MissionBaseModel):
 
 
 class LLMProviderAdapter(ABC):
-    """Base interface for every LLM provider adapter."""
+    """Base interface implemented by every LLM provider adapter."""
 
     provider: LLMProvider
 
@@ -40,40 +40,6 @@ class LLMProviderAdapter(ABC):
         self,
         request: LLMRequest,
     ) -> Callable[[], LLMProviderResponse]:
-        """Create one provider operation."""
+        """Create one retry-compatible provider operation."""
 
         raise NotImplementedError
-
-
-class AnthropicProviderAdapter(LLMProviderAdapter):
-    """Anthropic adapter skeleton."""
-
-    provider = LLMProvider.ANTHROPIC
-
-    def create_operation(
-        self,
-        request: LLMRequest,
-    ) -> Callable[[], LLMProviderResponse]:
-        def operation() -> LLMProviderResponse:
-            raise NotImplementedError(
-                "Anthropic API integration is not configured."
-            )
-
-        return operation
-
-
-class GeminiProviderAdapter(LLMProviderAdapter):
-    """Gemini adapter skeleton."""
-
-    provider = LLMProvider.GEMINI
-
-    def create_operation(
-        self,
-        request: LLMRequest,
-    ) -> Callable[[], LLMProviderResponse]:
-        def operation() -> LLMProviderResponse:
-            raise NotImplementedError(
-                "Gemini API integration is not configured."
-            )
-
-        return operation

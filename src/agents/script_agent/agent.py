@@ -8,33 +8,36 @@ from src.models.script import (
     Script,
     ScriptStatus,
 )
-from src.shared.llm.dry_run_provider import (
-    DryRunProviderAdapter,
-)
-from src.shared.llm.gateway import LLMGateway
+from src.services.llm.llm_service import LLMService
 from src.shared.llm.models import LLMProvider
 from src.shared.llm.request import LLMRequest
-from src.shared.llm.retry import RetryConfig
 
 
 class ScriptAgent:
-    """Generates a draft script from approved research."""
+    """Generates a draft script through the central LLM service."""
 
-    def __init__(self) -> None:
-        self.gateway = LLMGateway(
-            retry_config=RetryConfig(
-                max_attempts=2,
-                initial_delay_seconds=0.01,
-                max_delay_seconds=0.02,
+    def __init__(
+        self,
+        *,
+        llm_service: LLMService,
+        profile_ids: list[str] | None = None,
+        estimated_cost_usd: float = 0.0,
+    ) -> None:
+        if estimated_cost_usd < 0:
+            raise ValueError(
+                "Estimated script cost cannot be negative."
             )
-        )
 
-        self.provider = DryRunProviderAdapter()
+        self.llm_service = llm_service
+        self.profile_ids = profile_ids
+        self.estimated_cost_usd = estimated_cost_usd
 
     def generate(
         self,
         research: ResearchResult,
     ) -> Script:
+        """Generate one script from approved research."""
+
         if research.status != ResearchStatus.APPROVED:
             raise ValueError(
                 "Script generation requires approved research."
@@ -42,45 +45,69 @@ class ScriptAgent:
 
         request = LLMRequest(
             provider=LLMProvider.OPENAI,
-            model="dry-run-model",
+            model="provider-default-model",
             prompt=(
                 "Write a long-form YouTube script using "
-                "this research:\n\n"
-                f"{research.research_summary}"
+                "the following approved research:\n\n"
+                f"Topic: {research.topic}\n\n"
+                f"Research summary:\n"
+                f"{research.research_summary}\n\n"
+                "Key facts:\n"
+                + "\n".join(
+                    f"- {fact}"
+                    for fact in research.key_facts
+                )
             ),
             system_prompt=(
                 "You are a professional long-form YouTube "
-                "scriptwriter. Write original, engaging, "
-                "channel-specific scripts."
+                "scriptwriter. Write an original, engaging, "
+                "well-structured and channel-specific script. "
+                "Do not invent unsupported factual claims."
             ),
-            prompt_version="script_prompt_v1.0.0",
+            prompt_version="script_prompt_v2.0.0",
             metadata={
                 "agent": "ScriptAgent",
+                "workflow": "script",
                 "research_id": str(research.id),
                 "topic": research.topic,
             },
         )
 
-        operation = self.provider.create_operation(
-            request
+        service_result = self.llm_service.generate(
+            request,
+            estimated_cost_usd=self.estimated_cost_usd,
+            profile_ids=self.profile_ids,
         )
 
-        result = self.gateway.call(
-            provider=request.provider,
-            model=request.model,
-            operation=operation,
-            expect_json=request.expect_json,
-        )
+        if not service_result.is_success:
+            error_message = (
+                service_result.result.error_message
+                or "All configured LLM providers failed."
+            )
 
-        content = result.content or ""
+            raise RuntimeError(
+                "Script generation failed: "
+                f"{error_message}"
+            )
+
+        content = (
+            service_result.result.content or ""
+        ).strip()
+
+        if not content:
+            raise RuntimeError(
+                "Script provider returned empty content."
+            )
+
+        word_count = len(content.split())
 
         return Script(
             title=research.topic,
             content=content,
             prompt_version=request.prompt_version,
-            word_count=len(content.split()),
+            word_count=word_count,
             estimated_duration_seconds=max(
-                int(len(content.split()) / 2.3),
+                int(word_count / 2.3),
                 1,
             ),
             status=ScriptStatus.UNDER_REVIEW,
