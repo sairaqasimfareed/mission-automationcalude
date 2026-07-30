@@ -19,18 +19,21 @@ from src.services.asset_search_service import (
     AssetSearchService,
     AssetType,
 )
+from src.services.manual_upload_service import (
+    ManualUploadService,
+)
 
 
 class SceneAssetWorkflowService:
     """
-    Coordinates the complete visual asset workflow for one scene.
+    Coordinate the complete visual asset workflow for one scene.
 
     Active priority:
 
     Local Library
-    → Manual Upload
-    → Stock Footage
-    → Recovery Decision
+    -> Manual Upload
+    -> Stock Footage
+    -> Recovery Decision
     """
 
     def __init__(
@@ -39,6 +42,7 @@ class SceneAssetWorkflowService:
         asset_manager: AssetManager,
         decision_service: AssetDecisionService,
         asset_search_service: AssetSearchService,
+        manual_upload_service: ManualUploadService | None = None,
         maximum_stock_results: int = 15,
     ) -> None:
         if maximum_stock_results < 1:
@@ -48,22 +52,22 @@ class SceneAssetWorkflowService:
 
         self.asset_manager = asset_manager
         self.decision_service = decision_service
-        self.asset_search_service = (
-            asset_search_service
-        )
-        self.maximum_stock_results = (
-            maximum_stock_results
-        )
+        self.asset_search_service = asset_search_service
+
+        # Optional to preserve older call sites and tests.
+        self.manual_upload_service = manual_upload_service
+
+        self.maximum_stock_results = maximum_stock_results
 
     def start(
         self,
         scene: Scene,
     ) -> SceneAssetState:
         """
-        Start the visual workflow with a local-library search.
+        Start the workflow with local-library search.
 
-        If no local result is found, the workflow requests
-        a manual upload before allowing stock search.
+        If no local result is found, request manual upload
+        before allowing stock search.
         """
 
         state = self.asset_manager.search_local_assets(
@@ -72,24 +76,19 @@ class SceneAssetWorkflowService:
 
         if state.local_candidates:
             state.status = (
-                AssetWorkflowStatus
-                .LOCAL_RESULTS_AVAILABLE
+                AssetWorkflowStatus.LOCAL_RESULTS_AVAILABLE
             )
-
             state.user_decision = None
             state.manual_upload_requested = False
 
             return state
 
         state.status = (
-            AssetWorkflowStatus
-            .WAITING_FOR_MANUAL_UPLOAD
+            AssetWorkflowStatus.WAITING_FOR_MANUAL_UPLOAD
         )
-
         state.selected_source = (
             SceneSourceType.MANUAL_UPLOAD
         )
-
         state.manual_upload_requested = True
         state.manual_upload_declined = False
 
@@ -109,26 +108,40 @@ class SceneAssetWorkflowService:
         decision: AssetUserDecision,
         selected_candidate_index: int | None = None,
         manual_upload_path: str | None = None,
+        project_id: str | None = None,
         apply_to_remaining_scenes: bool = False,
     ) -> SceneAssetState:
         """
-        Apply a user decision and continue the workflow when needed.
+        Apply a user decision and continue the workflow.
+
+        When ManualUploadService is configured, manual uploads
+        are validated, stored, deduplicated, indexed, and selected.
+
+        Without ManualUploadService, the legacy stable behavior
+        remains available for backward compatibility.
         """
 
-        updated_state = (
-            self.decision_service.apply_decision(
+        if (
+            decision == AssetUserDecision.MANUAL_UPLOAD
+            and self.manual_upload_service is not None
+        ):
+            return self._process_manual_upload(
+                scene=scene,
                 state=state,
-                decision=decision,
-                selected_candidate_index=(
-                    selected_candidate_index
-                ),
-                manual_upload_path=(
-                    manual_upload_path
-                ),
-                apply_to_remaining_scenes=(
-                    apply_to_remaining_scenes
-                ),
+                manual_upload_path=manual_upload_path,
+                project_id=project_id,
             )
+
+        updated_state = self.decision_service.apply_decision(
+            state=state,
+            decision=decision,
+            selected_candidate_index=(
+                selected_candidate_index
+            ),
+            manual_upload_path=manual_upload_path,
+            apply_to_remaining_scenes=(
+                apply_to_remaining_scenes
+            ),
         )
 
         if (
@@ -141,6 +154,193 @@ class SceneAssetWorkflowService:
             )
 
         return updated_state
+
+    def _process_manual_upload(
+        self,
+        *,
+        scene: Scene,
+        state: SceneAssetState,
+        manual_upload_path: str | None,
+        project_id: str | None,
+    ) -> SceneAssetState:
+        """
+        Validate, store, index, and select a manual upload.
+        """
+
+        if not state.manual_upload_module_enabled:
+            disabled_failure = AssetModuleFailure(
+                module_name="manual_upload",
+                reason=AssetFailureReason.MODULE_DISABLED,
+                message=(
+                    "Manual upload module is disabled "
+                    "for this scene."
+                ),
+                recoverable=True,
+                requires_user_decision=True,
+                recovery_options=[
+                    AssetRecoveryAction.SEARCH_STOCK,
+                    AssetRecoveryAction.USE_PLACEHOLDER,
+                    AssetRecoveryAction.SKIP_SCENE,
+                ],
+            )
+
+            state.record_failure(disabled_failure)
+            return state
+
+        normalized_upload_path = (
+            manual_upload_path.strip()
+            if manual_upload_path is not None
+            else ""
+        )
+
+        if not normalized_upload_path:
+            missing_upload_failure = AssetModuleFailure(
+                module_name="manual_upload",
+                reason=(
+                    AssetFailureReason
+                    .MANUAL_UPLOAD_NOT_PROVIDED
+                ),
+                message=(
+                    "A manual upload file was not provided."
+                ),
+                recoverable=True,
+                requires_user_decision=True,
+                recovery_options=[
+                    AssetRecoveryAction.RETRY_MANUAL_UPLOAD,
+                    AssetRecoveryAction.SEARCH_STOCK,
+                    AssetRecoveryAction.SKIP_SCENE,
+                ],
+            )
+
+            state.record_failure(
+                missing_upload_failure
+            )
+            return state
+
+        normalized_project_id = (
+            project_id.strip()
+            if project_id is not None
+            else ""
+        )
+
+        if not normalized_project_id:
+            missing_project_failure = AssetModuleFailure(
+                module_name="manual_upload",
+                reason=(
+                    AssetFailureReason
+                    .INVALID_MANUAL_UPLOAD
+                ),
+                message=(
+                    "A project ID is required to store "
+                    "the manual upload."
+                ),
+                recoverable=True,
+                requires_user_decision=True,
+                recovery_options=[
+                    AssetRecoveryAction.RETRY_MANUAL_UPLOAD,
+                    AssetRecoveryAction.SEARCH_STOCK,
+                    AssetRecoveryAction.SKIP_SCENE,
+                ],
+            )
+
+            state.record_failure(
+                missing_project_failure
+            )
+            return state
+
+        upload_service = self.manual_upload_service
+
+        if upload_service is None:
+            raise RuntimeError(
+                "Manual upload service is not configured."
+            )
+
+        state.status = (
+            AssetWorkflowStatus.VALIDATING_MANUAL_UPLOAD
+        )
+
+        upload_result = (
+            upload_service.process_video_upload(
+                file_path=normalized_upload_path,
+                project_id=normalized_project_id,
+                scene_number=scene.scene_number,
+                title=scene.title,
+                tags=self._build_scene_tags(scene),
+            )
+        )
+
+        if (
+            not upload_result.success
+            or upload_result.candidate is None
+        ):
+            if upload_result.failure is not None:
+                upload_failure = upload_result.failure
+            else:
+                upload_failure = AssetModuleFailure(
+                    module_name="manual_upload",
+                    reason=(
+                        AssetFailureReason
+                        .INVALID_MANUAL_UPLOAD
+                    ),
+                    message=(
+                        "Manual upload processing failed."
+                    ),
+                    recoverable=True,
+                    requires_user_decision=True,
+                    recovery_options=[
+                        AssetRecoveryAction
+                        .RETRY_MANUAL_UPLOAD,
+                        AssetRecoveryAction.SEARCH_STOCK,
+                        AssetRecoveryAction.SKIP_SCENE,
+                    ],
+                )
+
+            state.record_failure(upload_failure)
+
+            self._append_unique_warnings(
+                state=state,
+                warnings=upload_result.warnings,
+            )
+
+            return state
+
+        state.clear_active_failure()
+
+        state.user_decision = (
+            AssetUserDecision.MANUAL_UPLOAD
+        )
+        state.manual_upload_requested = False
+        state.manual_upload_declined = False
+
+        state.manual_upload_path = (
+            upload_result.candidate.file_path
+        )
+        state.selected_source = (
+            SceneSourceType.MANUAL_UPLOAD
+        )
+        state.selected_candidate = (
+            upload_result.candidate
+        )
+
+        state.status = AssetWorkflowStatus.READY
+        state.skipped = False
+        state.placeholder_requested = False
+
+        if upload_result.reused_existing:
+            reuse_warning = (
+                "An identical manual upload already "
+                "existed and was reused."
+            )
+
+            if reuse_warning not in state.warnings:
+                state.warnings.append(reuse_warning)
+
+        self._append_unique_warnings(
+            state=state,
+            warnings=upload_result.warnings,
+        )
+
+        return state
 
     def search_stock(
         self,
@@ -156,9 +356,7 @@ class SceneAssetWorkflowService:
         if not state.stock_module_enabled:
             return self._record_stock_failure(
                 state=state,
-                reason=(
-                    AssetFailureReason.MODULE_DISABLED
-                ),
+                reason=AssetFailureReason.MODULE_DISABLED,
                 message=(
                     "Stock footage search cannot run "
                     "because the stock module is disabled."
@@ -166,8 +364,7 @@ class SceneAssetWorkflowService:
                 recovery_options=[
                     AssetRecoveryAction
                     .REQUEST_MANUAL_UPLOAD,
-                    AssetRecoveryAction
-                    .USE_PLACEHOLDER,
+                    AssetRecoveryAction.USE_PLACEHOLDER,
                     AssetRecoveryAction.SKIP_SCENE,
                 ],
             )
@@ -193,8 +390,7 @@ class SceneAssetWorkflowService:
             return self._record_stock_failure(
                 state=state,
                 reason=(
-                    AssetFailureReason
-                    .STOCK_API_TIMEOUT
+                    AssetFailureReason.STOCK_API_TIMEOUT
                 ),
                 message=(
                     "Stock footage search timed out."
@@ -223,8 +419,7 @@ class SceneAssetWorkflowService:
                 recovery_options=[
                     AssetRecoveryAction
                     .REQUEST_MANUAL_UPLOAD,
-                    AssetRecoveryAction
-                    .DISABLE_MODULE,
+                    AssetRecoveryAction.DISABLE_MODULE,
                     AssetRecoveryAction.SKIP_SCENE,
                 ],
                 error=error,
@@ -264,8 +459,7 @@ class SceneAssetWorkflowService:
                     .RETRY_STOCK_SEARCH,
                     AssetRecoveryAction
                     .REQUEST_MANUAL_UPLOAD,
-                    AssetRecoveryAction
-                    .DISABLE_MODULE,
+                    AssetRecoveryAction.DISABLE_MODULE,
                     AssetRecoveryAction.SKIP_SCENE,
                 ],
                 error=error,
@@ -280,8 +474,7 @@ class SceneAssetWorkflowService:
             return self._record_stock_failure(
                 state=state,
                 reason=(
-                    AssetFailureReason
-                    .STOCK_NO_RESULTS
+                    AssetFailureReason.STOCK_NO_RESULTS
                 ),
                 message=(
                     "No matching stock footage "
@@ -292,8 +485,7 @@ class SceneAssetWorkflowService:
                     .RETRY_STOCK_SEARCH,
                     AssetRecoveryAction
                     .REQUEST_MANUAL_UPLOAD,
-                    AssetRecoveryAction
-                    .USE_PLACEHOLDER,
+                    AssetRecoveryAction.USE_PLACEHOLDER,
                     AssetRecoveryAction.SKIP_SCENE,
                 ],
             )
@@ -305,11 +497,9 @@ class SceneAssetWorkflowService:
             AssetWorkflowStatus
             .STOCK_RESULTS_AVAILABLE
         )
-
         state.selected_source = (
             SceneSourceType.STOCK_FOOTAGE
         )
-
         state.selected_candidate = None
 
         return state
@@ -347,13 +537,60 @@ class SceneAssetWorkflowService:
         return updated_state
 
     @staticmethod
+    def _build_scene_tags(
+        scene: Scene,
+    ) -> list[str]:
+        """Build normalized searchable tags from scene text."""
+
+        combined_text = " ".join(
+            [
+                scene.title,
+                scene.visual_prompt,
+                scene.stock_query or "",
+            ]
+        )
+
+        normalized_text = (
+            combined_text.lower()
+            .replace(",", " ")
+            .replace(".", " ")
+            .replace("-", " ")
+            .replace("_", " ")
+        )
+
+        tags: list[str] = []
+
+        for token in normalized_text.split():
+            cleaned_token = token.strip()
+
+            if (
+                len(cleaned_token) >= 3
+                and cleaned_token not in tags
+            ):
+                tags.append(cleaned_token)
+
+        return tags
+
+    @staticmethod
+    def _append_unique_warnings(
+        *,
+        state: SceneAssetState,
+        warnings: list[str],
+    ) -> None:
+        """Append warnings without introducing duplicates."""
+
+        for warning in warnings:
+            if warning not in state.warnings:
+                state.warnings.append(warning)
+
+    @staticmethod
     def _to_stock_candidate(
         result: object,
     ) -> AssetCandidate:
         """
         Convert an AssetSearchResult into an AssetCandidate.
 
-        Attribute access is kept explicit so the workflow remains
+        Attribute access remains explicit so the workflow stays
         independent from individual stock-provider implementations.
         """
 
@@ -475,7 +712,7 @@ class SceneAssetWorkflowService:
                 state.stock_search_query
             )
 
-        failure = AssetModuleFailure(
+        stock_failure = AssetModuleFailure(
             module_name="stock",
             reason=reason,
             message=message,
@@ -492,6 +729,6 @@ class SceneAssetWorkflowService:
 
         state.stock_candidates.clear()
         state.selected_candidate = None
-        state.record_failure(failure)
+        state.record_failure(stock_failure)
 
         return state
