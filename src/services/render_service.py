@@ -32,6 +32,8 @@ class RenderService:
             output_file="outputs/final_video.mp4",
             render_engine="ffmpeg",
             render_time_seconds=elapsed,
-            duration_seconds=timeline.calculate_duration(),
+            duration_seconds=int(
+            timeline.calculate_duration()
+),
             status=RenderStatus.COMPLETED,
         )
