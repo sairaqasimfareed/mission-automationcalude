@@ -1,13 +1,26 @@
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import Field, model_validator
 
 from src.models.base import MissionBaseModel
+from src.models.resolved_editing_blueprint import (
+    ResolvedSceneEditingBlueprint,
+)
 from src.models.video_clip import VideoClip
 
 
 class VideoTimelineItem(MissionBaseModel):
-    """Placement of one video clip on the editing timeline."""
+    """
+    Placement of one video clip on the editing timeline.
+
+    The optional editing_blueprint contains the resolved,
+    provider-independent editing instructions for this scene.
+
+    transition_in and transition_out remain available for
+    backward compatibility and quick timeline inspection.
+    """
 
     clip: VideoClip
 
@@ -39,7 +52,11 @@ class VideoTimelineItem(MissionBaseModel):
     transition_in: str | None = None
     transition_out: str | None = None
 
-    metadata: dict = Field(
+    editing_blueprint: (
+        ResolvedSceneEditingBlueprint | None
+    ) = None
+
+    metadata: dict[str, Any] = Field(
         default_factory=dict,
     )
 
@@ -53,7 +70,10 @@ class VideoTimelineItem(MissionBaseModel):
                 "the video clip scene number."
             )
 
-        if self.end_time_seconds <= self.start_time_seconds:
+        if (
+            self.end_time_seconds
+            <= self.start_time_seconds
+        ):
             raise ValueError(
                 "Timeline item end time must be greater "
                 "than its start time."
@@ -68,11 +88,33 @@ class VideoTimelineItem(MissionBaseModel):
             - self.start_time_seconds
         )
 
-        if abs(actual_duration - expected_duration) > 0.001:
+        if (
+            abs(
+                actual_duration
+                - expected_duration
+            )
+            > 0.001
+        ):
             raise ValueError(
                 "Timeline item duration must match "
                 "the video clip duration."
             )
+
+        if self.editing_blueprint is not None:
+            if (
+                self.editing_blueprint.scene_number
+                != self.scene_number
+            ):
+                raise ValueError(
+                    "Editing blueprint scene number must "
+                    "match the timeline item scene number."
+                )
+
+            if not self.editing_blueprint.is_resolved:
+                raise ValueError(
+                    "Timeline items require a resolved "
+                    "editing blueprint."
+                )
 
         return self
 
@@ -83,4 +125,25 @@ class VideoTimelineItem(MissionBaseModel):
         return (
             self.end_time_seconds
             - self.start_time_seconds
+        )
+
+    @property
+    def has_editing_blueprint(self) -> bool:
+        """Return whether resolved editing instructions exist."""
+
+        return self.editing_blueprint is not None
+
+    @property
+    def is_render_ready(self) -> bool:
+        """
+        Return whether the item has a usable clip and blueprint.
+
+        This property represents editing readiness. It does not
+        replace complete timeline validation.
+        """
+
+        return (
+            self.enabled
+            and self.editing_blueprint is not None
+            and self.editing_blueprint.is_resolved
         )

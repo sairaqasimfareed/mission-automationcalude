@@ -16,7 +16,12 @@ from src.models.video_timeline_item import (
 
 
 class TimelineValidationService:
-    """Validates explicit video timeline item placement."""
+    """
+    Validate explicit video timeline placement.
+
+    Editing-blueprint validation is optional so existing timeline
+    workflows remain backward compatible.
+    """
 
     TIME_TOLERANCE_SECONDS = 0.001
 
@@ -25,29 +30,25 @@ class TimelineValidationService:
         timeline: VideoTimeline,
         *,
         require_gap_free_primary_track: bool = True,
+        require_editing_blueprints: bool = False,
+        warn_on_blueprint_fallbacks: bool = True,
     ) -> TimelineValidationResult:
         """Validate one video timeline and return a report."""
-
-        result = TimelineValidationResult(
-            is_valid=True,
-            item_count=len(timeline.items),
-            enabled_item_count=len(
-                [
-                    item
-                    for item in timeline.items
-                    if item.enabled
-                ]
-            ),
-            total_duration_seconds=(
-                timeline.calculate_duration()
-            ),
-        )
 
         enabled_items = [
             item
             for item in timeline.items
             if item.enabled
         ]
+
+        result = TimelineValidationResult(
+            is_valid=True,
+            item_count=len(timeline.items),
+            enabled_item_count=len(enabled_items),
+            total_duration_seconds=(
+                timeline.calculate_duration()
+            ),
+        )
 
         if not enabled_items:
             result.errors.append(
@@ -88,6 +89,17 @@ class TimelineValidationService:
             result=result,
             require_gap_free_primary_track=(
                 require_gap_free_primary_track
+            ),
+        )
+
+        self._validate_editing_blueprints(
+            items=enabled_items,
+            result=result,
+            require_editing_blueprints=(
+                require_editing_blueprints
+            ),
+            warn_on_blueprint_fallbacks=(
+                warn_on_blueprint_fallbacks
             ),
         )
 
@@ -138,7 +150,10 @@ class TimelineValidationService:
             )
 
             if (
-                abs(duration - expected_duration)
+                abs(
+                    duration
+                    - expected_duration
+                )
                 > self.TIME_TOLERANCE_SECONDS
             ):
                 result.errors.append(
@@ -166,7 +181,10 @@ class TimelineValidationService:
                     )
                 )
 
-            if item.clip.status != VideoClipStatus.READY:
+            if (
+                item.clip.status
+                != VideoClipStatus.READY
+            ):
                 result.errors.append(
                     TimelineValidationIssue(
                         code=(
@@ -285,7 +303,9 @@ class TimelineValidationService:
                 ),
             )
 
-            previous_item: VideoTimelineItem | None = None
+            previous_item: (
+                VideoTimelineItem | None
+            ) = None
 
             for item in ordered_items:
                 if previous_item is None:
@@ -325,7 +345,9 @@ class TimelineValidationService:
                                     item.start_time_seconds
                                 ),
                                 metadata={
-                                    "track_index": track_index,
+                                    "track_index": (
+                                        track_index
+                                    ),
                                     "gap_duration_seconds": (
                                         initial_gap
                                     ),
@@ -358,7 +380,9 @@ class TimelineValidationService:
                             TimelineValidationSeverity.ERROR
                             if (
                                 track_index == 0
-                                and require_gap_free_primary_track
+                                and (
+                                    require_gap_free_primary_track
+                                )
                             )
                             else (
                                 TimelineValidationSeverity
@@ -448,3 +472,126 @@ class TimelineValidationService:
                     > previous_item.end_time_seconds
                 ):
                     previous_item = item
+
+    @staticmethod
+    def _validate_editing_blueprints(
+        *,
+        items: list[VideoTimelineItem],
+        result: TimelineValidationResult,
+        require_editing_blueprints: bool,
+        warn_on_blueprint_fallbacks: bool,
+    ) -> None:
+        """Validate resolved editing blueprints on timeline items."""
+
+        for item in items:
+            blueprint = item.editing_blueprint
+
+            if blueprint is None:
+                if require_editing_blueprints:
+                    result.errors.append(
+                        TimelineValidationIssue(
+                            code=(
+                                TimelineValidationCode
+                                .MISSING_EDITING_BLUEPRINT
+                            ),
+                            severity=(
+                                TimelineValidationSeverity.ERROR
+                            ),
+                            message=(
+                                "The enabled timeline scene "
+                                "does not contain an editing "
+                                "blueprint."
+                            ),
+                            scene_number=item.scene_number,
+                        )
+                    )
+
+                continue
+
+            result.blueprint_count += 1
+
+            if (
+                blueprint.scene_number
+                != item.scene_number
+            ):
+                result.errors.append(
+                    TimelineValidationIssue(
+                        code=(
+                            TimelineValidationCode
+                            .EDITING_BLUEPRINT_SCENE_MISMATCH
+                        ),
+                        severity=(
+                            TimelineValidationSeverity.ERROR
+                        ),
+                        message=(
+                            "The editing blueprint scene number "
+                            "does not match its timeline item."
+                        ),
+                        scene_number=item.scene_number,
+                        related_scene_number=(
+                            blueprint.scene_number
+                        ),
+                    )
+                )
+
+                continue
+
+            if not blueprint.is_resolved:
+                result.errors.append(
+                    TimelineValidationIssue(
+                        code=(
+                            TimelineValidationCode
+                            .UNRESOLVED_EDITING_BLUEPRINT
+                        ),
+                        severity=(
+                            TimelineValidationSeverity.ERROR
+                        ),
+                        message=(
+                            "The timeline scene contains an "
+                            "unresolved editing blueprint."
+                        ),
+                        scene_number=item.scene_number,
+                        metadata={
+                            "blueprint_status": (
+                                blueprint.status.value
+                            ),
+                        },
+                    )
+                )
+
+                continue
+
+            result.render_ready_item_count += 1
+
+            result.blueprint_fallback_count += (
+                blueprint.fallback_count
+            )
+
+            if (
+                warn_on_blueprint_fallbacks
+                and blueprint.fallback_count > 0
+            ):
+                result.warnings.append(
+                    TimelineValidationIssue(
+                        code=(
+                            TimelineValidationCode
+                            .EDITING_BLUEPRINT_FALLBACK_USED
+                        ),
+                        severity=(
+                            TimelineValidationSeverity.WARNING
+                        ),
+                        message=(
+                            "The editing blueprint uses one "
+                            "or more safe fallback presets."
+                        ),
+                        scene_number=item.scene_number,
+                        metadata={
+                            "fallback_count": (
+                                blueprint.fallback_count
+                            ),
+                            "blueprint_status": (
+                                blueprint.status.value
+                            ),
+                        },
+                    )
+                )
