@@ -1,0 +1,1204 @@
+=== ADVANCED SETTINGS ===
+from __future__ import annotations
+
+from pydantic import Field, model_validator
+
+from src.models.base import MissionBaseModel
+
+
+class AdvancedSettings(MissionBaseModel):
+    """Controls advanced project and pipeline behaviour."""
+
+    schema_version: str = "1.0"
+
+    dry_run: bool = True
+    debug_logging: bool = False
+
+    resume_previous_pipeline: bool = True
+    retry_failed_stages: bool = True
+    skip_completed_stages: bool = True
+
+    maximum_stage_retries: int = Field(
+        default=3,
+        ge=0,
+        le=10,
+    )
+
+    stop_on_stage_failure: bool = True
+    allow_partial_output: bool = False
+
+    skip_upload: bool = True
+    require_upload_confirmation: bool = True
+
+    save_pipeline_state: bool = True
+    save_intermediate_outputs: bool = True
+
+    enable_cost_tracking: bool = True
+    enable_usage_tracking: bool = True
+
+    @model_validator(mode="after")
+    def validate_advanced_settings(
+        self,
+    ) -> AdvancedSettings:
+        """Prevent contradictory advanced configuration."""
+
+        if not self.retry_failed_stages and self.maximum_stage_retries != 0:
+            raise ValueError(
+                "maximum_stage_retries must be 0 when "
+                "retry_failed_stages is disabled."
+            )
+
+        if self.dry_run and not self.skip_upload:
+            raise ValueError("Dry-run mode requires upload to be skipped.")
+
+        if not self.skip_upload and not self.require_upload_confirmation:
+            raise ValueError("Active upload requires explicit upload confirmation.")
+
+        if self.allow_partial_output and self.stop_on_stage_failure:
+            raise ValueError(
+                "Partial output requires stop_on_stage_failure " "to be disabled."
+            )
+
+        return self
+
+=== STAGE RESULT ===
+from __future__ import annotations
+
+from pydantic import Field
+
+from src.models.base import MissionBaseModel
+from src.pipeline.pipeline_stage import (
+    PipelineStageName,
+    PipelineStageStatus,
+)
+
+
+class StageResult(MissionBaseModel):
+    """Result returned after executing a pipeline stage."""
+
+    stage: PipelineStageName
+
+    status: PipelineStageStatus
+
+    duration_seconds: float = 0.0
+
+    retry_count: int = 0
+
+    progress_percent: int = 100
+
+    warnings: list[str] = Field(default_factory=list)
+
+    errors: list[str] = Field(default_factory=list)
+
+    metadata: dict = Field(default_factory=dict)
+
+    @property
+    def successful(self) -> bool:
+        return self.status == PipelineStageStatus.COMPLETED
+
+=== PIPELINE STATE ===
+from __future__ import annotations
+
+from pydantic import Field
+
+from src.models.base import MissionBaseModel
+from src.pipeline.pipeline_stage import (
+    PipelineStageName,
+    PipelineStageStatus,
+)
+from src.pipeline.stage_result import StageResult
+
+
+class PipelineState(MissionBaseModel):
+    """Tracks the execution state of a pipeline."""
+
+    current_stage: PipelineStageName
+
+    overall_progress: int = 0
+
+    stages: list[StageResult] = Field(default_factory=list)
+
+    warnings: list[str] = Field(default_factory=list)
+
+    errors: list[str] = Field(default_factory=list)
+
+    @property
+    def completed_stages(self) -> int:
+        return sum(
+            stage.status == PipelineStageStatus.COMPLETED for stage in self.stages
+        )
+
+    @property
+    def failed(self) -> bool:
+        return any(stage.status == PipelineStageStatus.FAILED for stage in self.stages)
+
+=== PIPELINE RUNNER ===
+from __future__ import annotations
+
+from src.pipeline.base_stage import BasePipelineStage
+from src.pipeline.pipeline_stage import (
+    PipelineStageStatus,
+)
+from src.pipeline.stage_context import StageContext
+from src.pipeline.stage_result import StageResult
+
+
+class PipelineRunner:
+    """
+    Execute registered pipeline stages sequentially.
+
+    Execution stops when a stage reaches a blocking pipeline state.
+
+    Blocking states:
+    - FAILED
+    - WAITING_FOR_USER
+
+    COMPLETED and SKIPPED stages allow execution to continue.
+
+    Unexpected exceptions are intentionally not normalized here.
+    They propagate to the outer orchestration boundary, which owns
+    exception normalization and public lifecycle handling.
+    """
+
+    BLOCKING_STATUSES: frozenset[
+        PipelineStageStatus
+    ] = frozenset(
+        {
+            PipelineStageStatus.FAILED,
+            PipelineStageStatus.WAITING_FOR_USER,
+        }
+    )
+
+    def __init__(
+        self,
+    ) -> None:
+        self._stages: list[
+            BasePipelineStage
+        ] = []
+
+    def register(
+        self,
+        stage: BasePipelineStage,
+    ) -> None:
+        """Register one pipeline stage in deterministic order."""
+
+        self._stages.append(
+            stage
+        )
+
+    @property
+    def stages(
+        self,
+    ) -> list[BasePipelineStage]:
+        """Return a copy of registered stages."""
+
+        return self._stages.copy()
+
+    def run(
+        self,
+        context: StageContext,
+    ) -> list[StageResult]:
+        """
+        Execute registered stages until completion or a blocking result.
+
+        Pipeline progress represents the number of registered stages
+        actually reached. A blocked pipeline therefore does not report
+        false 100-percent completion.
+        """
+
+        results: list[
+            StageResult
+        ] = []
+
+        total = len(
+            self._stages
+        )
+
+        if total == 0:
+            context.pipeline_state.overall_progress = 0
+
+            return results
+
+        for index, stage in enumerate(
+            self._stages,
+            start=1,
+        ):
+            context.pipeline_state.current_stage = (
+                stage.stage_name
+            )
+
+            stage.before_execute(
+                context
+            )
+
+            result = stage.execute(
+                context
+            )
+
+            self._validate_stage_result(
+                stage=stage,
+                result=result,
+            )
+
+            stage.after_execute(
+                context,
+                result,
+            )
+
+            context.pipeline_state.stages.append(
+                result
+            )
+
+            self._synchronize_diagnostics(
+                context=context,
+                result=result,
+            )
+
+            context.pipeline_state.overall_progress = int(
+                index
+                * 100
+                / total
+            )
+
+            results.append(
+                result
+            )
+
+            if (
+                result.status
+                in self.BLOCKING_STATUSES
+            ):
+                break
+
+        return results
+
+    @staticmethod
+    def _validate_stage_result(
+        *,
+        stage: BasePipelineStage,
+        result: StageResult,
+    ) -> None:
+        """
+        Ensure a stage cannot report a result for another stage.
+
+        This catches adapter wiring mistakes at the pipeline boundary.
+        """
+
+        if (
+            result.stage
+            != stage.stage_name
+        ):
+            raise ValueError(
+                "Pipeline stage returned a result "
+                "for a different stage. "
+                f"Expected '{stage.stage_name.value}', "
+                f"received '{result.stage.value}'."
+            )
+
+    @staticmethod
+    def _synchronize_diagnostics(
+        *,
+        context: StageContext,
+        result: StageResult,
+    ) -> None:
+        """Copy unique stage diagnostics into PipelineState."""
+
+        for warning in result.warnings:
+            cleaned = (
+                warning.strip()
+            )
+
+            if (
+                cleaned
+                and cleaned
+                not in context.pipeline_state.warnings
+            ):
+                context.pipeline_state.warnings.append(
+                    cleaned
+                )
+
+        for error in result.errors:
+            cleaned = (
+                error.strip()
+            )
+
+            if (
+                cleaned
+                and cleaned
+                not in context.pipeline_state.errors
+            ):
+                context.pipeline_state.errors.append(
+                    cleaned
+                )
+
+=== RENDER ORCHESTRATOR ===
+from __future__ import annotations
+
+import time
+from collections.abc import Iterable
+
+from src.models.enums import (
+    JobStatus,
+    WorkflowStage,
+)
+from src.models.render_orchestration_result import (
+    RenderOrchestrationResult,
+)
+from src.models.video_job import VideoJob
+from src.pipeline.base_stage import BasePipelineStage
+from src.pipeline.pipeline_engine import PipelineEngine
+from src.pipeline.pipeline_runner import PipelineRunner
+from src.pipeline.pipeline_stage import (
+    PipelineStageName,
+    PipelineStageStatus,
+)
+from src.pipeline.stage_context import StageContext
+from src.pipeline.stage_result import StageResult
+
+
+class RenderOrchestratorService:
+    """
+    Coordinate render workflow execution through the existing pipeline
+    framework.
+
+    This service intentionally does not implement individual production
+    stages. Concrete BasePipelineStage implementations remain responsible
+    for voice, asset, timeline, render, and export work.
+
+    Responsibilities:
+    - register existing pipeline stages in deterministic order;
+    - execute them through PipelineEngine;
+    - synchronize pipeline state with VideoJob lifecycle state;
+    - aggregate warnings and errors;
+    - normalize the final outcome as RenderOrchestrationResult.
+
+    Retry, resume, checkpointing, and conditional stage skipping are
+    intentionally deferred to later orchestration sprints.
+    """
+
+    def __init__(
+        self,
+        *,
+        stages: Iterable[BasePipelineStage],
+    ) -> None:
+        stage_list = list(stages)
+
+        if not stage_list:
+            raise ValueError(
+                "Render orchestrator requires at least "
+                "one pipeline stage."
+            )
+
+        self._validate_stage_order(
+            stage_list
+        )
+
+        runner = PipelineRunner()
+
+        for stage in stage_list:
+            runner.register(
+                stage
+            )
+
+        self._runner = runner
+
+        self._engine = PipelineEngine(
+            runner
+        )
+
+    @property
+    def stages(
+        self,
+    ) -> list[BasePipelineStage]:
+        """
+        Return registered pipeline stages without exposing the runner's
+        mutable internal collection.
+        """
+
+        return self._runner.stages
+
+    def execute(
+        self,
+        job: VideoJob,
+        *,
+        dry_run: bool = False,
+    ) -> RenderOrchestrationResult:
+        """
+        Execute the registered render workflow for one VideoJob.
+
+        Exceptions raised by pipeline stages are normalized into failed
+        orchestration results instead of crossing the public orchestration
+        boundary.
+        """
+
+        start_time = time.perf_counter()
+
+        job.status = JobStatus.RUNNING
+
+        starting_stage = (
+            self._workflow_stage_for_pipeline_stage(
+                self._runner.stages[
+                    0
+                ].stage_name
+            )
+        )
+
+        job.current_stage = (
+            starting_stage
+        )
+
+        try:
+            context = self._engine.run(
+                job,
+                dry_run=dry_run,
+            )
+
+        except Exception as error:
+            elapsed_seconds = (
+                time.perf_counter()
+                - start_time
+            )
+
+            failed_stage = (
+                self._current_workflow_stage(
+                    job
+                )
+            )
+
+            message = (
+                self._exception_message(
+                    error
+                )
+            )
+
+            self._append_unique(
+                job.errors,
+                message,
+            )
+
+            job.status = (
+                JobStatus.FAILED
+            )
+
+            job.current_stage = (
+                failed_stage
+            )
+
+            return (
+                RenderOrchestrationResult
+                .failed(
+                    job=job,
+                    failed_stage=(
+                        failed_stage
+                    ),
+                    completed_stages=[],
+                    elapsed_seconds=(
+                        elapsed_seconds
+                    ),
+                    error_message=(
+                        message
+                    ),
+                    warnings=list(
+                        job.warnings
+                    ),
+                    metadata={
+                        "dry_run": (
+                            dry_run
+                        ),
+                        "exception_type": (
+                            type(
+                                error
+                            ).__name__
+                        ),
+                    },
+                )
+            )
+
+        elapsed_seconds = (
+            time.perf_counter()
+            - start_time
+        )
+
+        self._synchronize_diagnostics(
+            job=job,
+            context=context,
+        )
+
+        failed_result = (
+            self._first_failed_result(
+                context
+                .pipeline_state
+                .stages
+            )
+        )
+
+        completed_stages = (
+            self._completed_workflow_stages(
+                context
+                .pipeline_state
+                .stages
+            )
+        )
+
+        if failed_result is not None:
+            failed_stage = (
+                self._workflow_stage_for_pipeline_stage(
+                    failed_result.stage
+                )
+            )
+
+            completed_stages = (
+                self._without_stage(
+                    completed_stages,
+                    failed_stage,
+                )
+            )
+
+            error_message = (
+                failed_result.errors[-1]
+                if failed_result.errors
+                else (
+                    "Pipeline stage failed without "
+                    "an error message."
+                )
+            )
+
+            self._append_unique(
+                job.errors,
+                error_message,
+            )
+
+            job.status = (
+                JobStatus.FAILED
+            )
+
+            job.current_stage = (
+                failed_stage
+            )
+
+            return (
+                RenderOrchestrationResult
+                .failed(
+                    job=job,
+                    failed_stage=(
+                        failed_stage
+                    ),
+                    completed_stages=(
+                        completed_stages
+                    ),
+                    elapsed_seconds=(
+                        elapsed_seconds
+                    ),
+                    error_message=(
+                        error_message
+                    ),
+                    warnings=list(
+                        job.warnings
+                    ),
+                    metadata=(
+                        self._build_metadata(
+                            context=context,
+                            dry_run=dry_run,
+                        )
+                    ),
+                )
+            )
+
+        if (
+            not context
+            .pipeline_state
+            .stages
+        ):
+            message = (
+                "Render orchestration completed "
+                "without executing any stages."
+            )
+
+            self._append_unique(
+                job.errors,
+                message,
+            )
+
+            job.status = (
+                JobStatus.FAILED
+            )
+
+            failed_stage = (
+                job.current_stage
+            )
+
+            return (
+                RenderOrchestrationResult
+                .failed(
+                    job=job,
+                    failed_stage=(
+                        failed_stage
+                    ),
+                    completed_stages=[],
+                    elapsed_seconds=(
+                        elapsed_seconds
+                    ),
+                    error_message=(
+                        message
+                    ),
+                    warnings=list(
+                        job.warnings
+                    ),
+                    metadata=(
+                        self._build_metadata(
+                            context=context,
+                            dry_run=dry_run,
+                        )
+                    ),
+                )
+            )
+
+        if job.render_result is None:
+            message = (
+                "Render orchestration finished "
+                "without a render result."
+            )
+
+            self._append_unique(
+                job.errors,
+                message,
+            )
+
+            failed_stage = (
+                WorkflowStage.RENDER
+            )
+
+            completed_stages = (
+                self._without_stage(
+                    completed_stages,
+                    failed_stage,
+                )
+            )
+
+            job.status = (
+                JobStatus.FAILED
+            )
+
+            job.current_stage = (
+                failed_stage
+            )
+
+            return (
+                RenderOrchestrationResult
+                .failed(
+                    job=job,
+                    failed_stage=(
+                        failed_stage
+                    ),
+                    completed_stages=(
+                        completed_stages
+                    ),
+                    elapsed_seconds=(
+                        elapsed_seconds
+                    ),
+                    error_message=(
+                        message
+                    ),
+                    warnings=list(
+                        job.warnings
+                    ),
+                    metadata=(
+                        self._build_metadata(
+                            context=context,
+                            dry_run=dry_run,
+                        )
+                    ),
+                )
+            )
+
+        if not job.render_result.success:
+            message = (
+                job
+                .render_result
+                .error_message
+                or (
+                    "Render result reported "
+                    "failure."
+                )
+            )
+
+            self._append_unique(
+                job.errors,
+                message,
+            )
+
+            failed_stage = (
+                WorkflowStage.RENDER
+            )
+
+            completed_stages = (
+                self._without_stage(
+                    completed_stages,
+                    failed_stage,
+                )
+            )
+
+            job.status = (
+                JobStatus.FAILED
+            )
+
+            job.current_stage = (
+                failed_stage
+            )
+
+            return (
+                RenderOrchestrationResult
+                .failed(
+                    job=job,
+                    failed_stage=(
+                        failed_stage
+                    ),
+                    completed_stages=(
+                        completed_stages
+                    ),
+                    elapsed_seconds=(
+                        elapsed_seconds
+                    ),
+                    error_message=(
+                        message
+                    ),
+                    warnings=list(
+                        job.warnings
+                    ),
+                    metadata=(
+                        self._build_metadata(
+                            context=context,
+                            dry_run=dry_run,
+                        )
+                    ),
+                )
+            )
+
+        job.status = (
+            JobStatus.COMPLETED
+        )
+
+        job.current_stage = (
+            WorkflowStage
+            .READY_FOR_UPLOAD
+        )
+
+        return (
+            RenderOrchestrationResult
+            .succeeded(
+                job=job,
+                completed_stages=(
+                    completed_stages
+                ),
+                elapsed_seconds=(
+                    elapsed_seconds
+                ),
+                warnings=list(
+                    job.warnings
+                ),
+                metadata=(
+                    self._build_metadata(
+                        context=context,
+                        dry_run=dry_run,
+                    )
+                ),
+            )
+        )
+
+    @staticmethod
+    def _validate_stage_order(
+        stages: list[
+            BasePipelineStage
+        ],
+    ) -> None:
+        """
+        Reject duplicate pipeline-stage identifiers.
+
+        Registration order itself is intentionally supplied by the caller
+        and preserved by PipelineRunner.
+        """
+
+        seen: set[
+            PipelineStageName
+        ] = set()
+
+        for stage in stages:
+            if (
+                stage.stage_name
+                in seen
+            ):
+                raise ValueError(
+                    "Render orchestrator cannot "
+                    "register duplicate pipeline "
+                    "stage: "
+                    f"{stage.stage_name.value}."
+                )
+
+            seen.add(
+                stage.stage_name
+            )
+
+    @staticmethod
+    def _first_failed_result(
+        results: list[
+            StageResult
+        ],
+    ) -> StageResult | None:
+        """
+        Return the first pipeline stage that explicitly reported failure.
+        """
+
+        for result in results:
+            if (
+                result.status
+                == PipelineStageStatus.FAILED
+            ):
+                return result
+
+        return None
+
+    @classmethod
+    def _completed_workflow_stages(
+        cls,
+        results: list[
+            StageResult
+        ],
+    ) -> list[
+        WorkflowStage
+    ]:
+        """
+        Translate successfully completed internal pipeline stages into
+        the existing public VideoJob workflow-stage vocabulary.
+        """
+
+        completed: list[
+            WorkflowStage
+        ] = []
+
+        for result in results:
+            if (
+                result.status
+                != PipelineStageStatus.COMPLETED
+            ):
+                continue
+
+            stage = (
+                cls
+                ._workflow_stage_for_pipeline_stage(
+                    result.stage
+                )
+            )
+
+            if stage not in completed:
+                completed.append(
+                    stage
+                )
+
+        return completed
+
+    @staticmethod
+    def _without_stage(
+        stages: list[
+            WorkflowStage
+        ],
+        excluded_stage: WorkflowStage,
+    ) -> list[
+        WorkflowStage
+    ]:
+        """
+        Return completed stages excluding an orchestration-level failed
+        stage.
+
+        A pipeline adapter may report COMPLETED while a later
+        orchestration invariant reveals that its output is unusable.
+        In that case the same workflow stage must not appear as both
+        completed and failed.
+        """
+
+        return [
+            stage
+            for stage in stages
+            if stage
+            != excluded_stage
+        ]
+
+    @classmethod
+    def _synchronize_diagnostics(
+        cls,
+        *,
+        job: VideoJob,
+        context: StageContext,
+    ) -> None:
+        """
+        Copy unique pipeline diagnostics onto the central VideoJob.
+        """
+
+        for warning in (
+            context
+            .pipeline_state
+            .warnings
+        ):
+            cls._append_unique(
+                job.warnings,
+                warning,
+            )
+
+        for error in (
+            context
+            .pipeline_state
+            .errors
+        ):
+            cls._append_unique(
+                job.errors,
+                error,
+            )
+
+        for result in (
+            context
+            .pipeline_state
+            .stages
+        ):
+            for warning in (
+                result.warnings
+            ):
+                cls._append_unique(
+                    job.warnings,
+                    warning,
+                )
+
+            for error in (
+                result.errors
+            ):
+                cls._append_unique(
+                    job.errors,
+                    error,
+                )
+
+    @staticmethod
+    def _build_metadata(
+        *,
+        context: StageContext,
+        dry_run: bool,
+    ) -> dict[
+        str,
+        object,
+    ]:
+        """
+        Build stable orchestration diagnostics from existing pipeline
+        state.
+        """
+
+        return {
+            "dry_run": dry_run,
+            (
+                "pipeline_progress_percent"
+            ): (
+                context
+                .pipeline_state
+                .overall_progress
+            ),
+            "pipeline_stage_count": len(
+                context
+                .pipeline_state
+                .stages
+            ),
+            (
+                "pipeline_completed_stage_count"
+            ): (
+                context
+                .pipeline_state
+                .completed_stages
+            ),
+        }
+
+    @classmethod
+    def _current_workflow_stage(
+        cls,
+        job: VideoJob,
+    ) -> WorkflowStage:
+        """
+        Return the public workflow stage currently recorded on VideoJob.
+
+        VideoJob remains the authoritative public lifecycle object.
+        """
+
+        return (
+            job.current_stage
+        )
+
+    @staticmethod
+    def _workflow_stage_for_pipeline_stage(
+        stage: PipelineStageName,
+    ) -> WorkflowStage:
+        """
+        Map internal pipeline-stage names onto the existing VideoJob
+        workflow-stage vocabulary.
+
+        Multiple lower-level editing pipeline stages intentionally map
+        to the same public EDITING workflow stage.
+        """
+
+        mapping: dict[
+            PipelineStageName,
+            WorkflowStage,
+        ] = {
+            PipelineStageName.RESEARCH: (
+                WorkflowStage.RESEARCH
+            ),
+            PipelineStageName.SCRIPT: (
+                WorkflowStage.SCRIPT
+            ),
+            PipelineStageName.ORIGINALITY: (
+                WorkflowStage
+                .ORIGINALITY_REVIEW
+            ),
+            PipelineStageName.SCENE_PLANNING: (
+                WorkflowStage
+                .QUALITY_CHECK
+            ),
+            PipelineStageName.ASSET_SELECTION: (
+                WorkflowStage
+                .ASSET_GENERATION
+            ),
+            PipelineStageName.VOICE: (
+                WorkflowStage.VOICE
+            ),
+            PipelineStageName.BACKGROUND_MUSIC: (
+                WorkflowStage.EDITING
+            ),
+            PipelineStageName.SOUND_EFFECTS: (
+                WorkflowStage.EDITING
+            ),
+            PipelineStageName.VIDEO_TIMELINE: (
+                WorkflowStage.EDITING
+            ),
+            PipelineStageName.AUDIO_TIMELINE: (
+                WorkflowStage.EDITING
+            ),
+            PipelineStageName.RENDER: (
+                WorkflowStage.RENDER
+            ),
+            PipelineStageName.EXPORT: (
+                WorkflowStage
+                .READY_FOR_UPLOAD
+            ),
+        }
+
+        return mapping[
+            stage
+        ]
+
+    @staticmethod
+    def _append_unique(
+        values: list[str],
+        value: str,
+    ) -> None:
+        """
+        Append one normalized diagnostic message exactly once.
+        """
+
+        cleaned = (
+            value.strip()
+        )
+
+        if (
+            cleaned
+            and cleaned
+            not in values
+        ):
+            values.append(
+                cleaned
+            )
+
+    @staticmethod
+    def _exception_message(
+        error: Exception,
+    ) -> str:
+        """
+        Normalize an unexpected stage exception into a stable public
+        diagnostic message.
+        """
+
+        detail = str(
+            error
+        ).strip()
+
+        if detail:
+            return (
+                "Render orchestration stage "
+                f"raised "
+                f"{type(error).__name__}: "
+                f"{detail}"
+            )
+
+        return (
+            "Render orchestration stage "
+            f"raised "
+            f"{type(error).__name__}."
+        )
+
+=== VIDEO JOB RETRY CONTEXT ===
+
+  src\models\video_job.py:54:
+  src\models\video_job.py:55:    research: ResearchResult | None = None
+  src\models\video_job.py:56:    script: Script | None = None
+  src\models\video_job.py:57:    originality_review: OriginalityResult | None = None
+  src\models\video_job.py:58:
+  src\models\video_job.py:59:    scenes: list[Scene] = Field(default_factory=list)
+  src\models\video_job.py:60:    scene_asset_states: list[SceneAssetState] = Field(default_factory=list)
+  src\models\video_job.py:61:    video_clips: list[VideoClip] = Field(default_factory=list)
+  src\models\video_job.py:62:
+  src\models\video_job.py:63:    audio_timeline: AudioTimeline | None = None
+  src\models\video_job.py:64:    video_timeline: VideoTimeline | None = None
+  src\models\video_job.py:65:    render_result: RenderResult | None = None
+  src\models\video_job.py:66:
+  src\models\video_job.py:67:    policy_report: PolicyComplianceReport | None = None
+  src\models\video_job.py:68:
+> src\models\video_job.py:69:    retry_count: int = 0
+  src\models\video_job.py:70:    errors: list[str] = Field(default_factory=list)
+  src\models\video_job.py:71:    warnings: list[str] = Field(default_factory=list)
+  src\models\video_job.py:72:
+  src\models\video_job.py:73:    @model_validator(mode="after")
+  src\models\video_job.py:74:    def validate_workflow_state(self) -> VideoJob:
+  src\models\video_job.py:75:        """Prevent invalid workflow and media states."""
+  src\models\video_job.py:76:
+  src\models\video_job.py:77:        if self.script is not None:
+  src\models\video_job.py:78:            if self.research is None:
+  src\models\video_job.py:79:                raise ValueError("A script cannot exist without research.")
+  src\models\video_job.py:80:
+  src\models\video_job.py:81:            if self.research.status != ResearchStatus.APPROVED:
+  src\models\video_job.py:82:                raise ValueError("A script requires approved research.")
+  src\models\video_job.py:83:
+  src\models\video_job.py:84:        if self.originality_review is not None:
+
+
+
+
+=== ADVANCED SETTINGS USAGE ===
+
+src\models\advanced_settings.py:16:    resume_previous_pipeline: bool = True
+src\models\advanced_settings.py:17:    retry_failed_stages: bool = True
+src\models\advanced_settings.py:44:        if not self.retry_failed_stages and self.maximum_stage_retries != 0:
+src\models\advanced_settings.py:47:                "retry_failed_stages is disabled."
+
+
+
+
+=== STAGE RETRY COUNT USAGE ===
+
+src\models\upload_settings.py:56:    upload_retry_count: int = Field(
+src\models\video_job.py:69:    retry_count: int = 0
+src\pipeline\stage_result.py:21:    retry_count: int = 0
+src\shared\llm\gateway.py:45:            "latency_seconds=%.4f | retry_count=%s | "
+src\shared\llm\gateway.py:52:            result.retry_count,
+src\shared\llm\gateway.py:90:            provider_response, retry_count = execute_with_retry(
+src\shared\llm\gateway.py:104:                retry_count=max(
+src\shared\llm\gateway.py:129:                    retry_count=retry_count,
+src\shared\llm\gateway.py:151:                    retry_count=retry_count,
+src\shared\llm\gateway.py:176:            retry_count=retry_count,
+src\shared\llm\models.py:69:    retry_count: int = Field(
+src\shared\llm\retry.py:52:            retry_count = attempt - 1
+src\shared\llm\retry.py:53:            return result, retry_count
+
+
+

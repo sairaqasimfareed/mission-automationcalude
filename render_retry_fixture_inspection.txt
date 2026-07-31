@@ -1,0 +1,424 @@
+=== WORKING TEST IMPORTS ===
+from __future__ import annotations
+
+from src.models.audio_timeline import AudioTimeline
+from src.models.enums import (
+    JobStatus,
+    WorkflowStage,
+)
+from src.models.media_strategy import (
+    SceneSourceStatus,
+    SceneSourceType,
+)
+from src.models.render_orchestration_result import (
+    RenderOrchestrationResult,
+)
+from src.models.render_result import (
+    RenderResult,
+    RenderStatus,
+)
+from src.models.research import (
+    ResearchResult,
+    ResearchStatus,
+)
+from src.models.scene import (
+    Scene,
+    SceneStatus,
+)
+from src.models.script import (
+    Script,
+    ScriptStatus,
+)
+from src.models.video_clip import (
+    VideoClip,
+    VideoClipStatus,
+)
+from src.models.video_job import VideoJob
+from src.models.video_timeline import VideoTimeline
+from src.pipeline.base_stage import BasePipelineStage
+from src.pipeline.pipeline_stage import (
+    PipelineStageName,
+    PipelineStageStatus,
+)
+from src.pipeline.stage_context import StageContext
+from src.pipeline.stage_result import StageResult
+from src.services.render_orchestrator_service import (
+    RenderOrchestratorService,
+)
+
+
+def build_job() -> VideoJob:
+    """Create the minimum valid orchestration test job."""
+
+    return VideoJob(
+        project_name="Mission Test",
+        channel_name="Mission Channel",
+        niche="automation",
+        topic="Render orchestration test",
+        status=JobStatus.PENDING,
+        current_stage=WorkflowStage.RESEARCH,
+    )
+
+
+def prepare_render_ready_job(
+    job: VideoJob,
+) -> None:
+    """
+    Populate the minimum valid upstream state required by VideoJob
+    before attaching a render result.
+    """
+
+    research = ResearchResult.model_construct(
+        status=ResearchStatus.APPROVED,
+    )
+
+    script = Script(
+        title="Synthetic orchestration script",
+        content=(
+            "Synthetic narration for render "
+            "orchestration testing."
+        ),
+        prompt_version="test-1.0",
+        word_count=6,
+        estimated_duration_seconds=30,
+        status=ScriptStatus.APPROVED,
+    )
+
+    scene = Scene(
+        scene_number=1,
+        title="Synthetic Scene",
+        narration=(
+            "Synthetic narration for render "
+            "orchestration testing."
+        ),
+        visual_prompt=(
+            "Synthetic orchestration visual."
+        ),
+        estimated_duration_seconds=30,
+        manual_file_path=(
+            "assets/videos/manual/test_scene.mp4"
+        ),
+        source_status=SceneSourceStatus.READY,
+        status=SceneStatus.READY,
+    )
+
+    clip = VideoClip(
+        scene_number=1,
+        source_type=(
+            SceneSourceType.MANUAL_UPLOAD
+        ),
+        duration_seconds=30,
+        prompt=(
+            "Synthetic orchestration test scene."
+        ),
+        provider="Manual Upload",
+        local_file=(
+            "assets/videos/manual/test_scene.mp4"
+        ),
+        source_status=SceneSourceStatus.READY,
+        status=VideoClipStatus.READY,
+    )
+
+    job.research = research
+    job.script = script
+
+    job.scenes = [
+        scene,
+    ]
+
+    job.voice_file = (
+        "assets/audio/test_voice.wav"
+    )
+
+    job.video_clips = [
+        clip,
+    ]
+
+    job.video_timeline = VideoTimeline(
+        clips=[
+            clip,
+        ],
+    )
+
+    job.video_timeline.calculate_duration()
+
+    job.audio_timeline = AudioTimeline()
+
+
+class SyntheticStage(
+    BasePipelineStage
+):
+    """Deterministic pipeline stage used by orchestrator tests."""
+
+    def __init__(
+        self,
+        *,
+        stage_name: PipelineStageName,
+        status: PipelineStageStatus = (
+            PipelineStageStatus.COMPLETED
+        ),
+        warnings: list[str] | None = None,
+        errors: list[str] | None = None,
+        raise_error: Exception | None = None,
+        attach_render_result: bool = False,
+    ) -> None:
+        self._stage_name = stage_name
+        self._status = status
+        self._warnings = (
+            warnings or []
+        )
+        self._errors = (
+            errors or []
+        )
+        self._raise_error = (
+            raise_error
+        )
+        self._attach_render_result = (
+            attach_render_result
+        )
+
+    @property
+    def stage_name(
+
+=== JOB / FIXTURE HELPERS ===
+
+> tests\test_render_orchestrator_service.py:49:def build_job() -> VideoJob:
+  tests\test_render_orchestrator_service.py:50:    """Create the minimum valid orchestration test job."""
+  tests\test_render_orchestrator_service.py:51:
+> tests\test_render_orchestrator_service.py:52:    return VideoJob(
+  tests\test_render_orchestrator_service.py:53:        project_name="Mission Test",
+  tests\test_render_orchestrator_service.py:54:        channel_name="Mission Channel",
+  tests\test_render_orchestrator_service.py:55:        niche="automation",
+  tests\test_render_orchestrator_service.py:56:        topic="Render orchestration test",
+  tests\test_render_orchestrator_service.py:57:        status=JobStatus.PENDING,
+  tests\test_render_orchestrator_service.py:58:        current_stage=WorkflowStage.RESEARCH,
+  tests\test_render_orchestrator_service.py:59:    )
+  tests\test_render_orchestrator_service.py:60:
+  tests\test_render_orchestrator_service.py:61:
+  tests\test_render_orchestrator_service.py:62:def prepare_render_ready_job(
+  tests\test_render_orchestrator_service.py:63:    job: VideoJob,
+  tests\test_render_orchestrator_service.py:64:) -> None:
+  tests\test_render_orchestrator_service.py:65:    """
+  tests\test_render_orchestrator_service.py:66:    Populate the minimum valid upstream state required by VideoJob
+  tests\test_render_orchestrator_service.py:67:    before attaching a render result.
+  tests\test_render_orchestrator_service.py:68:    """
+  tests\test_render_orchestrator_service.py:69:
+  tests\test_render_orchestrator_service.py:70:    research = ResearchResult.model_construct(
+  tests\test_render_orchestrator_service.py:71:        status=ResearchStatus.APPROVED,
+  tests\test_render_orchestrator_service.py:72:    )
+  tests\test_render_orchestrator_service.py:73:
+  tests\test_render_orchestrator_service.py:74:    script = Script(
+  tests\test_render_orchestrator_service.py:75:        title="Synthetic orchestration script",
+  tests\test_render_orchestrator_service.py:76:        content=(
+  tests\test_render_orchestrator_service.py:77:            "Synthetic narration for render "
+  tests\test_render_orchestrator_service.py:78:            "orchestration testing."
+  tests\test_render_orchestrator_service.py:79:        ),
+  tests\test_render_orchestrator_service.py:80:        prompt_version="test-1.0",
+  tests\test_render_orchestrator_service.py:81:        word_count=6,
+  tests\test_render_orchestrator_service.py:82:        estimated_duration_seconds=30,
+  tests\test_render_orchestrator_service.py:83:        status=ScriptStatus.APPROVED,
+  tests\test_render_orchestrator_service.py:84:    )
+  tests\test_render_orchestrator_service.py:85:
+  tests\test_render_orchestrator_service.py:86:    scene = Scene(
+  tests\test_render_orchestrator_service.py:87:        scene_number=1,
+  tests\test_render_orchestrator_service.py:88:        title="Synthetic Scene",
+  tests\test_render_orchestrator_service.py:89:        narration=(
+  tests\test_render_orchestrator_service.py:90:            "Synthetic narration for render "
+  tests\test_render_orchestrator_service.py:91:            "orchestration testing."
+  tests\test_render_orchestrator_service.py:92:        ),
+  tests\test_render_orchestrator_service.py:93:        visual_prompt=(
+  tests\test_render_orchestrator_service.py:94:            "Synthetic orchestration visual."
+  tests\test_render_orchestrator_service.py:95:        ),
+  tests\test_render_orchestrator_service.py:96:        estimated_duration_seconds=30,
+  tests\test_render_orchestrator_service.py:97:        manual_file_path=(
+
+
+
+
+=== RENDER READY MUTATIONS ===
+
+  tests\test_render_orchestrator_service.py:356:    job = build_job()
+  tests\test_render_orchestrator_service.py:357:
+  tests\test_render_orchestrator_service.py:358:    service = RenderOrchestratorService(
+  tests\test_render_orchestrator_service.py:359:        stages=[
+  tests\test_render_orchestrator_service.py:360:            SyntheticStage(
+  tests\test_render_orchestrator_service.py:361:                stage_name=(
+  tests\test_render_orchestrator_service.py:362:                    PipelineStageName.RENDER
+  tests\test_render_orchestrator_service.py:363:                ),
+> tests\test_render_orchestrator_service.py:364:                attach_render_result=True,
+  tests\test_render_orchestrator_service.py:365:            ),
+  tests\test_render_orchestrator_service.py:366:        ],
+  tests\test_render_orchestrator_service.py:367:    )
+  tests\test_render_orchestrator_service.py:368:
+  tests\test_render_orchestrator_service.py:369:    result = service.execute(
+  tests\test_render_orchestrator_service.py:370:        job,
+  tests\test_render_orchestrator_service.py:371:        dry_run=True,
+  tests\test_render_orchestrator_service.py:372:    )
+  tests\test_render_orchestrator_service.py:373:
+  tests\test_render_orchestrator_service.py:374:    assert isinstance(
+  tests\test_render_orchestrator_service.py:375:        result,
+  tests\test_render_orchestrator_service.py:376:        RenderOrchestrationResult,
+  tests\test_render_orchestrator_service.py:525:            SyntheticStage(
+  tests\test_render_orchestrator_service.py:526:                stage_name=(
+  tests\test_render_orchestrator_service.py:527:                    PipelineStageName.RENDER
+  tests\test_render_orchestrator_service.py:528:                ),
+  tests\test_render_orchestrator_service.py:529:                warnings=[
+  tests\test_render_orchestrator_service.py:530:                    "Synthetic warning.",
+  tests\test_render_orchestrator_service.py:531:                    "Synthetic warning.",
+  tests\test_render_orchestrator_service.py:532:                ],
+> tests\test_render_orchestrator_service.py:533:                attach_render_result=True,
+  tests\test_render_orchestrator_service.py:534:            ),
+  tests\test_render_orchestrator_service.py:535:        ],
+  tests\test_render_orchestrator_service.py:536:    )
+  tests\test_render_orchestrator_service.py:537:
+  tests\test_render_orchestrator_service.py:538:    result = service.execute(
+  tests\test_render_orchestrator_service.py:539:        job
+  tests\test_render_orchestrator_service.py:540:    )
+  tests\test_render_orchestrator_service.py:541:
+  tests\test_render_orchestrator_service.py:542:    assert (
+  tests\test_render_orchestrator_service.py:543:        result.warnings
+  tests\test_render_orchestrator_service.py:544:        == [
+  tests\test_render_orchestrator_service.py:545:            "Synthetic warning.",
+  tests\test_render_orchestrator_service.py:614:    job = build_job()
+  tests\test_render_orchestrator_service.py:615:
+  tests\test_render_orchestrator_service.py:616:    service = RenderOrchestratorService(
+  tests\test_render_orchestrator_service.py:617:        stages=[
+  tests\test_render_orchestrator_service.py:618:            SyntheticStage(
+  tests\test_render_orchestrator_service.py:619:                stage_name=(
+  tests\test_render_orchestrator_service.py:620:                    PipelineStageName.RENDER
+  tests\test_render_orchestrator_service.py:621:                ),
+> tests\test_render_orchestrator_service.py:622:                attach_render_result=True,
+  tests\test_render_orchestrator_service.py:623:            ),
+  tests\test_render_orchestrator_service.py:624:        ],
+  tests\test_render_orchestrator_service.py:625:    )
+  tests\test_render_orchestrator_service.py:626:
+  tests\test_render_orchestrator_service.py:627:    result = service.execute(
+  tests\test_render_orchestrator_service.py:628:        job,
+  tests\test_render_orchestrator_service.py:629:        dry_run=True,
+  tests\test_render_orchestrator_service.py:630:    )
+  tests\test_render_orchestrator_service.py:631:
+  tests\test_render_orchestrator_service.py:632:    assert (
+  tests\test_render_orchestrator_service.py:633:        result.metadata[
+  tests\test_render_orchestrator_service.py:634:            "pipeline_progress_percent"
+  tests\test_render_orchestrator_service.py:667:                    PipelineStageName
+  tests\test_render_orchestrator_service.py:668:                    .VIDEO_TIMELINE
+  tests\test_render_orchestrator_service.py:669:                ),
+  tests\test_render_orchestrator_service.py:670:            ),
+  tests\test_render_orchestrator_service.py:671:            SyntheticStage(
+  tests\test_render_orchestrator_service.py:672:                stage_name=(
+  tests\test_render_orchestrator_service.py:673:                    PipelineStageName.RENDER
+  tests\test_render_orchestrator_service.py:674:                ),
+> tests\test_render_orchestrator_service.py:675:                attach_render_result=True,
+  tests\test_render_orchestrator_service.py:676:            ),
+  tests\test_render_orchestrator_service.py:677:        ],
+  tests\test_render_orchestrator_service.py:678:    )
+  tests\test_render_orchestrator_service.py:679:
+  tests\test_render_orchestrator_service.py:680:    result = service.execute(
+  tests\test_render_orchestrator_service.py:681:        job
+  tests\test_render_orchestrator_service.py:682:    )
+  tests\test_render_orchestrator_service.py:683:
+  tests\test_render_orchestrator_service.py:684:    assert result.success is True
+  tests\test_render_orchestrator_service.py:685:
+  tests\test_render_orchestrator_service.py:686:    assert (
+  tests\test_render_orchestrator_service.py:687:        result.completed_stages
+  tests\test_render_orchestrator_service.py:723:            ),
+  tests\test_render_orchestrator_service.py:724:            SyntheticStage(
+  tests\test_render_orchestrator_service.py:725:                stage_name=(
+  tests\test_render_orchestrator_service.py:726:                    PipelineStageName.RENDER
+  tests\test_render_orchestrator_service.py:727:                ),
+  tests\test_render_orchestrator_service.py:728:                warnings=[
+  tests\test_render_orchestrator_service.py:729:                    "Shared warning.",
+  tests\test_render_orchestrator_service.py:730:                ],
+> tests\test_render_orchestrator_service.py:731:                attach_render_result=True,
+  tests\test_render_orchestrator_service.py:732:            ),
+  tests\test_render_orchestrator_service.py:733:        ],
+  tests\test_render_orchestrator_service.py:734:    )
+  tests\test_render_orchestrator_service.py:735:
+  tests\test_render_orchestrator_service.py:736:    result = service.execute(
+  tests\test_render_orchestrator_service.py:737:        job
+  tests\test_render_orchestrator_service.py:738:    )
+  tests\test_render_orchestrator_service.py:739:
+  tests\test_render_orchestrator_service.py:740:    assert result.success is True
+  tests\test_render_orchestrator_service.py:741:
+  tests\test_render_orchestrator_service.py:742:    assert (
+  tests\test_render_orchestrator_service.py:743:        result.warnings
+
+
+
+
+=== VIDEO JOB VALIDATORS ===
+
+  src\models\video_job.py:78:            if self.research is None:
+  src\models\video_job.py:79:                raise ValueError("A script cannot exist without research.")
+  src\models\video_job.py:80:
+  src\models\video_job.py:81:            if self.research.status != ResearchStatus.APPROVED:
+  src\models\video_job.py:82:                raise ValueError("A script requires approved research.")
+  src\models\video_job.py:83:
+  src\models\video_job.py:84:        if self.originality_review is not None:
+  src\models\video_job.py:85:            if self.script is None:
+  src\models\video_job.py:86:                raise ValueError("Originality review requires a script.")
+  src\models\video_job.py:87:
+  src\models\video_job.py:88:            if self.script.status != ScriptStatus.APPROVED:
+  src\models\video_job.py:89:                raise ValueError("Originality review requires an approved script.")
+  src\models\video_job.py:90:
+  src\models\video_job.py:91:        if self.scenes:
+  src\models\video_job.py:92:            if self.script is None:
+> src\models\video_job.py:93:                raise ValueError("Scenes cannot exist without a script.")
+  src\models\video_job.py:94:
+  src\models\video_job.py:95:            if self.script.status != ScriptStatus.APPROVED:
+  src\models\video_job.py:96:                raise ValueError("Scene planning requires an approved script.")
+  src\models\video_job.py:97:
+  src\models\video_job.py:98:        if self.scene_asset_states and not self.scenes:
+  src\models\video_job.py:99:            raise ValueError("Scene asset states cannot exist without scenes.")
+  src\models\video_job.py:100:
+  src\models\video_job.py:101:        if self.scene_asset_states:
+  src\models\video_job.py:102:            scene_numbers = {scene.scene_number for scene in self.scenes}
+  src\models\video_job.py:103:
+  src\models\video_job.py:104:            state_numbers = {state.scene_number for state in self.scene_asset_states}
+  src\models\video_job.py:105:
+  src\models\video_job.py:106:            if not state_numbers.issubset(scene_numbers):
+  src\models\video_job.py:107:                raise ValueError(
+  src\models\video_job.py:108:                    "Every scene asset state must reference "
+  src\models\video_job.py:109:                    "an existing scene number."
+  src\models\video_job.py:110:                )
+  src\models\video_job.py:111:
+  src\models\video_job.py:112:        if self.video_clips and not self.scenes:
+> src\models\video_job.py:113:            raise ValueError("Video clips cannot exist without planned scenes.")
+  src\models\video_job.py:114:
+  src\models\video_job.py:115:        if (
+  src\models\video_job.py:116:            self.voice_strategy == VoiceStrategy.MANUAL_UPLOAD
+  src\models\video_job.py:117:            and self.voice_status == VoiceStatus.READY
+  src\models\video_job.py:118:            and not self.voice_file
+  src\models\video_job.py:119:        ):
+  src\models\video_job.py:120:            raise ValueError("Manual voiceover cannot be READY without a file.")
+  src\models\video_job.py:121:
+  src\models\video_job.py:122:        if (
+  src\models\video_job.py:123:            self.voice_strategy == VoiceStrategy.AUTO_GENERATE
+  src\models\video_job.py:124:            and self.voice_status == VoiceStatus.READY
+  src\models\video_job.py:125:            and not self.voice_file
+  src\models\video_job.py:126:        ):
+  src\models\video_job.py:127:            raise ValueError("Generated voiceover cannot be READY without a file.")
+  src\models\video_job.py:128:
+  src\models\video_job.py:129:        if self.audio_timeline is not None and not self.voice_file:
+> src\models\video_job.py:130:            raise ValueError("Audio timeline requires a voiceover file.")
+  src\models\video_job.py:131:
+  src\models\video_job.py:132:        if self.video_timeline is not None and not self.video_clips:
+> src\models\video_job.py:133:            raise ValueError("Video timeline requires ready video clips.")
+  src\models\video_job.py:134:
+  src\models\video_job.py:135:        if self.render_result is not None:
+  src\models\video_job.py:136:            if self.video_timeline is None:
+> src\models\video_job.py:137:                raise ValueError("Render result requires a video timeline.")
+  src\models\video_job.py:138:
+  src\models\video_job.py:139:            if self.audio_timeline is None:
+  src\models\video_job.py:140:                raise ValueError("Render result requires an audio timeline.")
+  src\models\video_job.py:141:
+  src\models\video_job.py:142:        if self.policy_report is not None:
+  src\models\video_job.py:143:            if self.policy_report.source_mode != self.production_mode:
+  src\models\video_job.py:144:                raise ValueError(
+  src\models\video_job.py:145:                    "Policy source_mode must match " "VideoJob production_mode."
+  src\models\video_job.py:146:                )
+  src\models\video_job.py:147:
+  src\models\video_job.py:148:        return self
+
+
+
