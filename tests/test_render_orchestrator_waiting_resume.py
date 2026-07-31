@@ -1028,6 +1028,221 @@ def test_unknown_scene_input_fails_cleanly(
     )
 
 
+def test_explicit_terminal_checkpoint_rejects_stale_resume(
+    tmp_path: Path,
+) -> None:
+    job = build_job()
+
+    storage = build_storage(
+        tmp_path
+    )
+
+    first_service = build_orchestrator(
+        storage=storage,
+        workflow=(
+            WaitingAssetWorkflowService()
+        ),
+        voice_stage=(
+            SuccessfulVoiceStage()
+        ),
+        render_stage=(
+            SuccessfulRenderStage()
+        ),
+    )
+
+    first_result = first_service.execute(
+        job
+    )
+
+    assert first_result.success is False
+
+    waiting_checkpoint = (
+        storage.load_latest(
+            job_id=job.id,
+        )
+    )
+
+    assert waiting_checkpoint is not None
+    assert waiting_checkpoint.resumable is True
+
+    first_upload = (
+        tmp_path
+        / "resolved_scene.mp4"
+    )
+
+    first_upload.write_bytes(
+        b"resolved-scene-video"
+    )
+
+    second_service = build_orchestrator(
+        storage=storage,
+        workflow=(
+            WaitingAssetWorkflowService()
+        ),
+        voice_stage=(
+            SuccessfulVoiceStage()
+        ),
+        render_stage=(
+            SuccessfulRenderStage()
+        ),
+    )
+
+    second_result = second_service.execute(
+        job,
+        checkpoint_id=(
+            waiting_checkpoint
+            .checkpoint_id
+        ),
+        user_input={
+            "asset_decisions": [
+                {
+                    "scene_number": 1,
+                    "decision": (
+                        AssetUserDecision
+                        .MANUAL_UPLOAD
+                        .value
+                    ),
+                    "manual_upload_path": (
+                        str(
+                            first_upload
+                        )
+                    ),
+                },
+            ],
+        },
+    )
+
+    assert second_result.success is True
+
+    terminal_checkpoint = (
+        storage.load_latest(
+            job_id=job.id,
+        )
+    )
+
+    assert terminal_checkpoint is not None
+
+    assert (
+        terminal_checkpoint.resumable
+        is False
+    )
+
+    resolved_state = (
+        job.scene_asset_states[0]
+    )
+
+    assert (
+        resolved_state.selected_candidate
+        is not None
+    )
+
+    original_file_path = (
+        resolved_state
+        .selected_candidate
+        .file_path
+    )
+
+    stale_upload = (
+        tmp_path
+        / "stale_scene.mp4"
+    )
+
+    stale_upload.write_bytes(
+        b"stale-scene-video"
+    )
+
+    stale_workflow = (
+        WaitingAssetWorkflowService()
+    )
+
+    stale_voice = (
+        SuccessfulVoiceStage()
+    )
+
+    stale_render = (
+        SuccessfulRenderStage()
+    )
+
+    stale_service = build_orchestrator(
+        storage=storage,
+        workflow=stale_workflow,
+        voice_stage=stale_voice,
+        render_stage=stale_render,
+    )
+
+    stale_result = stale_service.execute(
+        job,
+        checkpoint_id=(
+            terminal_checkpoint
+            .checkpoint_id
+        ),
+        user_input={
+            "asset_decisions": [
+                {
+                    "scene_number": 1,
+                    "decision": (
+                        AssetUserDecision
+                        .MANUAL_UPLOAD
+                        .value
+                    ),
+                    "manual_upload_path": (
+                        str(
+                            stale_upload
+                        )
+                    ),
+                },
+            ],
+        },
+    )
+
+    assert stale_result.success is False
+
+    assert (
+        "not resumable"
+        in stale_result.errors[-1]
+    )
+
+    assert (
+        stale_result.metadata[
+            "checkpoint_phase"
+        ]
+        == "resume_preparation"
+    )
+
+    # Resume preparation must fail before any pipeline stage executes.
+    assert stale_voice.execution_count == 0
+    assert stale_workflow.start_count == 0
+    assert stale_render.execution_count == 0
+
+    # The stale decision must not replace the already resolved asset.
+    assert (
+        job.scene_asset_states[0]
+        .selected_candidate
+        is not None
+    )
+
+    assert (
+        job.scene_asset_states[0]
+        .selected_candidate
+        .file_path
+        == original_file_path
+    )
+
+    assert (
+        original_file_path
+        == str(
+            first_upload.resolve()
+        )
+    )
+
+    # A rejected stale resume must not create another checkpoint.
+    checkpoints = (
+        storage.list_for_job(
+            job_id=job.id,
+        )
+    )
+
+    assert len(checkpoints) == 2
 def main() -> None:
     print()
     print(

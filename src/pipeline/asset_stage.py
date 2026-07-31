@@ -113,8 +113,8 @@ class AssetPipelineStage(BasePipelineStage):
         )
 
         decisions = (
-            self._extract_decisions(
-                context.user_input
+            self._consume_decisions(
+                context
             )
         )
 
@@ -471,19 +471,24 @@ class AssetPipelineStage(BasePipelineStage):
         )
 
     @classmethod
-    def _extract_decisions(
+    def _consume_decisions(
         cls,
-        user_input: dict[
-            str,
-            Any,
-        ],
-    ) -> list[
-        dict[str, Any]
-    ]:
-        """Extract and validate asset-stage user input."""
+        context: StageContext,
+    ) -> list[dict[str, Any]]:
+        """
+        Claim and validate asset-stage user input.
+
+        Asset decisions are one-shot execution commands. Once claimed by
+        this stage, they are removed from StageContext so an automatic
+        retry or downstream stage cannot accidentally apply the same
+        decision again.
+
+        Domain-specific validation remains owned by this adapter and the
+        existing SceneAssetWorkflowService.
+        """
 
         raw_decisions = (
-            user_input.get(
+            context.consume_user_input(
                 cls.USER_INPUT_KEY
             )
         )
@@ -542,7 +547,6 @@ class AssetPipelineStage(BasePipelineStage):
             )
 
         return decisions
-
     @classmethod
     def _index_decisions(
         cls,

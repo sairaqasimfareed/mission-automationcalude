@@ -1029,6 +1029,11 @@ class RenderOrchestratorService:
                     "Requested pipeline checkpoint "
                     "does not exist."
                 )
+            if not checkpoint.resumable:
+                raise ValueError(
+                    "Requested pipeline checkpoint "
+                    "is not resumable."
+                )
 
             return checkpoint
 
