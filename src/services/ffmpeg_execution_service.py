@@ -137,6 +137,14 @@ class FFmpegExecutionService:
             output_path
         )
 
+        self._cleanup_stale_output(
+            output_path=output_path,
+            overwrite_output=(
+                "-y"
+                in command_plan.arguments
+            ),
+        )
+
         start_time = time.perf_counter()
 
         stdout_lines: list[str] = []
@@ -266,6 +274,11 @@ class FFmpegExecutionService:
                         total_duration_seconds
                     ),
                     message=message,
+                    metadata={
+                        "failure_stage": (
+                            "stream_setup"
+                        ),
+                    },
                 )
             )
 
@@ -282,6 +295,11 @@ class FFmpegExecutionService:
                 stderr="",
                 error_message=message,
                 progress=failed_progress,
+                metadata={
+                    "failure_stage": (
+                        "stream_setup"
+                    ),
+                },
             )
 
         stdout_thread = threading.Thread(
@@ -532,6 +550,14 @@ class FFmpegExecutionService:
                     termination_message
                 ),
                 metadata={
+                    "failure_stage": (
+                        "cancelled"
+                        if (
+                            termination_status
+                            == FFmpegExecutionStatus.CANCELLED
+                        )
+                        else "timeout"
+                    ),
                     "progress": (
                         progress_snapshot
                     ),
@@ -559,6 +585,14 @@ class FFmpegExecutionService:
                 ),
                 progress=failed_progress,
                 metadata={
+                    "failure_stage": (
+                        "cancelled"
+                        if (
+                            termination_status
+                            == FFmpegExecutionStatus.CANCELLED
+                        )
+                        else "timeout"
+                    ),
                     "progress": (
                         progress_snapshot
                     ),
@@ -594,6 +628,9 @@ class FFmpegExecutionService:
                     ),
                     message=error_message,
                     metadata={
+                        "failure_stage": (
+                            "ffmpeg_exit"
+                        ),
                         "progress": (
                             progress_snapshot
                         ),
@@ -626,6 +663,9 @@ class FFmpegExecutionService:
                 ),
                 progress=failed_progress,
                 metadata={
+                    "failure_stage": (
+                        "ffmpeg_exit"
+                    ),
                     "progress": (
                         progress_snapshot
                     ),
@@ -659,6 +699,9 @@ class FFmpegExecutionService:
                     ),
                     message=error_message,
                     metadata={
+                        "failure_stage": (
+                            "output_presence"
+                        ),
                         "progress": (
                             progress_snapshot
                         ),
@@ -719,6 +762,11 @@ class FFmpegExecutionService:
                         total_duration_seconds
                     ),
                     message=error_message,
+                    metadata={
+                        "failure_stage": (
+                            "output_type"
+                        ),
+                    },
                 )
             )
 
@@ -771,6 +819,11 @@ class FFmpegExecutionService:
                         total_duration_seconds
                     ),
                     message=error_message,
+                    metadata={
+                        "failure_stage": (
+                            "output_size"
+                        ),
+                    },
                 )
             )
 
@@ -895,18 +948,100 @@ class FFmpegExecutionService:
     def _prepare_output_directory(
         output_path: Path,
     ) -> None:
-        """Create the parent output directory when required."""
+        """
+        Validate the output path and prepare its parent directory.
+
+        The renderer must never treat a directory as an output file,
+        and an existing parent path must itself be a directory.
+        """
+
+        if not output_path.name:
+            raise ValueError(
+                "FFmpeg output path must contain "
+                "a filename."
+            )
+
+        if (
+            output_path.exists()
+            and output_path.is_dir()
+        ):
+            raise ValueError(
+                "FFmpeg output path points to "
+                "an existing directory: "
+                f"{output_path.as_posix()}."
+            )
 
         parent = output_path.parent
 
         if (
-            str(parent)
-            and str(parent) != "."
+            not str(parent)
+            or str(parent) == "."
         ):
+            return
+
+        if parent.exists():
+            if not parent.is_dir():
+                raise ValueError(
+                    "FFmpeg output parent path "
+                    "is not a directory: "
+                    f"{parent.as_posix()}."
+                )
+
+            return
+
+        try:
             parent.mkdir(
                 parents=True,
                 exist_ok=True,
             )
+        except OSError as error:
+            raise RuntimeError(
+                "Could not create FFmpeg output "
+                "directory "
+                f"'{parent.as_posix()}': "
+                f"{error}"
+            ) from error
+
+    @staticmethod
+    def _cleanup_stale_output(
+        *,
+        output_path: Path,
+        overwrite_output: bool,
+    ) -> None:
+        """
+        Remove an old output before an overwrite-enabled render.
+
+        This prevents output left by an earlier render from being
+        mistaken for output produced by the current execution.
+        """
+
+        if not output_path.exists():
+            return
+
+        if output_path.is_dir():
+            raise ValueError(
+                "FFmpeg output path points to "
+                "a directory and cannot be cleaned: "
+                f"{output_path.as_posix()}."
+            )
+
+        if not overwrite_output:
+            return
+
+        try:
+            output_path.unlink()
+        except OSError as error:
+            raise RuntimeError(
+                "Could not remove stale FFmpeg "
+                "output file "
+                f"'{output_path.as_posix()}': "
+                f"{error}"
+            ) from error
+
+        logger.info(
+            "Removed stale FFmpeg output: %s",
+            output_path.as_posix(),
+        )
 
     @staticmethod
     def _start_process(
@@ -1395,48 +1530,89 @@ class FFmpegExecutionService:
         self,
         process: subprocess.Popen[str],
     ) -> None:
-        """Terminate FFmpeg and escalate to kill if necessary."""
+        """Terminate FFmpeg safely and escalate to kill when required."""
 
-        if process.poll() is not None:
+        existing_exit_code = process.poll()
+
+        if existing_exit_code is not None:
+            logger.debug(
+                "FFmpeg process already exited with code %s.",
+                existing_exit_code,
+            )
             return
 
         try:
             process.terminate()
+        except OSError as error:
+            logger.warning(
+                "Could not request graceful FFmpeg termination: %s",
+                error,
+            )
 
+        try:
             process.wait(
                 timeout=(
                     self._terminate_grace_seconds
                 )
             )
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "FFmpeg did not terminate within %.3f seconds; "
+                "escalating to process kill.",
+                self._terminate_grace_seconds,
+            )
+        except OSError as error:
+            logger.warning(
+                "Could not wait for graceful FFmpeg termination: %s",
+                error,
+            )
 
-            return
+        graceful_exit_code = process.poll()
 
-        except (
-            OSError,
-            subprocess.TimeoutExpired,
-        ):
-            pass
-
-        if process.poll() is not None:
+        if graceful_exit_code is not None:
+            logger.debug(
+                "FFmpeg process terminated with code %s.",
+                graceful_exit_code,
+            )
             return
 
         try:
             process.kill()
+        except OSError as error:
+            logger.error(
+                "Could not kill FFmpeg process: %s",
+                error,
+            )
 
+        try:
             process.wait(
                 timeout=(
                     self._terminate_grace_seconds
                 )
             )
-
-        except (
-            OSError,
-            subprocess.TimeoutExpired,
-        ):
-            logger.exception(
-                "Could not fully terminate "
-                "FFmpeg process."
+        except subprocess.TimeoutExpired:
+            logger.error(
+                "FFmpeg process remained alive %.3f seconds after kill.",
+                self._terminate_grace_seconds,
             )
+        except OSError as error:
+            logger.error(
+                "Could not wait for FFmpeg after kill: %s",
+                error,
+            )
+
+        final_exit_code = process.poll()
+
+        if final_exit_code is None:
+            logger.error(
+                "FFmpeg process could not be confirmed as terminated."
+            )
+            return
+
+        logger.debug(
+            "FFmpeg process killed with exit code %s.",
+            final_exit_code,
+        )
 
     @staticmethod
     def _execution_error_message(

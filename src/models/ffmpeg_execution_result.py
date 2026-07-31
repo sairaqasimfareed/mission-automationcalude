@@ -179,9 +179,7 @@ class FFmpegExecutionResult(MissionBaseModel):
                 self.output_file
             )
 
-            if (
-                path.name == ""
-            ):
+            if path.name == "":
                 raise ValueError(
                     "Output filename is invalid."
                 )
@@ -217,10 +215,135 @@ class FFmpegExecutionResult(MissionBaseModel):
 
     @property
     def command_line(self) -> str:
-        """Return the FFmpeg command as one shell string."""
+        """Return the FFmpeg command as one readable string."""
 
         return " ".join(
             self.ffmpeg_command
+        )
+
+    @property
+    def has_stdout(self) -> bool:
+        """Return whether FFmpeg produced stdout text."""
+
+        return bool(
+            self.stdout.strip()
+        )
+
+    @property
+    def has_stderr(self) -> bool:
+        """Return whether FFmpeg produced stderr text."""
+
+        return bool(
+            self.stderr.strip()
+        )
+
+    @property
+    def stderr_tail(self) -> str:
+        """
+        Return the final diagnostic lines from FFmpeg stderr.
+
+        Full stderr remains preserved on the result. This property is
+        intended for concise logs, UI messages, and diagnostic reports.
+        """
+
+        if not self.stderr:
+            return ""
+
+        lines = [
+            line
+            for line in self.stderr.splitlines()
+            if line.strip()
+        ]
+
+        return "\n".join(
+            lines[-20:]
+        )
+
+    @property
+    def failure_stage(self) -> str | None:
+        """
+        Return the normalized execution failure stage when available.
+
+        Failure stages are supplied by FFmpegExecutionService through
+        result metadata so this model remains provider-independent.
+        """
+
+        value = self.metadata.get(
+            "failure_stage"
+        )
+
+        if not isinstance(
+            value,
+            str,
+        ):
+            return None
+
+        cleaned = value.strip()
+
+        return cleaned or None
+
+    @property
+    def is_timeout(self) -> bool:
+        """Return whether execution terminated because of timeout."""
+
+        return (
+            self.status
+            == FFmpegExecutionStatus.TIMED_OUT
+        )
+
+    @property
+    def is_cancelled(self) -> bool:
+        """Return whether execution was cancelled."""
+
+        return (
+            self.status
+            == FFmpegExecutionStatus.CANCELLED
+        )
+
+    @property
+    def diagnostic_summary(self) -> str:
+        """
+        Return a concise human-readable execution diagnostic.
+
+        This does not replace structured fields such as exit_code,
+        error_message, stderr, status, or metadata.
+        """
+
+        if self.success:
+            output = (
+                self.output_file
+                or "unknown output"
+            )
+
+            return (
+                "FFmpeg execution succeeded "
+                f"with exit code {self.exit_code}: "
+                f"{output}"
+            )
+
+        stage = (
+            self.failure_stage
+            or "unknown"
+        )
+
+        error = (
+            self.error_message
+            or "Unknown FFmpeg execution error."
+        )
+
+        exit_code = (
+            "unknown"
+            if self.exit_code is None
+            else str(
+                self.exit_code
+            )
+        )
+
+        return (
+            "FFmpeg execution failed "
+            f"during {stage} "
+            f"(exit code {exit_code}): "
+            f"{error}"
         )
 
     @classmethod
