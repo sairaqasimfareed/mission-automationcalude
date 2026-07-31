@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import time
 from collections.abc import Iterable
+from pathlib import Path
+from typing import Any
+from uuid import UUID
 
 from src.models.advanced_settings import (
     AdvancedSettings,
@@ -15,7 +18,13 @@ from src.models.render_orchestration_result import (
 )
 from src.models.video_job import VideoJob
 from src.pipeline.base_stage import BasePipelineStage
+from src.pipeline.pipeline_checkpoint import (
+    PipelineCheckpoint,
+)
 from src.pipeline.pipeline_engine import PipelineEngine
+from src.pipeline.pipeline_resume_plan import (
+    PipelineResumePlan,
+)
 from src.pipeline.pipeline_runner import PipelineRunner
 from src.pipeline.pipeline_stage import (
     PipelineStageName,
@@ -23,6 +32,15 @@ from src.pipeline.pipeline_stage import (
 )
 from src.pipeline.stage_context import StageContext
 from src.pipeline.stage_result import StageResult
+from src.services.pipeline_checkpoint_service import (
+    PipelineCheckpointService,
+)
+from src.services.pipeline_checkpoint_storage_service import (
+    PipelineCheckpointStorageService,
+)
+from src.services.pipeline_resume_planner_service import (
+    PipelineResumePlannerService,
+)
 
 
 class RenderOrchestratorService:
@@ -30,22 +48,24 @@ class RenderOrchestratorService:
     Coordinate render workflow execution through the existing pipeline
     framework.
 
-    This service intentionally does not implement individual production
-    stages. Concrete BasePipelineStage implementations remain responsible
-    for voice, asset, timeline, render, and export work.
+    Concrete BasePipelineStage implementations remain responsible for
+    voice, asset, timeline, render, export, and other production work.
 
     Responsibilities:
     - register existing pipeline stages in deterministic order;
     - execute them through PipelineEngine;
-    - apply existing AdvancedSettings execution policy;
+    - apply AdvancedSettings execution policy;
+    - optionally restore execution from a persisted checkpoint;
+    - build deterministic resume plans;
+    - optionally persist the resulting pipeline checkpoint;
     - synchronize pipeline state with VideoJob lifecycle state;
     - aggregate warnings and errors;
     - normalize the final outcome as RenderOrchestrationResult.
 
-    Retry execution is delegated to PipelineRunner.
+    Retry execution remains delegated to PipelineRunner.
 
-    Resume, checkpoint persistence, and conditional stage skipping are
-    handled by later orchestration sprints.
+    Checkpoint construction, persistence, and resume planning remain
+    delegated to their dedicated services.
     """
 
     def __init__(
@@ -53,6 +73,18 @@ class RenderOrchestratorService:
         *,
         stages: Iterable[BasePipelineStage],
         advanced_settings: AdvancedSettings | None = None,
+        checkpoint_storage_service: (
+            PipelineCheckpointStorageService
+            | None
+        ) = None,
+        checkpoint_service: (
+            PipelineCheckpointService
+            | None
+        ) = None,
+        resume_planner_service: (
+            PipelineResumePlannerService
+            | None
+        ) = None,
     ) -> None:
         stage_list = list(
             stages
@@ -70,6 +102,20 @@ class RenderOrchestratorService:
 
         self._advanced_settings = (
             advanced_settings
+        )
+
+        self._checkpoint_storage_service = (
+            checkpoint_storage_service
+        )
+
+        self._checkpoint_service = (
+            checkpoint_service
+            or PipelineCheckpointService()
+        )
+
+        self._resume_planner_service = (
+            resume_planner_service
+            or PipelineResumePlannerService()
         )
 
         runner = PipelineRunner(
@@ -108,11 +154,21 @@ class RenderOrchestratorService:
 
         return self._advanced_settings
 
+    @property
+    def checkpoint_storage_service(
+        self,
+    ) -> PipelineCheckpointStorageService | None:
+        """Return configured checkpoint persistence service."""
+
+        return self._checkpoint_storage_service
+
     def execute(
         self,
         job: VideoJob,
         *,
         dry_run: bool = False,
+        checkpoint_id: UUID | None = None,
+        user_input: dict[str, Any] | None = None,
     ) -> RenderOrchestrationResult:
         """
         Execute the registered render workflow for one VideoJob.
@@ -121,9 +177,14 @@ class RenderOrchestratorService:
         authoritative execution mode. Otherwise the explicit execute()
         argument preserves historical behavior.
 
-        Exceptions raised by pipeline stages are normalized into failed
-        orchestration results instead of crossing the public orchestration
-        boundary.
+        When checkpoint persistence is configured and resume is enabled,
+        execution may resume from either:
+        - an explicitly requested checkpoint_id; or
+        - the latest persisted checkpoint for the supplied VideoJob.
+
+        Exceptions raised by pipeline stages or checkpoint orchestration
+        are normalized into failed orchestration results instead of
+        crossing the public orchestration boundary.
         """
 
         start_time = (
@@ -137,20 +198,112 @@ class RenderOrchestratorService:
             else dry_run
         )
 
+        loaded_checkpoint: (
+            PipelineCheckpoint
+            | None
+        ) = None
+
+        resume_plan: (
+            PipelineResumePlan
+            | None
+        ) = None
+
+        try:
+            loaded_checkpoint = (
+                self._load_resume_checkpoint(
+                    job=job,
+                    checkpoint_id=checkpoint_id,
+                )
+            )
+
+            if loaded_checkpoint is not None:
+                resume_plan = (
+                    self._build_resume_plan(
+                        job=job,
+                        checkpoint=(
+                            loaded_checkpoint
+                        ),
+                    )
+                )
+
+        except Exception as error:
+            elapsed_seconds = (
+                time.perf_counter()
+                - start_time
+            )
+
+            message = (
+                self._checkpoint_exception_message(
+                    error
+                )
+            )
+
+            self._append_unique(
+                job.errors,
+                message,
+            )
+
+            job.status = (
+                JobStatus.FAILED
+            )
+
+            failed_stage = (
+                self._current_workflow_stage(
+                    job
+                )
+            )
+
+            job.current_stage = (
+                failed_stage
+            )
+
+            return (
+                RenderOrchestrationResult
+                .failed(
+                    job=job,
+                    failed_stage=(
+                        failed_stage
+                    ),
+                    completed_stages=[],
+                    elapsed_seconds=(
+                        elapsed_seconds
+                    ),
+                    error_message=(
+                        message
+                    ),
+                    warnings=list(
+                        job.warnings
+                    ),
+                    metadata={
+                        "dry_run": (
+                            effective_dry_run
+                        ),
+                        "exception_type": (
+                            type(
+                                error
+                            ).__name__
+                        ),
+                        "checkpoint_phase": (
+                            "resume_preparation"
+                        ),
+                    },
+                )
+            )
+
         job.status = (
             JobStatus.RUNNING
         )
 
-        starting_stage = (
-            self._workflow_stage_for_pipeline_stage(
-                self._runner.stages[
-                    0
-                ].stage_name
+        starting_pipeline_stage = (
+            self._starting_pipeline_stage(
+                resume_plan
             )
         )
 
         job.current_stage = (
-            starting_stage
+            self._workflow_stage_for_pipeline_stage(
+                starting_pipeline_stage
+            )
         )
 
         try:
@@ -158,6 +311,12 @@ class RenderOrchestratorService:
                 job,
                 dry_run=(
                     effective_dry_run
+                ),
+                resume_plan=(
+                    resume_plan
+                ),
+                user_input=(
+                    user_input
                 ),
             )
 
@@ -218,6 +377,21 @@ class RenderOrchestratorService:
                                 error
                             ).__name__
                         ),
+                        "resumed": (
+                            resume_plan
+                            is not None
+                            and resume_plan
+                            .resume_enabled
+                        ),
+                        "loaded_checkpoint_id": (
+                            str(
+                                loaded_checkpoint
+                                .checkpoint_id
+                            )
+                            if loaded_checkpoint
+                            is not None
+                            else None
+                        ),
                     },
                 )
             )
@@ -232,8 +406,105 @@ class RenderOrchestratorService:
             context=context,
         )
 
+        persisted_checkpoint: (
+            PipelineCheckpoint
+            | None
+        ) = None
+
+        try:
+            persisted_checkpoint = (
+                self._persist_checkpoint_if_enabled(
+                    job=job,
+                    context=context,
+                    loaded_checkpoint=(
+                        loaded_checkpoint
+                    ),
+                    resume_plan=resume_plan,
+                    dry_run=(
+                        effective_dry_run
+                    ),
+                )
+            )
+
+        except Exception as error:
+            message = (
+                self._checkpoint_exception_message(
+                    error
+                )
+            )
+
+            self._append_unique(
+                job.errors,
+                message,
+            )
+
+            job.status = (
+                JobStatus.FAILED
+            )
+
+            failed_stage = (
+                self._workflow_stage_for_pipeline_stage(
+                    context
+                    .pipeline_state
+                    .current_stage
+                )
+            )
+
+            job.current_stage = (
+                failed_stage
+            )
+
+            return (
+                RenderOrchestrationResult
+                .failed(
+                    job=job,
+                    failed_stage=(
+                        failed_stage
+                    ),
+                    completed_stages=(
+                        self._completed_workflow_stages(
+                            context
+                            .pipeline_state
+                            .stages
+                        )
+                    ),
+                    elapsed_seconds=(
+                        elapsed_seconds
+                    ),
+                    error_message=(
+                        message
+                    ),
+                    warnings=list(
+                        job.warnings
+                    ),
+                    metadata=(
+                        self._build_metadata(
+                            context=context,
+                            dry_run=(
+                                effective_dry_run
+                            ),
+                            loaded_checkpoint=(
+                                loaded_checkpoint
+                            ),
+                            persisted_checkpoint=None,
+                            resume_plan=(
+                                resume_plan
+                            ),
+                        )
+                    ),
+                )
+            )
+
         failed_result = (
             self._first_failed_result(
+                context
+                .pipeline_state
+                .stages
+            )
+        )
+
+        waiting_result = (
+            self._first_waiting_result(
                 context
                 .pipeline_state
                 .stages
@@ -309,6 +580,100 @@ class RenderOrchestratorService:
                             dry_run=(
                                 effective_dry_run
                             ),
+                            loaded_checkpoint=(
+                                loaded_checkpoint
+                            ),
+                            persisted_checkpoint=(
+                                persisted_checkpoint
+                            ),
+                            resume_plan=(
+                                resume_plan
+                            ),
+                        )
+                    ),
+                )
+            )
+
+        if waiting_result is not None:
+            waiting_stage = (
+                self._workflow_stage_for_pipeline_stage(
+                    waiting_result.stage
+                )
+            )
+
+            completed_stages = (
+                self._without_stage(
+                    completed_stages,
+                    waiting_stage,
+                )
+            )
+
+            message = (
+                waiting_result.warnings[-1]
+                if waiting_result.warnings
+                else (
+                    "Pipeline execution is waiting "
+                    "for user input."
+                )
+            )
+
+            self._append_unique(
+                job.warnings,
+                message,
+            )
+
+            # WAITING_FOR_USER is represented at the orchestration
+            # boundary as a resumable failed result. Keep the VideoJob
+            # lifecycle synchronized with RenderOrchestrationResult so
+            # the result model's cross-object status invariant remains
+            # valid.
+            #
+            # The checkpoint still records waiting_stage separately,
+            # therefore FAILED here does not lose the semantic
+            # distinction between a terminal pipeline failure and a
+            # resumable user-input wait.
+            job.status = (
+                JobStatus.FAILED
+            )
+
+            job.current_stage = (
+                waiting_stage
+            )
+
+            return (
+                RenderOrchestrationResult
+                .failed(
+                    job=job,
+                    failed_stage=(
+                        waiting_stage
+                    ),
+                    completed_stages=(
+                        completed_stages
+                    ),
+                    elapsed_seconds=(
+                        elapsed_seconds
+                    ),
+                    error_message=(
+                        message
+                    ),
+                    warnings=list(
+                        job.warnings
+                    ),
+                    metadata=(
+                        self._build_metadata(
+                            context=context,
+                            dry_run=(
+                                effective_dry_run
+                            ),
+                            loaded_checkpoint=(
+                                loaded_checkpoint
+                            ),
+                            persisted_checkpoint=(
+                                persisted_checkpoint
+                            ),
+                            resume_plan=(
+                                resume_plan
+                            ),
                         )
                     ),
                 )
@@ -319,6 +684,61 @@ class RenderOrchestratorService:
             .pipeline_state
             .stages
         ):
+            if (
+                resume_plan is not None
+                and not resume_plan.resume_enabled
+                and not resume_plan.execution_stages
+                and loaded_checkpoint is not None
+            ):
+                if (
+                    job.render_result
+                    is not None
+                    and job.render_result.success
+                ):
+                    job.status = (
+                        JobStatus.COMPLETED
+                    )
+
+                    job.current_stage = (
+                        WorkflowStage
+                        .READY_FOR_UPLOAD
+                    )
+
+                    return (
+                        RenderOrchestrationResult
+                        .succeeded(
+                            job=job,
+                            completed_stages=(
+                                self._checkpoint_completed_workflow_stages(
+                                    loaded_checkpoint
+                                )
+                            ),
+                            elapsed_seconds=(
+                                elapsed_seconds
+                            ),
+                            warnings=list(
+                                job.warnings
+                            ),
+                            metadata=(
+                                self._build_metadata(
+                                    context=context,
+                                    dry_run=(
+                                        effective_dry_run
+                                    ),
+                                    loaded_checkpoint=(
+                                        loaded_checkpoint
+                                    ),
+                                    persisted_checkpoint=(
+                                        persisted_checkpoint
+                                    ),
+                                    resume_plan=(
+                                        resume_plan
+                                    ),
+                                )
+                            ),
+                        )
+                    )
+
             message = (
                 "Render orchestration completed "
                 "without executing any stages."
@@ -359,6 +779,15 @@ class RenderOrchestratorService:
                             context=context,
                             dry_run=(
                                 effective_dry_run
+                            ),
+                            loaded_checkpoint=(
+                                loaded_checkpoint
+                            ),
+                            persisted_checkpoint=(
+                                persisted_checkpoint
+                            ),
+                            resume_plan=(
+                                resume_plan
                             ),
                         )
                     ),
@@ -422,6 +851,15 @@ class RenderOrchestratorService:
                             context=context,
                             dry_run=(
                                 effective_dry_run
+                            ),
+                            loaded_checkpoint=(
+                                loaded_checkpoint
+                            ),
+                            persisted_checkpoint=(
+                                persisted_checkpoint
+                            ),
+                            resume_plan=(
+                                resume_plan
                             ),
                         )
                     ),
@@ -492,6 +930,15 @@ class RenderOrchestratorService:
                             dry_run=(
                                 effective_dry_run
                             ),
+                            loaded_checkpoint=(
+                                loaded_checkpoint
+                            ),
+                            persisted_checkpoint=(
+                                persisted_checkpoint
+                            ),
+                            resume_plan=(
+                                resume_plan
+                            ),
                         )
                     ),
                 )
@@ -525,9 +972,187 @@ class RenderOrchestratorService:
                         dry_run=(
                             effective_dry_run
                         ),
+                        loaded_checkpoint=(
+                            loaded_checkpoint
+                        ),
+                        persisted_checkpoint=(
+                            persisted_checkpoint
+                        ),
+                        resume_plan=(
+                            resume_plan
+                        ),
                     )
                 ),
             )
+        )
+
+    def _load_resume_checkpoint(
+        self,
+        *,
+        job: VideoJob,
+        checkpoint_id: UUID | None,
+    ) -> PipelineCheckpoint | None:
+        """
+        Resolve the checkpoint that should participate in this execution.
+
+        Persistence and automatic resume are opt-in orchestration features:
+        both AdvancedSettings and a storage service must be configured.
+        """
+
+        settings = (
+            self._advanced_settings
+        )
+
+        storage = (
+            self._checkpoint_storage_service
+        )
+
+        if (
+            settings is None
+            or storage is None
+        ):
+            return None
+
+        if not settings.resume_previous_pipeline:
+            return None
+
+        if checkpoint_id is not None:
+            checkpoint = storage.load(
+                job_id=job.id,
+                checkpoint_id=(
+                    checkpoint_id
+                ),
+            )
+
+            if checkpoint is None:
+                raise ValueError(
+                    "Requested pipeline checkpoint "
+                    "does not exist."
+                )
+
+            return checkpoint
+
+        return storage.load_latest(
+            job_id=job.id,
+        )
+
+    def _build_resume_plan(
+        self,
+        *,
+        job: VideoJob,
+        checkpoint: PipelineCheckpoint,
+    ) -> PipelineResumePlan:
+        """Build the execution plan for one restored checkpoint."""
+
+        settings = (
+            self._advanced_settings
+        )
+
+        if settings is None:
+            raise RuntimeError(
+                "Resume planning requires "
+                "AdvancedSettings."
+            )
+
+        return (
+            self._resume_planner_service
+            .create_plan(
+                job=job,
+                checkpoint=checkpoint,
+                stages=self._runner.stages,
+                settings=settings,
+            )
+        )
+
+    def _persist_checkpoint_if_enabled(
+        self,
+        *,
+        job: VideoJob,
+        context: StageContext,
+        loaded_checkpoint: PipelineCheckpoint | None,
+        resume_plan: PipelineResumePlan | None,
+        dry_run: bool,
+    ) -> PipelineCheckpoint | None:
+        """
+        Create and persist the current execution checkpoint when enabled.
+
+        When execution resumed from an earlier checkpoint, that checkpoint
+        is supplied to PipelineCheckpointService so historical completed
+        stages and execution results remain available in the new snapshot.
+        """
+
+        settings = (
+            self._advanced_settings
+        )
+
+        storage = (
+            self._checkpoint_storage_service
+        )
+
+        if (
+            settings is None
+            or storage is None
+            or not settings.save_pipeline_state
+        ):
+            return None
+
+        checkpoint = (
+            self._checkpoint_service
+            .create(
+                job=job,
+                pipeline_state=(
+                    context.pipeline_state
+                ),
+                metadata={
+                    "dry_run": dry_run,
+                    "resumed": (
+                        resume_plan
+                        is not None
+                        and resume_plan
+                        .resume_enabled
+                    ),
+                    "source_checkpoint_id": (
+                        str(
+                            loaded_checkpoint
+                            .checkpoint_id
+                        )
+                        if loaded_checkpoint
+                        is not None
+                        else None
+                    ),
+                },
+                previous_checkpoint=(
+                    loaded_checkpoint
+                ),
+            )
+        )
+
+        storage.save(
+            checkpoint
+        )
+
+        return checkpoint
+
+    def _starting_pipeline_stage(
+        self,
+        resume_plan: PipelineResumePlan | None,
+    ) -> PipelineStageName:
+        """Resolve the public execution starting point."""
+
+        if (
+            resume_plan is not None
+            and resume_plan.resume_enabled
+            and resume_plan.resume_stage
+            is not None
+        ):
+            return (
+                resume_plan.resume_stage
+            )
+
+        return (
+            self._runner
+            .stages[0]
+            .stage_name
         )
 
     @staticmethod
@@ -569,14 +1194,32 @@ class RenderOrchestratorService:
             StageResult
         ],
     ) -> StageResult | None:
-        """
-        Return the first pipeline stage that explicitly reported failure.
-        """
+        """Return the first stage that explicitly reported failure."""
 
         for result in results:
             if (
                 result.status
                 == PipelineStageStatus.FAILED
+            ):
+                return result
+
+        return None
+
+    @staticmethod
+    def _first_waiting_result(
+        results: list[
+            StageResult
+        ],
+    ) -> StageResult | None:
+        """Return the first stage waiting for user input."""
+
+        for result in results:
+            if (
+                result.status
+                == (
+                    PipelineStageStatus
+                    .WAITING_FOR_USER
+                )
             ):
                 return result
 
@@ -624,6 +1267,37 @@ class RenderOrchestratorService:
 
         return completed
 
+    @classmethod
+    def _checkpoint_completed_workflow_stages(
+        cls,
+        checkpoint: PipelineCheckpoint,
+    ) -> list[WorkflowStage]:
+        """Translate checkpoint-completed stages to public workflow stages."""
+
+        completed: list[
+            WorkflowStage
+        ] = []
+
+        for pipeline_stage in (
+            checkpoint.completed_stages
+        ):
+            workflow_stage = (
+                cls
+                ._workflow_stage_for_pipeline_stage(
+                    pipeline_stage
+                )
+            )
+
+            if (
+                workflow_stage
+                not in completed
+            ):
+                completed.append(
+                    workflow_stage
+                )
+
+        return completed
+
     @staticmethod
     def _without_stage(
         stages: list[
@@ -636,11 +1310,6 @@ class RenderOrchestratorService:
         """
         Return completed stages excluding an orchestration-level failed
         stage.
-
-        A pipeline adapter may report COMPLETED while a later
-        orchestration invariant reveals that its output is unusable.
-        In that case the same workflow stage must not appear as both
-        completed and failed.
         """
 
         return [
@@ -657,9 +1326,7 @@ class RenderOrchestratorService:
         job: VideoJob,
         context: StageContext,
     ) -> None:
-        """
-        Copy unique pipeline diagnostics onto the central VideoJob.
-        """
+        """Copy unique pipeline diagnostics onto the central VideoJob."""
 
         for warning in (
             context
@@ -707,20 +1374,18 @@ class RenderOrchestratorService:
         *,
         context: StageContext,
         dry_run: bool,
+        loaded_checkpoint: PipelineCheckpoint | None = None,
+        persisted_checkpoint: PipelineCheckpoint | None = None,
+        resume_plan: PipelineResumePlan | None = None,
     ) -> dict[
         str,
         object,
     ]:
-        """
-        Build stable orchestration diagnostics from existing pipeline
-        state.
-        """
+        """Build stable orchestration and checkpoint diagnostics."""
 
         return {
             "dry_run": dry_run,
-            (
-                "pipeline_progress_percent"
-            ): (
+            "pipeline_progress_percent": (
                 context
                 .pipeline_state
                 .overall_progress
@@ -730,9 +1395,7 @@ class RenderOrchestratorService:
                 .pipeline_state
                 .stages
             ),
-            (
-                "pipeline_completed_stage_count"
-            ): (
+            "pipeline_completed_stage_count": (
                 context
                 .pipeline_state
                 .completed_stages
@@ -741,6 +1404,43 @@ class RenderOrchestratorService:
                 context
                 .job
                 .retry_count
+            ),
+            "resumed": (
+                resume_plan
+                is not None
+                and resume_plan
+                .resume_enabled
+            ),
+            "resume_stage": (
+                resume_plan
+                .resume_stage
+                .value
+                if (
+                    resume_plan
+                    is not None
+                    and resume_plan
+                    .resume_stage
+                    is not None
+                )
+                else None
+            ),
+            "loaded_checkpoint_id": (
+                str(
+                    loaded_checkpoint
+                    .checkpoint_id
+                )
+                if loaded_checkpoint
+                is not None
+                else None
+            ),
+            "persisted_checkpoint_id": (
+                str(
+                    persisted_checkpoint
+                    .checkpoint_id
+                )
+                if persisted_checkpoint
+                is not None
+                else None
             ),
         }
 
@@ -763,13 +1463,7 @@ class RenderOrchestratorService:
     def _workflow_stage_for_pipeline_stage(
         stage: PipelineStageName,
     ) -> WorkflowStage:
-        """
-        Map internal pipeline-stage names onto the existing VideoJob
-        workflow-stage vocabulary.
-
-        Multiple lower-level editing pipeline stages intentionally map
-        to the same public EDITING workflow stage.
-        """
+        """Map internal pipeline stages onto public VideoJob stages."""
 
         mapping: dict[
             PipelineStageName,
@@ -826,9 +1520,7 @@ class RenderOrchestratorService:
         values: list[str],
         value: str,
     ) -> None:
-        """
-        Append one normalized diagnostic message exactly once.
-        """
+        """Append one normalized diagnostic message exactly once."""
 
         cleaned = (
             value.strip()
@@ -847,10 +1539,7 @@ class RenderOrchestratorService:
     def _exception_message(
         error: Exception,
     ) -> str:
-        """
-        Normalize an unexpected stage exception into a stable public
-        diagnostic message.
-        """
+        """Normalize an unexpected stage exception."""
 
         detail = str(
             error
@@ -867,5 +1556,29 @@ class RenderOrchestratorService:
         return (
             "Render orchestration stage "
             f"raised "
+            f"{type(error).__name__}."
+        )
+
+    @staticmethod
+    def _checkpoint_exception_message(
+        error: Exception,
+    ) -> str:
+        """Normalize checkpoint/resume infrastructure failures."""
+
+        detail = str(
+            error
+        ).strip()
+
+        if detail:
+            return (
+                "Render orchestration checkpoint "
+                f"operation raised "
+                f"{type(error).__name__}: "
+                f"{detail}"
+            )
+
+        return (
+            "Render orchestration checkpoint "
+            f"operation raised "
             f"{type(error).__name__}."
         )
