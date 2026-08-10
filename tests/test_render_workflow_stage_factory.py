@@ -30,6 +30,9 @@ from src.pipeline.voice_stage import (
 from src.services.genre_timeline_pipeline_service import (
     GenreTimelinePipelineService,
 )
+from src.services.production_render_service import (
+    ProductionRenderService,
+)
 from src.services.render_service import (
     RenderService,
 )
@@ -105,7 +108,18 @@ def _blueprint(
 def _factory(
     *,
     render_service: RenderService | None = None,
+    production_render_service: (
+        ProductionRenderService | None
+    ) = None,
 ) -> RenderWorkflowStageFactory:
+    """
+    Build the render workflow factory with typed identity dependencies.
+
+    A caller may explicitly choose either the legacy dry-run renderer
+    or the production renderer. Supplying neither exercises the normal
+    production-default composition.
+    """
+
     return RenderWorkflowStageFactory(
         voice_generation_service=_dependency(
             VoiceGenerationService
@@ -120,6 +134,9 @@ def _factory(
             GenreTimelinePipelineService
         ),
         render_service=render_service,
+        production_render_service=(
+            production_render_service
+        ),
     )
 
 
@@ -184,6 +201,109 @@ def test_factory_preserves_injected_dependencies() -> None:
         factory.render_service
         is render_service
     )
+
+    assert (
+        factory.production_render_service
+        is None
+    )
+
+    assert (
+        factory.production_render_enabled
+        is False
+    )
+
+
+def test_factory_enables_production_render_by_default() -> None:
+    factory = _factory()
+
+    assert (
+        factory.production_render_enabled
+        is True
+    )
+
+    assert (
+        factory.production_render_service
+        is not None
+    )
+
+    assert (
+        isinstance(
+            factory.production_render_service,
+            ProductionRenderService,
+        )
+    )
+
+    assert (
+        factory.render_service
+        is None
+    )
+
+
+def test_factory_preserves_explicit_legacy_renderer() -> None:
+    legacy_render_service = RenderService()
+
+    factory = _factory(
+        render_service=legacy_render_service,
+    )
+
+    assert (
+        factory.production_render_enabled
+        is False
+    )
+
+    assert (
+        factory.production_render_service
+        is None
+    )
+
+    assert (
+        factory.render_service
+        is legacy_render_service
+    )
+
+
+def test_factory_preserves_explicit_production_renderer() -> None:
+    production_render_service = (
+        ProductionRenderService()
+    )
+
+    factory = _factory(
+        production_render_service=(
+            production_render_service
+        ),
+    )
+
+    assert (
+        factory.production_render_enabled
+        is True
+    )
+
+    assert (
+        factory.production_render_service
+        is production_render_service
+    )
+
+    assert (
+        factory.render_service
+        is None
+    )
+
+
+def test_factory_rejects_two_render_engines() -> None:
+    with pytest.raises(
+        ValueError,
+        match=(
+            "Render workflow stage factory cannot "
+            "configure both legacy and production "
+            "render services"
+        ),
+    ):
+        _factory(
+            render_service=RenderService(),
+            production_render_service=(
+                ProductionRenderService()
+            ),
+        )
 
 
 def test_build_returns_required_stage_order() -> None:
@@ -295,6 +415,48 @@ def test_build_preserves_job_specific_voice_blueprints() -> None:
             first_blueprint,
             second_blueprint,
         ]
+    )
+
+
+def test_build_passes_voice_blueprints_to_production_render_stage() -> None:
+    factory = _factory()
+
+    first_blueprint = _blueprint(
+        scene_number=1,
+    )
+
+    second_blueprint = _blueprint(
+        scene_number=2,
+    )
+
+    blueprints = [
+        first_blueprint,
+        second_blueprint,
+    ]
+
+    stages = factory.build(
+        voice_blueprints=blueprints,
+        genre_id="documentary",
+    )
+
+    render_stage = cast(
+        RenderPipelineStage,
+        stages[3],
+    )
+
+    assert (
+        render_stage.production_render_enabled
+        is True
+    )
+
+    assert (
+        render_stage._voice_blueprints
+        == blueprints
+    )
+
+    assert (
+        render_stage._voice_blueprints
+        is not blueprints
     )
 
 
@@ -423,7 +585,7 @@ def test_build_copies_timeline_overrides() -> None:
     )
 
 
-def test_build_uses_injected_render_service() -> None:
+def test_build_uses_injected_legacy_render_service() -> None:
     render_service = _dependency(
         RenderService
     )
@@ -449,8 +611,18 @@ def test_build_uses_injected_render_service() -> None:
         is render_service
     )
 
+    assert (
+        render_stage.production_render_enabled
+        is False
+    )
 
-def test_build_creates_default_render_service_when_not_injected() -> None:
+    assert (
+        render_stage._voice_blueprints
+        == []
+    )
+
+
+def test_build_uses_production_renderer_by_default() -> None:
     factory = _factory()
 
     stages = factory.build(
@@ -465,9 +637,48 @@ def test_build_creates_default_render_service_when_not_injected() -> None:
         stages[3],
     )
 
-    assert isinstance(
-        render_stage._render_service,
-        RenderService,
+    assert (
+        render_stage.production_render_enabled
+        is True
+    )
+
+    assert (
+        render_stage._production_render_service
+        is factory.production_render_service
+    )
+
+
+def test_build_uses_explicit_production_renderer() -> None:
+    production_render_service = (
+        ProductionRenderService()
+    )
+
+    factory = _factory(
+        production_render_service=(
+            production_render_service
+        ),
+    )
+
+    stages = factory.build(
+        voice_blueprints=[
+            _blueprint(),
+        ],
+        genre_id="documentary",
+    )
+
+    render_stage = cast(
+        RenderPipelineStage,
+        stages[3],
+    )
+
+    assert (
+        render_stage.production_render_enabled
+        is True
+    )
+
+    assert (
+        render_stage._production_render_service
+        is production_render_service
     )
 
 

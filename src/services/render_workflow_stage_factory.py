@@ -6,13 +6,18 @@ from src.models.editing_directives import (
 from src.models.resolved_voice_blueprint import (
     ResolvedVoiceBlueprint,
 )
-from src.pipeline.base_stage import BasePipelineStage
 from src.pipeline.asset_stage import AssetPipelineStage
+from src.pipeline.base_stage import BasePipelineStage
 from src.pipeline.render_stage import RenderPipelineStage
-from src.pipeline.timeline_stage import TimelinePipelineStage
+from src.pipeline.timeline_stage import (
+    TimelinePipelineStage,
+)
 from src.pipeline.voice_stage import VoicePipelineStage
 from src.services.genre_timeline_pipeline_service import (
     GenreTimelinePipelineService,
+)
+from src.services.production_render_service import (
+    ProductionRenderService,
 )
 from src.services.render_service import RenderService
 from src.services.scene_asset_workflow_service import (
@@ -28,16 +33,20 @@ from src.services.voice_timeline_service import (
 
 class RenderWorkflowStageFactory:
     """
-    Build the per-execution render workflow stage collection.
+    Build the ordered per-execution render workflow.
 
-    Shared services are injected into the factory once.
+    Production rendering is the default composition.
 
-    Job-specific values such as resolved voice blueprints and the
-    genre-profile identifier remain explicit build-time inputs.
+    The legacy RenderService may still be injected explicitly for
+    isolated dry-run or compatibility workflows.
 
-    The factory performs composition only. Voice generation, asset
-    selection, timeline construction, rendering, checkpointing, retries,
-    and resume behavior remain owned by their existing services.
+    Shared services are injected into the factory once. Job-specific
+    values such as resolved voice blueprints and the genre identifier
+    remain explicit build-time inputs.
+
+    The factory performs composition only. It does not execute voice
+    generation, asset selection, timeline construction, rendering,
+    checkpointing, retries, or resume behavior.
     """
 
     def __init__(
@@ -48,50 +57,117 @@ class RenderWorkflowStageFactory:
         asset_workflow_service: SceneAssetWorkflowService,
         genre_timeline_service: GenreTimelinePipelineService,
         render_service: RenderService | None = None,
+        production_render_service: (
+            ProductionRenderService | None
+        ) = None,
     ) -> None:
+        if (
+            render_service is not None
+            and production_render_service
+            is not None
+        ):
+            raise ValueError(
+                "Render workflow stage factory cannot "
+                "configure both legacy and production "
+                "render services."
+            )
+
         self._voice_generation_service = (
             voice_generation_service
         )
+
         self._voice_timeline_service = (
             voice_timeline_service
         )
+
         self._asset_workflow_service = (
             asset_workflow_service
         )
+
         self._genre_timeline_service = (
             genre_timeline_service
         )
-        self._render_service = render_service
+
+        self._render_service = (
+            render_service
+        )
+
+        if render_service is not None:
+            self._production_render_service = (
+                None
+            )
+        else:
+            self._production_render_service = (
+                production_render_service
+                or ProductionRenderService()
+            )
 
     @property
     def voice_generation_service(
         self,
     ) -> VoiceGenerationService:
+        """Return the configured voice-generation service."""
+
         return self._voice_generation_service
 
     @property
     def voice_timeline_service(
         self,
     ) -> VoiceTimelineService:
+        """Return the configured voice-timeline service."""
+
         return self._voice_timeline_service
 
     @property
     def asset_workflow_service(
         self,
     ) -> SceneAssetWorkflowService:
+        """Return the configured scene-asset workflow."""
+
         return self._asset_workflow_service
 
     @property
     def genre_timeline_service(
         self,
     ) -> GenreTimelinePipelineService:
+        """Return the configured genre-aware timeline service."""
+
         return self._genre_timeline_service
 
     @property
     def render_service(
         self,
     ) -> RenderService | None:
+        """
+        Return the explicitly configured legacy renderer.
+
+        None is expected for normal production composition.
+        """
+
         return self._render_service
+
+    @property
+    def production_render_service(
+        self,
+    ) -> ProductionRenderService | None:
+        """
+        Return the production renderer.
+
+        Normal factory construction creates this renderer by default.
+        """
+
+        return self._production_render_service
+
+    @property
+    def production_render_enabled(
+        self,
+    ) -> bool:
+        """Return whether real FFmpeg production rendering is enabled."""
+
+        return (
+            self._production_render_service
+            is not None
+        )
 
     def build(
         self,
@@ -119,8 +195,10 @@ class RenderWorkflowStageFactory:
         -> VIDEO_TIMELINE
         -> RENDER
 
-        Constructor validation remains delegated to the existing stage
-        implementations.
+        Production composition passes the same resolved voice
+        blueprints used by the voice stage into the production render
+        stage so subtitle execution remains based on the authoritative
+        voice-resolution result.
         """
 
         voice_stage = VoicePipelineStage(
@@ -131,7 +209,9 @@ class RenderWorkflowStageFactory:
             timeline_service=(
                 self._voice_timeline_service
             ),
-            provider_name=voice_provider_name,
+            provider_name=(
+                voice_provider_name
+            ),
         )
 
         asset_stage = AssetPipelineStage(
@@ -148,7 +228,9 @@ class RenderWorkflowStageFactory:
             overrides_by_scene=(
                 overrides_by_scene
             ),
-            output_resolution=output_resolution,
+            output_resolution=(
+                output_resolution
+            ),
             frame_rate=frame_rate,
             warn_on_blueprint_fallbacks=(
                 warn_on_blueprint_fallbacks
@@ -156,7 +238,18 @@ class RenderWorkflowStageFactory:
         )
 
         render_stage = RenderPipelineStage(
-            render_service=self._render_service,
+            render_service=(
+                self._render_service
+            ),
+            production_render_service=(
+                self._production_render_service
+            ),
+            voice_blueprints=(
+                voice_blueprints
+                if self._production_render_service
+                is not None
+                else None
+            ),
         )
 
         return [
