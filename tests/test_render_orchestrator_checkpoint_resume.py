@@ -583,6 +583,240 @@ def test_new_orchestrator_resumes_latest_checkpoint(
     )
 
 
+def test_serialized_job_resumes_after_runtime_restart(
+    tmp_path: Path,
+) -> None:
+    """
+    Verify recovery after both orchestration runtime and VideoJob restart.
+
+    The first execution persists a failed render checkpoint. The VideoJob
+    is then serialized to JSON and reconstructed as a new model instance.
+
+    A brand-new orchestrator must load the persisted checkpoint, skip the
+    previously completed VOICE stage, resume RENDER, and complete the job.
+    """
+
+    job = build_job()
+
+    storage = build_storage(
+        tmp_path
+    )
+
+    first_voice_stage = (
+        SuccessfulVoiceStage()
+    )
+
+    first_render_stage = (
+        FailingRenderStage()
+    )
+
+    first_service = (
+        RenderOrchestratorService(
+            stages=[
+                first_voice_stage,
+                first_render_stage,
+            ],
+            advanced_settings=(
+                build_settings()
+            ),
+            checkpoint_storage_service=(
+                storage
+            ),
+        )
+    )
+
+    first_result = (
+        first_service.execute(
+            job
+        )
+    )
+
+    assert (
+        first_result.success
+        is False
+    )
+
+    failed_checkpoint = (
+        storage.load_latest(
+            job_id=job.id,
+        )
+    )
+
+    assert (
+        failed_checkpoint
+        is not None
+    )
+
+    assert (
+        failed_checkpoint.failed_stage
+        == PipelineStageName.RENDER
+    )
+
+    assert (
+        failed_checkpoint.resumable
+        is True
+    )
+
+    original_job_id = (
+        job.id
+    )
+
+    serialized_job = (
+        job.model_dump_json()
+    )
+
+    restarted_job = (
+        VideoJob.model_validate_json(
+            serialized_job
+        )
+    )
+
+    assert (
+        restarted_job
+        is not job
+    )
+
+    assert (
+        restarted_job.id
+        == original_job_id
+    )
+
+    assert (
+        restarted_job.status
+        == JobStatus.FAILED
+    )
+
+    assert (
+        restarted_job.current_stage
+        == WorkflowStage.RENDER
+    )
+
+    second_voice_stage = (
+        SuccessfulVoiceStage()
+    )
+
+    second_render_stage = (
+        SuccessfulRenderStage()
+    )
+
+    second_service = (
+        RenderOrchestratorService(
+            stages=[
+                second_voice_stage,
+                second_render_stage,
+            ],
+            advanced_settings=(
+                build_settings()
+            ),
+            checkpoint_storage_service=(
+                storage
+            ),
+        )
+    )
+
+    second_result = (
+        second_service.execute(
+            restarted_job
+        )
+    )
+
+    assert (
+        second_result.success
+        is True
+    )
+
+    assert (
+        second_voice_stage.execution_count
+        == 0
+    )
+
+    assert (
+        second_render_stage.execution_count
+        == 1
+    )
+
+    assert (
+        restarted_job.status
+        == JobStatus.COMPLETED
+    )
+
+    assert (
+        restarted_job.current_stage
+        == (
+            WorkflowStage
+            .READY_FOR_UPLOAD
+        )
+    )
+
+    assert (
+        restarted_job.render_result
+        is not None
+    )
+
+    assert (
+        restarted_job.render_result.success
+        is True
+    )
+
+    assert (
+        second_result.metadata[
+            "resumed"
+        ]
+        is True
+    )
+
+    assert (
+        second_result.metadata[
+            "resume_stage"
+        ]
+        == PipelineStageName.RENDER.value
+    )
+
+    assert (
+        second_result.metadata[
+            "loaded_checkpoint_id"
+        ]
+        == str(
+            failed_checkpoint
+            .checkpoint_id
+        )
+    )
+
+    checkpoints = (
+        storage.list_for_job(
+            job_id=(
+                restarted_job.id
+            ),
+        )
+    )
+
+    assert (
+        len(checkpoints)
+        == 2
+    )
+
+    latest_checkpoint = (
+        storage.load_latest(
+            job_id=(
+                restarted_job.id
+            ),
+        )
+    )
+
+    assert (
+        latest_checkpoint
+        is not None
+    )
+
+    assert (
+        latest_checkpoint.resumable
+        is False
+    )
+
+    assert (
+        latest_checkpoint.checkpoint_id
+        != failed_checkpoint.checkpoint_id
+    )
 def test_successful_resume_persists_new_checkpoint(
     tmp_path: Path,
 ) -> None:

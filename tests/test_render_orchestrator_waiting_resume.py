@@ -215,13 +215,29 @@ class SuccessfulRenderStage(
 
 
 def build_research() -> ResearchResult:
-    return (
-        ResearchResult.model_construct(
-            status=(
-                ResearchStatus.APPROVED
-            ),
-        )
+    """
+    Build fully validated approved research.
+
+    This fixture must survive normal Pydantic JSON serialization and
+    reconstruction because restart-recovery tests recreate VideoJob
+    from persisted JSON rather than reusing the in-memory object.
+    """
+
+    return ResearchResult(
+        topic=(
+            "Waiting-for-user checkpoint resume"
+        ),
+        research_summary=(
+            "Synthetic approved research for "
+            "waiting-for-user serialized "
+            "restart recovery testing."
+        ),
+        prompt_version="test-1.0",
+        status=(
+            ResearchStatus.APPROVED
+        ),
     )
+
 
 
 def build_script() -> Script:
@@ -744,6 +760,379 @@ def test_resume_applies_manual_upload_decision(
     )
 
 
+def test_serialized_waiting_job_resumes_after_runtime_restart(
+    tmp_path: Path,
+) -> None:
+    """
+    Verify waiting-for-user recovery after both runtime and VideoJob
+    reconstruction.
+
+    The first execution reaches ASSET_SELECTION and persists a waiting
+    checkpoint. The VideoJob is then serialized and reconstructed as a
+    fresh model instance.
+
+    A brand-new orchestrator must load the persisted checkpoint, preserve
+    the waiting asset state, apply the supplied manual-upload decision,
+    skip the already-completed VOICE stage, continue to RENDER, and
+    complete successfully.
+    """
+
+    job = build_job()
+
+    storage = build_storage(
+        tmp_path
+    )
+
+    first_workflow = (
+        WaitingAssetWorkflowService()
+    )
+
+    first_voice = (
+        SuccessfulVoiceStage()
+    )
+
+    first_render = (
+        SuccessfulRenderStage()
+    )
+
+    first_service = build_orchestrator(
+        storage=storage,
+        workflow=first_workflow,
+        voice_stage=first_voice,
+        render_stage=first_render,
+    )
+
+    first_result = (
+        first_service.execute(
+            job
+        )
+    )
+
+    assert (
+        first_result.success
+        is False
+    )
+
+    assert (
+        first_voice.execution_count
+        == 1
+    )
+
+    assert (
+        first_workflow.start_count
+        == 1
+    )
+
+    assert (
+        first_render.execution_count
+        == 0
+    )
+
+    waiting_checkpoint = (
+        storage.load_latest(
+            job_id=job.id,
+        )
+    )
+
+    assert (
+        waiting_checkpoint
+        is not None
+    )
+
+    assert (
+        waiting_checkpoint.waiting_stage
+        == (
+            PipelineStageName
+            .ASSET_SELECTION
+        )
+    )
+
+    assert (
+        waiting_checkpoint.resumable
+        is True
+    )
+
+    assert (
+        len(
+            job.scene_asset_states
+        )
+        == 1
+    )
+
+    original_state = (
+        job.scene_asset_states[0]
+    )
+
+    assert (
+        original_state.status
+        == (
+            AssetWorkflowStatus
+            .WAITING_FOR_MANUAL_UPLOAD
+        )
+    )
+
+    original_job_id = (
+        job.id
+    )
+
+    serialized_job = (
+        job.model_dump_json()
+    )
+
+    restarted_job = (
+        VideoJob.model_validate_json(
+            serialized_job
+        )
+    )
+
+    assert (
+        restarted_job
+        is not job
+    )
+
+    assert (
+        restarted_job.id
+        == original_job_id
+    )
+
+    assert (
+        len(
+            restarted_job
+            .scene_asset_states
+        )
+        == 1
+    )
+
+    restarted_state = (
+        restarted_job
+        .scene_asset_states[0]
+    )
+
+    assert (
+        restarted_state.status
+        == (
+            AssetWorkflowStatus
+            .WAITING_FOR_MANUAL_UPLOAD
+        )
+    )
+
+    assert (
+        restarted_state
+        .manual_upload_requested
+        is True
+    )
+
+    assert (
+        restarted_state
+        .selected_source
+        == SceneSourceType.MANUAL_UPLOAD
+    )
+
+    upload_file = (
+        tmp_path
+        / "serialized_restart_manual_scene.mp4"
+    )
+
+    upload_file.write_bytes(
+        b"serialized-restart-manual-video"
+    )
+
+    second_workflow = (
+        WaitingAssetWorkflowService()
+    )
+
+    second_voice = (
+        SuccessfulVoiceStage()
+    )
+
+    second_render = (
+        SuccessfulRenderStage()
+    )
+
+    second_service = build_orchestrator(
+        storage=storage,
+        workflow=second_workflow,
+        voice_stage=second_voice,
+        render_stage=second_render,
+    )
+
+    second_result = (
+        second_service.execute(
+            restarted_job,
+            user_input={
+                "asset_decisions": [
+                    {
+                        "scene_number": 1,
+                        "decision": (
+                            AssetUserDecision
+                            .MANUAL_UPLOAD
+                            .value
+                        ),
+                        "manual_upload_path": (
+                            str(
+                                upload_file
+                            )
+                        ),
+                    },
+                ],
+            },
+        )
+    )
+
+    assert (
+        second_result.success
+        is True
+    )
+
+    # VOICE already completed before the waiting checkpoint.
+    assert (
+        second_voice.execution_count
+        == 0
+    )
+
+    # The serialized SceneAssetState must be resumed instead of starting
+    # the asset workflow from scratch.
+    assert (
+        second_workflow.start_count
+        == 0
+    )
+
+    assert (
+        second_render.execution_count
+        == 1
+    )
+
+    assert (
+        len(
+            restarted_job
+            .scene_asset_states
+        )
+        == 1
+    )
+
+    resolved_state = (
+        restarted_job
+        .scene_asset_states[0]
+    )
+
+    assert (
+        resolved_state.status
+        == AssetWorkflowStatus.READY
+    )
+
+    assert (
+        resolved_state.user_decision
+        == (
+            AssetUserDecision
+            .MANUAL_UPLOAD
+        )
+    )
+
+    assert (
+        resolved_state.selected_candidate
+        is not None
+    )
+
+    assert (
+        resolved_state
+        .selected_candidate
+        .file_path
+        == str(
+            upload_file.resolve()
+        )
+    )
+
+    assert (
+        restarted_job.status
+        == JobStatus.COMPLETED
+    )
+
+    assert (
+        restarted_job.current_stage
+        == (
+            WorkflowStage
+            .READY_FOR_UPLOAD
+        )
+    )
+
+    assert (
+        restarted_job.render_result
+        is not None
+    )
+
+    assert (
+        restarted_job.render_result.success
+        is True
+    )
+
+    assert (
+        second_result.metadata[
+            "resumed"
+        ]
+        is True
+    )
+
+    assert (
+        second_result.metadata[
+            "resume_stage"
+        ]
+        == (
+            PipelineStageName
+            .ASSET_SELECTION
+            .value
+        )
+    )
+
+    assert (
+        second_result.metadata[
+            "loaded_checkpoint_id"
+        ]
+        == str(
+            waiting_checkpoint
+            .checkpoint_id
+        )
+    )
+
+    checkpoints = (
+        storage.list_for_job(
+            job_id=(
+                restarted_job.id
+            ),
+        )
+    )
+
+    assert (
+        len(checkpoints)
+        == 2
+    )
+
+    latest_checkpoint = (
+        storage.load_latest(
+            job_id=(
+                restarted_job.id
+            ),
+        )
+    )
+
+    assert (
+        latest_checkpoint
+        is not None
+    )
+
+    assert (
+        latest_checkpoint.resumable
+        is False
+    )
+
+    assert (
+        latest_checkpoint.waiting_stage
+        is None
+    )
+
+    assert (
+        latest_checkpoint.failed_stage
+        is None
+    )
 def test_resume_without_input_waits_again(
     tmp_path: Path,
 ) -> None:
