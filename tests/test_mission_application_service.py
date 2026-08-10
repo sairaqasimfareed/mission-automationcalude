@@ -1,25 +1,57 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypeVar, cast
 from uuid import UUID, uuid4
 
 import pytest
 
+from src.shared.exceptions import ConfigurationError
+from src.models.editing_directives import (
+    SceneEditingDirectives,
+)
 from src.models.enums import (
     JobStatus,
     Platform,
     ProductionMode,
     WorkflowStage,
 )
-from src.models.project_specification import ProjectSpecification
+from src.models.project_specification import (
+    ProjectSpecification,
+)
 from src.models.render_orchestration_result import (
     RenderOrchestrationResult,
 )
 from src.models.video_job import VideoJob
+from src.services.content_pipeline import (
+    ContentPipeline,
+)
 from src.services.mission_application_service import (
     MissionApplicationService,
 )
-from src.shared.exceptions import ConfigurationError
+from src.services.project_render_runtime_factory import (
+    ProjectRenderRuntimeFactory,
+)
+from src.services.project_specification_job_mapper import (
+    ProjectSpecificationJobMapper,
+)
+from src.services.render_orchestrator_service import (
+    RenderOrchestratorService,
+)
+
+
+T = TypeVar("T")
+
+
+def _as(
+    dependency_type: type[T],
+    value: object,
+) -> T:
+    del dependency_type
+
+    return cast(
+        T,
+        value,
+    )
 
 
 class FakeJobMapper:
@@ -28,9 +60,11 @@ class FakeJobMapper:
         *,
         job: VideoJob | None = None,
         error: Exception | None = None,
+        call_order: list[str] | None = None,
     ) -> None:
         self.job = job
         self.error = error
+        self.call_order = call_order
 
         self.calls: list[
             tuple[
@@ -51,6 +85,11 @@ class FakeJobMapper:
                 niche,
             )
         )
+
+        if self.call_order is not None:
+            self.call_order.append(
+                "mapper"
+            )
 
         if self.error is not None:
             raise self.error
@@ -138,6 +177,83 @@ class FakeRenderOrchestrator:
         return self.result
 
 
+class FakeRenderRuntimeFactory:
+    def __init__(
+        self,
+        *,
+        orchestrator: FakeRenderOrchestrator,
+        error: Exception | None = None,
+        call_order: list[str] | None = None,
+    ) -> None:
+        self.orchestrator = orchestrator
+        self.error = error
+        self.call_order = call_order
+
+        self.calls: list[
+            tuple[
+                VideoJob,
+                str,
+                str,
+                str,
+                str | None,
+                dict[
+                    int,
+                    SceneEditingDirectives,
+                ]
+                | None,
+                str,
+                int,
+                bool,
+            ]
+        ] = []
+
+    def build(
+        self,
+        *,
+        job: VideoJob,
+        genre_id: str,
+        language: str = "English",
+        language_code: str = "en",
+        voice_provider_name: str | None = None,
+        overrides_by_scene: (
+            dict[
+                int,
+                SceneEditingDirectives,
+            ]
+            | None
+        ) = None,
+        output_resolution: str = "1920x1080",
+        frame_rate: int = 30,
+        warn_on_blueprint_fallbacks: bool = True,
+    ) -> RenderOrchestratorService:
+        self.calls.append(
+            (
+                job,
+                genre_id,
+                language,
+                language_code,
+                voice_provider_name,
+                overrides_by_scene,
+                output_resolution,
+                frame_rate,
+                warn_on_blueprint_fallbacks,
+            )
+        )
+
+        if self.call_order is not None:
+            self.call_order.append(
+                "runtime"
+            )
+
+        if self.error is not None:
+            raise self.error
+
+        return _as(
+            RenderOrchestratorService,
+            self.orchestrator,
+        )
+
+
 def build_job(
     *,
     project_name: str = "Application Service Test",
@@ -165,7 +281,9 @@ def build_result(
         failed_stage=WorkflowStage.RENDER,
         completed_stages=[],
         elapsed_seconds=0.1,
-        error_message="Synthetic render failure.",
+        error_message=(
+            "Synthetic render failure."
+        ),
     )
 
 
@@ -177,6 +295,28 @@ def build_specification() -> ProjectSpecification:
     return build_mapper_specification()
 
 
+def _service(
+    *,
+    mapper: FakeJobMapper,
+    content: FakeContentPipeline,
+    runtime_factory: FakeRenderRuntimeFactory,
+) -> MissionApplicationService:
+    return MissionApplicationService(
+        job_mapper=_as(
+            ProjectSpecificationJobMapper,
+            mapper,
+        ),
+        content_pipeline=_as(
+            ContentPipeline,
+            content,
+        ),
+        render_runtime_factory=_as(
+            ProjectRenderRuntimeFactory,
+            runtime_factory,
+        ),
+    )
+
+
 def test_exposes_configured_dependencies() -> None:
     job = build_job()
     result = build_result(job)
@@ -184,25 +324,31 @@ def test_exposes_configured_dependencies() -> None:
     mapper = FakeJobMapper(
         job=job,
     )
-
     content = FakeContentPipeline()
 
     render = FakeRenderOrchestrator(
         result=result,
     )
 
-    service = MissionApplicationService(
-        job_mapper=mapper,  # type: ignore[arg-type]
-        content_pipeline=content,  # type: ignore[arg-type]
-        render_orchestrator=render,  # type: ignore[arg-type]
+    runtime_factory = FakeRenderRuntimeFactory(
+        orchestrator=render,
+    )
+
+    service = _service(
+        mapper=mapper,
+        content=content,
+        runtime_factory=runtime_factory,
     )
 
     assert service.job_mapper is mapper
     assert service.content_pipeline is content
-    assert service.render_orchestrator is render
+    assert (
+        service.render_runtime_factory
+        is runtime_factory
+    )
 
 
-def test_execute_maps_runs_content_and_renders() -> None:
+def test_execute_maps_runs_content_builds_runtime_and_renders() -> None:
     specification = build_specification()
 
     mapped_job = build_job(
@@ -229,16 +375,20 @@ def test_execute_maps_runs_content_and_renders() -> None:
         result=result,
     )
 
-    service = MissionApplicationService(
-        job_mapper=mapper,  # type: ignore[arg-type]
-        content_pipeline=content,  # type: ignore[arg-type]
-        render_orchestrator=render,  # type: ignore[arg-type]
+    runtime_factory = FakeRenderRuntimeFactory(
+        orchestrator=render,
+    )
+
+    service = _service(
+        mapper=mapper,
+        content=content,
+        runtime_factory=runtime_factory,
     )
 
     actual = service.execute(
         specification,
         niche="History Documentary",
-        dry_run=True,
+        genre_id="documentary",
     )
 
     assert actual is result
@@ -254,10 +404,24 @@ def test_execute_maps_runs_content_and_renders() -> None:
         mapped_job
     ]
 
+    assert len(runtime_factory.calls) == 1
+
+    runtime_call = runtime_factory.calls[0]
+
+    assert runtime_call[0] is prepared_job
+    assert runtime_call[1] == "documentary"
+    assert runtime_call[2] == "English"
+    assert runtime_call[3] == "en"
+    assert runtime_call[4] is None
+    assert runtime_call[5] is None
+    assert runtime_call[6] == "1920x1080"
+    assert runtime_call[7] == 30
+    assert runtime_call[8] is True
+
     assert render.calls == [
         (
             prepared_job,
-            True,
+            False,
             None,
             None,
         )
@@ -266,61 +430,115 @@ def test_execute_maps_runs_content_and_renders() -> None:
 
 def test_execute_preserves_dependency_call_order() -> None:
     specification = build_specification()
-
     job = build_job()
 
     call_order: list[str] = []
 
-    class OrderedMapper(
-        FakeJobMapper
-    ):
-        def map(
-            self,
-            specification: ProjectSpecification,
-            *,
-            niche: str,
-        ) -> VideoJob:
-            call_order.append(
-                "mapper"
-            )
-
-            return super().map(
-                specification,
-                niche=niche,
-            )
-
-    mapper = OrderedMapper(
+    mapper = FakeJobMapper(
         job=job,
+        call_order=call_order,
     )
 
     content = FakeContentPipeline(
         call_order=call_order,
     )
 
-    result = build_result(
-        job
-    )
+    result = build_result(job)
 
     render = FakeRenderOrchestrator(
         result=result,
         call_order=call_order,
     )
 
-    service = MissionApplicationService(
-        job_mapper=mapper,  # type: ignore[arg-type]
-        content_pipeline=content,  # type: ignore[arg-type]
-        render_orchestrator=render,  # type: ignore[arg-type]
+    runtime_factory = FakeRenderRuntimeFactory(
+        orchestrator=render,
+        call_order=call_order,
+    )
+
+    service = _service(
+        mapper=mapper,
+        content=content,
+        runtime_factory=runtime_factory,
     )
 
     service.execute(
         specification,
         niche="History Documentary",
+        genre_id="documentary",
     )
 
     assert call_order == [
         "mapper",
         "content",
+        "runtime",
         "render",
+    ]
+
+
+def test_execute_forwards_runtime_configuration() -> None:
+    specification = build_specification()
+    job = build_job()
+
+    result = build_result(job)
+
+    render = FakeRenderOrchestrator(
+        result=result,
+    )
+
+    runtime_factory = FakeRenderRuntimeFactory(
+        orchestrator=render,
+    )
+
+    service = _service(
+        mapper=FakeJobMapper(
+            job=job,
+        ),
+        content=FakeContentPipeline(),
+        runtime_factory=runtime_factory,
+    )
+
+    overrides = cast(
+        dict[int, SceneEditingDirectives],
+        {
+            3: object(),
+        },
+    )
+
+    service.execute(
+        specification,
+        niche="History Documentary",
+        genre_id="history-documentary",
+        language="Urdu",
+        language_code="ur-pk",
+        voice_provider_name="elevenlabs",
+        overrides_by_scene=overrides,
+        output_resolution="3840x2160",
+        frame_rate=60,
+        warn_on_blueprint_fallbacks=False,
+        dry_run=True,
+    )
+
+    assert runtime_factory.calls == [
+        (
+            job,
+            "history-documentary",
+            "Urdu",
+            "ur-pk",
+            "elevenlabs",
+            overrides,
+            "3840x2160",
+            60,
+            False,
+        )
+    ]
+
+    assert render.calls == [
+        (
+            job,
+            True,
+            None,
+            None,
+        )
     ]
 
 
@@ -333,18 +551,22 @@ def test_execute_propagates_mapper_configuration_error() -> None:
         )
     )
 
-    job = build_job()
-
     content = FakeContentPipeline()
+
+    job = build_job()
 
     render = FakeRenderOrchestrator(
         result=build_result(job),
     )
 
-    service = MissionApplicationService(
-        job_mapper=mapper,  # type: ignore[arg-type]
-        content_pipeline=content,  # type: ignore[arg-type]
-        render_orchestrator=render,  # type: ignore[arg-type]
+    runtime_factory = FakeRenderRuntimeFactory(
+        orchestrator=render,
+    )
+
+    service = _service(
+        mapper=mapper,
+        content=content,
+        runtime_factory=runtime_factory,
     )
 
     with pytest.raises(
@@ -354,15 +576,16 @@ def test_execute_propagates_mapper_configuration_error() -> None:
         service.execute(
             specification,
             niche="History Documentary",
+            genre_id="documentary",
         )
 
     assert content.calls == []
+    assert runtime_factory.calls == []
     assert render.calls == []
 
 
 def test_execute_propagates_content_pipeline_error() -> None:
     specification = build_specification()
-
     job = build_job()
 
     mapper = FakeJobMapper(
@@ -379,10 +602,14 @@ def test_execute_propagates_content_pipeline_error() -> None:
         result=build_result(job),
     )
 
-    service = MissionApplicationService(
-        job_mapper=mapper,  # type: ignore[arg-type]
-        content_pipeline=content,  # type: ignore[arg-type]
-        render_orchestrator=render,  # type: ignore[arg-type]
+    runtime_factory = FakeRenderRuntimeFactory(
+        orchestrator=render,
+    )
+
+    service = _service(
+        mapper=mapper,
+        content=content,
+        runtime_factory=runtime_factory,
     )
 
     with pytest.raises(
@@ -392,49 +619,80 @@ def test_execute_propagates_content_pipeline_error() -> None:
         service.execute(
             specification,
             niche="History Documentary",
+            genre_id="documentary",
         )
 
     assert len(mapper.calls) == 1
+    assert runtime_factory.calls == []
+    assert render.calls == []
 
-    assert content.calls == [
-        job
-    ]
 
+def test_execute_propagates_runtime_factory_error() -> None:
+    specification = build_specification()
+    job = build_job()
+
+    render = FakeRenderOrchestrator(
+        result=build_result(job),
+    )
+
+    runtime_factory = FakeRenderRuntimeFactory(
+        orchestrator=render,
+        error=RuntimeError(
+            "Runtime composition failed."
+        ),
+    )
+
+    service = _service(
+        mapper=FakeJobMapper(
+            job=job,
+        ),
+        content=FakeContentPipeline(),
+        runtime_factory=runtime_factory,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="Runtime composition failed",
+    ):
+        service.execute(
+            specification,
+            niche="History Documentary",
+            genre_id="documentary",
+        )
+
+    assert len(runtime_factory.calls) == 1
     assert render.calls == []
 
 
 def test_execute_forwards_dry_run_false_by_default() -> None:
     specification = build_specification()
-
     job = build_job()
 
-    result = build_result(
-        job
+    result = build_result(job)
+
+    render = FakeRenderOrchestrator(
+        result=result,
     )
 
-    service = MissionApplicationService(
-        job_mapper=FakeJobMapper(
+    runtime_factory = FakeRenderRuntimeFactory(
+        orchestrator=render,
+    )
+
+    service = _service(
+        mapper=FakeJobMapper(
             job=job,
-        ),  # type: ignore[arg-type]
-        content_pipeline=FakeContentPipeline(),  # type: ignore[arg-type]
-        render_orchestrator=FakeRenderOrchestrator(
-            result=result,
-        ),  # type: ignore[arg-type]
+        ),
+        content=FakeContentPipeline(),
+        runtime_factory=runtime_factory,
     )
 
     actual = service.execute(
         specification,
         niche="History Documentary",
+        genre_id="documentary",
     )
 
     assert actual is result
-
-    render = service.render_orchestrator
-
-    assert isinstance(
-        render,
-        FakeRenderOrchestrator,
-    )
 
     assert render.calls == [
         (
@@ -469,19 +727,28 @@ def test_resume_bypasses_mapper_and_content_pipeline() -> None:
         result=result,
     )
 
-    service = MissionApplicationService(
-        job_mapper=mapper,  # type: ignore[arg-type]
-        content_pipeline=content,  # type: ignore[arg-type]
-        render_orchestrator=render,  # type: ignore[arg-type]
+    runtime_factory = FakeRenderRuntimeFactory(
+        orchestrator=render,
+    )
+
+    service = _service(
+        mapper=mapper,
+        content=content,
+        runtime_factory=runtime_factory,
     )
 
     actual = service.resume(
         job,
+        genre_id="documentary",
     )
 
     assert actual is result
     assert mapper.calls == []
     assert content.calls == []
+
+    assert len(runtime_factory.calls) == 1
+    assert runtime_factory.calls[0][0] is job
+    assert runtime_factory.calls[0][1] == "documentary"
 
     assert render.calls == [
         (
@@ -489,6 +756,61 @@ def test_resume_bypasses_mapper_and_content_pipeline() -> None:
             False,
             None,
             None,
+        )
+    ]
+
+
+def test_resume_forwards_runtime_configuration() -> None:
+    job = build_job()
+
+    result = build_result(job)
+
+    render = FakeRenderOrchestrator(
+        result=result,
+    )
+
+    runtime_factory = FakeRenderRuntimeFactory(
+        orchestrator=render,
+    )
+
+    service = _service(
+        mapper=FakeJobMapper(
+            job=job,
+        ),
+        content=FakeContentPipeline(),
+        runtime_factory=runtime_factory,
+    )
+
+    overrides = cast(
+        dict[int, SceneEditingDirectives],
+        {
+            2: object(),
+        },
+    )
+
+    service.resume(
+        job,
+        genre_id="history-documentary",
+        language="Urdu",
+        language_code="ur-pk",
+        voice_provider_name="elevenlabs",
+        overrides_by_scene=overrides,
+        output_resolution="3840x2160",
+        frame_rate=60,
+        warn_on_blueprint_fallbacks=False,
+    )
+
+    assert runtime_factory.calls == [
+        (
+            job,
+            "history-documentary",
+            "Urdu",
+            "ur-pk",
+            "elevenlabs",
+            overrides,
+            "3840x2160",
+            60,
+            False,
         )
     ]
 
@@ -511,16 +833,21 @@ def test_resume_forwards_checkpoint_user_input_and_dry_run() -> None:
         result=result,
     )
 
-    service = MissionApplicationService(
-        job_mapper=FakeJobMapper(
+    runtime_factory = FakeRenderRuntimeFactory(
+        orchestrator=render,
+    )
+
+    service = _service(
+        mapper=FakeJobMapper(
             job=job,
-        ),  # type: ignore[arg-type]
-        content_pipeline=FakeContentPipeline(),  # type: ignore[arg-type]
-        render_orchestrator=render,  # type: ignore[arg-type]
+        ),
+        content=FakeContentPipeline(),
+        runtime_factory=runtime_factory,
     )
 
     actual = service.resume(
         job,
+        genre_id="documentary",
         checkpoint_id=checkpoint_id,
         user_input=user_input,
         dry_run=True,
@@ -538,28 +865,69 @@ def test_resume_forwards_checkpoint_user_input_and_dry_run() -> None:
     ]
 
 
+def test_resume_builds_fresh_runtime_for_each_call() -> None:
+    job = build_job()
+
+    result = build_result(job)
+
+    render = FakeRenderOrchestrator(
+        result=result,
+    )
+
+    runtime_factory = FakeRenderRuntimeFactory(
+        orchestrator=render,
+    )
+
+    service = _service(
+        mapper=FakeJobMapper(
+            job=job,
+        ),
+        content=FakeContentPipeline(),
+        runtime_factory=runtime_factory,
+    )
+
+    service.resume(
+        job,
+        genre_id="documentary",
+    )
+
+    service.resume(
+        job,
+        genre_id="documentary",
+    )
+
+    assert len(runtime_factory.calls) == 2
+    assert len(render.calls) == 2
+
+
 def test_execute_returns_orchestrator_result_unchanged() -> None:
     specification = build_specification()
-
     job = build_job()
 
     expected = build_result(
         job
     )
 
-    service = MissionApplicationService(
-        job_mapper=FakeJobMapper(
+    render = FakeRenderOrchestrator(
+        result=expected,
+    )
+
+    runtime_factory = FakeRenderRuntimeFactory(
+        orchestrator=render,
+    )
+
+    service = _service(
+        mapper=FakeJobMapper(
             job=job,
-        ),  # type: ignore[arg-type]
-        content_pipeline=FakeContentPipeline(),  # type: ignore[arg-type]
-        render_orchestrator=FakeRenderOrchestrator(
-            result=expected,
-        ),  # type: ignore[arg-type]
+        ),
+        content=FakeContentPipeline(),
+        runtime_factory=runtime_factory,
     )
 
     actual = service.execute(
         specification,
         niche="History Documentary",
+        genre_id="documentary",
     )
 
     assert actual is expected
