@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, TypeVar, cast
 from uuid import UUID, uuid4
 
@@ -23,6 +24,9 @@ from src.models.render_orchestration_result import (
 from src.models.research import ResearchResult, ResearchStatus
 from src.models.script import Script, ScriptStatus
 from src.models.video_job import VideoJob
+from src.providers.dry_run_thumbnail_image_provider import (
+    DryRunThumbnailImageProvider,
+)
 from src.services.content_pipeline import (
     ContentPipeline,
 )
@@ -45,6 +49,12 @@ from src.services.seo.seo_description_generation_service import (
 from src.services.seo.seo_package_service import SEOPackageService
 from src.services.seo.seo_title_generation_service import (
     SEOTitleGenerationService,
+)
+from src.services.thumbnail.thumbnail_concept_generation_service import (
+    ThumbnailConceptGenerationService,
+)
+from src.services.thumbnail.thumbnail_package_service import (
+    ThumbnailPackageService,
 )
 from src.shared.exceptions import ConfigurationError
 from src.shared.llm.models import LLMCallResult, LLMCallStatus, LLMProvider
@@ -302,6 +312,7 @@ def _service(
     content: FakeContentPipeline,
     runtime_factory: FakeRenderRuntimeFactory,
     seo_package_service: SEOPackageService | None = None,
+    thumbnail_package_service: ThumbnailPackageService | None = None,
 ) -> MissionApplicationService:
     return MissionApplicationService(
         job_mapper=_as(
@@ -317,6 +328,7 @@ def _service(
             runtime_factory,
         ),
         seo_package_service=seo_package_service,
+        thumbnail_package_service=thumbnail_package_service,
     )
 
 
@@ -1038,3 +1050,105 @@ def test_generate_seo_package_does_not_require_render_result() -> None:
     assert job.script.status == ScriptStatus.APPROVED
     assert job.research is not None
     assert job.research.status == ResearchStatus.APPROVED
+
+
+class _StubThumbnailLLMService:
+    def generate(
+        self,
+        request: LLMRequest,
+        *,
+        estimated_cost_usd: float = 0.0,
+        profile_ids: list[str] | None = None,
+    ) -> LLMServiceResult:
+        content = (
+            "CONCEPT: An underground city hallway.\n"
+            "HOOK: HIDDEN CITY\n"
+            "PROMPT: An ancient underground city hallway, dramatic lighting."
+        )
+
+        result = LLMCallResult(
+            status=LLMCallStatus.SUCCESS,
+            provider=LLMProvider.OPENAI,
+            model="test-model",
+            content=content,
+        )
+
+        return LLMServiceResult(result=result, selected_profile_id="openai-main")
+
+
+def _thumbnail_package_service(tmp_path: Path) -> ThumbnailPackageService:
+    return ThumbnailPackageService(
+        concept_generation_service=ThumbnailConceptGenerationService(
+            llm_service=_StubThumbnailLLMService(),  # type: ignore[arg-type]
+        ),
+        image_provider=DryRunThumbnailImageProvider(),
+        storage_root=tmp_path,
+    )
+
+
+def test_generate_thumbnail_raises_when_not_configured() -> None:
+    service = _service(
+        mapper=FakeJobMapper(job=build_job()),
+        content=FakeContentPipeline(),
+        runtime_factory=FakeRenderRuntimeFactory(
+            orchestrator=FakeRenderOrchestrator(result=None),  # type: ignore[arg-type]
+        ),
+    )
+
+    with pytest.raises(ValueError, match="requires a configured"):
+        service.generate_thumbnail(
+            _approved_seo_job(),
+            genre_id="genre.documentary",
+            target_audience="History enthusiasts",
+            project_id="underground-cities-doc",
+        )
+
+
+def test_generate_thumbnail_returns_validated_artifact(tmp_path: Path) -> None:
+    service = _service(
+        mapper=FakeJobMapper(job=build_job()),
+        content=FakeContentPipeline(),
+        runtime_factory=FakeRenderRuntimeFactory(
+            orchestrator=FakeRenderOrchestrator(result=None),  # type: ignore[arg-type]
+        ),
+        thumbnail_package_service=_thumbnail_package_service(tmp_path),
+    )
+
+    result = service.generate_thumbnail(
+        _approved_seo_job(),
+        genre_id="genre.documentary",
+        target_audience="History enthusiasts",
+        project_id="underground-cities-doc",
+    )
+
+    assert result.artifact.concept.hook_text == "HIDDEN CITY"
+    assert result.validation.is_valid is True
+
+
+def test_generate_thumbnail_does_not_require_render_result(
+    tmp_path: Path,
+) -> None:
+    job = _approved_seo_job()
+
+    assert job.render_result is None
+
+    service = _service(
+        mapper=FakeJobMapper(job=build_job()),
+        content=FakeContentPipeline(),
+        runtime_factory=FakeRenderRuntimeFactory(
+            orchestrator=FakeRenderOrchestrator(result=None),  # type: ignore[arg-type]
+        ),
+        thumbnail_package_service=_thumbnail_package_service(tmp_path),
+    )
+
+    result = service.generate_thumbnail(
+        job,
+        genre_id="genre.documentary",
+        target_audience="History enthusiasts",
+        project_id="underground-cities-doc",
+    )
+
+    assert result.artifact is not None
+    assert job.render_result is None
+    assert job.current_stage == WorkflowStage.RESEARCH
+    assert job.status == JobStatus.PENDING

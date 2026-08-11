@@ -12,6 +12,7 @@ from src.models.project_specification import (
 from src.models.render_orchestration_result import (
     RenderOrchestrationResult,
 )
+from src.models.thumbnail import ThumbnailTextPosition
 from src.models.video_job import VideoJob
 from src.services.content_pipeline import (
     ContentPipeline,
@@ -22,9 +23,14 @@ from src.services.project_render_runtime_factory import (
 from src.services.project_specification_job_mapper import (
     ProjectSpecificationJobMapper,
 )
+from src.services.seo.seo_context_builder import SEOContextBuilder
 from src.services.seo.seo_package_service import (
     SEOPackageBuildResult,
     SEOPackageService,
+)
+from src.services.thumbnail.thumbnail_package_service import (
+    ThumbnailPackageBuildResult,
+    ThumbnailPackageService,
 )
 
 
@@ -73,11 +79,13 @@ class MissionApplicationService:
         content_pipeline: ContentPipeline,
         render_runtime_factory: ProjectRenderRuntimeFactory,
         seo_package_service: SEOPackageService | None = None,
+        thumbnail_package_service: ThumbnailPackageService | None = None,
     ) -> None:
         self._job_mapper = job_mapper
         self._content_pipeline = content_pipeline
         self._render_runtime_factory = render_runtime_factory
         self._seo_package_service = seo_package_service
+        self._thumbnail_package_service = thumbnail_package_service
 
     @property
     def job_mapper(
@@ -146,6 +154,58 @@ class MissionApplicationService:
             title_candidate_count=title_candidate_count,
             max_tags=max_tags,
             max_hashtags=max_hashtags,
+        )
+
+    @property
+    def thumbnail_package_service(
+        self,
+    ) -> ThumbnailPackageService | None:
+        """Return the configured thumbnail package service, if any."""
+
+        return self._thumbnail_package_service
+
+    def generate_thumbnail(
+        self,
+        job: VideoJob,
+        *,
+        genre_id: str,
+        target_audience: str,
+        project_id: str,
+        language_code: str = "en",
+        concept_count: int = 3,
+        selected_seo_title: str | None = None,
+        hook_text_position: ThumbnailTextPosition = ThumbnailTextPosition.BOTTOM,
+    ) -> ThumbnailPackageBuildResult:
+        """
+        Generate a validated ThumbnailArtifact for a job with an
+        approved script.
+
+        Like generate_seo_package, this does not require
+        job.render_result to be set and does not mutate VideoJob or
+        interact with checkpoint/resume state. It builds its own
+        SEOContext from the job rather than requiring the caller to
+        have one already, so it can be called independently of
+        generate_seo_package.
+        """
+
+        if self._thumbnail_package_service is None:
+            raise ValueError(
+                "Thumbnail generation requires a configured " "ThumbnailPackageService."
+            )
+
+        context = SEOContextBuilder().build(
+            job,
+            genre_id=genre_id,
+            target_audience=target_audience,
+            language_code=language_code,
+        )
+
+        return self._thumbnail_package_service.build(
+            context,
+            project_id=project_id,
+            concept_count=concept_count,
+            selected_seo_title=selected_seo_title,
+            hook_text_position=hook_text_position,
         )
 
     def execute(
