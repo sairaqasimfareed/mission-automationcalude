@@ -1,0 +1,5588 @@
+=== MASTER RECONCILIATION AUDIT ===
+=== PHASE H.2 — TRUE END-TO-END APPLICATION INTEGRATION ===
+
+=== 1. MISSION APPLICATION TESTS ===
+from __future__ import annotations
+
+from typing import Any, TypeVar, cast
+from uuid import UUID, uuid4
+
+import pytest
+
+from src.shared.exceptions import ConfigurationError
+from src.models.editing_directives import (
+    SceneEditingDirectives,
+)
+from src.models.enums import (
+    JobStatus,
+    Platform,
+    ProductionMode,
+    WorkflowStage,
+)
+from src.models.project_specification import (
+    ProjectSpecification,
+)
+from src.models.render_orchestration_result import (
+    RenderOrchestrationResult,
+)
+from src.models.video_job import VideoJob
+from src.services.content_pipeline import (
+    ContentPipeline,
+)
+from src.services.mission_application_service import (
+    MissionApplicationService,
+)
+from src.services.project_render_runtime_factory import (
+    ProjectRenderRuntimeFactory,
+)
+from src.services.project_specification_job_mapper import (
+    ProjectSpecificationJobMapper,
+)
+from src.services.render_orchestrator_service import (
+    RenderOrchestratorService,
+)
+
+
+T = TypeVar("T")
+
+
+def _as(
+    dependency_type: type[T],
+    value: object,
+) -> T:
+    del dependency_type
+
+    return cast(
+        T,
+        value,
+    )
+
+
+class FakeJobMapper:
+    def __init__(
+        self,
+        *,
+        job: VideoJob | None = None,
+        error: Exception | None = None,
+        call_order: list[str] | None = None,
+    ) -> None:
+        self.job = job
+        self.error = error
+        self.call_order = call_order
+
+        self.calls: list[
+            tuple[
+                ProjectSpecification,
+                str,
+            ]
+        ] = []
+
+    def map(
+        self,
+        specification: ProjectSpecification,
+        *,
+        niche: str,
+    ) -> VideoJob:
+        self.calls.append(
+            (
+                specification,
+                niche,
+            )
+        )
+
+        if self.call_order is not None:
+            self.call_order.append(
+                "mapper"
+            )
+
+        if self.error is not None:
+            raise self.error
+
+        assert self.job is not None
+
+        return self.job
+
+
+class FakeContentPipeline:
+    def __init__(
+        self,
+        *,
+        returned_job: VideoJob | None = None,
+        error: Exception | None = None,
+        call_order: list[str] | None = None,
+    ) -> None:
+        self.returned_job = returned_job
+        self.error = error
+        self.call_order = call_order
+
+        self.calls: list[VideoJob] = []
+
+    def run(
+        self,
+        job: VideoJob,
+    ) -> VideoJob:
+        self.calls.append(job)
+
+        if self.call_order is not None:
+            self.call_order.append(
+                "content"
+            )
+
+        if self.error is not None:
+            raise self.error
+
+        if self.returned_job is not None:
+            return self.returned_job
+
+        return job
+
+
+class FakeRenderOrchestrator:
+    def __init__(
+        self,
+        *,
+        result: RenderOrchestrationResult,
+        call_order: list[str] | None = None,
+    ) -> None:
+        self.result = result
+        self.call_order = call_order
+
+        self.calls: list[
+            tuple[
+                VideoJob,
+                bool,
+                UUID | None,
+                dict[str, Any] | None,
+            ]
+        ] = []
+
+    def execute(
+        self,
+        job: VideoJob,
+        *,
+        dry_run: bool = False,
+        checkpoint_id: UUID | None = None,
+        user_input: dict[str, Any] | None = None,
+    ) -> RenderOrchestrationResult:
+        self.calls.append(
+            (
+                job,
+                dry_run,
+                checkpoint_id,
+                user_input,
+            )
+        )
+
+        if self.call_order is not None:
+            self.call_order.append(
+                "render"
+            )
+
+        return self.result
+
+
+class FakeRenderRuntimeFactory:
+    def __init__(
+        self,
+        *,
+        orchestrator: FakeRenderOrchestrator,
+        error: Exception | None = None,
+        call_order: list[str] | None = None,
+    ) -> None:
+        self.orchestrator = orchestrator
+        self.error = error
+        self.call_order = call_order
+
+        self.calls: list[
+            tuple[
+                VideoJob,
+                str,
+                str,
+                str,
+                str | None,
+                dict[
+                    int,
+                    SceneEditingDirectives,
+                ]
+                | None,
+                str,
+                int,
+                bool,
+            ]
+        ] = []
+
+    def build(
+        self,
+        *,
+        job: VideoJob,
+        genre_id: str,
+        language: str = "English",
+        language_code: str = "en",
+        voice_provider_name: str | None = None,
+        overrides_by_scene: (
+            dict[
+                int,
+                SceneEditingDirectives,
+            ]
+            | None
+        ) = None,
+        output_resolution: str = "1920x1080",
+        frame_rate: int = 30,
+        warn_on_blueprint_fallbacks: bool = True,
+    ) -> RenderOrchestratorService:
+        self.calls.append(
+            (
+                job,
+                genre_id,
+                language,
+                language_code,
+                voice_provider_name,
+                overrides_by_scene,
+                output_resolution,
+                frame_rate,
+                warn_on_blueprint_fallbacks,
+            )
+        )
+
+        if self.call_order is not None:
+            self.call_order.append(
+                "runtime"
+            )
+
+        if self.error is not None:
+            raise self.error
+
+        return _as(
+            RenderOrchestratorService,
+            self.orchestrator,
+        )
+
+
+def build_job(
+    *,
+    project_name: str = "Application Service Test",
+) -> VideoJob:
+    return VideoJob(
+        project_name=project_name,
+        channel_name="Mission Channel",
+        niche="History Documentary",
+        topic="Hidden underground cities",
+        platform=Platform.YOUTUBE,
+        production_mode=ProductionMode.PREMIUM,
+        status=JobStatus.PENDING,
+        current_stage=WorkflowStage.RESEARCH,
+    )
+
+
+def build_result(
+    job: VideoJob,
+) -> RenderOrchestrationResult:
+    job.status = JobStatus.FAILED
+    job.current_stage = WorkflowStage.RENDER
+
+    return RenderOrchestrationResult.failed(
+        job=job,
+        failed_stage=WorkflowStage.RENDER,
+        completed_stages=[],
+        elapsed_seconds=0.1,
+        error_message=(
+            "Synthetic render failure."
+        ),
+    )
+
+
+def build_specification() -> ProjectSpecification:
+    from tests.test_project_specification_job_mapper import (
+        build_specification as build_mapper_specification,
+    )
+
+    return build_mapper_specification()
+
+
+def _service(
+    *,
+    mapper: FakeJobMapper,
+    content: FakeContentPipeline,
+    runtime_factory: FakeRenderRuntimeFactory,
+) -> MissionApplicationService:
+    return MissionApplicationService(
+        job_mapper=_as(
+            ProjectSpecificationJobMapper,
+            mapper,
+        ),
+        content_pipeline=_as(
+            ContentPipeline,
+            content,
+        ),
+        render_runtime_factory=_as(
+            ProjectRenderRuntimeFactory,
+            runtime_factory,
+        ),
+    )
+
+
+def test_exposes_configured_dependencies() -> None:
+    job = build_job()
+    result = build_result(job)
+
+    mapper = FakeJobMapper(
+        job=job,
+    )
+    content = FakeContentPipeline()
+
+    render = FakeRenderOrchestrator(
+        result=result,
+    )
+
+    runtime_factory = FakeRenderRuntimeFactory(
+        orchestrator=render,
+    )
+
+    service = _service(
+        mapper=mapper,
+        content=content,
+        runtime_factory=runtime_factory,
+    )
+
+    assert service.job_mapper is mapper
+    assert service.content_pipeline is content
+    assert (
+        service.render_runtime_factory
+        is runtime_factory
+    )
+
+
+def test_execute_maps_runs_content_builds_runtime_and_renders() -> None:
+    specification = build_specification()
+
+    mapped_job = build_job(
+        project_name="Mapped Job",
+    )
+
+    prepared_job = mapped_job.model_copy(
+        deep=True
+    )
+
+    result = build_result(
+        prepared_job
+    )
+
+    mapper = FakeJobMapper(
+        job=mapped_job,
+    )
+
+    content = FakeContentPipeline(
+        returned_job=prepared_job,
+    )
+
+    render = FakeRenderOrchestrator(
+        result=result,
+    )
+
+    runtime_factory = FakeRenderRuntimeFactory(
+        orchestrator=render,
+    )
+
+    service = _service(
+        mapper=mapper,
+        content=content,
+        runtime_factory=runtime_factory,
+    )
+
+    actual = service.execute(
+        specification,
+        niche="History Documentary",
+        genre_id="documentary",
+    )
+
+    assert actual is result
+
+    assert mapper.calls == [
+        (
+            specification,
+            "History Documentary",
+        )
+    ]
+
+    assert content.calls == [
+        mapped_job
+    ]
+
+    assert len(runtime_factory.calls) == 1
+
+    runtime_call = runtime_factory.calls[0]
+
+    assert runtime_call[0] is prepared_job
+    assert runtime_call[1] == "documentary"
+    assert runtime_call[2] == "English"
+    assert runtime_call[3] == "en"
+    assert runtime_call[4] is None
+    assert runtime_call[5] is None
+    assert runtime_call[6] == "1920x1080"
+    assert runtime_call[7] == 30
+    assert runtime_call[8] is True
+
+    assert render.calls == [
+        (
+            prepared_job,
+            False,
+            None,
+            None,
+        )
+    ]
+
+
+def test_execute_preserves_dependency_call_order() -> None:
+    specification = build_specification()
+    job = build_job()
+
+    call_order: list[str] = []
+
+    mapper = FakeJobMapper(
+        job=job,
+        call_order=call_order,
+    )
+
+    content = FakeContentPipeline(
+        call_order=call_order,
+    )
+
+    result = build_result(job)
+
+    render = FakeRenderOrchestrator(
+        result=result,
+        call_order=call_order,
+    )
+
+    runtime_factory = FakeRenderRuntimeFactory(
+        orchestrator=render,
+        call_order=call_order,
+    )
+
+    service = _service(
+        mapper=mapper,
+        content=content,
+        runtime_factory=runtime_factory,
+    )
+
+    service.execute(
+        specification,
+        niche="History Documentary",
+        genre_id="documentary",
+    )
+
+    assert call_order == [
+        "mapper",
+        "content",
+        "runtime",
+        "render",
+    ]
+
+
+def test_execute_forwards_runtime_configuration() -> None:
+    specification = build_specification()
+    job = build_job()
+
+    result = build_result(job)
+
+    render = FakeRenderOrchestrator(
+        result=result,
+    )
+
+    runtime_factory = FakeRenderRuntimeFactory(
+        orchestrator=render,
+    )
+
+    service = _service(
+        mapper=FakeJobMapper(
+            job=job,
+        ),
+        content=FakeContentPipeline(),
+        runtime_factory=runtime_factory,
+    )
+
+    overrides = cast(
+        dict[int, SceneEditingDirectives],
+        {
+            3: object(),
+        },
+    )
+
+    service.execute(
+        specification,
+        niche="History Documentary",
+        genre_id="history-documentary",
+        language="Urdu",
+        language_code="ur-pk",
+        voice_provider_name="elevenlabs",
+        overrides_by_scene=overrides,
+        output_resolution="3840x2160",
+        frame_rate=60,
+        warn_on_blueprint_fallbacks=False,
+        dry_run=True,
+    )
+
+    assert runtime_factory.calls == [
+        (
+            job,
+            "history-documentary",
+            "Urdu",
+            "ur-pk",
+            "elevenlabs",
+            overrides,
+            "3840x2160",
+            60,
+            False,
+        )
+    ]
+
+    assert render.calls == [
+        (
+            job,
+            True,
+            None,
+            None,
+        )
+    ]
+
+
+def test_execute_propagates_mapper_configuration_error() -> None:
+    specification = build_specification()
+
+    mapper = FakeJobMapper(
+        error=ConfigurationError(
+            "Unsupported specification."
+        )
+    )
+
+    content = FakeContentPipeline()
+
+    job = build_job()
+
+    render = FakeRenderOrchestrator(
+        result=build_result(job),
+    )
+
+    runtime_factory = FakeRenderRuntimeFactory(
+        orchestrator=render,
+    )
+
+    service = _service(
+        mapper=mapper,
+        content=content,
+        runtime_factory=runtime_factory,
+    )
+
+    with pytest.raises(
+        ConfigurationError,
+        match="Unsupported specification",
+    ):
+        service.execute(
+            specification,
+            niche="History Documentary",
+            genre_id="documentary",
+        )
+
+    assert content.calls == []
+    assert runtime_factory.calls == []
+    assert render.calls == []
+
+
+def test_execute_propagates_content_pipeline_error() -> None:
+    specification = build_specification()
+    job = build_job()
+
+    mapper = FakeJobMapper(
+        job=job,
+    )
+
+    content = FakeContentPipeline(
+        error=RuntimeError(
+            "Content generation failed."
+        )
+    )
+
+    render = FakeRenderOrchestrator(
+        result=build_result(job),
+    )
+
+    runtime_factory = FakeRenderRuntimeFactory(
+        orchestrator=render,
+    )
+
+    service = _service(
+        mapper=mapper,
+        content=content,
+        runtime_factory=runtime_factory,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="Content generation failed",
+    ):
+        service.execute(
+            specification,
+            niche="History Documentary",
+            genre_id="documentary",
+        )
+
+    assert len(mapper.calls) == 1
+    assert runtime_factory.calls == []
+    assert render.calls == []
+
+
+def test_execute_propagates_runtime_factory_error() -> None:
+    specification = build_specification()
+    job = build_job()
+
+    render = FakeRenderOrchestrator(
+        result=build_result(job),
+    )
+
+    runtime_factory = FakeRenderRuntimeFactory(
+        orchestrator=render,
+        error=RuntimeError(
+            "Runtime composition failed."
+        ),
+    )
+
+    service = _service(
+        mapper=FakeJobMapper(
+            job=job,
+        ),
+        content=FakeContentPipeline(),
+        runtime_factory=runtime_factory,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="Runtime composition failed",
+    ):
+        service.execute(
+            specification,
+            niche="History Documentary",
+            genre_id="documentary",
+        )
+
+    assert len(runtime_factory.calls) == 1
+    assert render.calls == []
+
+
+def test_execute_forwards_dry_run_false_by_default() -> None:
+    specification = build_specification()
+    job = build_job()
+
+    result = build_result(job)
+
+    render = FakeRenderOrchestrator(
+        result=result,
+    )
+
+    runtime_factory = FakeRenderRuntimeFactory(
+        orchestrator=render,
+    )
+
+    service = _service(
+        mapper=FakeJobMapper(
+            job=job,
+        ),
+        content=FakeContentPipeline(),
+        runtime_factory=runtime_factory,
+    )
+
+    actual = service.execute(
+        specification,
+        niche="History Documentary",
+        genre_id="documentary",
+    )
+
+    assert actual is result
+
+    assert render.calls == [
+        (
+            job,
+            False,
+            None,
+            None,
+        )
+    ]
+
+
+def test_resume_bypasses_mapper_and_content_pipeline() -> None:
+    job = build_job()
+
+    result = build_result(
+        job
+    )
+
+    mapper = FakeJobMapper(
+        error=AssertionError(
+            "Mapper must not run during resume."
+        )
+    )
+
+    content = FakeContentPipeline(
+        error=AssertionError(
+            "Content pipeline must not run during resume."
+        )
+    )
+
+    render = FakeRenderOrchestrator(
+        result=result,
+    )
+
+    runtime_factory = FakeRenderRuntimeFactory(
+        orchestrator=render,
+    )
+
+    service = _service(
+        mapper=mapper,
+        content=content,
+        runtime_factory=runtime_factory,
+    )
+
+    actual = service.resume(
+        job,
+        genre_id="documentary",
+    )
+
+    assert actual is result
+    assert mapper.calls == []
+    assert content.calls == []
+
+    assert len(runtime_factory.calls) == 1
+    assert runtime_factory.calls[0][0] is job
+    assert runtime_factory.calls[0][1] == "documentary"
+
+    assert render.calls == [
+        (
+            job,
+            False,
+            None,
+            None,
+        )
+    ]
+
+
+def test_resume_forwards_runtime_configuration() -> None:
+    job = build_job()
+
+    result = build_result(job)
+
+    render = FakeRenderOrchestrator(
+        result=result,
+    )
+
+    runtime_factory = FakeRenderRuntimeFactory(
+        orchestrator=render,
+    )
+
+    service = _service(
+        mapper=FakeJobMapper(
+            job=job,
+        ),
+        content=FakeContentPipeline(),
+        runtime_factory=runtime_factory,
+    )
+
+    overrides = cast(
+        dict[int, SceneEditingDirectives],
+        {
+            2: object(),
+        },
+    )
+
+    service.resume(
+        job,
+        genre_id="history-documentary",
+        language="Urdu",
+        language_code="ur-pk",
+        voice_provider_name="elevenlabs",
+        overrides_by_scene=overrides,
+        output_resolution="3840x2160",
+        frame_rate=60,
+        warn_on_blueprint_fallbacks=False,
+    )
+
+    assert runtime_factory.calls == [
+        (
+            job,
+            "history-documentary",
+            "Urdu",
+            "ur-pk",
+            "elevenlabs",
+            overrides,
+            "3840x2160",
+            60,
+            False,
+        )
+    ]
+
+
+def test_resume_forwards_checkpoint_user_input_and_dry_run() -> None:
+    job = build_job()
+
+    result = build_result(
+        job
+    )
+
+    checkpoint_id = uuid4()
+
+    user_input: dict[str, Any] = {
+        "scene_number": 3,
+        "decision": "manual_upload",
+    }
+
+    render = FakeRenderOrchestrator(
+        result=result,
+    )
+
+    runtime_factory = FakeRenderRuntimeFactory(
+        orchestrator=render,
+    )
+
+    service = _service(
+        mapper=FakeJobMapper(
+            job=job,
+        ),
+        content=FakeContentPipeline(),
+        runtime_factory=runtime_factory,
+    )
+
+    actual = service.resume(
+        job,
+        genre_id="documentary",
+        checkpoint_id=checkpoint_id,
+        user_input=user_input,
+        dry_run=True,
+    )
+
+    assert actual is result
+
+    assert render.calls == [
+        (
+            job,
+            True,
+            checkpoint_id,
+            user_input,
+        )
+    ]
+
+
+def test_resume_builds_fresh_runtime_for_each_call() -> None:
+    job = build_job()
+
+    result = build_result(job)
+
+    render = FakeRenderOrchestrator(
+        result=result,
+    )
+
+    runtime_factory = FakeRenderRuntimeFactory(
+        orchestrator=render,
+    )
+
+    service = _service(
+        mapper=FakeJobMapper(
+            job=job,
+        ),
+        content=FakeContentPipeline(),
+        runtime_factory=runtime_factory,
+    )
+
+    service.resume(
+        job,
+        genre_id="documentary",
+    )
+
+    service.resume(
+        job,
+        genre_id="documentary",
+    )
+
+    assert len(runtime_factory.calls) == 2
+    assert len(render.calls) == 2
+
+
+def test_execute_returns_orchestrator_result_unchanged() -> None:
+    specification = build_specification()
+    job = build_job()
+
+    expected = build_result(
+        job
+    )
+
+    render = FakeRenderOrchestrator(
+        result=expected,
+    )
+
+    runtime_factory = FakeRenderRuntimeFactory(
+        orchestrator=render,
+    )
+
+    service = _service(
+        mapper=FakeJobMapper(
+            job=job,
+        ),
+        content=FakeContentPipeline(),
+        runtime_factory=runtime_factory,
+    )
+
+    actual = service.execute(
+        specification,
+        niche="History Documentary",
+        genre_id="documentary",
+    )
+
+    assert actual is expected
+
+=== 2. PRODUCTION APPLICATION FACTORY TESTS ===
+from __future__ import annotations
+
+from pathlib import Path
+from typing import cast
+
+import pytest
+
+from src.models.provider_profile import (
+    ProviderProfile,
+)
+from src.models.voice_profile import (
+    VoiceProfile,
+)
+from src.providers.voice_provider import (
+    VoiceProvider,
+)
+from src.services.genre_profile_registry_service import (
+    GenreProfileRegistryService,
+)
+from src.services.genre_timeline_pipeline_service import (
+    GenreTimelinePipelineService,
+)
+from src.services.mission_application_service import (
+    MissionApplicationService,
+)
+from src.services.production_application_factory import (
+    ProductionApplicationFactory,
+    ProductionApplicationRuntime,
+)
+from src.services.production_render_service import (
+    ProductionRenderService,
+)
+from src.services.scene_asset_workflow_service import (
+    SceneAssetWorkflowService,
+)
+from src.services.secrets.provider_secret_manager import (
+    SecretStore,
+)
+
+
+def _provider_profile() -> ProviderProfile:
+    """
+    Create one minimal provider profile.
+
+    Provider execution is intentionally not exercised by these
+    composition tests.
+    """
+
+    return ProviderProfile.model_construct(
+        profile_id="provider.test",
+        display_name="Test Provider",
+        provider_name="test",
+    )
+
+
+def _voice_profile() -> VoiceProfile:
+    """Create one valid provider-independent voice profile."""
+
+    return VoiceProfile(
+        profile_id="voice.neutral_narrator",
+        display_name="Neutral Narrator",
+        fallback_profile_id=None,
+    )
+
+
+
+def _secret_store() -> SecretStore:
+    """
+    Return a typed identity-only SecretStore dependency.
+
+    SecretStore is an abstract/interface boundary. These tests verify
+    dependency composition only and never execute secret-store behavior.
+    """
+
+    return cast(
+        SecretStore,
+        object(),
+    )
+
+
+def _voice_provider() -> VoiceProvider:
+    """
+    Return a typed identity-only voice provider.
+
+    Voice generation itself is not executed in these composition tests.
+    """
+
+    return cast(
+        VoiceProvider,
+        object(),
+    )
+
+
+def _asset_workflow_service() -> SceneAssetWorkflowService:
+    """
+    Return a typed identity-only asset workflow dependency.
+
+    Asset workflow behavior is covered by its dedicated service tests.
+    """
+
+    return cast(
+        SceneAssetWorkflowService,
+        object(),
+    )
+
+
+def _genre_timeline_service() -> GenreTimelinePipelineService:
+    """
+    Return a typed identity-only genre timeline dependency.
+
+    Timeline behavior is covered independently by its dedicated tests.
+    """
+
+    return cast(
+        GenreTimelinePipelineService,
+        object(),
+    )
+
+
+def _factory(
+    *,
+    checkpoint_storage_root: str | Path | None = None,
+    production_render_service: (
+        ProductionRenderService | None
+    ) = None,
+) -> ProductionApplicationFactory:
+    """Build one production application factory for composition tests."""
+
+    return ProductionApplicationFactory(
+        secret_store=_secret_store(),
+        provider_profiles=[
+            _provider_profile(),
+        ],
+        voice_profiles=[
+            _voice_profile(),
+        ],
+        voice_providers=[
+            _voice_provider(),
+        ],
+        genre_registry=(
+            GenreProfileRegistryService
+            .with_default_profiles()
+        ),
+        asset_workflow_service=(
+            _asset_workflow_service()
+        ),
+        genre_timeline_service=(
+            _genre_timeline_service()
+        ),
+        checkpoint_storage_root=(
+            checkpoint_storage_root
+        ),
+        production_render_service=(
+            production_render_service
+        ),
+    )
+
+
+def test_build_returns_complete_runtime() -> None:
+    runtime = _factory().build()
+
+    assert isinstance(
+        runtime,
+        ProductionApplicationRuntime,
+    )
+
+    assert isinstance(
+        runtime.application,
+        MissionApplicationService,
+    )
+
+    assert (
+        runtime.render_stage_factory
+        .production_render_enabled
+        is True
+    )
+
+    assert (
+        runtime.render_stage_factory
+        .render_service
+        is None
+    )
+
+    assert (
+        runtime.render_stage_factory
+        .production_render_service
+        is runtime.production_render_service
+    )
+
+
+def test_runtime_uses_shared_voice_registry() -> None:
+    runtime = _factory().build()
+
+    directive_service = (
+        runtime.render_runtime_factory
+        .voice_directive_generation_service
+    )
+
+    assert (
+        directive_service
+        .voice_profile_registry
+        is runtime
+        .voice_resolution_runtime
+        .voice_profile_registry
+    )
+
+
+def test_build_application_returns_entrypoint() -> None:
+    application = (
+        _factory()
+        .build_application()
+    )
+
+    assert isinstance(
+        application,
+        MissionApplicationService,
+    )
+
+
+def test_build_without_checkpoint_root_disables_persistence() -> None:
+    runtime = _factory().build()
+
+    assert (
+        runtime.checkpoint_storage_service
+        is None
+    )
+
+    assert (
+        runtime.checkpoint_service
+        is None
+    )
+
+    assert (
+        runtime.resume_planner_service
+        is None
+    )
+
+
+def test_build_with_checkpoint_root_enables_complete_checkpoint_graph(
+    tmp_path: Path,
+) -> None:
+    runtime = _factory(
+        checkpoint_storage_root=(
+            tmp_path / "checkpoints"
+        ),
+    ).build()
+
+    assert (
+        runtime.checkpoint_storage_service
+        is not None
+    )
+
+    assert (
+        runtime.checkpoint_service
+        is not None
+    )
+
+    assert (
+        runtime.resume_planner_service
+        is not None
+    )
+
+    assert (
+        runtime
+        .render_runtime_factory
+        .checkpoint_storage_service
+        is runtime
+        .checkpoint_storage_service
+    )
+
+    assert (
+        runtime
+        .render_runtime_factory
+        .checkpoint_service
+        is runtime
+        .checkpoint_service
+    )
+
+    assert (
+        runtime
+        .render_runtime_factory
+        .resume_planner_service
+        is runtime
+        .resume_planner_service
+    )
+
+
+def test_factory_uses_production_settings_by_default() -> None:
+    factory = _factory()
+
+    assert (
+        factory.advanced_settings.dry_run
+        is False
+    )
+
+
+def test_factory_preserves_explicit_production_renderer() -> None:
+    renderer = ProductionRenderService()
+
+    runtime = _factory(
+        production_render_service=renderer,
+    ).build()
+
+    assert (
+        runtime.production_render_service
+        is renderer
+    )
+
+    assert (
+        runtime.render_stage_factory
+        .production_render_service
+        is renderer
+    )
+
+
+@pytest.mark.parametrize(
+    (
+        "provider_profiles",
+        "voice_profiles",
+        "voice_providers",
+        "message",
+    ),
+    [
+        (
+            [],
+            [
+                _voice_profile(),
+            ],
+            [
+                _voice_provider(),
+            ],
+            (
+                "Production application requires "
+                "at least one provider profile."
+            ),
+        ),
+        (
+            [
+                _provider_profile(),
+            ],
+            [],
+            [
+                _voice_provider(),
+            ],
+            (
+                "Production application requires "
+                "at least one voice profile."
+            ),
+        ),
+        (
+            [
+                _provider_profile(),
+            ],
+            [
+                _voice_profile(),
+            ],
+            [],
+            (
+                "Production application requires "
+                "at least one voice provider."
+            ),
+        ),
+    ],
+)
+def test_factory_rejects_missing_required_runtime_configuration(
+    provider_profiles: list[
+        ProviderProfile
+    ],
+    voice_profiles: list[
+        VoiceProfile
+    ],
+    voice_providers: list[
+        VoiceProvider
+    ],
+    message: str,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match=message,
+    ):
+        ProductionApplicationFactory(
+            secret_store=(
+                _secret_store()
+            ),
+            provider_profiles=(
+                provider_profiles
+            ),
+            voice_profiles=(
+                voice_profiles
+            ),
+            voice_providers=(
+                voice_providers
+            ),
+            genre_registry=(
+                GenreProfileRegistryService
+                .with_default_profiles()
+            ),
+            asset_workflow_service=(
+                _asset_workflow_service()
+            ),
+            genre_timeline_service=(
+                _genre_timeline_service()
+            ),
+        )
+
+
+def test_each_build_creates_fresh_application_graph() -> None:
+    factory = _factory()
+
+    first = factory.build()
+    second = factory.build()
+
+    assert (
+        first
+        is not second
+    )
+
+    assert (
+        first.application
+        is not second.application
+    )
+
+    assert (
+        first.infrastructure
+        is not second.infrastructure
+    )
+
+    assert (
+        first.voice_resolution_runtime
+        is not second.voice_resolution_runtime
+    )
+
+    assert (
+        first.voice_generation_service
+        is not second.voice_generation_service
+    )
+
+    assert (
+        first.render_stage_factory
+        is not second.render_stage_factory
+    )
+
+    assert (
+        first.render_runtime_factory
+        is not second.render_runtime_factory
+    )
+
+=== 3. PROJECT RENDER RUNTIME FACTORY TESTS ===
+from __future__ import annotations
+
+from typing import TypeVar, cast
+
+from src.models.advanced_settings import AdvancedSettings
+from src.models.editing_directives import (
+    SceneEditingDirectives,
+)
+from src.models.resolved_voice_blueprint import (
+    ResolvedVoiceBlueprint,
+    ResolvedVoiceProfileReference,
+    VoiceBlueprintResolutionStatus,
+)
+from src.models.scene import Scene
+from src.models.video_job import VideoJob
+from src.models.voice_directives import (
+    SceneVoiceDirectives,
+)
+from src.pipeline.base_stage import (
+    BasePipelineStage,
+)
+from src.pipeline.pipeline_stage import (
+    PipelineStageName,
+)
+from src.services.genre_voice_directive_generation_service import (
+    GenreVoiceDirectiveGenerationService,
+)
+from src.services.pipeline_checkpoint_service import (
+    PipelineCheckpointService,
+)
+from src.services.pipeline_checkpoint_storage_service import (
+    PipelineCheckpointStorageService,
+)
+from src.services.pipeline_resume_planner_service import (
+    PipelineResumePlannerService,
+)
+from src.services.project_render_runtime_factory import (
+    ProjectRenderRuntimeFactory,
+)
+from src.services.render_orchestrator_service import (
+    RenderOrchestratorService,
+)
+from src.services.render_workflow_stage_factory import (
+    RenderWorkflowStageFactory,
+)
+from src.services.voice_resolution_runtime import (
+    VoiceResolutionRequest,
+    VoiceResolutionRuntime,
+)
+
+
+T = TypeVar("T")
+
+
+def _dependency(
+    dependency_type: type[T],
+) -> T:
+    """
+    Create a typed identity-only dependency.
+
+    These tests verify composition only. Dependencies that are merely
+    retained by the runtime factory or orchestrator do not need to be
+    executable.
+    """
+
+    del dependency_type
+
+    return cast(
+        T,
+        object(),
+    )
+
+
+def _scene(
+    scene_number: int,
+) -> Scene:
+    """Build one valid synthetic scene."""
+
+    return Scene(
+        scene_number=scene_number,
+        title=f"Scene {scene_number}",
+        narration=f"Narration {scene_number}.",
+        visual_prompt=(
+            f"Visual prompt {scene_number}."
+        ),
+        estimated_duration_seconds=(
+            scene_number * 10
+        ),
+    )
+
+
+def _job() -> VideoJob:
+    """
+    Build one prepared render-runtime job.
+
+    Scenes are deliberately reversed so deterministic scene/directive
+    alignment can be verified.
+    """
+
+    job = VideoJob(
+        project_name=(
+            "Project Runtime Factory Test"
+        ),
+        channel_name="Mission Channel",
+        niche="documentary",
+        topic="Runtime assembly",
+    )
+
+    job.scenes = [
+        _scene(2),
+        _scene(1),
+    ]
+
+    return job
+
+
+def _directive(
+    scene_number: int,
+) -> SceneVoiceDirectives:
+    """Build one provider-independent synthetic voice directive."""
+
+    return SceneVoiceDirectives(
+        scene_number=scene_number,
+        voice_profile_id=(
+            "voice.documentary"
+        ),
+    )
+
+
+def _blueprint(
+    scene_number: int,
+) -> ResolvedVoiceBlueprint:
+    """Build one valid synthetic resolved voice blueprint."""
+
+    return ResolvedVoiceBlueprint(
+        scene_number=scene_number,
+        status=(
+            VoiceBlueprintResolutionStatus
+            .RESOLVED
+        ),
+        profile=(
+            ResolvedVoiceProfileReference(
+                requested_profile_id=(
+                    "voice.documentary"
+                ),
+                resolved_profile_id=(
+                    "voice.documentary"
+                ),
+                display_name=(
+                    "Documentary Narrator"
+                ),
+                found_exact_match=True,
+                used_fallback=False,
+            )
+        ),
+        narration_text=(
+            f"Narration {scene_number}."
+        ),
+    )
+
+
+class RecordingDirectiveService(
+    GenreVoiceDirectiveGenerationService
+):
+    """
+    Record directive-generation calls without invoking genre registries.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[
+            tuple[
+                list[Scene],
+                str,
+                str,
+                str,
+            ]
+        ] = []
+
+    def generate_many(
+        self,
+        *,
+        scenes: list[Scene],
+        genre_id: str,
+        language: str = "English",
+        language_code: str = "en",
+    ) -> list[SceneVoiceDirectives]:
+        self.calls.append(
+            (
+                list(scenes),
+                genre_id,
+                language,
+                language_code,
+            )
+        )
+
+        return [
+            _directive(
+                scene.scene_number
+            )
+            for scene in sorted(
+                scenes,
+                key=lambda item: (
+                    item.scene_number
+                ),
+            )
+        ]
+
+
+class RecordingVoiceResolutionRuntime(
+    VoiceResolutionRuntime
+):
+    """
+    Record voice-resolution requests and return valid blueprints.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[
+            list[VoiceResolutionRequest]
+        ] = []
+
+    def resolve_many(
+        self,
+        requests: list[
+            VoiceResolutionRequest
+        ],
+    ) -> list[
+        ResolvedVoiceBlueprint
+    ]:
+        self.calls.append(
+            list(requests)
+        )
+
+        return [
+            _blueprint(
+                request[0].scene_number
+            )
+            for request in requests
+        ]
+
+
+class SyntheticStage:
+    """
+    Minimal construction-only stage object.
+
+    ProjectRenderRuntimeFactory tests verify composition rather than
+    pipeline execution. RenderOrchestratorService construction requires
+    stage_name for ordering/registration, so no execution behavior is
+    required here.
+    """
+
+    def __init__(
+        self,
+        stage_name: PipelineStageName,
+    ) -> None:
+        self.stage_name = stage_name
+
+
+def _stage(
+    stage_name: PipelineStageName,
+) -> BasePipelineStage:
+    """
+    Return one construction-only stage using the pipeline stage type.
+
+    The cast is intentional because these tests never execute the stage;
+    they only verify orchestration composition and registration.
+    """
+
+    return cast(
+        BasePipelineStage,
+        SyntheticStage(
+            stage_name
+        ),
+    )
+
+
+class RecordingStageFactory(
+    RenderWorkflowStageFactory
+):
+    """
+    Record stage-factory inputs and return canonical ordered stages.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[
+            tuple[
+                list[
+                    ResolvedVoiceBlueprint
+                ],
+                str,
+                str | None,
+                dict[
+                    int,
+                    SceneEditingDirectives,
+                ]
+                | None,
+                str,
+                int,
+                bool,
+            ]
+        ] = []
+
+    def build(
+        self,
+        *,
+        voice_blueprints: list[
+            ResolvedVoiceBlueprint
+        ],
+        genre_id: str,
+        voice_provider_name: (
+            str | None
+        ) = None,
+        overrides_by_scene: (
+            dict[
+                int,
+                SceneEditingDirectives,
+            ]
+            | None
+        ) = None,
+        output_resolution: str = (
+            "1920x1080"
+        ),
+        frame_rate: int = 30,
+        warn_on_blueprint_fallbacks: (
+            bool
+        ) = True,
+    ) -> list[
+        BasePipelineStage
+    ]:
+        self.calls.append(
+            (
+                list(
+                    voice_blueprints
+                ),
+                genre_id,
+                voice_provider_name,
+                overrides_by_scene,
+                output_resolution,
+                frame_rate,
+                warn_on_blueprint_fallbacks,
+            )
+        )
+
+        return [
+            _stage(
+                PipelineStageName.VOICE
+            ),
+            _stage(
+                PipelineStageName
+                .ASSET_SELECTION
+            ),
+            _stage(
+                PipelineStageName
+                .VIDEO_TIMELINE
+            ),
+            _stage(
+                PipelineStageName.RENDER
+            ),
+        ]
+
+
+def _factory(
+    *,
+    directive_service: (
+        RecordingDirectiveService
+        | None
+    ) = None,
+    voice_runtime: (
+        RecordingVoiceResolutionRuntime
+        | None
+    ) = None,
+    stage_factory: (
+        RecordingStageFactory
+        | None
+    ) = None,
+    advanced_settings: (
+        AdvancedSettings
+        | None
+    ) = None,
+    checkpoint_storage_service: (
+        PipelineCheckpointStorageService
+        | None
+    ) = None,
+    checkpoint_service: (
+        PipelineCheckpointService
+        | None
+    ) = None,
+    resume_planner_service: (
+        PipelineResumePlannerService
+        | None
+    ) = None,
+) -> ProjectRenderRuntimeFactory:
+    """Build a test runtime factory."""
+
+    return ProjectRenderRuntimeFactory(
+        voice_directive_generation_service=(
+            directive_service
+            or RecordingDirectiveService()
+        ),
+        voice_resolution_runtime=(
+            voice_runtime
+            or RecordingVoiceResolutionRuntime()
+        ),
+        stage_factory=(
+            stage_factory
+            or RecordingStageFactory()
+        ),
+        advanced_settings=(
+            advanced_settings
+        ),
+        checkpoint_storage_service=(
+            checkpoint_storage_service
+        ),
+        checkpoint_service=(
+            checkpoint_service
+        ),
+        resume_planner_service=(
+            resume_planner_service
+        ),
+    )
+
+
+def test_exposes_configured_dependencies() -> None:
+    directive_service = (
+        RecordingDirectiveService()
+    )
+
+    voice_runtime = (
+        RecordingVoiceResolutionRuntime()
+    )
+
+    stage_factory = (
+        RecordingStageFactory()
+    )
+
+    advanced_settings = (
+        AdvancedSettings()
+    )
+
+    checkpoint_storage = _dependency(
+        PipelineCheckpointStorageService
+    )
+
+    checkpoint_service = _dependency(
+        PipelineCheckpointService
+    )
+
+    resume_planner = _dependency(
+        PipelineResumePlannerService
+    )
+
+    factory = _factory(
+        directive_service=(
+            directive_service
+        ),
+        voice_runtime=(
+            voice_runtime
+        ),
+        stage_factory=(
+            stage_factory
+        ),
+        advanced_settings=(
+            advanced_settings
+        ),
+        checkpoint_storage_service=(
+            checkpoint_storage
+        ),
+        checkpoint_service=(
+            checkpoint_service
+        ),
+        resume_planner_service=(
+            resume_planner
+        ),
+    )
+
+    assert (
+        factory
+        .voice_directive_generation_service
+        is directive_service
+    )
+
+    assert (
+        factory.voice_resolution_runtime
+        is voice_runtime
+    )
+
+    assert (
+        factory.stage_factory
+        is stage_factory
+    )
+
+    assert (
+        factory.advanced_settings
+        is advanced_settings
+    )
+
+    assert (
+        factory.checkpoint_storage_service
+        is checkpoint_storage
+    )
+
+    assert (
+        factory.checkpoint_service
+        is checkpoint_service
+    )
+
+    assert (
+        factory.resume_planner_service
+        is resume_planner
+    )
+
+
+def test_build_generates_directives_for_job_scenes() -> None:
+    directive_service = (
+        RecordingDirectiveService()
+    )
+
+    factory = _factory(
+        directive_service=(
+            directive_service
+        ),
+    )
+
+    job = _job()
+
+    factory.build(
+        job=job,
+        genre_id=(
+            "genre.documentary"
+        ),
+        language="Urdu",
+        language_code="ur-pk",
+    )
+
+    assert (
+        len(
+            directive_service.calls
+        )
+        == 1
+    )
+
+    (
+        scenes,
+        genre_id,
+        language,
+        language_code,
+    ) = directive_service.calls[0]
+
+    assert scenes == job.scenes
+
+    assert (
+        genre_id
+        == "genre.documentary"
+    )
+
+    assert language == "Urdu"
+
+    assert (
+        language_code
+        == "ur-pk"
+    )
+
+
+def test_build_aligns_resolution_requests_by_scene_number() -> None:
+    voice_runtime = (
+        RecordingVoiceResolutionRuntime()
+    )
+
+    factory = _factory(
+        voice_runtime=(
+            voice_runtime
+        ),
+    )
+
+    factory.build(
+        job=_job(),
+        genre_id=(
+            "genre.documentary"
+        ),
+    )
+
+    assert (
+        len(
+            voice_runtime.calls
+        )
+        == 1
+    )
+
+    requests = (
+        voice_runtime.calls[0]
+    )
+
+    assert [
+        request[0].scene_number
+        for request in requests
+    ] == [
+        1,
+        2,
+    ]
+
+    assert [
+        request[1]
+        for request in requests
+    ] == [
+        "Narration 1.",
+        "Narration 2.",
+    ]
+
+    assert [
+        request[2]
+        for request in requests
+    ] == [
+        10,
+        20,
+    ]
+
+
+def test_build_forwards_resolved_blueprints_to_stage_factory() -> None:
+    stage_factory = (
+        RecordingStageFactory()
+    )
+
+    factory = _factory(
+        stage_factory=(
+            stage_factory
+        ),
+    )
+
+    factory.build(
+        job=_job(),
+        genre_id=(
+            "genre.documentary"
+        ),
+    )
+
+    assert (
+        len(
+            stage_factory.calls
+        )
+        == 1
+    )
+
+    blueprints = (
+        stage_factory.calls[0][0]
+    )
+
+    assert [
+        blueprint.scene_number
+        for blueprint in blueprints
+    ] == [
+        1,
+        2,
+    ]
+
+
+def test_build_forwards_render_configuration() -> None:
+    stage_factory = (
+        RecordingStageFactory()
+    )
+
+    overrides = cast(
+        dict[
+            int,
+            SceneEditingDirectives,
+        ],
+        {
+            1: _dependency(
+                SceneEditingDirectives
+            ),
+        },
+    )
+
+    factory = _factory(
+        stage_factory=(
+            stage_factory
+        ),
+    )
+
+    factory.build(
+        job=_job(),
+        genre_id=(
+            "genre.documentary"
+        ),
+        voice_provider_name=(
+            "elevenlabs"
+        ),
+        overrides_by_scene=(
+            overrides
+        ),
+        output_resolution=(
+            "3840x2160"
+        ),
+        frame_rate=60,
+        warn_on_blueprint_fallbacks=(
+            False
+        ),
+    )
+
+    assert (
+        len(
+            stage_factory.calls
+        )
+        == 1
+    )
+
+    call = stage_factory.calls[0]
+
+    assert (
+        call[1]
+        == "genre.documentary"
+    )
+
+    assert (
+        call[2]
+        == "elevenlabs"
+    )
+
+    assert (
+        call[3]
+        is overrides
+    )
+
+    assert (
+        call[4]
+        == "3840x2160"
+    )
+
+    assert call[5] == 60
+
+    assert (
+        call[6]
+        is False
+    )
+
+
+def test_build_returns_render_orchestrator() -> None:
+    orchestrator = (
+        _factory().build(
+            job=_job(),
+            genre_id=(
+                "genre.documentary"
+            ),
+        )
+    )
+
+    assert isinstance(
+        orchestrator,
+        RenderOrchestratorService,
+    )
+
+
+def test_build_registers_canonical_stage_order() -> None:
+    orchestrator = (
+        _factory().build(
+            job=_job(),
+            genre_id=(
+                "genre.documentary"
+            ),
+        )
+    )
+
+    assert [
+        stage.stage_name
+        for stage in orchestrator.stages
+    ] == [
+        PipelineStageName.VOICE,
+        PipelineStageName.ASSET_SELECTION,
+        PipelineStageName.VIDEO_TIMELINE,
+        PipelineStageName.RENDER,
+    ]
+
+
+def test_build_creates_fresh_orchestrator() -> None:
+    factory = _factory()
+    job = _job()
+
+    first = factory.build(
+        job=job,
+        genre_id=(
+            "genre.documentary"
+        ),
+    )
+
+    second = factory.build(
+        job=job,
+        genre_id=(
+            "genre.documentary"
+        ),
+    )
+
+    assert first is not second
+
+
+def test_build_preserves_orchestrator_runtime_configuration() -> None:
+    advanced_settings = (
+        AdvancedSettings()
+    )
+
+    checkpoint_storage = _dependency(
+        PipelineCheckpointStorageService
+    )
+
+    checkpoint_service = _dependency(
+        PipelineCheckpointService
+    )
+
+    resume_planner = _dependency(
+        PipelineResumePlannerService
+    )
+
+    factory = _factory(
+        advanced_settings=(
+            advanced_settings
+        ),
+        checkpoint_storage_service=(
+            checkpoint_storage
+        ),
+        checkpoint_service=(
+            checkpoint_service
+        ),
+        resume_planner_service=(
+            resume_planner
+        ),
+    )
+
+    orchestrator = factory.build(
+        job=_job(),
+        genre_id=(
+            "genre.documentary"
+        ),
+    )
+
+    assert (
+        orchestrator.advanced_settings
+        is advanced_settings
+    )
+
+    assert (
+        orchestrator
+        .checkpoint_storage_service
+        is checkpoint_storage
+    )
+
+    assert (
+        orchestrator
+        ._checkpoint_service
+        is checkpoint_service
+    )
+
+    assert (
+        orchestrator
+        ._resume_planner_service
+        is resume_planner
+    )
+
+=== 4. RENDER WORKFLOW FACTORY TESTS ===
+from __future__ import annotations
+
+from typing import TypeVar, cast
+
+import pytest
+
+from src.models.editing_directives import (
+    SceneEditingDirectives,
+)
+from src.models.resolved_voice_blueprint import (
+    ResolvedVoiceBlueprint,
+    ResolvedVoiceProfileReference,
+    VoiceBlueprintResolutionStatus,
+)
+from src.pipeline.asset_stage import (
+    AssetPipelineStage,
+)
+from src.pipeline.pipeline_stage import (
+    PipelineStageName,
+)
+from src.pipeline.render_stage import (
+    RenderPipelineStage,
+)
+from src.pipeline.timeline_stage import (
+    TimelinePipelineStage,
+)
+from src.pipeline.voice_stage import (
+    VoicePipelineStage,
+)
+from src.services.genre_timeline_pipeline_service import (
+    GenreTimelinePipelineService,
+)
+from src.services.production_render_service import (
+    ProductionRenderService,
+)
+from src.services.render_service import (
+    RenderService,
+)
+from src.services.render_workflow_stage_factory import (
+    RenderWorkflowStageFactory,
+)
+from src.services.scene_asset_workflow_service import (
+    SceneAssetWorkflowService,
+)
+from src.services.voice_generation_service import (
+    VoiceGenerationService,
+)
+from src.services.voice_timeline_service import (
+    VoiceTimelineService,
+)
+
+
+T = TypeVar("T")
+
+
+def _dependency(
+    dependency_type: type[T],
+) -> T:
+    """
+    Create a typed identity-only dependency.
+
+    These tests verify composition rather than service behavior.
+    Dependencies that are only stored by stage constructors do not
+    need to be executable.
+    """
+
+    del dependency_type
+
+    return cast(
+        T,
+        object(),
+    )
+
+
+def _blueprint(
+    *,
+    scene_number: int = 1,
+    narration_text: str = "Test narration.",
+) -> ResolvedVoiceBlueprint:
+    """
+    Build one valid resolved voice blueprint.
+
+    A real domain model is used because VoicePipelineStage validates
+    blueprint scene mappings during construction.
+    """
+
+    return ResolvedVoiceBlueprint(
+        scene_number=scene_number,
+        status=(
+            VoiceBlueprintResolutionStatus
+            .RESOLVED
+        ),
+        profile=ResolvedVoiceProfileReference(
+            requested_profile_id=(
+                "voice.test_narrator"
+            ),
+            resolved_profile_id=(
+                "voice.test_narrator"
+            ),
+            display_name="Test Narrator",
+            found_exact_match=True,
+            used_fallback=False,
+        ),
+        narration_text=narration_text,
+    )
+
+
+def _factory(
+    *,
+    render_service: RenderService | None = None,
+    production_render_service: (
+        ProductionRenderService | None
+    ) = None,
+) -> RenderWorkflowStageFactory:
+    """
+    Build the render workflow factory with typed identity dependencies.
+
+    A caller may explicitly choose either the legacy dry-run renderer
+    or the production renderer. Supplying neither exercises the normal
+    production-default composition.
+    """
+
+    return RenderWorkflowStageFactory(
+        voice_generation_service=_dependency(
+            VoiceGenerationService
+        ),
+        voice_timeline_service=_dependency(
+            VoiceTimelineService
+        ),
+        asset_workflow_service=_dependency(
+            SceneAssetWorkflowService
+        ),
+        genre_timeline_service=_dependency(
+            GenreTimelinePipelineService
+        ),
+        render_service=render_service,
+        production_render_service=(
+            production_render_service
+        ),
+    )
+
+
+def test_factory_preserves_injected_dependencies() -> None:
+    voice_generation_service = _dependency(
+        VoiceGenerationService
+    )
+
+    voice_timeline_service = _dependency(
+        VoiceTimelineService
+    )
+
+    asset_workflow_service = _dependency(
+        SceneAssetWorkflowService
+    )
+
+    genre_timeline_service = _dependency(
+        GenreTimelinePipelineService
+    )
+
+    render_service = _dependency(
+        RenderService
+    )
+
+    factory = RenderWorkflowStageFactory(
+        voice_generation_service=(
+            voice_generation_service
+        ),
+        voice_timeline_service=(
+            voice_timeline_service
+        ),
+        asset_workflow_service=(
+            asset_workflow_service
+        ),
+        genre_timeline_service=(
+            genre_timeline_service
+        ),
+        render_service=render_service,
+    )
+
+    assert (
+        factory.voice_generation_service
+        is voice_generation_service
+    )
+
+    assert (
+        factory.voice_timeline_service
+        is voice_timeline_service
+    )
+
+    assert (
+        factory.asset_workflow_service
+        is asset_workflow_service
+    )
+
+    assert (
+        factory.genre_timeline_service
+        is genre_timeline_service
+    )
+
+    assert (
+        factory.render_service
+        is render_service
+    )
+
+    assert (
+        factory.production_render_service
+        is None
+    )
+
+    assert (
+        factory.production_render_enabled
+        is False
+    )
+
+
+def test_factory_enables_production_render_by_default() -> None:
+    factory = _factory()
+
+    assert (
+        factory.production_render_enabled
+        is True
+    )
+
+    assert (
+        factory.production_render_service
+        is not None
+    )
+
+    assert (
+        isinstance(
+            factory.production_render_service,
+            ProductionRenderService,
+        )
+    )
+
+    assert (
+        factory.render_service
+        is None
+    )
+
+
+def test_factory_preserves_explicit_legacy_renderer() -> None:
+    legacy_render_service = RenderService()
+
+    factory = _factory(
+        render_service=legacy_render_service,
+    )
+
+    assert (
+        factory.production_render_enabled
+        is False
+    )
+
+    assert (
+        factory.production_render_service
+        is None
+    )
+
+    assert (
+        factory.render_service
+        is legacy_render_service
+    )
+
+
+def test_factory_preserves_explicit_production_renderer() -> None:
+    production_render_service = (
+        ProductionRenderService()
+    )
+
+    factory = _factory(
+        production_render_service=(
+            production_render_service
+        ),
+    )
+
+    assert (
+        factory.production_render_enabled
+        is True
+    )
+
+    assert (
+        factory.production_render_service
+        is production_render_service
+    )
+
+    assert (
+        factory.render_service
+        is None
+    )
+
+
+def test_factory_rejects_two_render_engines() -> None:
+    with pytest.raises(
+        ValueError,
+        match=(
+            "Render workflow stage factory cannot "
+            "configure both legacy and production "
+            "render services"
+        ),
+    ):
+        _factory(
+            render_service=RenderService(),
+            production_render_service=(
+                ProductionRenderService()
+            ),
+        )
+
+
+def test_build_returns_required_stage_order() -> None:
+    factory = _factory()
+
+    stages = factory.build(
+        voice_blueprints=[
+            _blueprint(),
+        ],
+        genre_id="documentary",
+    )
+
+    assert len(stages) == 4
+
+    assert isinstance(
+        stages[0],
+        VoicePipelineStage,
+    )
+
+    assert isinstance(
+        stages[1],
+        AssetPipelineStage,
+    )
+
+    assert isinstance(
+        stages[2],
+        TimelinePipelineStage,
+    )
+
+    assert isinstance(
+        stages[3],
+        RenderPipelineStage,
+    )
+
+    assert [
+        stage.stage_name
+        for stage in stages
+    ] == [
+        PipelineStageName.VOICE,
+        PipelineStageName.ASSET_SELECTION,
+        PipelineStageName.VIDEO_TIMELINE,
+        PipelineStageName.RENDER,
+    ]
+
+
+def test_build_creates_fresh_stage_instances() -> None:
+    factory = _factory()
+
+    blueprints = [
+        _blueprint(),
+    ]
+
+    first = factory.build(
+        voice_blueprints=blueprints,
+        genre_id="documentary",
+    )
+
+    second = factory.build(
+        voice_blueprints=blueprints,
+        genre_id="documentary",
+    )
+
+    assert len(first) == len(second)
+
+    for first_stage, second_stage in zip(
+        first,
+        second,
+        strict=True,
+    ):
+        assert (
+            first_stage
+            is not second_stage
+        )
+
+
+def test_build_preserves_job_specific_voice_blueprints() -> None:
+    factory = _factory()
+
+    first_blueprint = _blueprint(
+        scene_number=1,
+        narration_text=(
+            "First scene narration."
+        ),
+    )
+
+    second_blueprint = _blueprint(
+        scene_number=2,
+        narration_text=(
+            "Second scene narration."
+        ),
+    )
+
+    stages = factory.build(
+        voice_blueprints=[
+            first_blueprint,
+            second_blueprint,
+        ],
+        genre_id="documentary",
+    )
+
+    voice_stage = cast(
+        VoicePipelineStage,
+        stages[0],
+    )
+
+    assert (
+        voice_stage._blueprints
+        == [
+            first_blueprint,
+            second_blueprint,
+        ]
+    )
+
+
+def test_build_passes_voice_blueprints_to_production_render_stage() -> None:
+    factory = _factory()
+
+    first_blueprint = _blueprint(
+        scene_number=1,
+    )
+
+    second_blueprint = _blueprint(
+        scene_number=2,
+    )
+
+    blueprints = [
+        first_blueprint,
+        second_blueprint,
+    ]
+
+    stages = factory.build(
+        voice_blueprints=blueprints,
+        genre_id="documentary",
+    )
+
+    render_stage = cast(
+        RenderPipelineStage,
+        stages[3],
+    )
+
+    assert (
+        render_stage.production_render_enabled
+        is True
+    )
+
+    assert (
+        render_stage._voice_blueprints
+        == blueprints
+    )
+
+    assert (
+        render_stage._voice_blueprints
+        is not blueprints
+    )
+
+
+def test_build_forwards_voice_provider_name() -> None:
+    factory = _factory()
+
+    stages = factory.build(
+        voice_blueprints=[
+            _blueprint(),
+        ],
+        genre_id="documentary",
+        voice_provider_name=(
+            "  elevenlabs  "
+        ),
+    )
+
+    voice_stage = cast(
+        VoicePipelineStage,
+        stages[0],
+    )
+
+    assert (
+        voice_stage._provider_name
+        == "elevenlabs"
+    )
+
+
+def test_build_forwards_timeline_configuration() -> None:
+    factory = _factory()
+
+    overrides = cast(
+        dict[
+            int,
+            SceneEditingDirectives,
+        ],
+        {
+            1: _dependency(
+                SceneEditingDirectives
+            ),
+        },
+    )
+
+    stages = factory.build(
+        voice_blueprints=[
+            _blueprint(),
+        ],
+        genre_id="  Documentary  ",
+        overrides_by_scene=overrides,
+        output_resolution="3840x2160",
+        frame_rate=60,
+        warn_on_blueprint_fallbacks=False,
+    )
+
+    timeline_stage = cast(
+        TimelinePipelineStage,
+        stages[2],
+    )
+
+    assert (
+        timeline_stage.genre_id
+        == "documentary"
+    )
+
+    assert (
+        timeline_stage
+        ._overrides_by_scene
+        == overrides
+    )
+
+    assert (
+        timeline_stage
+        ._output_resolution
+        == "3840x2160"
+    )
+
+    assert (
+        timeline_stage._frame_rate
+        == 60
+    )
+
+    assert (
+        timeline_stage
+        ._warn_on_blueprint_fallbacks
+        is False
+    )
+
+
+def test_build_copies_timeline_overrides() -> None:
+    factory = _factory()
+
+    overrides = cast(
+        dict[
+            int,
+            SceneEditingDirectives,
+        ],
+        {
+            1: _dependency(
+                SceneEditingDirectives
+            ),
+        },
+    )
+
+    stages = factory.build(
+        voice_blueprints=[
+            _blueprint(),
+        ],
+        genre_id="documentary",
+        overrides_by_scene=overrides,
+    )
+
+    timeline_stage = cast(
+        TimelinePipelineStage,
+        stages[2],
+    )
+
+    assert (
+        timeline_stage
+        ._overrides_by_scene
+        == overrides
+    )
+
+    assert (
+        timeline_stage
+        ._overrides_by_scene
+        is not overrides
+    )
+
+
+def test_build_uses_injected_legacy_render_service() -> None:
+    render_service = _dependency(
+        RenderService
+    )
+
+    factory = _factory(
+        render_service=render_service,
+    )
+
+    stages = factory.build(
+        voice_blueprints=[
+            _blueprint(),
+        ],
+        genre_id="documentary",
+    )
+
+    render_stage = cast(
+        RenderPipelineStage,
+        stages[3],
+    )
+
+    assert (
+        render_stage._render_service
+        is render_service
+    )
+
+    assert (
+        render_stage.production_render_enabled
+        is False
+    )
+
+    assert (
+        render_stage._voice_blueprints
+        == []
+    )
+
+
+def test_build_uses_production_renderer_by_default() -> None:
+    factory = _factory()
+
+    stages = factory.build(
+        voice_blueprints=[
+            _blueprint(),
+        ],
+        genre_id="documentary",
+    )
+
+    render_stage = cast(
+        RenderPipelineStage,
+        stages[3],
+    )
+
+    assert (
+        render_stage.production_render_enabled
+        is True
+    )
+
+    assert (
+        render_stage._production_render_service
+        is factory.production_render_service
+    )
+
+
+def test_build_uses_explicit_production_renderer() -> None:
+    production_render_service = (
+        ProductionRenderService()
+    )
+
+    factory = _factory(
+        production_render_service=(
+            production_render_service
+        ),
+    )
+
+    stages = factory.build(
+        voice_blueprints=[
+            _blueprint(),
+        ],
+        genre_id="documentary",
+    )
+
+    render_stage = cast(
+        RenderPipelineStage,
+        stages[3],
+    )
+
+    assert (
+        render_stage.production_render_enabled
+        is True
+    )
+
+    assert (
+        render_stage._production_render_service
+        is production_render_service
+    )
+
+
+def test_build_rejects_empty_voice_blueprints() -> None:
+    factory = _factory()
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "Voice pipeline stage requires "
+            "at least one resolved voice blueprint"
+        ),
+    ):
+        factory.build(
+            voice_blueprints=[],
+            genre_id="documentary",
+        )
+
+
+def test_build_rejects_duplicate_voice_scene_numbers() -> None:
+    factory = _factory()
+
+    with pytest.raises(
+        ValueError,
+    ):
+        factory.build(
+            voice_blueprints=[
+                _blueprint(
+                    scene_number=1,
+                    narration_text=(
+                        "First narration."
+                    ),
+                ),
+                _blueprint(
+                    scene_number=1,
+                    narration_text=(
+                        "Duplicate scene narration."
+                    ),
+                ),
+            ],
+            genre_id="documentary",
+        )
+
+
+@pytest.mark.parametrize(
+    "genre_id",
+    [
+        "",
+        " ",
+        "\t",
+        "\n",
+    ],
+)
+def test_build_rejects_blank_genre_id(
+    genre_id: str,
+) -> None:
+    factory = _factory()
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "Timeline pipeline stage requires "
+            "a genre ID"
+        ),
+    ):
+        factory.build(
+            voice_blueprints=[
+                _blueprint(),
+            ],
+            genre_id=genre_id,
+        )
+
+
+@pytest.mark.parametrize(
+    "frame_rate",
+    [
+        0,
+        -1,
+        -30,
+    ],
+)
+def test_build_rejects_non_positive_frame_rate(
+    frame_rate: int,
+) -> None:
+    factory = _factory()
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "Timeline pipeline stage frame rate "
+            "must be positive"
+        ),
+    ):
+        factory.build(
+            voice_blueprints=[
+                _blueprint(),
+            ],
+            genre_id="documentary",
+            frame_rate=frame_rate,
+        )
+
+
+@pytest.mark.parametrize(
+    "output_resolution",
+    [
+        "",
+        " ",
+        "\t",
+        "\n",
+    ],
+)
+def test_build_rejects_blank_output_resolution(
+    output_resolution: str,
+) -> None:
+    factory = _factory()
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "Timeline pipeline stage requires "
+            "an output resolution"
+        ),
+    ):
+        factory.build(
+            voice_blueprints=[
+                _blueprint(),
+            ],
+            genre_id="documentary",
+            output_resolution=(
+                output_resolution
+            ),
+        )
+
+=== 5. PIPELINE ADAPTER INTEGRATION TESTS ===
+from __future__ import annotations
+
+from src.models.asset_state import (
+    AssetWorkflowStatus,
+    SceneAssetState,
+)
+from src.models.audio_track import (
+    AudioTrack,
+    AudioTrackStatus,
+    AudioTrackType,
+)
+from src.models.enums import (
+    JobStatus,
+    WorkflowStage,
+)
+from src.models.editing_directives import (
+    SceneEditingDirectives,
+)
+from src.models.genre_timeline_pipeline import (
+    GenreTimelinePipelineResult,
+    GenreTimelinePipelineStatus,
+)
+from src.models.media_strategy import (
+    SceneSourceStatus,
+    SceneSourceType,
+    VoiceStatus,
+)
+from src.models.render_result import (
+    RenderResult,
+    RenderStatus,
+)
+from src.models.research import (
+    ResearchResult,
+    ResearchStatus,
+)
+from src.models.resolved_voice_blueprint import (
+    ResolvedVoiceBlueprint,
+)
+from src.models.scene import (
+    Scene,
+    SceneStatus,
+)
+from src.models.script import (
+    Script,
+    ScriptStatus,
+)
+from src.models.timeline_validation import (
+    TimelineValidationResult,
+)
+from src.models.video_clip import (
+    VideoClip,
+    VideoClipStatus,
+)
+from src.models.video_job import VideoJob
+from src.models.video_timeline import (
+    VideoTimeline,
+)
+from src.models.voice_generation import (
+    VoiceGenerationResult,
+    VoiceGenerationStatus,
+)
+from src.pipeline.asset_stage import (
+    AssetPipelineStage,
+)
+from src.pipeline.pipeline_runner import (
+    PipelineRunner,
+)
+from src.pipeline.pipeline_stage import (
+    PipelineStageName,
+    PipelineStageStatus,
+)
+from src.pipeline.pipeline_state import (
+    PipelineState,
+)
+from src.pipeline.render_stage import (
+    RenderPipelineStage,
+)
+from src.pipeline.stage_context import (
+    StageContext,
+)
+from src.pipeline.timeline_stage import (
+    TimelinePipelineStage,
+)
+from src.pipeline.voice_stage import (
+    VoicePipelineStage,
+)
+from src.services.genre_timeline_pipeline_service import (
+    GenreTimelinePipelineService,
+)
+from src.services.render_orchestrator_service import (
+    RenderOrchestratorService,
+)
+from src.services.render_service import (
+    RenderService,
+)
+from src.services.scene_asset_workflow_service import (
+    SceneAssetWorkflowService,
+)
+from src.services.voice_generation_service import (
+    VoiceGenerationService,
+)
+from src.services.voice_timeline_service import (
+    VoiceTimelineService,
+)
+
+
+class SyntheticVoiceGenerationService(
+    VoiceGenerationService
+):
+    """Successful deterministic voice generation."""
+
+    def __init__(
+        self,
+    ) -> None:
+        self.generated_scene_numbers: list[int] = []
+
+    def generate(
+        self,
+        blueprint: ResolvedVoiceBlueprint,
+        *,
+        start_time_seconds: float = 0.0,
+        provider_name: str | None = None,
+    ) -> VoiceGenerationResult:
+        del provider_name
+
+        self.generated_scene_numbers.append(
+            blueprint.scene_number
+        )
+
+        output_file = (
+            "outputs/audio/"
+            f"scene_{blueprint.scene_number:03d}.wav"
+        )
+
+        track = AudioTrack(
+            track_type=(
+                AudioTrackType.VOICEOVER
+            ),
+            source_file=output_file,
+            start_time_seconds=(
+                start_time_seconds
+            ),
+            duration_seconds=5.0,
+            provider="synthetic-voice",
+            status=AudioTrackStatus.READY,
+            metadata={
+                "scene_number": (
+                    blueprint.scene_number
+                ),
+            },
+        )
+
+        return VoiceGenerationResult(
+            success=True,
+            scene_number=(
+                blueprint.scene_number
+            ),
+            status=(
+                VoiceGenerationStatus.COMPLETED
+            ),
+            provider="synthetic-voice",
+            output_file=output_file,
+            audio_track=track,
+            attempts=1,
+        )
+
+
+class SyntheticReadyAssetService(
+    SceneAssetWorkflowService
+):
+    """Return an immediately-ready state for each scene."""
+
+    def __init__(
+        self,
+    ) -> None:
+        self.started_scene_numbers: list[int] = []
+
+    def start(
+        self,
+        scene: Scene,
+    ) -> SceneAssetState:
+        self.started_scene_numbers.append(
+            scene.scene_number
+        )
+
+        return SceneAssetState.model_construct(
+            scene_number=scene.scene_number,
+            status=AssetWorkflowStatus.READY,
+            warnings=[],
+            errors=[],
+        )
+
+
+class SyntheticWaitingAssetService(
+    SceneAssetWorkflowService
+):
+    """Return a state requiring manual user interaction."""
+
+    def __init__(
+        self,
+    ) -> None:
+        self.started_scene_numbers: list[int] = []
+
+    def start(
+        self,
+        scene: Scene,
+    ) -> SceneAssetState:
+        self.started_scene_numbers.append(
+            scene.scene_number
+        )
+
+        return SceneAssetState.model_construct(
+            scene_number=scene.scene_number,
+            status=(
+                AssetWorkflowStatus
+                .WAITING_FOR_MANUAL_UPLOAD
+            ),
+            warnings=[
+                "Manual upload required.",
+            ],
+            errors=[],
+        )
+
+
+class SyntheticTimelineService(
+    GenreTimelinePipelineService
+):
+    """Create a deterministic render-ready timeline."""
+
+    def __init__(
+        self,
+    ) -> None:
+        self.called = False
+
+    def build(
+        self,
+        *,
+        scenes: list[Scene],
+        clips: list[VideoClip],
+        genre_id: str,
+        overrides_by_scene: dict[int, SceneEditingDirectives] | None = None,
+        output_resolution: str = "1920x1080",
+        frame_rate: int = 30,
+        warn_on_blueprint_fallbacks: bool = True,
+    ) -> GenreTimelinePipelineResult:
+        del scenes
+        del overrides_by_scene
+        del warn_on_blueprint_fallbacks
+
+        self.called = True
+
+        timeline = VideoTimeline(
+            clips=list(
+                clips
+            ),
+            output_resolution=(
+                output_resolution
+            ),
+            frame_rate=frame_rate,
+        )
+
+        timeline.calculate_duration()
+
+        validation = (
+            TimelineValidationResult
+            .model_construct(
+                is_valid=True,
+                item_count=1,
+                enabled_item_count=1,
+                track_count=1,
+                total_duration_seconds=(
+                    timeline.total_duration_seconds
+                ),
+                gap_duration_seconds=0.0,
+                overlap_duration_seconds=0.0,
+                blueprint_count=1,
+                render_ready_item_count=1,
+                blueprint_fallback_count=0,
+                errors=[],
+                warnings=[],
+            )
+        )
+
+        return (
+            GenreTimelinePipelineResult
+            .model_construct(
+                requested_genre_id=(
+                    genre_id
+                ),
+                status=(
+                    GenreTimelinePipelineStatus
+                    .COMPLETED
+                ),
+                timeline=timeline,
+                directives=[],
+                blueprints=[],
+                validation=validation,
+                warnings=[],
+                metadata={
+                    "synthetic": True,
+                },
+            )
+        )
+
+
+class SyntheticRenderService(
+    RenderService
+):
+    """Successful deterministic render service."""
+
+    def __init__(
+        self,
+    ) -> None:
+        self.called = False
+
+    def render(
+        self,
+        timeline: VideoTimeline,
+    ) -> RenderResult:
+        self.called = True
+
+        return RenderResult(
+            success=True,
+            output_file=(
+                "outputs/"
+                "integration_final.mp4"
+            ),
+            render_engine=(
+                "synthetic-render"
+            ),
+            render_time_seconds=0.01,
+            duration_seconds=int(
+                timeline.calculate_duration()
+            ),
+            status=RenderStatus.COMPLETED,
+        )
+
+
+def build_research() -> ResearchResult:
+    """Build approved upstream research."""
+
+    return ResearchResult.model_construct(
+        status=ResearchStatus.APPROVED,
+    )
+
+
+def build_script() -> Script:
+    """Build approved upstream script."""
+
+    return Script(
+        title="Adapter integration test",
+        content=(
+            "Synthetic narration for "
+            "pipeline adapter integration."
+        ),
+        prompt_version="test-1.0",
+        word_count=7,
+        estimated_duration_seconds=10,
+        status=ScriptStatus.APPROVED,
+    )
+
+
+def build_scene(
+    scene_number: int,
+) -> Scene:
+    """Build one planned scene."""
+
+    return Scene(
+        scene_number=scene_number,
+        title=(
+            f"Integration Scene "
+            f"{scene_number}"
+        ),
+        narration=(
+            f"Synthetic narration "
+            f"for scene {scene_number}."
+        ),
+        visual_prompt=(
+            "Synthetic integration visual."
+        ),
+        estimated_duration_seconds=5,
+        manual_file_path=(
+            "assets/videos/manual/"
+            f"scene_{scene_number:03d}.mp4"
+        ),
+        source_status=(
+            SceneSourceStatus.READY
+        ),
+        status=SceneStatus.READY,
+    )
+
+
+def build_clip(
+    scene_number: int,
+) -> VideoClip:
+    """Build one ready video clip."""
+
+    return VideoClip(
+        scene_number=scene_number,
+        source_type=(
+            SceneSourceType.MANUAL_UPLOAD
+        ),
+        duration_seconds=5,
+        prompt=(
+            "Synthetic integration clip."
+        ),
+        provider="Manual Upload",
+        local_file=(
+            "assets/videos/manual/"
+            f"scene_{scene_number:03d}.mp4"
+        ),
+        source_status=(
+            SceneSourceStatus.READY
+        ),
+        status=VideoClipStatus.READY,
+    )
+
+
+def build_job() -> VideoJob:
+    """Build a complete pre-render integration job."""
+
+    return VideoJob(
+        project_name=(
+            "Pipeline Adapter Integration"
+        ),
+        channel_name="Mission Channel",
+        niche="horror",
+        topic="Adapter integration",
+        status=JobStatus.PENDING,
+        current_stage=WorkflowStage.VOICE,
+        research=build_research(),
+        script=build_script(),
+        scenes=[
+            build_scene(1),
+            build_scene(2),
+        ],
+        video_clips=[
+            build_clip(1),
+            build_clip(2),
+        ],
+    )
+
+
+def build_blueprint(
+    scene_number: int,
+) -> ResolvedVoiceBlueprint:
+    """
+    Build a synthetic resolved voice blueprint.
+
+    Blueprint validation itself belongs to its dedicated tests.
+    """
+
+    return (
+        ResolvedVoiceBlueprint
+        .model_construct(
+            scene_number=scene_number,
+        )
+    )
+
+
+def build_success_stages(
+    *,
+    voice_service: (
+        SyntheticVoiceGenerationService
+    ),
+    asset_service: (
+        SyntheticReadyAssetService
+    ),
+    timeline_service: (
+        SyntheticTimelineService
+    ),
+    render_service: (
+        SyntheticRenderService
+    ),
+) -> list[
+    VoicePipelineStage
+    | AssetPipelineStage
+    | TimelinePipelineStage
+    | RenderPipelineStage
+]:
+    """Build the real adapter chain with synthetic dependencies."""
+
+    return [
+        VoicePipelineStage(
+            blueprints=[
+                build_blueprint(1),
+                build_blueprint(2),
+            ],
+            generation_service=(
+                voice_service
+            ),
+            timeline_service=(
+                VoiceTimelineService()
+            ),
+        ),
+        AssetPipelineStage(
+            asset_workflow_service=(
+                asset_service
+            ),
+        ),
+        TimelinePipelineStage(
+            genre_id="horror",
+            timeline_service=(
+                timeline_service
+            ),
+        ),
+        RenderPipelineStage(
+            render_service=(
+                render_service
+            ),
+        ),
+    ]
+
+
+def test_real_adapter_chain_succeeds() -> None:
+    job = build_job()
+
+    voice_service = (
+        SyntheticVoiceGenerationService()
+    )
+
+    asset_service = (
+        SyntheticReadyAssetService()
+    )
+
+    timeline_service = (
+        SyntheticTimelineService()
+    )
+
+    render_service = (
+        SyntheticRenderService()
+    )
+
+    service = (
+        RenderOrchestratorService(
+            stages=(
+                build_success_stages(
+                    voice_service=(
+                        voice_service
+                    ),
+                    asset_service=(
+                        asset_service
+                    ),
+                    timeline_service=(
+                        timeline_service
+                    ),
+                    render_service=(
+                        render_service
+                    ),
+                )
+            ),
+        )
+    )
+
+    result = service.execute(
+        job,
+        dry_run=True,
+    )
+
+    assert result.success is True
+
+    assert (
+        result.status
+        == JobStatus.COMPLETED
+    )
+
+    assert (
+        job.status
+        == JobStatus.COMPLETED
+    )
+
+    assert (
+        job.current_stage
+        == WorkflowStage
+        .READY_FOR_UPLOAD
+    )
+
+    assert (
+        job.voice_status
+        == VoiceStatus.READY
+    )
+
+    assert (
+        job.voice_file
+        == "outputs/audio/scene_001.wav"
+    )
+
+    assert (
+        job.voice_provider
+        == "synthetic-voice"
+    )
+
+    assert (
+        job.audio_timeline
+        is not None
+    )
+
+    assert (
+        len(
+            job.audio_timeline.tracks
+        )
+        == 2
+    )
+
+    assert (
+        len(
+            job.scene_asset_states
+        )
+        == 2
+    )
+
+    assert (
+        job.video_timeline
+        is not None
+    )
+
+    assert (
+        job.render_result
+        is not None
+    )
+
+    assert (
+        job.render_result.success
+        is True
+    )
+
+    assert (
+        job.render_result.output_file
+        == (
+            "outputs/"
+            "integration_final.mp4"
+        )
+    )
+
+
+def test_real_adapter_execution_order() -> None:
+    job = build_job()
+
+    voice_service = (
+        SyntheticVoiceGenerationService()
+    )
+
+    asset_service = (
+        SyntheticReadyAssetService()
+    )
+
+    timeline_service = (
+        SyntheticTimelineService()
+    )
+
+    render_service = (
+        SyntheticRenderService()
+    )
+
+    service = (
+        RenderOrchestratorService(
+            stages=(
+                build_success_stages(
+                    voice_service=(
+                        voice_service
+                    ),
+                    asset_service=(
+                        asset_service
+                    ),
+                    timeline_service=(
+                        timeline_service
+                    ),
+                    render_service=(
+                        render_service
+                    ),
+                )
+            ),
+        )
+    )
+
+    result = service.execute(
+        job
+    )
+
+    assert result.success is True
+
+    assert (
+        voice_service
+        .generated_scene_numbers
+        == [
+            1,
+            2,
+        ]
+    )
+
+    assert (
+        asset_service
+        .started_scene_numbers
+        == [
+            1,
+            2,
+        ]
+    )
+
+    assert (
+        timeline_service.called
+        is True
+    )
+
+    assert (
+        render_service.called
+        is True
+    )
+
+
+def test_real_adapter_completed_stage_mapping() -> None:
+    job = build_job()
+
+    service = (
+        RenderOrchestratorService(
+            stages=(
+                build_success_stages(
+                    voice_service=(
+                        SyntheticVoiceGenerationService()
+                    ),
+                    asset_service=(
+                        SyntheticReadyAssetService()
+                    ),
+                    timeline_service=(
+                        SyntheticTimelineService()
+                    ),
+                    render_service=(
+                        SyntheticRenderService()
+                    ),
+                )
+            ),
+        )
+    )
+
+    result = service.execute(
+        job
+    )
+
+    assert result.success is True
+
+    assert (
+        result.completed_stages
+        == [
+            WorkflowStage.VOICE,
+            (
+                WorkflowStage
+                .ASSET_GENERATION
+            ),
+            WorkflowStage.EDITING,
+            WorkflowStage.RENDER,
+        ]
+    )
+
+    assert (
+        result.metadata[
+            "pipeline_stage_count"
+        ]
+        == 4
+    )
+
+    assert (
+        result.metadata[
+            "pipeline_completed_stage_count"
+        ]
+        == 4
+    )
+
+    assert (
+        result.metadata[
+            "pipeline_progress_percent"
+        ]
+        == 100
+    )
+
+
+def test_waiting_asset_blocks_downstream_adapters() -> None:
+    """
+    Verify real adapter blocking semantics directly at PipelineRunner.
+
+    RenderOrchestratorService result normalization is tested separately;
+    this test is specifically about stage execution stopping at the
+    interactive asset boundary.
+    """
+
+    job = build_job()
+
+    voice_service = (
+        SyntheticVoiceGenerationService()
+    )
+
+    asset_service = (
+        SyntheticWaitingAssetService()
+    )
+
+    timeline_service = (
+        SyntheticTimelineService()
+    )
+
+    render_service = (
+        SyntheticRenderService()
+    )
+
+    runner = PipelineRunner()
+
+    runner.register(
+        VoicePipelineStage(
+            blueprints=[
+                build_blueprint(1),
+                build_blueprint(2),
+            ],
+            generation_service=(
+                voice_service
+            ),
+            timeline_service=(
+                VoiceTimelineService()
+            ),
+        )
+    )
+
+    runner.register(
+        AssetPipelineStage(
+            asset_workflow_service=(
+                asset_service
+            ),
+        )
+    )
+
+    runner.register(
+        TimelinePipelineStage(
+            genre_id="horror",
+            timeline_service=(
+                timeline_service
+            ),
+        )
+    )
+
+    runner.register(
+        RenderPipelineStage(
+            render_service=(
+                render_service
+            ),
+        )
+    )
+
+    context = StageContext(
+        job=job,
+        pipeline_state=PipelineState(
+            current_stage=(
+                PipelineStageName.VOICE
+            ),
+        ),
+        dry_run=True,
+    )
+
+    results = runner.run(
+        context
+    )
+
+    assert (
+        len(results)
+        == 2
+    )
+
+    assert (
+        results[0].stage
+        == PipelineStageName.VOICE
+    )
+
+    assert (
+        results[0].status
+        == PipelineStageStatus.COMPLETED
+    )
+
+    assert (
+        results[1].stage
+        == (
+            PipelineStageName
+            .ASSET_SELECTION
+        )
+    )
+
+    assert (
+        results[1].status
+        == (
+            PipelineStageStatus
+            .WAITING_FOR_USER
+        )
+    )
+
+    assert (
+        timeline_service.called
+        is False
+    )
+
+    assert (
+        render_service.called
+        is False
+    )
+
+    assert (
+        job.video_timeline
+        is None
+    )
+
+    assert (
+        job.render_result
+        is None
+    )
+
+    assert (
+        context
+        .pipeline_state
+        .overall_progress
+        == 50
+    )
+
+
+def test_integration_preserves_pipeline_diagnostics() -> None:
+    job = build_job()
+
+    asset_service = (
+        SyntheticWaitingAssetService()
+    )
+
+    runner = PipelineRunner()
+
+    runner.register(
+        VoicePipelineStage(
+            blueprints=[
+                build_blueprint(1),
+                build_blueprint(2),
+            ],
+            generation_service=(
+                SyntheticVoiceGenerationService()
+            ),
+            timeline_service=(
+                VoiceTimelineService()
+            ),
+        )
+    )
+
+    runner.register(
+        AssetPipelineStage(
+            asset_workflow_service=(
+                asset_service
+            ),
+        )
+    )
+
+    context = StageContext(
+        job=job,
+        pipeline_state=PipelineState(
+            current_stage=(
+                PipelineStageName.VOICE
+            ),
+        ),
+        dry_run=True,
+    )
+
+    runner.run(
+        context
+    )
+
+    assert (
+        context.pipeline_state.warnings
+        == [
+            "Manual upload required.",
+        ]
+    )
+
+    assert (
+        context.pipeline_state.errors
+        == []
+    )
+
+
+def main() -> None:
+    print()
+    print(
+        "Running Pipeline Adapter "
+        "Integration tests..."
+    )
+    print()
+
+    test_real_adapter_chain_succeeds()
+    test_real_adapter_execution_order()
+    test_real_adapter_completed_stage_mapping()
+    (
+        test_waiting_asset_blocks_downstream_adapters()
+    )
+    (
+        test_integration_preserves_pipeline_diagnostics()
+    )
+
+    print()
+    print(
+        "Pipeline Adapter Integration tests "
+        "completed successfully."
+    )
+
+
+if __name__ == "__main__":
+    main()
+
+=== 6. PRODUCTION RENDER TESTS ===
+from __future__ import annotations
+
+from unittest.mock import MagicMock
+from src.models.resolved_voice_blueprint import (
+    ResolvedVoiceBlueprint,
+)
+
+from src.models.ffmpeg_execution_result import (
+    FFmpegExecutionStatus,
+)
+from src.models.render_result import RenderStatus
+from src.services.production_render_service import (
+    ProductionRenderService,
+)
+
+
+def _service_dependencies() -> dict[
+    str,
+    MagicMock,
+]:
+    return {
+        "master_edit_plan_service": MagicMock(),
+        "transition_execution_service": MagicMock(),
+        "effect_execution_service": MagicMock(),
+        "subtitle_execution_service": MagicMock(),
+        "camera_execution_service": MagicMock(),
+        "animation_execution_service": MagicMock(),
+        "render_graph_builder_service": MagicMock(),
+        "ffmpeg_capability_service": MagicMock(),
+        "filter_graph_builder_service": MagicMock(),
+        "ffmpeg_command_builder_service": MagicMock(),
+        "ffmpeg_execution_service": MagicMock(),
+    }
+
+
+def test_render_executes_real_render_chain() -> None:
+    dependencies = _service_dependencies()
+
+    video_timeline = MagicMock()
+    video_timeline.calculate_duration.return_value = 12.5
+
+    audio_timeline = MagicMock()
+
+    voice_blueprints: list[
+    ResolvedVoiceBlueprint
+    ] = [
+    MagicMock(
+        spec=ResolvedVoiceBlueprint,
+        ),
+    ]
+    
+
+    master_plan = MagicMock()
+    master_plan.warnings = [
+        "master warning",
+    ]
+
+    transition_plan = MagicMock()
+    effect_plan = MagicMock()
+    subtitle_plan = MagicMock()
+    camera_plan = MagicMock()
+    animation_plan = MagicMock()
+
+    render_graph = MagicMock()
+    render_graph.warnings = [
+        "graph warning",
+    ]
+
+    resolved_config = MagicMock()
+    resolved_config.warnings = [
+        "codec warning",
+    ]
+    resolved_config.config.timeout_seconds = (
+        3600.0
+    )
+
+    filter_graph = MagicMock()
+    command_plan = MagicMock()
+
+    execution_result = MagicMock()
+    execution_result.success = True
+    execution_result.output_file = (
+        "outputs/test.mp4"
+    )
+    execution_result.elapsed_seconds = 2.25
+    execution_result.error_message = None
+    execution_result.exit_code = 0
+    execution_result.status = (
+        FFmpegExecutionStatus.SUCCEEDED
+    )
+
+    dependencies[
+        "master_edit_plan_service"
+    ].build.return_value = master_plan
+
+    dependencies[
+        "transition_execution_service"
+    ].build_plan.return_value = (
+        transition_plan
+    )
+
+    dependencies[
+        "effect_execution_service"
+    ].build_plan.return_value = effect_plan
+
+    dependencies[
+        "subtitle_execution_service"
+    ].build_plan.return_value = (
+        subtitle_plan
+    )
+
+    dependencies[
+        "camera_execution_service"
+    ].build_plan.return_value = camera_plan
+
+    dependencies[
+        "animation_execution_service"
+    ].build_plan.return_value = (
+        animation_plan
+    )
+
+    dependencies[
+        "render_graph_builder_service"
+    ].build.return_value = render_graph
+
+    dependencies[
+        "ffmpeg_capability_service"
+    ].resolve.return_value = resolved_config
+
+    dependencies[
+        "filter_graph_builder_service"
+    ].build.return_value = filter_graph
+
+    dependencies[
+        "ffmpeg_command_builder_service"
+    ].build.return_value = command_plan
+
+    dependencies[
+        "ffmpeg_execution_service"
+    ].execute.return_value = execution_result
+
+    service = ProductionRenderService(
+        master_edit_plan_service=(
+            dependencies[
+                "master_edit_plan_service"
+            ]
+        ),
+        transition_execution_service=(
+            dependencies[
+                "transition_execution_service"
+            ]
+        ),
+        effect_execution_service=(
+            dependencies[
+                "effect_execution_service"
+            ]
+        ),
+        subtitle_execution_service=(
+            dependencies[
+                "subtitle_execution_service"
+            ]
+        ),
+        camera_execution_service=(
+            dependencies[
+                "camera_execution_service"
+            ]
+        ),
+        animation_execution_service=(
+            dependencies[
+                "animation_execution_service"
+            ]
+        ),
+        render_graph_builder_service=(
+            dependencies[
+                "render_graph_builder_service"
+            ]
+        ),
+        ffmpeg_capability_service=(
+            dependencies[
+                "ffmpeg_capability_service"
+            ]
+        ),
+        filter_graph_builder_service=(
+            dependencies[
+                "filter_graph_builder_service"
+            ]
+        ),
+        ffmpeg_command_builder_service=(
+            dependencies[
+                "ffmpeg_command_builder_service"
+            ]
+        ),
+        ffmpeg_execution_service=(
+            dependencies[
+                "ffmpeg_execution_service"
+            ]
+        ),
+    )
+
+    result = service.render(
+        video_timeline=video_timeline,
+        audio_timeline=audio_timeline,
+        voice_blueprints=voice_blueprints,
+        output_file="outputs/test.mp4",
+    )
+
+    assert result.success is True
+    assert result.status == RenderStatus.COMPLETED
+    assert result.render_engine == "ffmpeg"
+    assert result.output_file == "outputs/test.mp4"
+    assert result.render_time_seconds == 2.25
+    assert result.duration_seconds == 12
+
+    assert result.warnings == [
+        "master warning",
+        "graph warning",
+        "codec warning",
+    ]
+
+    dependencies[
+        "master_edit_plan_service"
+    ].build.assert_called_once_with(
+        video_timeline=video_timeline,
+        audio_timeline=audio_timeline,
+    )
+
+    dependencies[
+        "subtitle_execution_service"
+    ].build_plan.assert_called_once_with(
+        video_timeline,
+        voice_blueprints=voice_blueprints,
+        mark_ready=True,
+    )
+
+    dependencies[
+        "ffmpeg_execution_service"
+    ].execute.assert_called_once_with(
+        command_plan,
+        total_duration_seconds=12.5,
+        timeout_seconds=3600.0,
+    )
+
+    dependencies[
+        "master_edit_plan_service"
+    ].mark_completed.assert_called_once_with(
+        master_plan,
+        output_file="outputs/test.mp4",
+    )
+
+
+def test_render_maps_ffmpeg_failure() -> None:
+    dependencies = _service_dependencies()
+
+    video_timeline = MagicMock()
+    video_timeline.calculate_duration.return_value = 8.0
+
+    audio_timeline = MagicMock()
+
+    voice_blueprints: list[
+    ResolvedVoiceBlueprint
+    ] = [
+    MagicMock(
+        spec=ResolvedVoiceBlueprint,
+        ),
+    ]
+   
+
+    master_plan = MagicMock()
+    master_plan.warnings = []
+
+    render_graph = MagicMock()
+    render_graph.warnings = []
+
+    resolved_config = MagicMock()
+    resolved_config.warnings = []
+    resolved_config.config.timeout_seconds = (
+        300.0
+    )
+
+    execution_result = MagicMock()
+    execution_result.success = False
+    execution_result.output_file = None
+    execution_result.elapsed_seconds = 1.5
+    execution_result.error_message = (
+        "FFmpeg render failed."
+    )
+    execution_result.exit_code = 1
+    execution_result.status = (
+        FFmpegExecutionStatus.FAILED
+    )
+
+    dependencies[
+        "master_edit_plan_service"
+    ].build.return_value = master_plan
+
+    dependencies[
+        "transition_execution_service"
+    ].build_plan.return_value = MagicMock()
+
+    dependencies[
+        "effect_execution_service"
+    ].build_plan.return_value = MagicMock()
+
+    dependencies[
+        "subtitle_execution_service"
+    ].build_plan.return_value = MagicMock()
+
+    dependencies[
+        "camera_execution_service"
+    ].build_plan.return_value = MagicMock()
+
+    dependencies[
+        "animation_execution_service"
+    ].build_plan.return_value = MagicMock()
+
+    dependencies[
+        "render_graph_builder_service"
+    ].build.return_value = render_graph
+
+    dependencies[
+        "ffmpeg_capability_service"
+    ].resolve.return_value = resolved_config
+
+    dependencies[
+        "filter_graph_builder_service"
+    ].build.return_value = MagicMock()
+
+    dependencies[
+        "ffmpeg_command_builder_service"
+    ].build.return_value = MagicMock()
+
+    dependencies[
+        "ffmpeg_execution_service"
+    ].execute.return_value = execution_result
+
+    service = ProductionRenderService(
+        master_edit_plan_service=(
+            dependencies[
+                "master_edit_plan_service"
+            ]
+        ),
+        transition_execution_service=(
+            dependencies[
+                "transition_execution_service"
+            ]
+        ),
+        effect_execution_service=(
+            dependencies[
+                "effect_execution_service"
+            ]
+        ),
+        subtitle_execution_service=(
+            dependencies[
+                "subtitle_execution_service"
+            ]
+        ),
+        camera_execution_service=(
+            dependencies[
+                "camera_execution_service"
+            ]
+        ),
+        animation_execution_service=(
+            dependencies[
+                "animation_execution_service"
+            ]
+        ),
+        render_graph_builder_service=(
+            dependencies[
+                "render_graph_builder_service"
+            ]
+        ),
+        ffmpeg_capability_service=(
+            dependencies[
+                "ffmpeg_capability_service"
+            ]
+        ),
+        filter_graph_builder_service=(
+            dependencies[
+                "filter_graph_builder_service"
+            ]
+        ),
+        ffmpeg_command_builder_service=(
+            dependencies[
+                "ffmpeg_command_builder_service"
+            ]
+        ),
+        ffmpeg_execution_service=(
+            dependencies[
+                "ffmpeg_execution_service"
+            ]
+        ),
+    )
+
+    result = service.render(
+        video_timeline=video_timeline,
+        audio_timeline=audio_timeline,
+        voice_blueprints=voice_blueprints,
+    )
+
+    assert result.success is False
+    assert result.status == RenderStatus.FAILED
+    assert result.render_engine == "ffmpeg"
+    assert result.output_file is None
+    assert (
+        result.error_message
+        == "FFmpeg render failed."
+    )
+
+    dependencies[
+        "master_edit_plan_service"
+    ].mark_failed.assert_called_once()
+
+    dependencies[
+        "master_edit_plan_service"
+    ].mark_completed.assert_not_called()
+
+
+def test_constructor_rejects_empty_output_file() -> None:
+    try:
+        ProductionRenderService(
+            output_file="   ",
+        )
+    except ValueError as error:
+        assert (
+            str(error)
+            == (
+                "Production render output file "
+                "cannot be empty."
+            )
+        )
+    else:
+        raise AssertionError(
+            "Expected ValueError."
+        )
+
+
+def test_render_rejects_missing_voice_blueprints() -> None:
+    service = ProductionRenderService()
+
+    video_timeline = MagicMock()
+    video_timeline.calculate_duration.return_value = 5.0
+
+    try:
+        service.render(
+            video_timeline=video_timeline,
+            audio_timeline=MagicMock(),
+            voice_blueprints=[],
+        )
+    except ValueError as error:
+        assert (
+            str(error)
+            == (
+                "Production rendering requires "
+                "resolved voice blueprints."
+            )
+        )
+    else:
+        raise AssertionError(
+            "Expected ValueError."
+        )
+
+=== 7. REAL FFMPEG TESTS ===
+from __future__ import annotations
+
+import shutil
+import subprocess
+from pathlib import Path
+
+from src.models.audio_timeline import AudioTimeline
+from src.models.audio_track import (
+    AudioTrack,
+    AudioTrackStatus,
+    AudioTrackType,
+)
+from src.models.editing_directives import (
+    DirectiveIntensity,
+)
+from src.models.ffmpeg_config import (
+    FFmpegConfig,
+    FFmpegHardwareAcceleration,
+    FFmpegVideoCodec,
+)
+from src.models.media_strategy import (
+    SceneSourceStatus,
+    SceneSourceType,
+)
+from src.models.render_result import (
+    RenderStatus,
+)
+from src.models.resolved_editing_blueprint import (
+    BlueprintResolutionStatus,
+    ResolvedCameraInstruction,
+    ResolvedMusicInstruction,
+    ResolvedPresetReference,
+    ResolvedSceneEditingBlueprint,
+    ResolvedSubtitleInstruction,
+    ResolvedTransitionInstruction,
+)
+from src.models.resolved_voice_blueprint import (
+    ResolvedVoiceBlueprint,
+    ResolvedVoiceProfileReference,
+    VoiceBlueprintResolutionStatus,
+)
+from src.models.video_clip import (
+    VideoClip,
+    VideoClipStatus,
+)
+from src.models.video_timeline import (
+    VideoTimeline,
+)
+from src.models.video_timeline_item import (
+    VideoTimelineItem,
+)
+from src.services.production_render_service import (
+    ProductionRenderService,
+)
+
+
+SMOKE_DURATION_SECONDS = 3
+SMOKE_WIDTH = 640
+SMOKE_HEIGHT = 360
+SMOKE_FRAME_RATE = 30
+
+
+def _run_command(
+    command: list[str],
+) -> subprocess.CompletedProcess[str]:
+    """
+    Run one deterministic external command.
+
+    The real-render smoke deliberately uses subprocess only to create
+    synthetic source fixtures and to inspect the final output. The
+    actual render under test is always executed by
+    ProductionRenderService.
+    """
+
+    return subprocess.run(
+        command,
+        check=True,
+        capture_output=True,
+        text=True,
+        shell=False,
+    )
+
+
+def _require_ffmpeg() -> tuple[str, str]:
+    """
+    Return local FFmpeg and ffprobe executables.
+
+    The test is intentionally a real-runtime integration smoke, so a
+    machine without the binaries should fail rather than silently pass.
+    """
+
+    ffmpeg = shutil.which("ffmpeg")
+    ffprobe = shutil.which("ffprobe")
+
+    if ffmpeg is None:
+        raise RuntimeError(
+            "Real production render smoke requires ffmpeg."
+        )
+
+    if ffprobe is None:
+        raise RuntimeError(
+            "Real production render smoke requires ffprobe."
+        )
+
+    return (
+        ffmpeg,
+        ffprobe,
+    )
+
+
+def _create_source_video(
+    *,
+    ffmpeg: str,
+    output_file: Path,
+) -> None:
+    """
+    Create a short deterministic real H.264 source clip.
+
+    This is fixture preparation only. It is not the render operation
+    being tested.
+    """
+
+    output_file.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    _run_command(
+        [
+            ffmpeg,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            (
+                "testsrc2="
+                f"size={SMOKE_WIDTH}x{SMOKE_HEIGHT}:"
+                f"rate={SMOKE_FRAME_RATE}:"
+                f"duration={SMOKE_DURATION_SECONDS}"
+            ),
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-an",
+            output_file.as_posix(),
+        ]
+    )
+
+    assert output_file.is_file()
+    assert output_file.stat().st_size > 0
+
+
+def _create_source_audio(
+    *,
+    ffmpeg: str,
+    output_file: Path,
+) -> None:
+    """
+    Create a short deterministic PCM voiceover fixture.
+
+    A generated sine wave is sufficient because this smoke verifies
+    render plumbing rather than speech synthesis quality.
+    """
+
+    output_file.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    _run_command(
+        [
+            ffmpeg,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            (
+                "sine="
+                "frequency=440:"
+                "sample_rate=48000:"
+                f"duration={SMOKE_DURATION_SECONDS}"
+            ),
+            "-c:a",
+            "pcm_s16le",
+            output_file.as_posix(),
+        ]
+    )
+
+    assert output_file.is_file()
+    assert output_file.stat().st_size > 0
+
+
+def _preset_reference(
+    *,
+    directive_path: str,
+    preset_id: str,
+    implementation: dict[str, object] | None = None,
+) -> ResolvedPresetReference:
+    """Build one exact resolved editing-preset reference."""
+
+    return ResolvedPresetReference(
+        directive_path=directive_path,
+        requested_preset_id=preset_id,
+        resolved_preset_id=preset_id,
+        found_exact_match=True,
+        used_fallback=False,
+        implementation=dict(
+            implementation or {}
+        ),
+        metadata={},
+    )
+
+
+def _editing_blueprint(
+    *,
+    scene_number: int,
+) -> ResolvedSceneEditingBlueprint:
+    """
+    Build a minimal resolved production editing blueprint.
+
+    No creative effect is required for this smoke. The objective is to
+    exercise the real production render architecture with the safest
+    valid editing configuration.
+    """
+
+    return ResolvedSceneEditingBlueprint(
+        scene_number=scene_number,
+        genre_preset=_preset_reference(
+            directive_path="genre_preset_id",
+            preset_id="genre.default",
+        ),
+        camera=ResolvedCameraInstruction(
+            preset=_preset_reference(
+                directive_path="camera.preset_id",
+                preset_id="camera.none",
+                implementation={
+                    "motion": "none",
+                },
+            ),
+            intensity=DirectiveIntensity.MEDIUM,
+            start_offset_seconds=0.0,
+        ),
+        transition_in=(
+            ResolvedTransitionInstruction(
+                preset=_preset_reference(
+                    directive_path=(
+                        "transition_in.preset_id"
+                    ),
+                    preset_id="transition.cut",
+                    implementation={
+                        "type": "cut",
+                    },
+                ),
+                duration_seconds=0.0,
+                intensity=DirectiveIntensity.MEDIUM,
+            )
+        ),
+        transition_out=(
+            ResolvedTransitionInstruction(
+                preset=_preset_reference(
+                    directive_path=(
+                        "transition_out.preset_id"
+                    ),
+                    preset_id="transition.cut",
+                    implementation={
+                        "type": "cut",
+                    },
+                ),
+                duration_seconds=0.0,
+                intensity=DirectiveIntensity.MEDIUM,
+            )
+        ),
+        visual_effects=[],
+        animations=[],
+        music=ResolvedMusicInstruction(
+            preset=_preset_reference(
+                directive_path="music.preset_id",
+                preset_id="music.none",
+            ),
+            intensity=DirectiveIntensity.LOW,
+            volume_percent=25.0,
+            fade_in_seconds=0.0,
+            fade_out_seconds=0.0,
+            duck_under_voice=True,
+            enabled=False,
+        ),
+        sound_effects=[],
+        subtitles=ResolvedSubtitleInstruction(
+            preset=_preset_reference(
+                directive_path=(
+                    "subtitles.preset_id"
+                ),
+                preset_id="subtitle.none",
+            ),
+            animation_preset=None,
+            enabled=False,
+            burn_into_video=False,
+            maximum_words_per_line=8,
+        ),
+        status=BlueprintResolutionStatus.RESOLVED,
+        fallback_count=0,
+        exact_match_count=6,
+        warnings=[],
+        metadata={},
+    )
+
+
+def _video_timeline(
+    *,
+    source_file: Path,
+) -> VideoTimeline:
+    """Build one real-file explicit production video timeline."""
+
+    clip = VideoClip(
+        scene_number=1,
+        source_type=(
+            SceneSourceType.MANUAL_UPLOAD
+        ),
+        duration_seconds=(
+            SMOKE_DURATION_SECONDS
+        ),
+        prompt=(
+            "Real ProductionRenderService "
+            "FFmpeg integration smoke."
+        ),
+        provider="F.4E synthetic fixture",
+        local_file=source_file.as_posix(),
+        resolution=(
+            f"{SMOKE_WIDTH}x{SMOKE_HEIGHT}"
+        ),
+        aspect_ratio="16:9",
+        source_status=(
+            SceneSourceStatus.READY
+        ),
+        status=VideoClipStatus.READY,
+    )
+
+    item = VideoTimelineItem(
+        clip=clip,
+        scene_number=1,
+        start_time_seconds=0.0,
+        end_time_seconds=float(
+            SMOKE_DURATION_SECONDS
+        ),
+        track_index=0,
+        layer_index=0,
+        enabled=True,
+        editing_blueprint=(
+            _editing_blueprint(
+                scene_number=1,
+            )
+        ),
+    )
+
+    timeline = VideoTimeline(
+        clips=[
+            clip,
+        ],
+        items=[
+            item,
+        ],
+        output_resolution=(
+            f"{SMOKE_WIDTH}x{SMOKE_HEIGHT}"
+        ),
+        frame_rate=SMOKE_FRAME_RATE,
+    )
+
+    assert (
+        timeline.calculate_duration()
+        == float(SMOKE_DURATION_SECONDS)
+    )
+
+    assert item.is_render_ready is True
+
+    return timeline
+
+
+def _audio_timeline(
+    *,
+    source_file: Path,
+) -> AudioTimeline:
+    """Build one real-file production voiceover timeline."""
+
+    track = AudioTrack(
+        track_type=AudioTrackType.VOICEOVER,
+        source_file=source_file.as_posix(),
+        start_time_seconds=0.0,
+        duration_seconds=float(
+            SMOKE_DURATION_SECONDS
+        ),
+        volume=1.0,
+        fade_in_seconds=0.0,
+        fade_out_seconds=0.0,
+        loop_enabled=False,
+        duck_under_voice=False,
+        provider="F.4E synthetic fixture",
+        status=AudioTrackStatus.READY,
+        metadata={
+            "scene_number": 1,
+        },
+    )
+
+    timeline = AudioTimeline(
+        tracks=[
+            track,
+        ],
+        sample_rate=48000,
+        channels=2,
+    )
+
+    assert (
+        timeline.calculate_duration()
+        == float(SMOKE_DURATION_SECONDS)
+    )
+
+    return timeline
+
+
+def _voice_blueprint() -> ResolvedVoiceBlueprint:
+    """
+    Build the authoritative resolved voice blueprint for scene one.
+
+    Subtitles are intentionally disabled in the editing blueprint, but
+    ProductionRenderService still requires the canonical voice
+    blueprint collection as part of its render contract.
+    """
+
+    return ResolvedVoiceBlueprint(
+        scene_number=1,
+        status=(
+            VoiceBlueprintResolutionStatus.RESOLVED
+        ),
+        profile=ResolvedVoiceProfileReference(
+            requested_profile_id=(
+                "voice.ffmpeg_smoke"
+            ),
+            resolved_profile_id=(
+                "voice.ffmpeg_smoke"
+            ),
+            display_name=(
+                "FFmpeg Smoke Voice"
+            ),
+            found_exact_match=True,
+            used_fallback=False,
+        ),
+        narration_text=(
+            "This is the real production render "
+            "integration smoke test."
+        ),
+    )
+
+
+def _probe_output(
+    *,
+    ffprobe: str,
+    output_file: Path,
+) -> str:
+    """Return compact stream metadata from the produced MP4."""
+
+    completed = _run_command(
+        [
+            ffprobe,
+            "-v",
+            "error",
+            "-show_entries",
+            (
+                "format=duration:"
+                "stream=index,codec_type,"
+                "codec_name,width,height"
+            ),
+            "-of",
+            "default=noprint_wrappers=1",
+            output_file.as_posix(),
+        ]
+    )
+
+    return completed.stdout
+
+
+def test_real_production_render_service_executes_ffmpeg(
+    tmp_path: Path,
+) -> None:
+    """
+    Verify the complete real production render path.
+
+    This test crosses all of the production boundaries that F.4 was
+    created to connect:
+
+    VideoTimeline + AudioTimeline
+        -> MasterEditPlan
+        -> execution plans
+        -> RenderGraph
+        -> FilterGraph
+        -> FFmpegCommandPlan
+        -> FFmpegExecutionService
+        -> physical MP4
+        -> RenderResult
+    """
+
+    (
+        ffmpeg,
+        ffprobe,
+    ) = _require_ffmpeg()
+
+    source_video = (
+        tmp_path
+        / "inputs"
+        / "scene_001.mp4"
+    )
+
+    source_audio = (
+        tmp_path
+        / "inputs"
+        / "voice_001.wav"
+    )
+
+    output_file = (
+        tmp_path
+        / "outputs"
+        / "production_render_smoke.mp4"
+    )
+
+    _create_source_video(
+        ffmpeg=ffmpeg,
+        output_file=source_video,
+    )
+
+    _create_source_audio(
+        ffmpeg=ffmpeg,
+        output_file=source_audio,
+    )
+
+    output_file.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    video_timeline = _video_timeline(
+        source_file=source_video,
+    )
+
+    audio_timeline = _audio_timeline(
+        source_file=source_audio,
+    )
+
+    voice_blueprint = (
+        _voice_blueprint()
+    )
+
+    service = ProductionRenderService(
+        ffmpeg_config=FFmpegConfig(
+            ffmpeg_path=ffmpeg,
+            ffprobe_path=ffprobe,
+            video_codec=(
+                FFmpegVideoCodec.LIBX264
+            ),
+            hardware_acceleration=(
+                FFmpegHardwareAcceleration.NONE
+            ),
+            timeout_seconds=60.0,
+        ),
+        output_file=output_file.as_posix(),
+    )
+
+    result = service.render(
+        video_timeline=video_timeline,
+        audio_timeline=audio_timeline,
+        voice_blueprints=[
+            voice_blueprint,
+        ],
+    )
+
+    assert result.success is True
+
+    assert (
+        result.status
+        == RenderStatus.COMPLETED
+    )
+
+    assert result.render_engine == "ffmpeg"
+
+    assert result.output_file is not None
+
+    rendered_file = Path(
+        result.output_file
+    )
+
+    assert rendered_file == output_file
+
+    assert rendered_file.is_file()
+
+    assert rendered_file.stat().st_size > 0
+
+    assert result.render_time_seconds >= 0.0
+
+    assert (
+        result.duration_seconds
+        == SMOKE_DURATION_SECONDS
+    )
+
+    probe_output = _probe_output(
+        ffprobe=ffprobe,
+        output_file=rendered_file,
+    )
+
+    assert "codec_type=video" in probe_output
+
+    assert "codec_type=audio" in probe_output
+
+    assert "codec_name=h264" in probe_output
+
+    assert (
+        f"width={SMOKE_WIDTH}"
+        in probe_output
+    )
+
+    assert (
+        f"height={SMOKE_HEIGHT}"
+        in probe_output
+    )
+
+=== 8. PROJECT SPECIFICATION MODEL ===
+from __future__ import annotations
+
+from src.models.advanced_settings import AdvancedSettings
+from src.models.audience_settings import AudienceSettings
+from src.models.base import MissionBaseModel
+from src.models.budget_settings import BudgetSettings
+from src.models.duration_config import DurationConfig
+from src.models.general_settings import GeneralSettings
+from src.models.music_settings import MusicSettings
+from src.models.packaging_settings import PackagingSettings
+from src.models.provider_preferences import ProviderPreferences
+from src.models.upload_settings import UploadSettings
+from src.models.video_settings import VideoSettings
+from src.models.visual_settings import VisualSettings
+from src.models.voice_settings import VoiceSettings
+
+
+class ProjectSpecification(MissionBaseModel):
+    """Complete project configuration."""
+
+    schema_version: str = "1.0"
+
+    general: GeneralSettings
+
+    duration: DurationConfig
+
+    audience: AudienceSettings
+
+    video: VideoSettings
+
+    visual: VisualSettings
+
+    voice: VoiceSettings
+
+    music: MusicSettings
+
+    providers: ProviderPreferences
+
+    upload: UploadSettings
+
+    packaging: PackagingSettings
+
+    budget: BudgetSettings
+
+    advanced: AdvancedSettings
+
+    def estimated_duration_seconds(self) -> int:
+        return self.duration.preferred_duration_seconds
+
+    def requires_user_review(self) -> bool:
+        return self.packaging.requires_user_review
+
+    def is_ready_for_generation(self) -> bool:
+        return True
+
+    def summary(self) -> dict:
+        return {
+            "project": self.general.project_name,
+            "topic": self.general.topic,
+            "video_type": self.general.video_type,
+            "duration": self.estimated_duration_seconds(),
+            "language": self.audience.language,
+            "platform": self.upload.platform.value,
+        }
+
+=== 9. VIDEO JOB MODEL ===
+from __future__ import annotations
+
+from pydantic import Field, model_validator
+
+from src.models.asset_state import SceneAssetState
+from src.models.audio_timeline import AudioTimeline
+from src.models.base import MissionBaseModel
+from src.models.enums import (
+    JobStatus,
+    Platform,
+    ProductionMode,
+    WorkflowStage,
+)
+from src.models.media_strategy import (
+    SceneSourceType,
+    VisualStrategy,
+    VoiceStatus,
+    VoiceStrategy,
+)
+from src.models.originality import OriginalityResult
+from src.models.policy import PolicyComplianceReport
+from src.models.render_result import RenderResult
+from src.models.research import ResearchResult, ResearchStatus
+from src.models.scene import Scene
+from src.models.script import Script, ScriptStatus
+from src.models.video_clip import VideoClip
+from src.models.video_timeline import VideoTimeline
+
+
+class VideoJob(MissionBaseModel):
+    """Central workflow object for one Mission Automation video."""
+
+    project_name: str
+    channel_name: str
+    niche: str
+    topic: str
+
+    platform: Platform = Platform.YOUTUBE
+    language: str = "English"
+    target_country: str = "United States"
+    production_mode: ProductionMode = ProductionMode.PREMIUM
+
+    status: JobStatus = JobStatus.PENDING
+    current_stage: WorkflowStage = WorkflowStage.RESEARCH
+
+    visual_strategy: VisualStrategy = VisualStrategy.HYBRID
+    default_visual_source: SceneSourceType = SceneSourceType.MANUAL_UPLOAD
+    maximum_visual_budget: float = 0.0
+
+    voice_strategy: VoiceStrategy = VoiceStrategy.MANUAL_UPLOAD
+    voice_status: VoiceStatus = VoiceStatus.PENDING
+    voice_file: str | None = None
+    voice_provider: str | None = None
+
+    research: ResearchResult | None = None
+    script: Script | None = None
+    originality_review: OriginalityResult | None = None
+
+    scenes: list[Scene] = Field(default_factory=list)
+    scene_asset_states: list[SceneAssetState] = Field(default_factory=list)
+    video_clips: list[VideoClip] = Field(default_factory=list)
+
+    audio_timeline: AudioTimeline | None = None
+    video_timeline: VideoTimeline | None = None
+    render_result: RenderResult | None = None
+
+    policy_report: PolicyComplianceReport | None = None
+
+    retry_count: int = 0
+    errors: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_workflow_state(self) -> VideoJob:
+        """Prevent invalid workflow and media states."""
+
+        if self.script is not None:
+            if self.research is None:
+                raise ValueError("A script cannot exist without research.")
+
+            if self.research.status != ResearchStatus.APPROVED:
+                raise ValueError("A script requires approved research.")
+
+        if self.originality_review is not None:
+            if self.script is None:
+                raise ValueError("Originality review requires a script.")
+
+            if self.script.status != ScriptStatus.APPROVED:
+                raise ValueError("Originality review requires an approved script.")
+
+        if self.scenes:
+            if self.script is None:
+                raise ValueError("Scenes cannot exist without a script.")
+
+            if self.script.status != ScriptStatus.APPROVED:
+                raise ValueError("Scene planning requires an approved script.")
+
+        if self.scene_asset_states and not self.scenes:
+            raise ValueError("Scene asset states cannot exist without scenes.")
+
+        if self.scene_asset_states:
+            scene_numbers = {scene.scene_number for scene in self.scenes}
+
+            state_numbers = {state.scene_number for state in self.scene_asset_states}
+
+            if not state_numbers.issubset(scene_numbers):
+                raise ValueError(
+                    "Every scene asset state must reference "
+                    "an existing scene number."
+                )
+
+        if self.video_clips and not self.scenes:
+            raise ValueError("Video clips cannot exist without planned scenes.")
+
+        if (
+            self.voice_strategy == VoiceStrategy.MANUAL_UPLOAD
+            and self.voice_status == VoiceStatus.READY
+            and not self.voice_file
+        ):
+            raise ValueError("Manual voiceover cannot be READY without a file.")
+
+        if (
+            self.voice_strategy == VoiceStrategy.AUTO_GENERATE
+            and self.voice_status == VoiceStatus.READY
+            and not self.voice_file
+        ):
+            raise ValueError("Generated voiceover cannot be READY without a file.")
+
+        if self.audio_timeline is not None and not self.voice_file:
+            raise ValueError("Audio timeline requires a voiceover file.")
+
+        if self.video_timeline is not None and not self.video_clips:
+            raise ValueError("Video timeline requires ready video clips.")
+
+        if self.render_result is not None:
+            if self.video_timeline is None:
+                raise ValueError("Render result requires a video timeline.")
+
+            if self.audio_timeline is None:
+                raise ValueError("Render result requires an audio timeline.")
+
+        if self.policy_report is not None:
+            if self.policy_report.source_mode != self.production_mode:
+                raise ValueError(
+                    "Policy source_mode must match " "VideoJob production_mode."
+                )
+
+        return self
+
+=== 10. TEST FIXTURES / CONFTEST ===
+from __future__ import annotations
+
+import tempfile
+from collections.abc import Generator
+from pathlib import Path
+
+import pytest
+
+
+@pytest.fixture
+def temporary_directory() -> Generator[Path, None, None]:
+    """
+    Provide a temporary directory for FFmpeg execution tests.
+
+    The directory exists for the duration of one test and is removed
+    automatically afterwards.
+    """
+
+    with tempfile.TemporaryDirectory(
+        prefix="mission_ffmpeg_tests_",
+    ) as directory:
+        yield Path(directory)
+
+
+@pytest.fixture
+def root() -> Generator[Path, None, None]:
+    """
+    Provide a temporary root directory for FFmpeg hardening and
+    diagnostics tests.
+    """
+
+    with tempfile.TemporaryDirectory(
+        prefix="mission_ffmpeg_root_",
+    ) as directory:
+        yield Path(directory)
+
+=== 11. EXISTING END-TO-END TEST NAMES ===
+E:\Projects\Mission-Automation\mission-automation\tests\test_asset_stage.py:256:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_asset_stage.py:300:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_asset_stage.py:355:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_asset_stage.py:384:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_asset_stage.py:418:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_asset_stage.py:464:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_asset_stage.py:498:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_asset_stage.py:550:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_asset_stage.py:598:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_asset_stage.py:659:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_asset_stage.py:708:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_asset_stage.py:748:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_asset_stage.py:800:        stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_asset_stage_multi_scene_resume_input.py:219:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_asset_stage_multi_scene_resume_input.py:264:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_asset_stage_multi_scene_resume_input.py:331:        stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_asset_stage_multi_scene_resume_input.py:379:        stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_asset_stage_multi_scene_resume_input.py:433:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_asset_stage_user_input_consumption.py:240:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_asset_stage_user_input_consumption.py:290:    stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_asset_stage_user_input_consumption.py:334:    first_result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_asset_stage_user_input_consumption.py:338:    second_result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_asset_stage_user_input_consumption.py:383:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_asset_stage_user_input_consumption.py:429:        stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_asset_stage_user_input_consumption.py:479:        stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_base_stage.py:18:    def execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_base_stage.py:46:stage.before_execute(context)
+E:\Projects\Mission-Automation\mission-automation\tests\test_base_stage.py:48:result = stage.execute(context)
+E:\Projects\Mission-Automation\mission-automation\tests\test_base_stage.py:50:stage.after_execute(context, result)
+E:\Projects\Mission-Automation\mission-automation\tests\test_circuit_breaker.py:12:print("Can execute:", breaker.can_execute())
+E:\Projects\Mission-Automation\mission-automation\tests\test_circuit_breaker.py:23:print("Can execute after opening:", breaker.can_execute())
+E:\Projects\Mission-Automation\mission-automation\tests\test_circuit_breaker.py:26:assert breaker.can_execute() is False
+E:\Projects\Mission-Automation\mission-automation\tests\test_ffmpeg_execution_diagnostics.py:345:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_ffmpeg_execution_diagnostics.py:403:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_ffmpeg_execution_diagnostics.py:464:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_ffmpeg_execution_diagnostics.py:528:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_ffmpeg_execution_diagnostics.py:584:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_ffmpeg_execution_diagnostics.py:633:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_ffmpeg_execution_service.py:265:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_ffmpeg_execution_service.py:363:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_ffmpeg_execution_service.py:422:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_ffmpeg_execution_service.py:483:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_ffmpeg_execution_service.py:544:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_ffmpeg_execution_service.py:615:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_ffmpeg_execution_service.py:676:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_ffmpeg_execution_service.py:750:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_ffmpeg_execution_service.py:934:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_mission_application_service.py:155:    def execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_mission_application_service.py:388:    actual = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_mission_application_service.py:464:    service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_mission_application_service.py:507:    service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_mission_application_service.py:576:        service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_mission_application_service.py:619:        service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_mission_application_service.py:657:        service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_mission_application_service.py:689:    actual = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_mission_application_service.py:927:    actual = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_pipeline_adapter_integration.py:555:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_pipeline_adapter_integration.py:676:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_pipeline_adapter_integration.py:735:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_pipeline_engine.py:28:    def execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_pipeline_engine.py:48:    def execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_pipeline_engine_resume.py:45:    def execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_pipeline_resume_execution.py:61:    def before_execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_pipeline_resume_execution.py:69:    def execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_pipeline_resume_execution.py:126:    def after_execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_pipeline_resume_planner_service.py:39:    def execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_pipeline_retry.py:47:    def before_execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_pipeline_retry.py:55:    def execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_pipeline_retry.py:87:    def after_execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_pipeline_retry.py:116:    def execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_pipeline_runner.py:66:    def execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_pipeline_user_input_retry_guard.py:56:    def execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_pipeline_user_input_retry_guard.py:114:    def execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_production_application_factory.py:27:    ProductionApplicationFactory,
+E:\Projects\Mission-Automation\mission-automation\tests\test_production_application_factory.py:126:) -> ProductionApplicationFactory:
+E:\Projects\Mission-Automation\mission-automation\tests\test_production_application_factory.py:129:    return ProductionApplicationFactory(
+E:\Projects\Mission-Automation\mission-automation\tests\test_production_application_factory.py:208:def test_build_application_returns_entrypoint() -> None:
+E:\Projects\Mission-Automation\mission-automation\tests\test_production_application_factory.py:211:        .build_application()
+E:\Projects\Mission-Automation\mission-automation\tests\test_production_application_factory.py:381:        ProductionApplicationFactory(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_checkpoint_resume.py:70:    def execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_checkpoint_resume.py:102:    def execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_checkpoint_resume.py:137:    def execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_checkpoint_resume.py:362:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_checkpoint_resume.py:463:        first_service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_checkpoint_resume.py:516:        second_service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_checkpoint_resume.py:629:        first_service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_checkpoint_resume.py:718:        second_service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_checkpoint_resume.py:845:        first_service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_checkpoint_resume.py:881:    result = second_service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_checkpoint_resume.py:971:    first_service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_checkpoint_resume.py:1005:    result = second_service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_checkpoint_resume.py:1086:    first_service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_checkpoint_resume.py:1121:    result = second_service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_checkpoint_resume.py:1176:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_checkpoint_resume.py:1236:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_retry.py:84:    def before_execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_retry.py:92:    def execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_retry.py:144:    def after_execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_retry.py:339:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_retry.py:406:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_retry.py:471:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_retry.py:540:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_retry.py:593:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_retry.py:623:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_retry.py:658:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_service.py:185:    def execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_service.py:242:    def execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_service.py:369:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_service.py:443:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_service.py:486:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_service.py:538:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_service.py:570:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_service.py:596:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_service.py:627:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_service.py:680:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_service.py:736:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_waiting_resume.py:149:    def execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_waiting_resume.py:183:    def execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_waiting_resume.py:475:    result = service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_waiting_resume.py:587:        first_service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_waiting_resume.py:637:        second_service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_waiting_resume.py:806:        first_service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_waiting_resume.py:960:        second_service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_waiting_resume.py:1159:        first_service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_waiting_resume.py:1189:        second_service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_waiting_resume.py:1258:    first_service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_waiting_resume.py:1285:        second_service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_waiting_resume.py:1376:    first_service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_waiting_resume.py:1394:        resumed_service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_waiting_resume.py:1442:    first_result = first_service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_waiting_resume.py:1479:    second_result = second_service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_orchestrator_waiting_resume.py:1562:    stale_result = stale_service.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_stage.py:246:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_stage.py:306:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_stage.py:351:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_stage.py:395:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_stage.py:426:        stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_render_stage.py:453:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_timeline_stage.py:560:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_timeline_stage.py:599:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_timeline_stage.py:641:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_timeline_stage.py:739:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_timeline_stage.py:771:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_timeline_stage.py:859:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_timeline_stage.py:903:        stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_voice_stage.py:503:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_voice_stage.py:549:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_voice_stage.py:594:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_voice_stage.py:633:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_voice_stage.py:719:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_voice_stage.py:754:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_voice_stage.py:803:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_voice_stage.py:839:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_voice_stage.py:881:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_voice_stage.py:932:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_voice_stage.py:1011:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_voice_stage.py:1056:    result = stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_voice_stage.py:1101:        stage.execute(
+E:\Projects\Mission-Automation\mission-automation\tests\test_voice_stage.py:1137:        stage.execute(
+
+=== 12. CURRENT TARGETED BASELINE ===
+......................................................................   [100%]
+============================== warnings summary ===============================
+.venv\Lib\site-packages\google\genai\types.py:42
+  E:\Projects\Mission-Automation\mission-automation\.venv\Lib\site-packages\google\genai\types.py:42: DeprecationWarning: '_UnionGenericAlias' is deprecated and slated for removal in Python 3.17
+    VersionedUnionType = Union[builtin_types.UnionType, _UnionGenericAlias]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+70 passed, 1 warning in 33.75s
+
+TARGETED_EXIT_CODE=0
+
+=== 13. FULL SOURCE MYPY ===
+Success: no issues found in 201 source files
+
+MYPY_EXIT_CODE=0
+
+=== 14. DIFF CHECK ===
+
+DIFF_CHECK_EXIT_CODE=0
+
+=== PHASE H.2 STEP 1 EVIDENCE COMPLETE ===

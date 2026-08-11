@@ -1,0 +1,5532 @@
+=== PHASE H.2 STEP 2 — EXACT E2E CONTRACTS ===
+
+=== 1. CONTENT PIPELINE ===
+from __future__ import annotations
+
+from src.agents.originality_agent.agent import (
+    OriginalityAgent,
+)
+from src.agents.scene_planner.agent import (
+    ScenePlannerAgent,
+)
+from src.models.enums import WorkflowStage
+from src.models.video_job import VideoJob
+from src.services.llm.llm_service import LLMService
+from src.services.research_pipeline import (
+    ResearchPipeline,
+)
+from src.services.script_pipeline import (
+    ScriptPipeline,
+)
+
+
+class ContentPipeline:
+    """Runs the complete core content-generation workflow."""
+
+    def __init__(
+        self,
+        *,
+        llm_service: LLMService,
+        research_pipeline: ResearchPipeline | None = None,
+        script_pipeline: ScriptPipeline | None = None,
+        originality_agent: OriginalityAgent | None = None,
+        scene_planner: ScenePlannerAgent | None = None,
+        research_profile_ids: list[str] | None = None,
+        research_estimated_cost_usd: float = 0.0,
+    ) -> None:
+        self.research_pipeline = (
+            research_pipeline
+            or ResearchPipeline(
+                llm_service=llm_service,
+                profile_ids=research_profile_ids,
+                estimated_cost_usd=(
+                    research_estimated_cost_usd
+                ),
+            )
+        )
+
+        self.script_pipeline = (
+    script_pipeline
+    or ScriptPipeline(
+        llm_service=llm_service,
+        profile_ids=research_profile_ids,
+        estimated_cost_usd=research_estimated_cost_usd,
+    )
+)
+        
+
+        self.originality_agent = (
+            originality_agent
+            or OriginalityAgent()
+        )
+
+        self.scene_planner = (
+            scene_planner
+            or ScenePlannerAgent()
+        )
+
+    def run(
+        self,
+        job: VideoJob,
+    ) -> VideoJob:
+        """Run research, script, originality and scene planning."""
+
+        research = self.research_pipeline.run(
+            job.topic
+        )
+
+        job.research = research
+        job.current_stage = WorkflowStage.SCRIPT
+
+        script = self.script_pipeline.run(
+            research
+        )
+
+        job.script = script
+        job.current_stage = (
+            WorkflowStage.ORIGINALITY_REVIEW
+        )
+
+        originality = self.originality_agent.analyze(
+            script
+        )
+
+        job.originality_review = originality
+
+        scenes = self.scene_planner.plan(
+            script
+        )
+
+        job.scenes = scenes
+        job.current_stage = WorkflowStage.QUALITY_CHECK
+
+        return job
+
+=== 2. CONTENT PIPELINE TESTS ===
+from __future__ import annotations
+
+from src.models.enums import (
+    Platform,
+    ProductionMode,
+    WorkflowStage,
+)
+from src.models.research import (
+    ResearchResult,
+    ResearchSource,
+    ResearchStatus,
+)
+from src.models.script import (
+    Script,
+    ScriptReviewStatus,
+    ScriptStatus,
+)
+from src.models.video_job import VideoJob
+from src.services.content_pipeline import ContentPipeline
+
+
+class FakeResearchPipeline:
+    """Fake research pipeline for ContentPipeline testing."""
+
+    def run(
+        self,
+        topic: str,
+    ) -> ResearchResult:
+        return ResearchResult(
+            topic=topic,
+            research_summary=(
+                "Underground cities were built for "
+                "protection, storage, trade and survival."
+            ),
+            key_facts=[
+                "Some underground cities contained homes.",
+                "Many included food storage rooms.",
+                "Ventilation shafts supported long stays.",
+                "Defensive doors protected passageways.",
+                "Some complexes contained wells and worship areas.",
+            ],
+            interesting_angles=[
+                "How communities survived below ground.",
+            ],
+            potential_hooks=[
+                "Entire cities once existed beneath ordinary streets.",
+            ],
+            risk_notes=[
+                "Dates and population estimates require verification.",
+            ],
+            sources=[
+                ResearchSource(
+                    title="Test Historical Source",
+                    confidence_score=95,
+                )
+            ],
+            fact_confidence_score=92,
+            prompt_version="research_prompt_v2.0.0",
+            status=ResearchStatus.APPROVED,
+        )
+
+
+class FakeScriptPipeline:
+    """Fake script pipeline for ContentPipeline testing."""
+
+    def run(
+        self,
+        research: ResearchResult,
+    ) -> Script:
+        content = (
+            "Beneath ordinary streets, entire cities once "
+            "existed in silence. These underground complexes "
+            "protected communities and helped them survive."
+        )
+
+        return Script(
+            title=research.topic,
+            content=content,
+            prompt_version="script_prompt_v2.0.0",
+            word_count=len(content.split()),
+            estimated_duration_seconds=max(
+                int(len(content.split()) / 2.3),
+                1,
+            ),
+            status=ScriptStatus.APPROVED,
+            claude_review_status=ScriptReviewStatus.APPROVED,
+            claude_review_notes=[
+                "Script structure is clear and suitable for production.",
+            ],
+        )
+
+
+pipeline = ContentPipeline(
+    llm_service=None,  # type: ignore[arg-type]
+    research_pipeline=FakeResearchPipeline(),  # type: ignore[arg-type]
+    script_pipeline=FakeScriptPipeline(),  # type: ignore[arg-type]
+)
+
+job = VideoJob(
+    project_name="Hidden Underground Cities Project",
+    channel_name="History Vault",
+    niche="History Documentary",
+    title="Hidden Underground Cities",
+    topic="Top 10 Hidden Underground Cities",
+    production_mode=ProductionMode.PREMIUM,
+    platform=Platform.YOUTUBE,
+)
+
+result = pipeline.run(job)
+
+print("Project:", result.project_name)
+print("Current stage:", result.current_stage)
+print("Research status:", result.research.status)
+print("Script status:", result.script.status)
+print("Scene count:", len(result.scenes))
+
+assert result.research is not None
+assert result.script is not None
+assert result.originality_review is not None
+assert len(result.scenes) > 0
+
+assert result.research.status == ResearchStatus.APPROVED
+assert result.script.status == ScriptStatus.APPROVED
+assert (
+    result.script.claude_review_status
+    == ScriptReviewStatus.APPROVED
+)
+
+assert result.current_stage == WorkflowStage.QUALITY_CHECK
+
+print("Content Pipeline test completed successfully.")
+
+=== 3. PROJECT SPECIFICATION JOB MAPPER ===
+from __future__ import annotations
+
+from src.models.enums import (
+    JobStatus,
+    Platform,
+    ProductionMode,
+    WorkflowStage,
+)
+from src.models.media_strategy import (
+    SceneSourceType,
+    VisualStrategy,
+    VoiceStatus,
+    VoiceStrategy,
+)
+from src.models.project_specification import (
+    ProjectSpecification,
+)
+from src.models.specification_enums import (
+    QualityMode,
+    VisualStrategy as SpecificationVisualStrategy,
+    VoiceStrategy as SpecificationVoiceStrategy,
+)
+from src.models.upload_settings import (
+    UploadPlatform,
+)
+from src.models.video_job import VideoJob
+from src.shared.exceptions import ConfigurationError
+
+
+class ProjectSpecificationJobMapper:
+    """
+    Map a validated ProjectSpecification into a fresh VideoJob.
+
+    The mapper is an application-boundary translation service. It keeps
+    specification-layer enums and runtime pipeline enums explicitly
+    separated rather than relying on coincidental enum values.
+
+    A niche is supplied explicitly because ProjectSpecification does not
+    currently define a canonical niche or genre-profile identifier.
+    """
+
+    def map(
+        self,
+        specification: ProjectSpecification,
+        *,
+        niche: str,
+    ) -> VideoJob:
+        normalized_niche = niche.strip()
+
+        if not normalized_niche:
+            raise ConfigurationError(
+                "A non-empty niche is required to create a VideoJob."
+            )
+
+        return VideoJob(
+            project_name=(
+                specification.general.project_name
+            ),
+            channel_name=(
+                specification.general.channel_name
+            ),
+            niche=normalized_niche,
+            topic=specification.general.topic,
+            platform=self._map_platform(
+                specification.upload.platform
+            ),
+            language=specification.audience.language,
+            target_country=(
+                specification.audience.target_country
+            ),
+            production_mode=(
+                self._map_production_mode(
+                    specification.video.quality_mode
+                )
+            ),
+            status=JobStatus.PENDING,
+            current_stage=WorkflowStage.RESEARCH,
+            visual_strategy=(
+                self._map_visual_strategy(
+                    specification.visual.strategy
+                )
+            ),
+            default_visual_source=(
+                self._map_default_visual_source(
+                    specification.visual.strategy
+                )
+            ),
+            maximum_visual_budget=(
+                specification
+                .budget
+                .maximum_scene_cost_usd
+            ),
+            voice_strategy=(
+                self._map_voice_strategy(
+                    specification.voice.strategy
+                )
+            ),
+            voice_status=(
+                self._initial_voice_status(
+                    specification
+                )
+            ),
+            voice_file=(
+                specification.voice.manual_voice_file
+            ),
+            voice_provider=(
+                specification
+                .voice
+                .preferred_provider_profile_id
+            ),
+        )
+
+    @staticmethod
+    def _map_platform(
+        platform: UploadPlatform,
+    ) -> Platform:
+        mapping = {
+            UploadPlatform.YOUTUBE: (
+                Platform.YOUTUBE
+            ),
+            UploadPlatform.FACEBOOK: (
+                Platform.FACEBOOK
+            ),
+            UploadPlatform.TIKTOK: (
+                Platform.TIKTOK
+            ),
+        }
+
+        mapped = mapping.get(platform)
+
+        if mapped is None:
+            raise ConfigurationError(
+                "Upload platform "
+                f"'{platform.value}' is not supported "
+                "by the current VideoJob runtime."
+            )
+
+        return mapped
+
+    @staticmethod
+    def _map_production_mode(
+        quality_mode: QualityMode,
+    ) -> ProductionMode:
+        if quality_mode in {
+            QualityMode.DRAFT,
+            QualityMode.STANDARD,
+        }:
+            return ProductionMode.QUICK
+
+        if quality_mode in {
+            QualityMode.PREMIUM,
+            QualityMode.ULTRA,
+        }:
+            return ProductionMode.PREMIUM
+
+        raise ConfigurationError(
+            "Unsupported quality mode: "
+            f"'{quality_mode.value}'."
+        )
+
+    @staticmethod
+    def _map_visual_strategy(
+        strategy: SpecificationVisualStrategy,
+    ) -> VisualStrategy:
+        mapping = {
+            SpecificationVisualStrategy.LOCAL_LIBRARY: (
+                VisualStrategy.ALL_LOCAL
+            ),
+            SpecificationVisualStrategy.MANUAL_UPLOAD: (
+                VisualStrategy.ALL_MANUAL
+            ),
+            SpecificationVisualStrategy.STOCK_FOOTAGE: (
+                VisualStrategy.ALL_STOCK
+            ),
+            SpecificationVisualStrategy.IMAGE_TO_VIDEO: (
+                VisualStrategy.ALL_IMAGE_TO_VIDEO
+            ),
+            SpecificationVisualStrategy.HYBRID: (
+                VisualStrategy.HYBRID
+            ),
+        }
+
+        mapped = mapping.get(strategy)
+
+        if mapped is None:
+            raise ConfigurationError(
+                "Visual strategy "
+                f"'{strategy.value}' is not supported "
+                "by the active runtime workflow."
+            )
+
+        return mapped
+
+    @staticmethod
+    def _map_default_visual_source(
+        strategy: SpecificationVisualStrategy,
+    ) -> SceneSourceType:
+        mapping = {
+            SpecificationVisualStrategy.LOCAL_LIBRARY: (
+                SceneSourceType.LOCAL_LIBRARY
+            ),
+            SpecificationVisualStrategy.MANUAL_UPLOAD: (
+                SceneSourceType.MANUAL_UPLOAD
+            ),
+            SpecificationVisualStrategy.STOCK_FOOTAGE: (
+                SceneSourceType.STOCK_FOOTAGE
+            ),
+            SpecificationVisualStrategy.IMAGE_TO_VIDEO: (
+                SceneSourceType.IMAGE_TO_VIDEO
+            ),
+            SpecificationVisualStrategy.HYBRID: (
+                SceneSourceType.MANUAL_UPLOAD
+            ),
+        }
+
+        mapped = mapping.get(strategy)
+
+        if mapped is None:
+            raise ConfigurationError(
+                "Visual strategy "
+                f"'{strategy.value}' does not have "
+                "an active default scene source."
+            )
+
+        return mapped
+
+    @staticmethod
+    def _map_voice_strategy(
+        strategy: SpecificationVoiceStrategy,
+    ) -> VoiceStrategy:
+        if (
+            strategy
+            == SpecificationVoiceStrategy.AUTO_GENERATE
+        ):
+            return VoiceStrategy.AUTO_GENERATE
+
+        if (
+            strategy
+            == SpecificationVoiceStrategy.MANUAL_UPLOAD
+        ):
+            return VoiceStrategy.MANUAL_UPLOAD
+
+        raise ConfigurationError(
+            "Unsupported voice strategy: "
+            f"'{strategy.value}'."
+        )
+
+    @staticmethod
+    def _initial_voice_status(
+        specification: ProjectSpecification,
+    ) -> VoiceStatus:
+        if (
+            specification.voice.strategy
+            == SpecificationVoiceStrategy.AUTO_GENERATE
+        ):
+            return VoiceStatus.PENDING
+
+        if specification.voice.manual_voice_file:
+            return VoiceStatus.READY
+
+        return VoiceStatus.WAITING_FOR_UPLOAD
+from __future__ import annotations
+
+import pytest
+
+from src.models.advanced_settings import AdvancedSettings
+from src.models.audience_settings import AudienceSettings
+from src.models.budget_settings import BudgetSettings
+from src.models.duration_config import DurationConfig
+from src.models.enums import (
+    JobStatus,
+    Platform,
+    ProductionMode,
+    WorkflowStage,
+)
+from src.models.general_settings import GeneralSettings
+from src.models.duration_config import (
+    DurationConfig,
+    DurationMode,
+)
+from src.models.media_strategy import (
+    SceneSourceType,
+    VisualStrategy,
+    VoiceStatus,
+    VoiceStrategy,
+)
+from src.models.music_settings import MusicSettings
+from src.models.packaging_settings import PackagingSettings
+from src.models.project_specification import ProjectSpecification
+from src.models.provider_preferences import ProviderPreferences
+from src.models.specification_enums import (
+    QualityMode,
+    VisualStrategy as SpecificationVisualStrategy,
+    VoiceStrategy as SpecificationVoiceStrategy,
+)
+from src.models.upload_settings import (
+    UploadPlatform,
+    UploadSettings,
+)
+from src.models.video_settings import VideoSettings
+from src.models.visual_settings import VisualSettings
+from src.models.voice_settings import VoiceSettings
+from src.services.project_specification_job_mapper import (
+    ProjectSpecificationJobMapper,
+)
+from src.shared.exceptions import ConfigurationError
+
+
+def build_specification(
+    *,
+    platform: UploadPlatform = UploadPlatform.YOUTUBE,
+    quality_mode: QualityMode = QualityMode.PREMIUM,
+    visual_strategy: SpecificationVisualStrategy = (
+        SpecificationVisualStrategy.HYBRID
+    ),
+    voice_strategy: SpecificationVoiceStrategy = (
+        SpecificationVoiceStrategy.MANUAL_UPLOAD
+    ),
+    manual_voice_file: str | None = None,
+    preferred_voice_provider_profile_id: str | None = None,
+) -> ProjectSpecification:
+    return ProjectSpecification(
+        general=GeneralSettings(
+            project_name="Mission Mapper Test",
+            channel_name="Mission Channel",
+            topic="Hidden underground cities",
+            video_type="Documentary",
+            tags=[
+                "history",
+                "mystery",
+            ],
+        ),
+        duration=DurationConfig(mode=DurationMode.EXACT,target_duration_seconds=300,),
+        audience=AudienceSettings(
+            language="English",
+            target_country="United Kingdom",
+        ),
+        video=VideoSettings(
+            quality_mode=quality_mode,
+        ),
+        visual=VisualSettings(
+            strategy=visual_strategy,
+            prefer_local_assets=True,
+            allow_stock_search=True,
+            allow_manual_upload=True,
+            allow_image_to_video=True,
+            allow_ai_video_generation=(
+                visual_strategy
+                == SpecificationVisualStrategy.AI_VIDEO
+            ),
+        ),
+        voice=VoiceSettings(
+            strategy=voice_strategy,
+            manual_voice_file=manual_voice_file,
+            preferred_provider_profile_id=(
+                preferred_voice_provider_profile_id
+            ),
+        ),
+        music=MusicSettings(),
+        providers=ProviderPreferences(),
+        upload=UploadSettings(
+            platform=platform,
+        ),
+        packaging=PackagingSettings(),
+        budget=BudgetSettings(
+            total_budget_usd=25.0,
+            maximum_scene_cost_usd=2.5,
+            reserve_budget_usd=5.0,
+        ),
+        advanced=AdvancedSettings(),
+    )
+
+
+def test_maps_basic_project_fields() -> None:
+    mapper = ProjectSpecificationJobMapper()
+    specification = build_specification()
+
+    job = mapper.map(
+        specification,
+        niche="History Documentary",
+    )
+
+    assert job.project_name == "Mission Mapper Test"
+    assert job.channel_name == "Mission Channel"
+    assert job.niche == "History Documentary"
+    assert job.topic == "Hidden underground cities"
+
+    assert job.language == "English"
+    assert job.target_country == "United Kingdom"
+
+    assert job.status == JobStatus.PENDING
+    assert job.current_stage == WorkflowStage.RESEARCH
+
+    assert job.platform == Platform.YOUTUBE
+    assert job.production_mode == ProductionMode.PREMIUM
+
+    assert job.maximum_visual_budget == 2.5
+
+
+@pytest.mark.parametrize(
+    ("upload_platform", "expected"),
+    [
+        (
+            UploadPlatform.YOUTUBE,
+            Platform.YOUTUBE,
+        ),
+        (
+            UploadPlatform.FACEBOOK,
+            Platform.FACEBOOK,
+        ),
+        (
+            UploadPlatform.TIKTOK,
+            Platform.TIKTOK,
+        ),
+    ],
+)
+def test_maps_supported_platforms(
+    upload_platform: UploadPlatform,
+    expected: Platform,
+) -> None:
+    mapper = ProjectSpecificationJobMapper()
+
+    job = mapper.map(
+        build_specification(
+            platform=upload_platform,
+        ),
+        niche="Automation",
+    )
+
+    assert job.platform == expected
+
+
+@pytest.mark.parametrize(
+    "unsupported_platform",
+    [
+        UploadPlatform.INSTAGRAM,
+        UploadPlatform.CUSTOM,
+    ],
+)
+def test_rejects_unsupported_runtime_platforms(
+    unsupported_platform: UploadPlatform,
+) -> None:
+    mapper = ProjectSpecificationJobMapper()
+
+    with pytest.raises(
+        ConfigurationError,
+        match="not supported",
+    ):
+        mapper.map(
+            build_specification(
+                platform=unsupported_platform,
+            ),
+            niche="Automation",
+        )
+
+
+@pytest.mark.parametrize(
+    ("quality_mode", "expected"),
+    [
+        (
+            QualityMode.DRAFT,
+            ProductionMode.QUICK,
+        ),
+        (
+            QualityMode.STANDARD,
+            ProductionMode.QUICK,
+        ),
+        (
+            QualityMode.PREMIUM,
+            ProductionMode.PREMIUM,
+        ),
+        (
+            QualityMode.ULTRA,
+            ProductionMode.PREMIUM,
+        ),
+    ],
+)
+def test_maps_quality_mode_to_runtime_production_mode(
+    quality_mode: QualityMode,
+    expected: ProductionMode,
+) -> None:
+    mapper = ProjectSpecificationJobMapper()
+
+    job = mapper.map(
+        build_specification(
+            quality_mode=quality_mode,
+        ),
+        niche="Automation",
+    )
+
+    assert job.production_mode == expected
+
+
+@pytest.mark.parametrize(
+    (
+        "specification_strategy",
+        "expected_strategy",
+        "expected_source",
+    ),
+    [
+        (
+            SpecificationVisualStrategy.LOCAL_LIBRARY,
+            VisualStrategy.ALL_LOCAL,
+            SceneSourceType.LOCAL_LIBRARY,
+        ),
+        (
+            SpecificationVisualStrategy.MANUAL_UPLOAD,
+            VisualStrategy.ALL_MANUAL,
+            SceneSourceType.MANUAL_UPLOAD,
+        ),
+        (
+            SpecificationVisualStrategy.STOCK_FOOTAGE,
+            VisualStrategy.ALL_STOCK,
+            SceneSourceType.STOCK_FOOTAGE,
+        ),
+        (
+            SpecificationVisualStrategy.IMAGE_TO_VIDEO,
+            VisualStrategy.ALL_IMAGE_TO_VIDEO,
+            SceneSourceType.IMAGE_TO_VIDEO,
+        ),
+        (
+            SpecificationVisualStrategy.HYBRID,
+            VisualStrategy.HYBRID,
+            SceneSourceType.MANUAL_UPLOAD,
+        ),
+    ],
+)
+def test_maps_active_visual_strategies(
+    specification_strategy: SpecificationVisualStrategy,
+    expected_strategy: VisualStrategy,
+    expected_source: SceneSourceType,
+) -> None:
+    mapper = ProjectSpecificationJobMapper()
+
+    job = mapper.map(
+        build_specification(
+            visual_strategy=specification_strategy,
+        ),
+        niche="Automation",
+    )
+
+    assert job.visual_strategy == expected_strategy
+    assert job.default_visual_source == expected_source
+
+
+def test_rejects_ai_video_until_runtime_support_exists() -> None:
+    mapper = ProjectSpecificationJobMapper()
+
+    specification = build_specification(
+        visual_strategy=(
+            SpecificationVisualStrategy.AI_VIDEO
+        ),
+    )
+
+    with pytest.raises(
+        ConfigurationError,
+        match="not supported",
+    ):
+        mapper.map(
+            specification,
+            niche="Automation",
+        )
+
+
+def test_maps_manual_voice_without_file_to_waiting() -> None:
+    mapper = ProjectSpecificationJobMapper()
+
+    job = mapper.map(
+        build_specification(
+            voice_strategy=(
+                SpecificationVoiceStrategy.MANUAL_UPLOAD
+            ),
+            manual_voice_file=None,
+        ),
+        niche="Automation",
+    )
+
+    assert job.voice_strategy == VoiceStrategy.MANUAL_UPLOAD
+    assert job.voice_status == VoiceStatus.WAITING_FOR_UPLOAD
+    assert job.voice_file is None
+    assert job.voice_provider is None
+
+
+def test_maps_manual_voice_with_file_to_ready() -> None:
+    mapper = ProjectSpecificationJobMapper()
+
+    job = mapper.map(
+        build_specification(
+            voice_strategy=(
+                SpecificationVoiceStrategy.MANUAL_UPLOAD
+            ),
+            manual_voice_file=(
+                "assets/audio/manual_voice.wav"
+            ),
+        ),
+        niche="Automation",
+    )
+
+    assert job.voice_strategy == VoiceStrategy.MANUAL_UPLOAD
+    assert job.voice_status == VoiceStatus.READY
+    assert (
+        job.voice_file
+        == "assets/audio/manual_voice.wav"
+    )
+
+
+def test_maps_auto_generated_voice_to_pending() -> None:
+    mapper = ProjectSpecificationJobMapper()
+
+    job = mapper.map(
+        build_specification(
+            voice_strategy=(
+                SpecificationVoiceStrategy.AUTO_GENERATE
+            ),
+            preferred_voice_provider_profile_id=(
+                "voice-provider-profile"
+            ),
+        ),
+        niche="Automation",
+    )
+
+    assert job.voice_strategy == VoiceStrategy.AUTO_GENERATE
+    assert job.voice_status == VoiceStatus.PENDING
+    assert job.voice_file is None
+    assert job.voice_provider == "voice-provider-profile"
+
+
+@pytest.mark.parametrize(
+    "niche",
+    [
+        "",
+        "   ",
+        "\t",
+    ],
+)
+def test_rejects_empty_niche(
+    niche: str,
+) -> None:
+    mapper = ProjectSpecificationJobMapper()
+
+    with pytest.raises(
+        ConfigurationError,
+        match="non-empty niche",
+    ):
+        mapper.map(
+            build_specification(),
+            niche=niche,
+        )
+
+
+def test_normalizes_niche_whitespace() -> None:
+    mapper = ProjectSpecificationJobMapper()
+
+    job = mapper.map(
+        build_specification(),
+        niche="  History Documentary  ",
+    )
+
+    assert job.niche == "History Documentary"
+
+
+def test_result_survives_json_round_trip() -> None:
+    mapper = ProjectSpecificationJobMapper()
+
+    job = mapper.map(
+        build_specification(
+            platform=UploadPlatform.FACEBOOK,
+            quality_mode=QualityMode.PREMIUM,
+            visual_strategy=(
+                SpecificationVisualStrategy.STOCK_FOOTAGE
+            ),
+            voice_strategy=(
+                SpecificationVoiceStrategy.MANUAL_UPLOAD
+            ),
+        ),
+        niche="Documentary",
+    )
+
+    serialized = job.model_dump_json()
+
+    restored = type(job).model_validate_json(
+        serialized
+    )
+
+    assert restored == job
+    assert restored.platform == Platform.FACEBOOK
+    assert restored.visual_strategy == VisualStrategy.ALL_STOCK
+    assert (
+        restored.default_visual_source
+        == SceneSourceType.STOCK_FOOTAGE
+    )
+
+=== 4. RENDER ORCHESTRATOR ===
+from __future__ import annotations
+
+import time
+from collections.abc import Iterable
+from pathlib import Path
+from typing import Any
+from uuid import UUID
+
+from src.models.advanced_settings import (
+    AdvancedSettings,
+)
+from src.models.enums import (
+    JobStatus,
+    WorkflowStage,
+)
+from src.models.render_orchestration_result import (
+    RenderOrchestrationResult,
+)
+from src.models.video_job import VideoJob
+from src.pipeline.base_stage import BasePipelineStage
+from src.pipeline.pipeline_checkpoint import (
+    PipelineCheckpoint,
+)
+from src.pipeline.pipeline_engine import PipelineEngine
+from src.pipeline.pipeline_resume_plan import (
+    PipelineResumePlan,
+)
+from src.pipeline.pipeline_runner import PipelineRunner
+from src.pipeline.pipeline_stage import (
+    PipelineStageName,
+    PipelineStageStatus,
+)
+from src.pipeline.stage_context import StageContext
+from src.pipeline.stage_result import StageResult
+from src.services.pipeline_checkpoint_service import (
+    PipelineCheckpointService,
+)
+from src.services.pipeline_checkpoint_storage_service import (
+    PipelineCheckpointStorageService,
+)
+from src.services.pipeline_resume_planner_service import (
+    PipelineResumePlannerService,
+)
+
+
+class RenderOrchestratorService:
+    """
+    Coordinate render workflow execution through the existing pipeline
+    framework.
+
+    Concrete BasePipelineStage implementations remain responsible for
+    voice, asset, timeline, render, export, and other production work.
+
+    Responsibilities:
+    - register existing pipeline stages in deterministic order;
+    - execute them through PipelineEngine;
+    - apply AdvancedSettings execution policy;
+    - optionally restore execution from a persisted checkpoint;
+    - build deterministic resume plans;
+    - optionally persist the resulting pipeline checkpoint;
+    - synchronize pipeline state with VideoJob lifecycle state;
+    - aggregate warnings and errors;
+    - normalize the final outcome as RenderOrchestrationResult.
+
+    Retry execution remains delegated to PipelineRunner.
+
+    Checkpoint construction, persistence, and resume planning remain
+    delegated to their dedicated services.
+    """
+
+    def __init__(
+        self,
+        *,
+        stages: Iterable[BasePipelineStage],
+        advanced_settings: AdvancedSettings | None = None,
+        checkpoint_storage_service: (
+            PipelineCheckpointStorageService
+            | None
+        ) = None,
+        checkpoint_service: (
+            PipelineCheckpointService
+            | None
+        ) = None,
+        resume_planner_service: (
+            PipelineResumePlannerService
+            | None
+        ) = None,
+    ) -> None:
+        stage_list = list(
+            stages
+        )
+
+        if not stage_list:
+            raise ValueError(
+                "Render orchestrator requires at least "
+                "one pipeline stage."
+            )
+
+        self._validate_stage_order(
+            stage_list
+        )
+
+        self._advanced_settings = (
+            advanced_settings
+        )
+
+        self._checkpoint_storage_service = (
+            checkpoint_storage_service
+        )
+
+        self._checkpoint_service = (
+            checkpoint_service
+            or PipelineCheckpointService()
+        )
+
+        self._resume_planner_service = (
+            resume_planner_service
+            or PipelineResumePlannerService()
+        )
+
+        runner = PipelineRunner(
+            advanced_settings=(
+                advanced_settings
+            ),
+        )
+
+        for stage in stage_list:
+            runner.register(
+                stage
+            )
+
+        self._runner = runner
+
+        self._engine = PipelineEngine(
+            runner
+        )
+
+    @property
+    def stages(
+        self,
+    ) -> list[BasePipelineStage]:
+        """
+        Return registered pipeline stages without exposing the runner's
+        mutable internal collection.
+        """
+
+        return self._runner.stages
+
+    @property
+    def advanced_settings(
+        self,
+    ) -> AdvancedSettings | None:
+        """Return orchestration execution settings."""
+
+        return self._advanced_settings
+
+    @property
+    def checkpoint_storage_service(
+        self,
+    ) -> PipelineCheckpointStorageService | None:
+        """Return configured checkpoint persistence service."""
+
+        return self._checkpoint_storage_service
+
+    def execute(
+        self,
+        job: VideoJob,
+        *,
+        dry_run: bool = False,
+        checkpoint_id: UUID | None = None,
+        user_input: dict[str, Any] | None = None,
+    ) -> RenderOrchestrationResult:
+        """
+        Execute the registered render workflow for one VideoJob.
+
+        When AdvancedSettings is supplied, its dry_run value is the
+        authoritative execution mode. Otherwise the explicit execute()
+        argument preserves historical behavior.
+
+        When checkpoint persistence is configured and resume is enabled,
+        execution may resume from either:
+        - an explicitly requested checkpoint_id; or
+        - the latest persisted checkpoint for the supplied VideoJob.
+
+        Exceptions raised by pipeline stages or checkpoint orchestration
+        are normalized into failed orchestration results instead of
+        crossing the public orchestration boundary.
+        """
+
+        start_time = (
+            time.perf_counter()
+        )
+
+        effective_dry_run = (
+            self._advanced_settings.dry_run
+            if self._advanced_settings
+            is not None
+            else dry_run
+        )
+
+        loaded_checkpoint: (
+            PipelineCheckpoint
+            | None
+        ) = None
+
+        resume_plan: (
+            PipelineResumePlan
+            | None
+        ) = None
+
+        try:
+            loaded_checkpoint = (
+                self._load_resume_checkpoint(
+                    job=job,
+                    checkpoint_id=checkpoint_id,
+                )
+            )
+
+            if loaded_checkpoint is not None:
+                resume_plan = (
+                    self._build_resume_plan(
+                        job=job,
+                        checkpoint=(
+                            loaded_checkpoint
+                        ),
+                    )
+                )
+
+        except Exception as error:
+            elapsed_seconds = (
+                time.perf_counter()
+                - start_time
+            )
+
+            message = (
+                self._checkpoint_exception_message(
+                    error
+                )
+            )
+
+            self._append_unique(
+                job.errors,
+                message,
+            )
+
+            job.status = (
+                JobStatus.FAILED
+            )
+
+            failed_stage = (
+                self._current_workflow_stage(
+                    job
+                )
+            )
+
+            job.current_stage = (
+                failed_stage
+            )
+
+            return (
+                RenderOrchestrationResult
+                .failed(
+                    job=job,
+                    failed_stage=(
+                        failed_stage
+                    ),
+                    completed_stages=[],
+                    elapsed_seconds=(
+                        elapsed_seconds
+                    ),
+                    error_message=(
+                        message
+                    ),
+                    warnings=list(
+                        job.warnings
+                    ),
+                    metadata={
+                        "dry_run": (
+                            effective_dry_run
+                        ),
+                        "exception_type": (
+                            type(
+                                error
+                            ).__name__
+                        ),
+                        "checkpoint_phase": (
+                            "resume_preparation"
+                        ),
+                    },
+                )
+            )
+
+        job.status = (
+            JobStatus.RUNNING
+        )
+
+        starting_pipeline_stage = (
+            self._starting_pipeline_stage(
+                resume_plan
+            )
+        )
+
+        job.current_stage = (
+            self._workflow_stage_for_pipeline_stage(
+                starting_pipeline_stage
+            )
+        )
+
+        try:
+            context = self._engine.run(
+                job,
+                dry_run=(
+                    effective_dry_run
+                ),
+                resume_plan=(
+                    resume_plan
+                ),
+                user_input=(
+                    user_input
+                ),
+            )
+
+        except Exception as error:
+            elapsed_seconds = (
+                time.perf_counter()
+                - start_time
+            )
+
+            failed_stage = (
+                self._current_workflow_stage(
+                    job
+                )
+            )
+
+            message = (
+                self._exception_message(
+                    error
+                )
+            )
+
+            self._append_unique(
+                job.errors,
+                message,
+            )
+
+            job.status = (
+                JobStatus.FAILED
+            )
+
+            job.current_stage = (
+                failed_stage
+            )
+
+            return (
+                RenderOrchestrationResult
+                .failed(
+                    job=job,
+                    failed_stage=(
+                        failed_stage
+                    ),
+                    completed_stages=[],
+                    elapsed_seconds=(
+                        elapsed_seconds
+                    ),
+                    error_message=(
+                        message
+                    ),
+                    warnings=list(
+                        job.warnings
+                    ),
+                    metadata={
+                        "dry_run": (
+                            effective_dry_run
+                        ),
+                        "exception_type": (
+                            type(
+                                error
+                            ).__name__
+                        ),
+                        "resumed": (
+                            resume_plan
+                            is not None
+                            and resume_plan
+                            .resume_enabled
+                        ),
+                        "loaded_checkpoint_id": (
+                            str(
+                                loaded_checkpoint
+                                .checkpoint_id
+                            )
+                            if loaded_checkpoint
+                            is not None
+                            else None
+                        ),
+                    },
+                )
+            )
+
+        elapsed_seconds = (
+            time.perf_counter()
+            - start_time
+        )
+
+        self._synchronize_diagnostics(
+            job=job,
+            context=context,
+        )
+
+        persisted_checkpoint: (
+            PipelineCheckpoint
+            | None
+        ) = None
+
+        try:
+            persisted_checkpoint = (
+                self._persist_checkpoint_if_enabled(
+                    job=job,
+                    context=context,
+                    loaded_checkpoint=(
+                        loaded_checkpoint
+                    ),
+                    resume_plan=resume_plan,
+                    dry_run=(
+                        effective_dry_run
+                    ),
+                )
+            )
+
+        except Exception as error:
+            message = (
+                self._checkpoint_exception_message(
+                    error
+                )
+            )
+
+            self._append_unique(
+                job.errors,
+                message,
+            )
+
+            job.status = (
+                JobStatus.FAILED
+            )
+
+            failed_stage = (
+                self._workflow_stage_for_pipeline_stage(
+                    context
+                    .pipeline_state
+                    .current_stage
+                )
+            )
+
+            job.current_stage = (
+                failed_stage
+            )
+
+            return (
+                RenderOrchestrationResult
+                .failed(
+                    job=job,
+                    failed_stage=(
+                        failed_stage
+                    ),
+                    completed_stages=(
+                        self._completed_workflow_stages(
+                            context
+                            .pipeline_state
+                            .stages
+                        )
+                    ),
+                    elapsed_seconds=(
+                        elapsed_seconds
+                    ),
+                    error_message=(
+                        message
+                    ),
+                    warnings=list(
+                        job.warnings
+                    ),
+                    metadata=(
+                        self._build_metadata(
+                            context=context,
+                            dry_run=(
+                                effective_dry_run
+                            ),
+                            loaded_checkpoint=(
+                                loaded_checkpoint
+                            ),
+                            persisted_checkpoint=None,
+                            resume_plan=(
+                                resume_plan
+                            ),
+                        )
+                    ),
+                )
+            )
+
+        failed_result = (
+            self._first_failed_result(
+                context
+                .pipeline_state
+                .stages
+            )
+        )
+
+        waiting_result = (
+            self._first_waiting_result(
+                context
+                .pipeline_state
+                .stages
+            )
+        )
+
+        completed_stages = (
+            self._completed_workflow_stages(
+                context
+                .pipeline_state
+                .stages
+            )
+        )
+
+        if failed_result is not None:
+            failed_stage = (
+                self._workflow_stage_for_pipeline_stage(
+                    failed_result.stage
+                )
+            )
+
+            completed_stages = (
+                self._without_stage(
+                    completed_stages,
+                    failed_stage,
+                )
+            )
+
+            error_message = (
+                failed_result.errors[-1]
+                if failed_result.errors
+                else (
+                    "Pipeline stage failed without "
+                    "an error message."
+                )
+            )
+
+            self._append_unique(
+                job.errors,
+                error_message,
+            )
+
+            job.status = (
+                JobStatus.FAILED
+            )
+
+            job.current_stage = (
+                failed_stage
+            )
+
+            return (
+                RenderOrchestrationResult
+                .failed(
+                    job=job,
+                    failed_stage=(
+                        failed_stage
+                    ),
+                    completed_stages=(
+                        completed_stages
+                    ),
+                    elapsed_seconds=(
+                        elapsed_seconds
+                    ),
+                    error_message=(
+                        error_message
+                    ),
+                    warnings=list(
+                        job.warnings
+                    ),
+                    metadata=(
+                        self._build_metadata(
+                            context=context,
+                            dry_run=(
+                                effective_dry_run
+                            ),
+                            loaded_checkpoint=(
+                                loaded_checkpoint
+                            ),
+                            persisted_checkpoint=(
+                                persisted_checkpoint
+                            ),
+                            resume_plan=(
+                                resume_plan
+                            ),
+                        )
+                    ),
+                )
+            )
+
+        if waiting_result is not None:
+            waiting_stage = (
+                self._workflow_stage_for_pipeline_stage(
+                    waiting_result.stage
+                )
+            )
+
+            completed_stages = (
+                self._without_stage(
+                    completed_stages,
+                    waiting_stage,
+                )
+            )
+
+            message = (
+                waiting_result.warnings[-1]
+                if waiting_result.warnings
+                else (
+                    "Pipeline execution is waiting "
+                    "for user input."
+                )
+            )
+
+            self._append_unique(
+                job.warnings,
+                message,
+            )
+
+            # WAITING_FOR_USER is represented at the orchestration
+            # boundary as a resumable failed result. Keep the VideoJob
+            # lifecycle synchronized with RenderOrchestrationResult so
+            # the result model's cross-object status invariant remains
+            # valid.
+            #
+            # The checkpoint still records waiting_stage separately,
+            # therefore FAILED here does not lose the semantic
+            # distinction between a terminal pipeline failure and a
+            # resumable user-input wait.
+            job.status = (
+                JobStatus.FAILED
+            )
+
+            job.current_stage = (
+                waiting_stage
+            )
+
+            return (
+                RenderOrchestrationResult
+                .failed(
+                    job=job,
+                    failed_stage=(
+                        waiting_stage
+                    ),
+                    completed_stages=(
+                        completed_stages
+                    ),
+                    elapsed_seconds=(
+                        elapsed_seconds
+                    ),
+                    error_message=(
+                        message
+                    ),
+                    warnings=list(
+                        job.warnings
+                    ),
+                    metadata=(
+                        self._build_metadata(
+                            context=context,
+                            dry_run=(
+                                effective_dry_run
+                            ),
+                            loaded_checkpoint=(
+                                loaded_checkpoint
+                            ),
+                            persisted_checkpoint=(
+                                persisted_checkpoint
+                            ),
+                            resume_plan=(
+                                resume_plan
+                            ),
+                        )
+                    ),
+                )
+            )
+
+        if (
+            not context
+            .pipeline_state
+            .stages
+        ):
+            if (
+                resume_plan is not None
+                and not resume_plan.resume_enabled
+                and not resume_plan.execution_stages
+                and loaded_checkpoint is not None
+            ):
+                if (
+                    job.render_result
+                    is not None
+                    and job.render_result.success
+                ):
+                    job.status = (
+                        JobStatus.COMPLETED
+                    )
+
+                    job.current_stage = (
+                        WorkflowStage
+                        .READY_FOR_UPLOAD
+                    )
+
+                    return (
+                        RenderOrchestrationResult
+                        .succeeded(
+                            job=job,
+                            completed_stages=(
+                                self._checkpoint_completed_workflow_stages(
+                                    loaded_checkpoint
+                                )
+                            ),
+                            elapsed_seconds=(
+                                elapsed_seconds
+                            ),
+                            warnings=list(
+                                job.warnings
+                            ),
+                            metadata=(
+                                self._build_metadata(
+                                    context=context,
+                                    dry_run=(
+                                        effective_dry_run
+                                    ),
+                                    loaded_checkpoint=(
+                                        loaded_checkpoint
+                                    ),
+                                    persisted_checkpoint=(
+                                        persisted_checkpoint
+                                    ),
+                                    resume_plan=(
+                                        resume_plan
+                                    ),
+                                )
+                            ),
+                        )
+                    )
+
+            message = (
+                "Render orchestration completed "
+                "without executing any stages."
+            )
+
+            self._append_unique(
+                job.errors,
+                message,
+            )
+
+            job.status = (
+                JobStatus.FAILED
+            )
+
+            failed_stage = (
+                job.current_stage
+            )
+
+            return (
+                RenderOrchestrationResult
+                .failed(
+                    job=job,
+                    failed_stage=(
+                        failed_stage
+                    ),
+                    completed_stages=[],
+                    elapsed_seconds=(
+                        elapsed_seconds
+                    ),
+                    error_message=(
+                        message
+                    ),
+                    warnings=list(
+                        job.warnings
+                    ),
+                    metadata=(
+                        self._build_metadata(
+                            context=context,
+                            dry_run=(
+                                effective_dry_run
+                            ),
+                            loaded_checkpoint=(
+                                loaded_checkpoint
+                            ),
+                            persisted_checkpoint=(
+                                persisted_checkpoint
+                            ),
+                            resume_plan=(
+                                resume_plan
+                            ),
+                        )
+                    ),
+                )
+            )
+
+        if (
+            job.render_result
+            is None
+        ):
+            message = (
+                "Render orchestration finished "
+                "without a render result."
+            )
+
+            self._append_unique(
+                job.errors,
+                message,
+            )
+
+            failed_stage = (
+                WorkflowStage.RENDER
+            )
+
+            completed_stages = (
+                self._without_stage(
+                    completed_stages,
+                    failed_stage,
+                )
+            )
+
+            job.status = (
+                JobStatus.FAILED
+            )
+
+            job.current_stage = (
+                failed_stage
+            )
+
+            return (
+                RenderOrchestrationResult
+                .failed(
+                    job=job,
+                    failed_stage=(
+                        failed_stage
+                    ),
+                    completed_stages=(
+                        completed_stages
+                    ),
+                    elapsed_seconds=(
+                        elapsed_seconds
+                    ),
+                    error_message=(
+                        message
+                    ),
+                    warnings=list(
+                        job.warnings
+                    ),
+                    metadata=(
+                        self._build_metadata(
+                            context=context,
+                            dry_run=(
+                                effective_dry_run
+                            ),
+                            loaded_checkpoint=(
+                                loaded_checkpoint
+                            ),
+                            persisted_checkpoint=(
+                                persisted_checkpoint
+                            ),
+                            resume_plan=(
+                                resume_plan
+                            ),
+                        )
+                    ),
+                )
+            )
+
+        if (
+            not job
+            .render_result
+            .success
+        ):
+            message = (
+                job
+                .render_result
+                .error_message
+                or (
+                    "Render result reported "
+                    "failure."
+                )
+            )
+
+            self._append_unique(
+                job.errors,
+                message,
+            )
+
+            failed_stage = (
+                WorkflowStage.RENDER
+            )
+
+            completed_stages = (
+                self._without_stage(
+                    completed_stages,
+                    failed_stage,
+                )
+            )
+
+            job.status = (
+                JobStatus.FAILED
+            )
+
+            job.current_stage = (
+                failed_stage
+            )
+
+            return (
+                RenderOrchestrationResult
+                .failed(
+                    job=job,
+                    failed_stage=(
+                        failed_stage
+                    ),
+                    completed_stages=(
+                        completed_stages
+                    ),
+                    elapsed_seconds=(
+                        elapsed_seconds
+                    ),
+                    error_message=(
+                        message
+                    ),
+                    warnings=list(
+                        job.warnings
+                    ),
+                    metadata=(
+                        self._build_metadata(
+                            context=context,
+                            dry_run=(
+                                effective_dry_run
+                            ),
+                            loaded_checkpoint=(
+                                loaded_checkpoint
+                            ),
+                            persisted_checkpoint=(
+                                persisted_checkpoint
+                            ),
+                            resume_plan=(
+                                resume_plan
+                            ),
+                        )
+                    ),
+                )
+            )
+
+        job.status = (
+            JobStatus.COMPLETED
+        )
+
+        job.current_stage = (
+            WorkflowStage
+            .READY_FOR_UPLOAD
+        )
+
+        return (
+            RenderOrchestrationResult
+            .succeeded(
+                job=job,
+                completed_stages=(
+                    completed_stages
+                ),
+                elapsed_seconds=(
+                    elapsed_seconds
+                ),
+                warnings=list(
+                    job.warnings
+                ),
+                metadata=(
+                    self._build_metadata(
+                        context=context,
+                        dry_run=(
+                            effective_dry_run
+                        ),
+                        loaded_checkpoint=(
+                            loaded_checkpoint
+                        ),
+                        persisted_checkpoint=(
+                            persisted_checkpoint
+                        ),
+                        resume_plan=(
+                            resume_plan
+                        ),
+                    )
+                ),
+            )
+        )
+
+    def _load_resume_checkpoint(
+        self,
+        *,
+        job: VideoJob,
+        checkpoint_id: UUID | None,
+    ) -> PipelineCheckpoint | None:
+        """
+        Resolve the checkpoint that should participate in this execution.
+
+        Persistence and automatic resume are opt-in orchestration features:
+        both AdvancedSettings and a storage service must be configured.
+        """
+
+        settings = (
+            self._advanced_settings
+        )
+
+        storage = (
+            self._checkpoint_storage_service
+        )
+
+        if (
+            settings is None
+            or storage is None
+        ):
+            return None
+
+        if not settings.resume_previous_pipeline:
+            return None
+
+        if checkpoint_id is not None:
+            checkpoint = storage.load(
+                job_id=job.id,
+                checkpoint_id=(
+                    checkpoint_id
+                ),
+            )
+
+            if checkpoint is None:
+                raise ValueError(
+                    "Requested pipeline checkpoint "
+                    "does not exist."
+                )
+            if not checkpoint.resumable:
+                raise ValueError(
+                    "Requested pipeline checkpoint "
+                    "is not resumable."
+                )
+
+            return checkpoint
+
+        return storage.load_latest(
+            job_id=job.id,
+        )
+
+    def _build_resume_plan(
+        self,
+        *,
+        job: VideoJob,
+        checkpoint: PipelineCheckpoint,
+    ) -> PipelineResumePlan:
+        """Build the execution plan for one restored checkpoint."""
+
+        settings = (
+            self._advanced_settings
+        )
+
+        if settings is None:
+            raise RuntimeError(
+                "Resume planning requires "
+                "AdvancedSettings."
+            )
+
+        return (
+            self._resume_planner_service
+            .create_plan(
+                job=job,
+                checkpoint=checkpoint,
+                stages=self._runner.stages,
+                settings=settings,
+            )
+        )
+
+    def _persist_checkpoint_if_enabled(
+        self,
+        *,
+        job: VideoJob,
+        context: StageContext,
+        loaded_checkpoint: PipelineCheckpoint | None,
+        resume_plan: PipelineResumePlan | None,
+        dry_run: bool,
+    ) -> PipelineCheckpoint | None:
+        """
+        Create and persist the current execution checkpoint when enabled.
+
+        When execution resumed from an earlier checkpoint, that checkpoint
+        is supplied to PipelineCheckpointService so historical completed
+        stages and execution results remain available in the new snapshot.
+        """
+
+        settings = (
+            self._advanced_settings
+        )
+
+        storage = (
+            self._checkpoint_storage_service
+        )
+
+        if (
+            settings is None
+            or storage is None
+            or not settings.save_pipeline_state
+        ):
+            return None
+
+        checkpoint = (
+            self._checkpoint_service
+            .create(
+                job=job,
+                pipeline_state=(
+                    context.pipeline_state
+                ),
+                metadata={
+                    "dry_run": dry_run,
+                    "resumed": (
+                        resume_plan
+                        is not None
+                        and resume_plan
+                        .resume_enabled
+                    ),
+                    "source_checkpoint_id": (
+                        str(
+                            loaded_checkpoint
+                            .checkpoint_id
+                        )
+                        if loaded_checkpoint
+                        is not None
+                        else None
+                    ),
+                },
+                previous_checkpoint=(
+                    loaded_checkpoint
+                ),
+            )
+        )
+
+        storage.save(
+            checkpoint
+        )
+
+        return checkpoint
+
+    def _starting_pipeline_stage(
+        self,
+        resume_plan: PipelineResumePlan | None,
+    ) -> PipelineStageName:
+        """Resolve the public execution starting point."""
+
+        if (
+            resume_plan is not None
+            and resume_plan.resume_enabled
+            and resume_plan.resume_stage
+            is not None
+        ):
+            return (
+                resume_plan.resume_stage
+            )
+
+        return (
+            self._runner
+            .stages[0]
+            .stage_name
+        )
+
+    @staticmethod
+    def _validate_stage_order(
+        stages: list[
+            BasePipelineStage
+        ],
+    ) -> None:
+        """
+        Reject duplicate pipeline-stage identifiers.
+
+        Registration order itself is intentionally supplied by the caller
+        and preserved by PipelineRunner.
+        """
+
+        seen: set[
+            PipelineStageName
+        ] = set()
+
+        for stage in stages:
+            if (
+                stage.stage_name
+                in seen
+            ):
+                raise ValueError(
+                    "Render orchestrator cannot "
+                    "register duplicate pipeline "
+                    "stage: "
+                    f"{stage.stage_name.value}."
+                )
+
+            seen.add(
+                stage.stage_name
+            )
+
+    @staticmethod
+    def _first_failed_result(
+        results: list[
+            StageResult
+        ],
+    ) -> StageResult | None:
+        """Return the first stage that explicitly reported failure."""
+
+        for result in results:
+            if (
+                result.status
+                == PipelineStageStatus.FAILED
+            ):
+                return result
+
+        return None
+
+    @staticmethod
+    def _first_waiting_result(
+        results: list[
+            StageResult
+        ],
+    ) -> StageResult | None:
+        """Return the first stage waiting for user input."""
+
+        for result in results:
+            if (
+                result.status
+                == (
+                    PipelineStageStatus
+                    .WAITING_FOR_USER
+                )
+            ):
+                return result
+
+        return None
+
+    @classmethod
+    def _completed_workflow_stages(
+        cls,
+        results: list[
+            StageResult
+        ],
+    ) -> list[
+        WorkflowStage
+    ]:
+        """
+        Translate successfully completed internal pipeline stages into
+        the existing public VideoJob workflow-stage vocabulary.
+        """
+
+        completed: list[
+            WorkflowStage
+        ] = []
+
+        for result in results:
+            if (
+                result.status
+                != PipelineStageStatus.COMPLETED
+            ):
+                continue
+
+            stage = (
+                cls
+                ._workflow_stage_for_pipeline_stage(
+                    result.stage
+                )
+            )
+
+            if (
+                stage
+                not in completed
+            ):
+                completed.append(
+                    stage
+                )
+
+        return completed
+
+    @classmethod
+    def _checkpoint_completed_workflow_stages(
+        cls,
+        checkpoint: PipelineCheckpoint,
+    ) -> list[WorkflowStage]:
+        """Translate checkpoint-completed stages to public workflow stages."""
+
+        completed: list[
+            WorkflowStage
+        ] = []
+
+        for pipeline_stage in (
+            checkpoint.completed_stages
+        ):
+            workflow_stage = (
+                cls
+                ._workflow_stage_for_pipeline_stage(
+                    pipeline_stage
+                )
+            )
+
+            if (
+                workflow_stage
+                not in completed
+            ):
+                completed.append(
+                    workflow_stage
+                )
+
+        return completed
+
+    @staticmethod
+    def _without_stage(
+        stages: list[
+            WorkflowStage
+        ],
+        excluded_stage: WorkflowStage,
+    ) -> list[
+        WorkflowStage
+    ]:
+        """
+        Return completed stages excluding an orchestration-level failed
+        stage.
+        """
+
+        return [
+            stage
+            for stage in stages
+            if stage
+            != excluded_stage
+        ]
+
+    @classmethod
+    def _synchronize_diagnostics(
+        cls,
+        *,
+        job: VideoJob,
+        context: StageContext,
+    ) -> None:
+        """Copy unique pipeline diagnostics onto the central VideoJob."""
+
+        for warning in (
+            context
+            .pipeline_state
+            .warnings
+        ):
+            cls._append_unique(
+                job.warnings,
+                warning,
+            )
+
+        for error in (
+            context
+            .pipeline_state
+            .errors
+        ):
+            cls._append_unique(
+                job.errors,
+                error,
+            )
+
+        for result in (
+            context
+            .pipeline_state
+            .stages
+        ):
+            for warning in (
+                result.warnings
+            ):
+                cls._append_unique(
+                    job.warnings,
+                    warning,
+                )
+
+            for error in (
+                result.errors
+            ):
+                cls._append_unique(
+                    job.errors,
+                    error,
+                )
+
+    @staticmethod
+    def _build_metadata(
+        *,
+        context: StageContext,
+        dry_run: bool,
+        loaded_checkpoint: PipelineCheckpoint | None = None,
+        persisted_checkpoint: PipelineCheckpoint | None = None,
+        resume_plan: PipelineResumePlan | None = None,
+    ) -> dict[
+        str,
+        object,
+    ]:
+        """Build stable orchestration and checkpoint diagnostics."""
+
+        return {
+            "dry_run": dry_run,
+            "pipeline_progress_percent": (
+                context
+                .pipeline_state
+                .overall_progress
+            ),
+            "pipeline_stage_count": len(
+                context
+                .pipeline_state
+                .stages
+            ),
+            "pipeline_completed_stage_count": (
+                context
+                .pipeline_state
+                .completed_stages
+            ),
+            "job_retry_count": (
+                context
+                .job
+                .retry_count
+            ),
+            "resumed": (
+                resume_plan
+                is not None
+                and resume_plan
+                .resume_enabled
+            ),
+            "resume_stage": (
+                resume_plan
+                .resume_stage
+                .value
+                if (
+                    resume_plan
+                    is not None
+                    and resume_plan
+                    .resume_stage
+                    is not None
+                )
+                else None
+            ),
+            "loaded_checkpoint_id": (
+                str(
+                    loaded_checkpoint
+                    .checkpoint_id
+                )
+                if loaded_checkpoint
+                is not None
+                else None
+            ),
+            "persisted_checkpoint_id": (
+                str(
+                    persisted_checkpoint
+                    .checkpoint_id
+                )
+                if persisted_checkpoint
+                is not None
+                else None
+            ),
+        }
+
+    @classmethod
+    def _current_workflow_stage(
+        cls,
+        job: VideoJob,
+    ) -> WorkflowStage:
+        """
+        Return the public workflow stage currently recorded on VideoJob.
+
+        VideoJob remains the authoritative public lifecycle object.
+        """
+
+        return (
+            job.current_stage
+        )
+
+    @staticmethod
+    def _workflow_stage_for_pipeline_stage(
+        stage: PipelineStageName,
+    ) -> WorkflowStage:
+        """Map internal pipeline stages onto public VideoJob stages."""
+
+        mapping: dict[
+            PipelineStageName,
+            WorkflowStage,
+        ] = {
+            PipelineStageName.RESEARCH: (
+                WorkflowStage.RESEARCH
+            ),
+            PipelineStageName.SCRIPT: (
+                WorkflowStage.SCRIPT
+            ),
+            PipelineStageName.ORIGINALITY: (
+                WorkflowStage
+                .ORIGINALITY_REVIEW
+            ),
+            PipelineStageName.SCENE_PLANNING: (
+                WorkflowStage
+                .QUALITY_CHECK
+            ),
+            PipelineStageName.ASSET_SELECTION: (
+                WorkflowStage
+                .ASSET_GENERATION
+            ),
+            PipelineStageName.VOICE: (
+                WorkflowStage.VOICE
+            ),
+            PipelineStageName.BACKGROUND_MUSIC: (
+                WorkflowStage.EDITING
+            ),
+            PipelineStageName.SOUND_EFFECTS: (
+                WorkflowStage.EDITING
+            ),
+            PipelineStageName.VIDEO_TIMELINE: (
+                WorkflowStage.EDITING
+            ),
+            PipelineStageName.AUDIO_TIMELINE: (
+                WorkflowStage.EDITING
+            ),
+            PipelineStageName.RENDER: (
+                WorkflowStage.RENDER
+            ),
+            PipelineStageName.EXPORT: (
+                WorkflowStage
+                .READY_FOR_UPLOAD
+            ),
+        }
+
+        return mapping[
+            stage
+        ]
+
+    @staticmethod
+    def _append_unique(
+        values: list[str],
+        value: str,
+    ) -> None:
+        """Append one normalized diagnostic message exactly once."""
+
+        cleaned = (
+            value.strip()
+        )
+
+        if (
+            cleaned
+            and cleaned
+            not in values
+        ):
+            values.append(
+                cleaned
+            )
+
+    @staticmethod
+    def _exception_message(
+        error: Exception,
+    ) -> str:
+        """Normalize an unexpected stage exception."""
+
+        detail = str(
+            error
+        ).strip()
+
+        if detail:
+            return (
+                "Render orchestration stage "
+                f"raised "
+                f"{type(error).__name__}: "
+                f"{detail}"
+            )
+
+        return (
+            "Render orchestration stage "
+            f"raised "
+            f"{type(error).__name__}."
+        )
+
+    @staticmethod
+    def _checkpoint_exception_message(
+        error: Exception,
+    ) -> str:
+        """Normalize checkpoint/resume infrastructure failures."""
+
+        detail = str(
+            error
+        ).strip()
+
+        if detail:
+            return (
+                "Render orchestration checkpoint "
+                f"operation raised "
+                f"{type(error).__name__}: "
+                f"{detail}"
+            )
+
+        return (
+            "Render orchestration checkpoint "
+            f"operation raised "
+            f"{type(error).__name__}."
+        )
+
+=== 5. VOICE STAGE ===
+from __future__ import annotations
+
+import time
+
+from src.models.audio_timeline import AudioTimeline
+from src.models.media_strategy import (
+    VoiceStatus,
+)
+from src.models.resolved_voice_blueprint import (
+    ResolvedVoiceBlueprint,
+)
+from src.models.voice_generation import (
+    VoiceGenerationResult,
+)
+from src.pipeline.base_stage import BasePipelineStage
+from src.pipeline.pipeline_stage import (
+    PipelineStageName,
+    PipelineStageStatus,
+)
+from src.pipeline.stage_context import StageContext
+from src.pipeline.stage_result import StageResult
+from src.services.voice_generation_service import (
+    VoiceGenerationService,
+)
+from src.services.voice_timeline_service import (
+    VoiceTimelineService,
+)
+
+
+class VoicePipelineStage(BasePipelineStage):
+    """
+    Pipeline adapter for provider-independent voice generation.
+
+    ResolvedVoiceBlueprint instances are injected explicitly because
+    voice directive resolution is owned by the existing voice
+    resolution services and must not be duplicated here.
+
+    Responsibilities:
+    - verify scene/blueprint coverage;
+    - generate one voice result per scene;
+    - stop on failed voice generation;
+    - attach successful tracks through VoiceTimelineService;
+    - update VideoJob's public voice state;
+    - return a generic StageResult.
+
+    Provider selection and provider execution remain owned by
+    VoiceGenerationService.
+    """
+
+    def __init__(
+        self,
+        *,
+        blueprints: list[ResolvedVoiceBlueprint],
+        generation_service: VoiceGenerationService,
+        timeline_service: VoiceTimelineService,
+        provider_name: str | None = None,
+    ) -> None:
+        if not blueprints:
+            raise ValueError(
+                "Voice pipeline stage requires at least "
+                "one resolved voice blueprint."
+            )
+
+        normalized_provider = (
+            provider_name.strip()
+            if provider_name is not None
+            else None
+        )
+
+        self._blueprints = list(
+            blueprints
+        )
+
+        self._generation_service = (
+            generation_service
+        )
+
+        self._timeline_service = (
+            timeline_service
+        )
+
+        self._provider_name = (
+            normalized_provider
+            or None
+        )
+
+        self._validate_blueprints(
+            self._blueprints
+        )
+
+    @property
+    def stage_name(
+        self,
+    ) -> PipelineStageName:
+        """Return the pipeline identifier."""
+
+        return PipelineStageName.VOICE
+
+    def execute(
+        self,
+        context: StageContext,
+    ) -> StageResult:
+        """
+        Generate and attach narration for all planned scenes.
+
+        Unexpected service exceptions intentionally propagate so the
+        outer RenderOrchestratorService can normalize them.
+        """
+
+        started_at = (
+            time.perf_counter()
+        )
+
+        if not context.job.scenes:
+            return self._failed_result(
+                started_at=started_at,
+                error_message=(
+                    "Voice stage requires "
+                    "planned scenes."
+                ),
+            )
+
+        coverage_error = (
+            self._validate_scene_coverage(
+                context=context,
+            )
+        )
+
+        if coverage_error is not None:
+            return self._failed_result(
+                started_at=started_at,
+                error_message=(
+                    coverage_error
+                ),
+            )
+
+        results: list[
+            VoiceGenerationResult
+        ] = []
+
+        warnings: list[str] = []
+
+        start_time_seconds = 0.0
+
+        for blueprint in sorted(
+            self._blueprints,
+            key=lambda value: (
+                value.scene_number
+            ),
+        ):
+            result = (
+                self._generation_service
+                .generate(
+                    blueprint,
+                    start_time_seconds=(
+                        start_time_seconds
+                    ),
+                    provider_name=(
+                        self._provider_name
+                    ),
+                )
+            )
+
+            results.append(
+                result
+            )
+
+            self._extend_unique(
+                warnings,
+                result.warnings,
+            )
+
+            if not result.success:
+                message = (
+                    result.failure.message
+                    if result.failure is not None
+                    else (
+                        "Voice generation failed "
+                        "without failure details."
+                    )
+                )
+
+                context.job.voice_status = (
+                    VoiceStatus.FAILED
+                )
+
+                context.job.voice_file = None
+
+                return StageResult(
+                    stage=self.stage_name,
+                    status=(
+                        PipelineStageStatus
+                        .FAILED
+                    ),
+                    duration_seconds=(
+                        time.perf_counter()
+                        - started_at
+                    ),
+                    progress_percent=100,
+                    warnings=warnings,
+                    errors=[
+                        message,
+                    ],
+                    metadata=(
+                        self._build_metadata(
+                            results=results,
+                            attached=False,
+                        )
+                    ),
+                )
+
+            if result.audio_track is None:
+                context.job.voice_status = (
+                    VoiceStatus.FAILED
+                )
+
+                context.job.voice_file = None
+
+                return StageResult(
+                    stage=self.stage_name,
+                    status=(
+                        PipelineStageStatus
+                        .FAILED
+                    ),
+                    duration_seconds=(
+                        time.perf_counter()
+                        - started_at
+                    ),
+                    progress_percent=100,
+                    warnings=warnings,
+                    errors=[
+                        (
+                            "Successful voice generation "
+                            "result has no audio track."
+                        ),
+                    ],
+                    metadata=(
+                        self._build_metadata(
+                            results=results,
+                            attached=False,
+                        )
+                    ),
+                )
+
+            start_time_seconds = (
+                result.audio_track
+                .start_time_seconds
+                + result.audio_track
+                .duration_seconds
+            )
+
+        audio_timeline = (
+            context.job.audio_timeline
+            or AudioTimeline()
+        )
+
+        self._timeline_service.attach_many(
+            audio_timeline,
+            results=results,
+            replace=False,
+        )
+
+        context.job.audio_timeline = (
+            audio_timeline
+        )
+
+        last_result = (
+            results[-1]
+        )
+
+        first_result = (
+            results[0]
+        )
+
+        context.job.voice_file = (
+            first_result.output_file
+        )
+
+        context.job.voice_provider = (
+            self._single_provider(
+                results
+            )
+        )
+
+        context.job.voice_status = (
+            VoiceStatus.READY
+        )
+
+        return StageResult(
+            stage=self.stage_name,
+            status=(
+                PipelineStageStatus
+                .COMPLETED
+            ),
+            duration_seconds=(
+                time.perf_counter()
+                - started_at
+            ),
+            progress_percent=100,
+            warnings=warnings,
+            errors=[],
+            metadata={
+                **self._build_metadata(
+                    results=results,
+                    attached=True,
+                ),
+                "timeline_duration_seconds": (
+                    audio_timeline
+                    .calculate_duration()
+                ),
+                "voice_file": (
+                    first_result.output_file
+                ),
+                "last_output_file": (
+                    last_result.output_file
+                ),
+            },
+        )
+
+    @staticmethod
+    def _validate_blueprints(
+        blueprints: list[
+            ResolvedVoiceBlueprint
+        ],
+    ) -> None:
+        """Reject duplicate scene mappings."""
+
+        scene_numbers = [
+            blueprint.scene_number
+            for blueprint in blueprints
+        ]
+
+        if len(scene_numbers) != len(
+            set(scene_numbers)
+        ):
+            raise ValueError(
+                "Voice pipeline stage cannot "
+                "contain duplicate scene blueprints."
+            )
+
+    def _validate_scene_coverage(
+        self,
+        *,
+        context: StageContext,
+    ) -> str | None:
+        """
+        Ensure the supplied blueprints map exactly to the planned scenes.
+        """
+
+        expected = {
+            scene.scene_number
+            for scene in (
+                context.job.scenes
+            )
+        }
+
+        supplied = {
+            blueprint.scene_number
+            for blueprint in (
+                self._blueprints
+            )
+        }
+
+        missing = sorted(
+            expected - supplied
+        )
+
+        unexpected = sorted(
+            supplied - expected
+        )
+
+        if missing:
+            return (
+                "Voice stage is missing resolved "
+                "blueprints for scene(s): "
+                + ", ".join(
+                    str(value)
+                    for value in missing
+                )
+                + "."
+            )
+
+        if unexpected:
+            return (
+                "Voice stage received blueprints "
+                "for unknown scene(s): "
+                + ", ".join(
+                    str(value)
+                    for value in unexpected
+                )
+                + "."
+            )
+
+        return None
+
+    @staticmethod
+    def _single_provider(
+        results: list[
+            VoiceGenerationResult
+        ],
+    ) -> str | None:
+        """
+        Return the provider when all results used the same provider.
+
+        Mixed-provider generation remains valid; VideoJob's single
+        voice_provider field is left unset in that case.
+        """
+
+        providers = {
+            result.provider
+            for result in results
+            if result.provider is not None
+        }
+
+        if len(providers) != 1:
+            return None
+
+        return next(
+            iter(
+                providers
+            )
+        )
+
+    @staticmethod
+    def _build_metadata(
+        *,
+        results: list[
+            VoiceGenerationResult
+        ],
+        attached: bool,
+    ) -> dict[str, object]:
+        """Build deterministic voice-stage metadata."""
+
+        successful_count = sum(
+            1
+            for result in results
+            if result.success
+        )
+
+        failed_count = (
+            len(results)
+            - successful_count
+        )
+
+        providers = sorted(
+            {
+                result.provider
+                for result in results
+                if result.provider is not None
+            }
+        )
+
+        return {
+            "result_count": len(
+                results
+            ),
+            "successful_count": (
+                successful_count
+            ),
+            "failed_count": (
+                failed_count
+            ),
+            "providers": (
+                providers
+            ),
+            "timeline_attached": (
+                attached
+            ),
+        }
+
+    @staticmethod
+    def _extend_unique(
+        target: list[str],
+        values: list[str],
+    ) -> None:
+        """Append normalized unique diagnostics."""
+
+        for value in values:
+            cleaned = (
+                value.strip()
+            )
+
+            if (
+                cleaned
+                and cleaned not in target
+            ):
+                target.append(
+                    cleaned
+                )
+
+    def _failed_result(
+        self,
+        *,
+        started_at: float,
+        error_message: str,
+    ) -> StageResult:
+        """Create a normalized voice-stage precondition failure."""
+
+        return StageResult(
+            stage=self.stage_name,
+            status=(
+                PipelineStageStatus.FAILED
+            ),
+            duration_seconds=(
+                time.perf_counter()
+                - started_at
+            ),
+            progress_percent=100,
+            errors=[
+                error_message,
+            ],
+            metadata={
+                "result_count": 0,
+                "successful_count": 0,
+                "failed_count": 0,
+                "providers": [],
+                "timeline_attached": False,
+            },
+        )
+
+=== 6. ASSET STAGE ===
+from __future__ import annotations
+
+import time
+from typing import Any
+
+from src.models.asset_state import (
+    AssetUserDecision,
+    AssetWorkflowStatus,
+    SceneAssetState,
+)
+from src.models.scene import Scene
+from src.pipeline.base_stage import BasePipelineStage
+from src.pipeline.pipeline_stage import (
+    PipelineStageName,
+    PipelineStageStatus,
+)
+from src.pipeline.stage_context import StageContext
+from src.pipeline.stage_result import StageResult
+from src.services.scene_asset_workflow_service import (
+    SceneAssetWorkflowService,
+)
+
+
+class AssetPipelineStage(BasePipelineStage):
+    """
+    Pipeline adapter for SceneAssetWorkflowService.
+
+    Fresh execution:
+    - starts the existing visual-asset workflow for every planned scene;
+    - stores resulting SceneAssetState objects on VideoJob.
+
+    Resume execution:
+    - preserves existing VideoJob.scene_asset_states;
+    - consumes asset decisions from StageContext.user_input;
+    - delegates decisions to SceneAssetWorkflowService.apply_decision();
+    - never recreates asset decision/manual-upload business logic.
+
+    Expected user-input structure:
+
+        {
+            "asset_decisions": [
+                {
+                    "scene_number": 1,
+                    "decision": "manual_upload",
+                    "selected_candidate_index": None,
+                    "manual_upload_path": "...",
+                    "project_id": "...",
+                    "apply_to_remaining_scenes": False,
+                }
+            ]
+        }
+
+    asset_decisions may contain decisions for one or more scenes.
+    """
+
+    USER_INPUT_KEY = "asset_decisions"
+
+    def __init__(
+        self,
+        *,
+        asset_workflow_service: SceneAssetWorkflowService,
+    ) -> None:
+        self._asset_workflow_service = (
+            asset_workflow_service
+        )
+
+    @property
+    def stage_name(
+        self,
+    ) -> PipelineStageName:
+        """Return the pipeline identifier."""
+
+        return (
+            PipelineStageName
+            .ASSET_SELECTION
+        )
+
+    def execute(
+        self,
+        context: StageContext,
+    ) -> StageResult:
+        """
+        Execute fresh or resumed asset-selection workflow.
+
+        Existing asset states are authoritative during resumed execution.
+        A resumed stage must not restart local/manual/stock discovery and
+        accidentally discard an earlier user-visible workflow state.
+        """
+
+        started_at = (
+            time.perf_counter()
+        )
+
+        scenes = sorted(
+            context.job.scenes,
+            key=lambda value: (
+                value.scene_number
+            ),
+        )
+
+        if not scenes:
+            return self._failed_result(
+                started_at=started_at,
+                error_message=(
+                    "Asset stage requires "
+                    "planned scenes."
+                ),
+            )
+
+        existing_states = (
+            context.job
+            .scene_asset_states
+        )
+
+        decisions = (
+            self._consume_decisions(
+                context
+            )
+        )
+
+        if existing_states:
+            states = (
+                self._resume_states(
+                    scenes=scenes,
+                    states=existing_states,
+                    decisions=decisions,
+                )
+            )
+        else:
+            if decisions:
+                return self._failed_result(
+                    started_at=started_at,
+                    error_message=(
+                        "Asset decisions cannot be "
+                        "applied because no persisted "
+                        "scene asset states are available."
+                    ),
+                )
+
+            states = (
+                self._start_states(
+                    scenes
+                )
+            )
+
+        context.job.scene_asset_states = (
+            states
+        )
+
+        warnings = (
+            self._collect_warnings(
+                states
+            )
+        )
+
+        errors = (
+            self._collect_errors(
+                states
+            )
+        )
+
+        metadata = (
+            self._build_metadata(
+                states
+            )
+        )
+
+        if errors:
+            return StageResult(
+                stage=self.stage_name,
+                status=(
+                    PipelineStageStatus
+                    .FAILED
+                ),
+                duration_seconds=(
+                    time.perf_counter()
+                    - started_at
+                ),
+                progress_percent=100,
+                warnings=warnings,
+                errors=errors,
+                metadata=metadata,
+            )
+
+        if self._requires_user_input(
+            states
+        ):
+            return StageResult(
+                stage=self.stage_name,
+                status=(
+                    PipelineStageStatus
+                    .WAITING_FOR_USER
+                ),
+                duration_seconds=(
+                    time.perf_counter()
+                    - started_at
+                ),
+                progress_percent=100,
+                warnings=warnings,
+                errors=[],
+                metadata=metadata,
+            )
+
+        return StageResult(
+            stage=self.stage_name,
+            status=(
+                PipelineStageStatus
+                .COMPLETED
+            ),
+            duration_seconds=(
+                time.perf_counter()
+                - started_at
+            ),
+            progress_percent=100,
+            warnings=warnings,
+            errors=[],
+            metadata=metadata,
+        )
+
+    def _start_states(
+        self,
+        scenes: list[Scene],
+    ) -> list[SceneAssetState]:
+        """
+        Start asset workflow for a fresh execution.
+
+        This preserves the historical AssetPipelineStage behavior.
+        """
+
+        states: list[
+            SceneAssetState
+        ] = []
+
+        for scene in scenes:
+            state = (
+                self._asset_workflow_service
+                .start(
+                    scene
+                )
+            )
+
+            states.append(
+                state
+            )
+
+        return states
+
+    def _resume_states(
+        self,
+        *,
+        scenes: list[Scene],
+        states: list[SceneAssetState],
+        decisions: list[dict[str, Any]],
+    ) -> list[SceneAssetState]:
+        """
+        Resume persisted scene workflow states.
+
+        Existing states are matched to scenes by scene_number.
+        Only scenes with supplied user decisions are mutated.
+        """
+
+        scene_by_number = {
+            scene.scene_number: scene
+            for scene in scenes
+        }
+
+        state_by_number: dict[
+            int,
+            SceneAssetState,
+        ] = {}
+
+        for state in states:
+            if (
+                state.scene_number
+                in state_by_number
+            ):
+                raise ValueError(
+                    "Duplicate persisted asset state "
+                    "for scene "
+                    f"{state.scene_number}."
+                )
+
+            state_by_number[
+                state.scene_number
+            ] = state
+
+        expected_scene_numbers = set(
+            scene_by_number
+        )
+
+        persisted_scene_numbers = set(
+            state_by_number
+        )
+
+        unknown_states = sorted(
+            persisted_scene_numbers
+            - expected_scene_numbers
+        )
+
+        if unknown_states:
+            raise ValueError(
+                "Persisted asset state references "
+                "unknown scene number(s): "
+                + ", ".join(
+                    str(value)
+                    for value in unknown_states
+                )
+                + "."
+            )
+
+        missing_states = sorted(
+            expected_scene_numbers
+            - persisted_scene_numbers
+        )
+
+        if missing_states:
+            raise ValueError(
+                "Persisted asset state is missing "
+                "scene number(s): "
+                + ", ".join(
+                    str(value)
+                    for value in missing_states
+                )
+                + "."
+            )
+
+        decisions_by_scene = (
+            self._index_decisions(
+                decisions=decisions,
+                scene_numbers=(
+                    expected_scene_numbers
+                ),
+            )
+        )
+
+        updated_states: list[
+            SceneAssetState
+        ] = []
+
+        for scene_number in sorted(
+            expected_scene_numbers
+        ):
+            scene = (
+                scene_by_number[
+                    scene_number
+                ]
+            )
+
+            state = (
+                state_by_number[
+                    scene_number
+                ]
+            )
+
+            decision_payload = (
+                decisions_by_scene.get(
+                    scene_number
+                )
+            )
+
+            if decision_payload is not None:
+                state = (
+                    self._apply_decision(
+                        scene=scene,
+                        state=state,
+                        payload=(
+                            decision_payload
+                        ),
+                    )
+                )
+
+            updated_states.append(
+                state
+            )
+
+        return updated_states
+
+    def _apply_decision(
+        self,
+        *,
+        scene: Scene,
+        state: SceneAssetState,
+        payload: dict[str, Any],
+    ) -> SceneAssetState:
+        """
+        Validate one normalized user decision and delegate it.
+
+        SceneAssetWorkflowService remains the sole owner of asset
+        workflow transitions.
+        """
+
+        raw_decision = (
+            payload.get(
+                "decision"
+            )
+        )
+
+        if not isinstance(
+            raw_decision,
+            str,
+        ):
+            raise ValueError(
+                "Asset decision requires a "
+                "string 'decision' value."
+            )
+
+        try:
+            decision = (
+                AssetUserDecision(
+                    raw_decision.strip()
+                )
+            )
+        except ValueError as error:
+            raise ValueError(
+                "Unsupported asset decision "
+                f"for scene "
+                f"{scene.scene_number}: "
+                f"{raw_decision}."
+            ) from error
+
+        selected_candidate_index = (
+            self._optional_int(
+                payload=payload,
+                key=(
+                    "selected_candidate_index"
+                ),
+            )
+        )
+
+        manual_upload_path = (
+            self._optional_string(
+                payload=payload,
+                key="manual_upload_path",
+            )
+        )
+
+        project_id = (
+            self._optional_string(
+                payload=payload,
+                key="project_id",
+            )
+        )
+
+        apply_to_remaining_scenes = (
+            self._optional_bool(
+                payload=payload,
+                key=(
+                    "apply_to_remaining_scenes"
+                ),
+                default=False,
+            )
+        )
+
+        return (
+            self._asset_workflow_service
+            .apply_decision(
+                scene=scene,
+                state=state,
+                decision=decision,
+                selected_candidate_index=(
+                    selected_candidate_index
+                ),
+                manual_upload_path=(
+                    manual_upload_path
+                ),
+                project_id=project_id,
+                apply_to_remaining_scenes=(
+                    apply_to_remaining_scenes
+                ),
+            )
+        )
+
+    @classmethod
+    def _consume_decisions(
+        cls,
+        context: StageContext,
+    ) -> list[dict[str, Any]]:
+        """
+        Claim and validate asset-stage user input.
+
+        Asset decisions are one-shot execution commands. Once claimed by
+        this stage, they are removed from StageContext so an automatic
+        retry or downstream stage cannot accidentally apply the same
+        decision again.
+
+        Domain-specific validation remains owned by this adapter and the
+        existing SceneAssetWorkflowService.
+        """
+
+        raw_decisions = (
+            context.consume_user_input(
+                cls.USER_INPUT_KEY
+            )
+        )
+
+        if raw_decisions is None:
+            return []
+
+        if not isinstance(
+            raw_decisions,
+            list,
+        ):
+            raise ValueError(
+                "'asset_decisions' user input "
+                "must be a list."
+            )
+
+        decisions: list[
+            dict[str, Any]
+        ] = []
+
+        for index, raw_decision in enumerate(
+            raw_decisions
+        ):
+            if not isinstance(
+                raw_decision,
+                dict,
+            ):
+                raise ValueError(
+                    "Asset decision at index "
+                    f"{index} must be an object."
+                )
+
+            normalized: dict[
+                str,
+                Any,
+            ] = {}
+
+            for key, value in (
+                raw_decision.items()
+            ):
+                if not isinstance(
+                    key,
+                    str,
+                ):
+                    raise ValueError(
+                        "Asset decision keys "
+                        "must be strings."
+                    )
+
+                normalized[
+                    key
+                ] = value
+
+            decisions.append(
+                normalized
+            )
+
+        return decisions
+    @classmethod
+    def _index_decisions(
+        cls,
+        *,
+        decisions: list[
+            dict[str, Any]
+        ],
+        scene_numbers: set[int],
+    ) -> dict[
+        int,
+        dict[str, Any],
+    ]:
+        """Index decisions by scene number and reject stale input."""
+
+        indexed: dict[
+            int,
+            dict[str, Any],
+        ] = {}
+
+        for payload in decisions:
+            scene_number = (
+                cls._required_scene_number(
+                    payload
+                )
+            )
+
+            if (
+                scene_number
+                not in scene_numbers
+            ):
+                raise ValueError(
+                    "Asset decision references "
+                    "unknown scene number "
+                    f"{scene_number}."
+                )
+
+            if (
+                scene_number
+                in indexed
+            ):
+                raise ValueError(
+                    "Multiple asset decisions "
+                    "were supplied for scene "
+                    f"{scene_number}."
+                )
+
+            indexed[
+                scene_number
+            ] = payload
+
+        return indexed
+
+    @staticmethod
+    def _required_scene_number(
+        payload: dict[
+            str,
+            Any,
+        ],
+    ) -> int:
+        """Return one validated decision scene number."""
+
+        value = payload.get(
+            "scene_number"
+        )
+
+        if (
+            isinstance(value, bool)
+            or not isinstance(
+                value,
+                int,
+            )
+            or value < 1
+        ):
+            raise ValueError(
+                "Asset decision requires a "
+                "positive integer "
+                "'scene_number'."
+            )
+
+        return value
+
+    @staticmethod
+    def _optional_int(
+        *,
+        payload: dict[
+            str,
+            Any,
+        ],
+        key: str,
+    ) -> int | None:
+        """Read an optional integer decision field."""
+
+        value = payload.get(
+            key
+        )
+
+        if value is None:
+            return None
+
+        if (
+            isinstance(value, bool)
+            or not isinstance(
+                value,
+                int,
+            )
+        ):
+            raise ValueError(
+                f"Asset decision field "
+                f"'{key}' must be an integer "
+                "or null."
+            )
+
+        return value
+
+    @staticmethod
+    def _optional_string(
+        *,
+        payload: dict[
+            str,
+            Any,
+        ],
+        key: str,
+    ) -> str | None:
+        """Read an optional string decision field."""
+
+        value = payload.get(
+            key
+        )
+
+        if value is None:
+            return None
+
+        if not isinstance(
+            value,
+            str,
+        ):
+            raise ValueError(
+                f"Asset decision field "
+                f"'{key}' must be a string "
+                "or null."
+            )
+
+        cleaned = (
+            value.strip()
+        )
+
+        return (
+            cleaned
+            or None
+        )
+
+    @staticmethod
+    def _optional_bool(
+        *,
+        payload: dict[
+            str,
+            Any,
+        ],
+        key: str,
+        default: bool,
+    ) -> bool:
+        """Read an optional boolean decision field."""
+
+        value = payload.get(
+            key,
+            default,
+        )
+
+        if not isinstance(
+            value,
+            bool,
+        ):
+            raise ValueError(
+                f"Asset decision field "
+                f"'{key}' must be boolean."
+            )
+
+        return value
+
+    @staticmethod
+    def _requires_user_input(
+        states: list[
+            SceneAssetState
+        ],
+    ) -> bool:
+        """
+        Return whether one or more scene workflows require input.
+
+        SceneAssetState already owns this domain decision, so the
+        pipeline adapter delegates to that property instead of
+        duplicating its status list.
+        """
+
+        return any(
+            state.requires_user_decision
+            for state in states
+        )
+
+    @staticmethod
+    def _collect_warnings(
+        states: list[
+            SceneAssetState
+        ],
+    ) -> list[str]:
+        """Collect unique warnings from all scene asset states."""
+
+        warnings: list[str] = []
+
+        for state in states:
+            for warning in (
+                state.warnings
+            ):
+                cleaned = (
+                    warning.strip()
+                )
+
+                if (
+                    cleaned
+                    and cleaned
+                    not in warnings
+                ):
+                    warnings.append(
+                        cleaned
+                    )
+
+        return warnings
+
+    @staticmethod
+    def _collect_errors(
+        states: list[
+            SceneAssetState
+        ],
+    ) -> list[str]:
+        """Collect unique errors from all scene asset states."""
+
+        errors: list[str] = []
+
+        for state in states:
+            for error in (
+                state.errors
+            ):
+                cleaned = (
+                    error.strip()
+                )
+
+                if (
+                    cleaned
+                    and cleaned
+                    not in errors
+                ):
+                    errors.append(
+                        cleaned
+                    )
+
+        return errors
+
+    @staticmethod
+    def _build_metadata(
+        states: list[
+            SceneAssetState
+        ],
+    ) -> dict[str, object]:
+        """Build stable asset-stage diagnostic metadata."""
+
+        status_counts: dict[
+            str,
+            int,
+        ] = {}
+
+        waiting_scene_numbers: list[
+            int
+        ] = []
+
+        for state in states:
+            status = (
+                state.status.value
+            )
+
+            status_counts[
+                status
+            ] = (
+                status_counts.get(
+                    status,
+                    0,
+                )
+                + 1
+            )
+
+            if (
+                state.requires_user_decision
+            ):
+                waiting_scene_numbers.append(
+                    state.scene_number
+                )
+
+        return {
+            "scene_count": len(
+                states
+            ),
+            "status_counts": (
+                status_counts
+            ),
+            "waiting_for_user": bool(
+                waiting_scene_numbers
+            ),
+            "waiting_scene_numbers": (
+                waiting_scene_numbers
+            ),
+        }
+
+    def _failed_result(
+        self,
+        *,
+        started_at: float,
+        error_message: str,
+    ) -> StageResult:
+        """Create a normalized asset-stage precondition failure."""
+
+        return StageResult(
+            stage=self.stage_name,
+            status=(
+                PipelineStageStatus
+                .FAILED
+            ),
+            duration_seconds=(
+                time.perf_counter()
+                - started_at
+            ),
+            progress_percent=100,
+            errors=[
+                error_message,
+            ],
+            metadata={
+                "scene_count": 0,
+                "waiting_for_user": False,
+                "waiting_scene_numbers": [],
+            },
+        )
+
+=== 7. TIMELINE STAGE ===
+from __future__ import annotations
+
+import time
+
+from src.models.editing_directives import (
+    SceneEditingDirectives,
+)
+from src.models.genre_timeline_pipeline import (
+    GenreTimelinePipelineResult,
+)
+from src.pipeline.base_stage import BasePipelineStage
+from src.pipeline.pipeline_stage import (
+    PipelineStageName,
+    PipelineStageStatus,
+)
+from src.pipeline.stage_context import StageContext
+from src.pipeline.stage_result import StageResult
+from src.services.genre_timeline_pipeline_service import (
+    GenreTimelinePipelineService,
+)
+
+
+class TimelinePipelineStage(BasePipelineStage):
+    """
+    Pipeline adapter for GenreTimelinePipelineService.
+
+    The adapter contains orchestration glue only. Genre-aware editing
+    directives, blueprint resolution, timeline construction, and
+    validation remain owned by GenreTimelinePipelineService.
+
+    The underlying service is injected explicitly because it owns
+    required directive-generation and directive-resolution
+    dependencies.
+
+    A genre ID is also supplied explicitly because VideoJob currently
+    stores a niche but does not define a canonical genre-profile ID.
+    """
+
+    def __init__(
+        self,
+        *,
+        genre_id: str,
+        timeline_service: GenreTimelinePipelineService,
+        overrides_by_scene: (
+            dict[int, SceneEditingDirectives]
+            | None
+        ) = None,
+        output_resolution: str = "1920x1080",
+        frame_rate: int = 30,
+        warn_on_blueprint_fallbacks: bool = True,
+    ) -> None:
+        normalized_genre_id = (
+            genre_id.strip().lower()
+        )
+
+        if not normalized_genre_id:
+            raise ValueError(
+                "Timeline pipeline stage requires "
+                "a genre ID."
+            )
+
+        cleaned_resolution = (
+            output_resolution.strip()
+        )
+
+        if not cleaned_resolution:
+            raise ValueError(
+                "Timeline pipeline stage requires "
+                "an output resolution."
+            )
+
+        if frame_rate <= 0:
+            raise ValueError(
+                "Timeline pipeline stage frame rate "
+                "must be positive."
+            )
+
+        self._genre_id = (
+            normalized_genre_id
+        )
+
+        self._timeline_service = (
+            timeline_service
+        )
+
+        self._overrides_by_scene = dict(
+            overrides_by_scene
+            or {}
+        )
+
+        self._output_resolution = (
+            cleaned_resolution
+        )
+
+        self._frame_rate = (
+            frame_rate
+        )
+
+        self._warn_on_blueprint_fallbacks = (
+            warn_on_blueprint_fallbacks
+        )
+
+    @property
+    def stage_name(
+        self,
+    ) -> PipelineStageName:
+        """Return the internal pipeline identifier."""
+
+        return (
+            PipelineStageName
+            .VIDEO_TIMELINE
+        )
+
+    @property
+    def genre_id(
+        self,
+    ) -> str:
+        """Return the normalized genre-profile identifier."""
+
+        return self._genre_id
+
+    def execute(
+        self,
+        context: StageContext,
+    ) -> StageResult:
+        """
+        Build and validate the VideoJob's genre-aware video timeline.
+
+        Missing upstream orchestration state is returned as a failed
+        StageResult.
+
+        Exceptions raised by the underlying timeline service propagate
+        so RenderOrchestratorService can normalize unexpected service
+        failures consistently.
+        """
+
+        start_time = (
+            time.perf_counter()
+        )
+
+        if not context.job.scenes:
+            return self._failed_result(
+                started_at=start_time,
+                error_message=(
+                    "Timeline stage requires "
+                    "planned scenes."
+                ),
+            )
+
+        if not context.job.video_clips:
+            return self._failed_result(
+                started_at=start_time,
+                error_message=(
+                    "Timeline stage requires "
+                    "ready video clips."
+                ),
+            )
+
+        pipeline_result = (
+            self._timeline_service.build(
+                scenes=list(
+                    context.job.scenes
+                ),
+                clips=list(
+                    context.job.video_clips
+                ),
+                genre_id=(
+                    self._genre_id
+                ),
+                overrides_by_scene=dict(
+                    self._overrides_by_scene
+                ),
+                output_resolution=(
+                    self._output_resolution
+                ),
+                frame_rate=(
+                    self._frame_rate
+                ),
+                warn_on_blueprint_fallbacks=(
+                    self
+                    ._warn_on_blueprint_fallbacks
+                ),
+            )
+        )
+
+        return self._translate_result(
+            context=context,
+            pipeline_result=(
+                pipeline_result
+            ),
+            started_at=start_time,
+        )
+
+    def _translate_result(
+        self,
+        *,
+        context: StageContext,
+        pipeline_result: (
+            GenreTimelinePipelineResult
+        ),
+        started_at: float,
+    ) -> StageResult:
+        """
+        Translate GenreTimelinePipelineResult into the generic
+        StageResult contract.
+        """
+
+        elapsed_seconds = (
+            time.perf_counter()
+            - started_at
+        )
+
+        metadata: dict[
+            str,
+            object,
+        ] = {
+            "genre_id": (
+                pipeline_result
+                .requested_genre_id
+            ),
+            "genre_timeline_status": (
+                pipeline_result
+                .status
+                .value
+            ),
+            "render_ready": (
+                pipeline_result
+                .is_render_ready
+            ),
+            "scene_count": (
+                pipeline_result
+                .scene_count
+            ),
+            "fallback_count": (
+                pipeline_result
+                .fallback_count
+            ),
+            "timeline_duration_seconds": (
+                pipeline_result
+                .timeline
+                .calculate_duration()
+            ),
+            "output_resolution": (
+                pipeline_result
+                .timeline
+                .output_resolution
+            ),
+            "frame_rate": (
+                pipeline_result
+                .timeline
+                .frame_rate
+            ),
+            "validation_issue_count": (
+                pipeline_result
+                .validation
+                .issue_count
+            ),
+        }
+
+        if (
+            pipeline_result
+            .is_render_ready
+        ):
+            context.job.video_timeline = (
+                pipeline_result.timeline
+            )
+
+            return StageResult(
+                stage=self.stage_name,
+                status=(
+                    PipelineStageStatus
+                    .COMPLETED
+                ),
+                duration_seconds=(
+                    elapsed_seconds
+                ),
+                progress_percent=100,
+                warnings=list(
+                    pipeline_result.warnings
+                ),
+                errors=[],
+                metadata=metadata,
+            )
+
+        errors = (
+            self._validation_errors(
+                pipeline_result
+            )
+        )
+
+        if not errors:
+            errors = [
+                (
+                    "Genre timeline pipeline "
+                    "did not produce a "
+                    "render-ready timeline."
+                ),
+            ]
+
+        return StageResult(
+            stage=self.stage_name,
+            status=(
+                PipelineStageStatus.FAILED
+            ),
+            duration_seconds=(
+                elapsed_seconds
+            ),
+            progress_percent=100,
+            warnings=list(
+                pipeline_result.warnings
+            ),
+            errors=errors,
+            metadata=metadata,
+        )
+
+    @staticmethod
+    def _validation_errors(
+        pipeline_result: (
+            GenreTimelinePipelineResult
+        ),
+    ) -> list[str]:
+        """Return unique timeline-validation error messages."""
+
+        errors: list[str] = []
+
+        for issue in (
+            pipeline_result
+            .validation
+            .errors
+        ):
+            message = (
+                issue.message.strip()
+            )
+
+            if (
+                message
+                and message not in errors
+            ):
+                errors.append(
+                    message
+                )
+
+        return errors
+
+    def _failed_result(
+        self,
+        *,
+        started_at: float,
+        error_message: str,
+    ) -> StageResult:
+        """Create a normalized timeline-stage precondition failure."""
+
+        return StageResult(
+            stage=self.stage_name,
+            status=(
+                PipelineStageStatus.FAILED
+            ),
+            duration_seconds=(
+                time.perf_counter()
+                - started_at
+            ),
+            progress_percent=100,
+            errors=[
+                error_message,
+            ],
+            metadata={
+                "genre_id": (
+                    self._genre_id
+                ),
+                "render_ready": False,
+            },
+        )
+
+=== 8. RENDER STAGE ===
+from __future__ import annotations
+
+import time
+
+from src.models.render_result import RenderResult
+from src.models.resolved_voice_blueprint import (
+    ResolvedVoiceBlueprint,
+)
+from src.pipeline.base_stage import BasePipelineStage
+from src.pipeline.pipeline_stage import (
+    PipelineStageName,
+    PipelineStageStatus,
+)
+from src.pipeline.stage_context import StageContext
+from src.pipeline.stage_result import StageResult
+from src.services.production_render_service import (
+    ProductionRenderService,
+)
+from src.services.render_service import RenderService
+
+
+class RenderPipelineStage(BasePipelineStage):
+    """
+    Pipeline adapter for render execution.
+
+    The stage remains orchestration glue only.
+
+    When a ProductionRenderService is supplied, the stage executes the
+    prepared VideoJob through the real FFmpeg production render boundary.
+
+    When no production renderer is supplied, the existing RenderService
+    path remains available for backward compatibility with legacy and
+    isolated dry-run workflows.
+    """
+
+    def __init__(
+        self,
+        *,
+        render_service: RenderService | None = None,
+        production_render_service: (
+            ProductionRenderService | None
+        ) = None,
+        voice_blueprints: (
+            list[ResolvedVoiceBlueprint] | None
+        ) = None,
+    ) -> None:
+        if (
+            production_render_service is not None
+            and not voice_blueprints
+        ):
+            raise ValueError(
+                "Production render stage requires "
+                "resolved voice blueprints."
+            )
+
+        self._render_service = (
+            render_service
+            or RenderService()
+        )
+
+        self._production_render_service = (
+            production_render_service
+        )
+
+        self._voice_blueprints = list(
+            voice_blueprints or []
+        )
+
+    @property
+    def stage_name(
+        self,
+    ) -> PipelineStageName:
+        """Return the pipeline identifier for this adapter."""
+
+        return PipelineStageName.RENDER
+
+    @property
+    def production_render_enabled(
+        self,
+    ) -> bool:
+        """Return whether real production rendering is configured."""
+
+        return (
+            self._production_render_service
+            is not None
+        )
+
+    def execute(
+        self,
+        context: StageContext,
+    ) -> StageResult:
+        """
+        Render the VideoJob's prepared timelines.
+
+        Expected orchestration-state errors are normalized into failed
+        StageResults.
+
+        Unexpected renderer exceptions intentionally cross this adapter
+        boundary so RenderOrchestratorService can apply its existing
+        exception-normalization policy.
+        """
+
+        start_time = time.perf_counter()
+
+        timeline = (
+            context.job.video_timeline
+        )
+
+        if timeline is None:
+            return self._failed_result(
+                started_at=start_time,
+                error_message=(
+                    "Render stage requires "
+                    "VideoJob.video_timeline."
+                ),
+            )
+
+        if not (
+            timeline.items
+            or timeline.clips
+        ):
+            return self._failed_result(
+                started_at=start_time,
+                error_message=(
+                    "Render stage requires a "
+                    "non-empty video timeline."
+                ),
+            )
+
+        if self.production_render_enabled:
+            render_result = (
+                self._execute_production_render(
+                    context=context,
+                )
+            )
+        else:
+            render_result = (
+                self._render_service.render(
+                    timeline
+                )
+            )
+
+        context.job.render_result = (
+            render_result
+        )
+
+        return self._stage_result_from_render(
+            render_result=render_result,
+            started_at=start_time,
+        )
+
+    def _execute_production_render(
+        self,
+        *,
+        context: StageContext,
+    ) -> RenderResult:
+        """Execute the real production rendering boundary."""
+
+        production_render_service = (
+            self._production_render_service
+        )
+
+        if production_render_service is None:
+            raise RuntimeError(
+                "Production render service "
+                "is not configured."
+            )
+
+        video_timeline = (
+            context.job.video_timeline
+        )
+
+        if video_timeline is None:
+            raise RuntimeError(
+                "Production render requires "
+                "VideoJob.video_timeline."
+            )
+
+        audio_timeline = (
+            context.job.audio_timeline
+        )
+
+        if audio_timeline is None:
+            raise ValueError(
+                "Production render stage requires "
+                "VideoJob.audio_timeline."
+            )
+
+        if not self._voice_blueprints:
+            raise ValueError(
+                "Production render stage requires "
+                "resolved voice blueprints."
+            )
+
+        return production_render_service.render(
+            video_timeline=video_timeline,
+            audio_timeline=audio_timeline,
+            voice_blueprints=(
+                self._voice_blueprints
+            ),
+        )
+
+    def _stage_result_from_render(
+        self,
+        *,
+        render_result: RenderResult,
+        started_at: float,
+    ) -> StageResult:
+        """
+        Translate the provider-independent RenderResult into the generic
+        pipeline StageResult contract.
+        """
+
+        duration_seconds = (
+            time.perf_counter()
+            - started_at
+        )
+
+        metadata: dict[
+            str,
+            object,
+        ] = {
+            "render_engine": (
+                render_result.render_engine
+            ),
+            "output_file": (
+                render_result.output_file
+            ),
+            "render_time_seconds": (
+                render_result
+                .render_time_seconds
+            ),
+            "render_duration_seconds": (
+                render_result.duration_seconds
+            ),
+            "production_render": (
+                self.production_render_enabled
+            ),
+        }
+
+        if render_result.success:
+            return StageResult(
+                stage=self.stage_name,
+                status=(
+                    PipelineStageStatus.COMPLETED
+                ),
+                duration_seconds=(
+                    duration_seconds
+                ),
+                progress_percent=100,
+                warnings=list(
+                    render_result.warnings
+                ),
+                errors=[],
+                metadata=metadata,
+            )
+
+        error_message = (
+            render_result.error_message
+            or (
+                "Render service returned "
+                "an unsuccessful result."
+            )
+        )
+
+        return StageResult(
+            stage=self.stage_name,
+            status=(
+                PipelineStageStatus.FAILED
+            ),
+            duration_seconds=(
+                duration_seconds
+            ),
+            progress_percent=100,
+            warnings=list(
+                render_result.warnings
+            ),
+            errors=[
+                error_message,
+            ],
+            metadata=metadata,
+        )
+
+    def _failed_result(
+        self,
+        *,
+        started_at: float,
+        error_message: str,
+    ) -> StageResult:
+        """Create a normalized precondition failure."""
+
+        return StageResult(
+            stage=self.stage_name,
+            status=(
+                PipelineStageStatus.FAILED
+            ),
+            duration_seconds=(
+                time.perf_counter()
+                - started_at
+            ),
+            progress_percent=100,
+            errors=[
+                error_message,
+            ],
+            metadata={
+                "render_engine": None,
+                "output_file": None,
+                "production_render": (
+                    self.production_render_enabled
+                ),
+            },
+        )
+
+=== 9. PIPELINE CONTEXT / RESULT CONTRACTS ===
+
+--- src\pipeline\stage_result.py ---
+from __future__ import annotations
+
+from typing import Any
+
+from pydantic import Field, field_validator, model_validator
+
+from src.models.base import MissionBaseModel
+from src.pipeline.pipeline_stage import (
+    PipelineStageName,
+    PipelineStageStatus,
+)
+
+
+class StageResult(MissionBaseModel):
+    """
+    Result returned after executing one pipeline stage.
+
+    retry_count represents retries performed after the initial stage
+    execution. Therefore:
+
+    - retry_count == 0 means the stage ran once;
+    - retry_count == 1 means one retry occurred;
+    - retry_count == N means N retry executions occurred.
+
+    Retry policy itself remains owned by AdvancedSettings.
+    """
+
+    schema_version: str = "1.0"
+
+    stage: PipelineStageName
+
+    status: PipelineStageStatus
+
+    duration_seconds: float = Field(
+        default=0.0,
+        ge=0.0,
+    )
+
+    retry_count: int = Field(
+        default=0,
+        ge=0,
+    )
+
+    progress_percent: int = Field(
+        default=100,
+        ge=0,
+        le=100,
+    )
+
+    warnings: list[str] = Field(
+        default_factory=list,
+    )
+
+    errors: list[str] = Field(
+        default_factory=list,
+    )
+
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+    )
+
+    @field_validator(
+        "warnings",
+        "errors",
+    )
+    @classmethod
+    def normalize_diagnostics(
+        cls,
+        values: list[str],
+    ) -> list[str]:
+        """
+        Normalize and deduplicate diagnostics while preserving order.
+        """
+
+        normalized: list[str] = []
+
+        for value in values:
+            cleaned = value.strip()
+
+            if (
+                cleaned
+                and cleaned not in normalized
+            ):
+                normalized.append(
+                    cleaned
+                )
+
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_result(
+        self,
+    ) -> StageResult:
+        """Prevent contradictory terminal stage results."""
+
+        if (
+            self.status
+            == PipelineStageStatus.FAILED
+            and not self.errors
+        ):
+            raise ValueError(
+                "Failed pipeline stage requires "
+                "at least one error."
+            )
+
+        if (
+            self.status
+            == PipelineStageStatus.COMPLETED
+            and self.errors
+        ):
+            raise ValueError(
+                "Completed pipeline stage cannot "
+                "contain errors."
+            )
+
+        return self
+
+    @property
+    def successful(
+        self,
+    ) -> bool:
+        """Return whether the stage completed successfully."""
+
+        return (
+            self.status
+            == PipelineStageStatus.COMPLETED
+        )
+
+    @property
+    def failed(
+        self,
+    ) -> bool:
+        """Return whether the stage explicitly failed."""
+
+        return (
+            self.status
+            == PipelineStageStatus.FAILED
+        )
+
+    @property
+    def waiting_for_user(
+        self,
+    ) -> bool:
+        """Return whether execution is blocked on user input."""
+
+        return (
+            self.status
+            == PipelineStageStatus.WAITING_FOR_USER
+        )
+
+    @property
+    def attempted_execution_count(
+        self,
+    ) -> int:
+        """
+        Return total executions including the initial attempt.
+
+        Example:
+        retry_count=0 -> one execution
+        retry_count=2 -> three executions
+        """
+
+        return (
+            self.retry_count
+            + 1
+        )
+
+    def with_retry_count(
+        self,
+        retry_count: int,
+    ) -> StageResult:
+        """
+        Return a validated copy carrying orchestration retry metadata.
+
+        PipelineRunner can use this without mutating the original result
+        returned by a stage.
+        """
+
+        if retry_count < 0:
+            raise ValueError(
+                "Retry count cannot be negative."
+            )
+
+        return self.model_copy(
+            update={
+                "retry_count": retry_count,
+            },
+        )
+
+--- src\models\render_orchestration_result.py ---
+from __future__ import annotations
+
+from typing import Any
+
+from pydantic import Field, field_validator, model_validator
+
+from src.models.base import MissionBaseModel
+from src.models.enums import JobStatus, WorkflowStage
+from src.models.render_result import RenderResult, RenderStatus
+from src.models.video_job import VideoJob
+
+
+class RenderOrchestrationResult(MissionBaseModel):
+    """
+    Final normalized result of one render-orchestration run.
+
+    The orchestration result does not replace VideoJob. VideoJob remains
+    the central mutable workflow object, while this model captures the
+    outcome of one orchestrator execution in a stable, serializable form.
+    """
+
+    schema_version: str = "1.0"
+
+    success: bool
+
+    status: JobStatus
+
+    current_stage: WorkflowStage
+
+    completed_stages: list[WorkflowStage] = Field(
+        default_factory=list,
+    )
+
+    failed_stage: WorkflowStage | None = None
+
+    job: VideoJob
+
+    render_result: RenderResult | None = None
+
+    elapsed_seconds: float = Field(
+        default=0.0,
+        ge=0.0,
+    )
+
+    warnings: list[str] = Field(
+        default_factory=list,
+    )
+
+    errors: list[str] = Field(
+        default_factory=list,
+    )
+
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+    )
+
+    @field_validator(
+        "warnings",
+        "errors",
+    )
+    @classmethod
+    def clean_messages(
+        cls,
+        values: list[str],
+    ) -> list[str]:
+        """
+        Normalize diagnostic messages while preserving order.
+
+        Empty messages and duplicate normalized messages are removed.
+        """
+
+        cleaned: list[str] = []
+
+        for value in values:
+            normalized = value.strip()
+
+            if (
+                normalized
+                and normalized not in cleaned
+            ):
+                cleaned.append(
+                    normalized
+                )
+
+        return cleaned
+
+    @field_validator(
+        "completed_stages",
+    )
+    @classmethod
+    def clean_completed_stages(
+        cls,
+        values: list[WorkflowStage],
+    ) -> list[WorkflowStage]:
+        """
+        Preserve stage order while removing duplicate stage entries.
+        """
+
+        cleaned: list[WorkflowStage] = []
+
+        for value in values:
+            if value not in cleaned:
+                cleaned.append(
+                    value
+                )
+
+        return cleaned
+
+    @model_validator(mode="after")
+    def validate_result(
+        self,
+    ) -> RenderOrchestrationResult:
+        """
+        Prevent contradictory orchestration outcomes.
+        """
+
+        if self.success:
+            if self.status != JobStatus.COMPLETED:
+                raise ValueError(
+                    "Successful render orchestration "
+                    "must have COMPLETED job status."
+                )
+
+            if self.failed_stage is not None:
+                raise ValueError(
+                    "Successful render orchestration "
+                    "cannot contain a failed stage."
+                )
+
+            if self.errors:
+                raise ValueError(
+                    "Successful render orchestration "
+                    "cannot contain errors."
+                )
+
+            if self.render_result is None:
+                raise ValueError(
+                    "Successful render orchestration "
+                    "requires a render result."
+                )
+
+            if not self.render_result.success:
+                raise ValueError(
+                    "Successful orchestration requires "
+                    "a successful render result."
+                )
+
+            if (
+                self.render_result.status
+                != RenderStatus.COMPLETED
+            ):
+                raise ValueError(
+                    "Successful orchestration requires "
+                    "a completed render result."
+                )
+
+            if (
+                self.current_stage
+                not in {
+                    WorkflowStage.READY_FOR_UPLOAD,
+                    WorkflowStage.UPLOADED,
+                }
+            ):
+                raise ValueError(
+                    "Successful render orchestration must "
+                    "finish at READY_FOR_UPLOAD or UPLOADED."
+                )
+
+        else:
+            if self.status == JobStatus.COMPLETED:
+                raise ValueError(
+                    "Failed orchestration cannot have "
+                    "COMPLETED job status."
+                )
+
+            if (
+                self.status == JobStatus.FAILED
+                and self.failed_stage is None
+            ):
+                raise ValueError(
+                    "Failed orchestration requires "
+                    "a failed stage."
+                )
+
+            if (
+                self.status == JobStatus.FAILED
+                and not self.errors
+            ):
+                raise ValueError(
+                    "Failed orchestration requires "
+                    "at least one error."
+                )
+
+        if self.failed_stage is not None:
+            if self.failed_stage in self.completed_stages:
+                raise ValueError(
+                    "Failed stage cannot also appear "
+                    "in completed stages."
+                )
+
+        if self.job.status != self.status:
+            raise ValueError(
+                "Orchestration status must match "
+                "VideoJob status."
+            )
+
+        if self.job.current_stage != self.current_stage:
+            raise ValueError(
+                "Orchestration current stage must match "
+                "VideoJob current stage."
+            )
+
+        if (
+            self.render_result is not None
+            and self.job.render_result is not None
+            and self.render_result != self.job.render_result
+        ):
+            raise ValueError(
+                "Orchestration render result must match "
+                "VideoJob render result."
+            )
+
+        return self
+
+    @property
+    def is_terminal(self) -> bool:
+        """Return whether orchestration reached a terminal job state."""
+
+        return self.status in {
+            JobStatus.COMPLETED,
+            JobStatus.FAILED,
+            JobStatus.CANCELLED,
+        }
+
+    @property
+    def is_failed(self) -> bool:
+        """Return whether orchestration ended in failure."""
+
+        return (
+            self.status
+            == JobStatus.FAILED
+        )
+
+    @property
+    def is_cancelled(self) -> bool:
+        """Return whether orchestration was cancelled."""
+
+        return (
+            self.status
+            == JobStatus.CANCELLED
+        )
+
+    @property
+    def completed_stage_count(self) -> int:
+        """Return number of uniquely completed workflow stages."""
+
+        return len(
+            self.completed_stages
+        )
+
+    @property
+    def has_warnings(self) -> bool:
+        """Return whether orchestration produced warnings."""
+
+        return bool(
+            self.warnings
+        )
+
+    @property
+    def has_errors(self) -> bool:
+        """Return whether orchestration produced errors."""
+
+        return bool(
+            self.errors
+        )
+
+    @property
+    def diagnostic_summary(self) -> str:
+        """Return concise human-readable orchestration diagnostics."""
+
+        if self.success:
+            return (
+                "Render orchestration completed successfully "
+                f"in {self.elapsed_seconds:.3f} seconds."
+            )
+
+        if self.is_cancelled:
+            return (
+                "Render orchestration was cancelled "
+                f"during {self.current_stage.value}."
+            )
+
+        failed_stage = (
+            self.failed_stage.value
+            if self.failed_stage is not None
+            else self.current_stage.value
+        )
+
+        message = (
+            self.errors[-1]
+            if self.errors
+            else "Unknown orchestration failure."
+        )
+
+        return (
+            "Render orchestration failed during "
+            f"{failed_stage}: {message}"
+        )
+
+    @classmethod
+    def succeeded(
+        cls,
+        *,
+        job: VideoJob,
+        completed_stages: list[WorkflowStage],
+        elapsed_seconds: float,
+        warnings: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> RenderOrchestrationResult:
+        """Create a successful orchestration result."""
+
+        if job.render_result is None:
+            raise ValueError(
+                "Successful orchestration factory "
+                "requires VideoJob.render_result."
+            )
+
+        return cls(
+            success=True,
+            status=JobStatus.COMPLETED,
+            current_stage=job.current_stage,
+            completed_stages=completed_stages,
+            failed_stage=None,
+            job=job,
+            render_result=job.render_result,
+            elapsed_seconds=elapsed_seconds,
+            warnings=warnings or [],
+            errors=[],
+            metadata=metadata or {},
+        )
+
+    @classmethod
+    def failed(
+        cls,
+        *,
+        job: VideoJob,
+        failed_stage: WorkflowStage,
+        completed_stages: list[WorkflowStage],
+        elapsed_seconds: float,
+        error_message: str,
+        warnings: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> RenderOrchestrationResult:
+        """Create a failed orchestration result."""
+
+        return cls(
+            success=False,
+            status=JobStatus.FAILED,
+            current_stage=job.current_stage,
+            completed_stages=completed_stages,
+            failed_stage=failed_stage,
+            job=job,
+            render_result=job.render_result,
+            elapsed_seconds=elapsed_seconds,
+            warnings=warnings or [],
+            errors=[
+                error_message,
+            ],
+            metadata=metadata or {},
+        )
+
+    @classmethod
+    def cancelled(
+        cls,
+        *,
+        job: VideoJob,
+        completed_stages: list[WorkflowStage],
+        elapsed_seconds: float,
+        warnings: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> RenderOrchestrationResult:
+        """Create a cancelled orchestration result."""
+
+        return cls(
+            success=False,
+            status=JobStatus.CANCELLED,
+            current_stage=job.current_stage,
+            completed_stages=completed_stages,
+            failed_stage=None,
+            job=job,
+            render_result=job.render_result,
+            elapsed_seconds=elapsed_seconds,
+            warnings=warnings or [],
+            errors=[],
+            metadata=metadata or {},
+        )
+
+=== 10. CONTENT DEPENDENCY CONSTRUCTORS ===
+> E:\Projects\Mission-Automation\mission-automation\src\agents\originality_agent\agent.py:10:class OriginalityAgent:
+  E:\Projects\Mission-Automation\mission-automation\src\agents\originality_agent\agent.py:11:    """Analyzes a script for originality and human value."""
+  E:\Projects\Mission-Automation\mission-automation\src\agents\originality_agent\agent.py:12:
+  E:\Projects\Mission-Automation\mission-automation\src\agents\originality_agent\agent.py:13:    def analyze(self, script: Script) -> OriginalityResult:
+  E:\Projects\Mission-Automation\mission-automation\src\agents\originality_agent\agent.py:14:
+  E:\Projects\Mission-Automation\mission-automation\src\agents\originality_agent\agent.py:15:        word_count = script.word_count
+  E:\Projects\Mission-Automation\mission-automation\src\agents\originality_agent\agent.py:16:
+  E:\Projects\Mission-Automation\mission-automation\src\agents\originality_agent\agent.py:17:        originality_score = min(95, 70 + word_count)
+  E:\Projects\Mission-Automation\mission-automation\src\agents\originality_agent\agent.py:18:        human_value_score = min(90, 65 + word_count)
+  E:\Projects\Mission-Automation\mission-automation\src\agents\originality_agent\agent.py:19:        hook_strength_score = 90
+  E:\Projects\Mission-Automation\mission-automation\src\agents\originality_agent\agent.py:20:
+  E:\Projects\Mission-Automation\mission-automation\src\agents\originality_agent\agent.py:21:        return OriginalityResult(
+  E:\Projects\Mission-Automation\mission-automation\src\agents\originality_agent\agent.py:22:            script_id=str(script.id),
+  E:\Projects\Mission-Automation\mission-automation\src\agents\originality_agent\agent.py:23:            originality_score=originality_score,
+  E:\Projects\Mission-Automation\mission-automation\src\agents\originality_agent\agent.py:24:            human_value_score=human_value_score,
+  E:\Projects\Mission-Automation\mission-automation\src\agents\originality_agent\agent.py:25:            hook_strength_score=hook_strength_score,
+  E:\Projects\Mission-Automation\mission-automation\src\agents\originality_agent\agent.py:26:            strengths=[
+  E:\Projects\Mission-Automation\mission-automation\src\agents\originality_agent\agent.py:27:                "Original storytelling flow",
+  E:\Projects\Mission-Automation\mission-automation\src\agents\originality_agent\agent.py:28:                "Strong opening hook",
+  E:\Projects\Mission-Automation\mission-automation\src\agents\originality_agent\agent.py:29:            ],
+  E:\Projects\Mission-Automation\mission-automation\src\agents\originality_agent\agent.py:30:            weaknesses=[],
+  E:\Projects\Mission-Automation\mission-automation\src\agents\originality_agent\agent.py:31:            recommendations=[],
+  E:\Projects\Mission-Automation\mission-automation\src\agents\originality_agent\agent.py:32:            status=OriginalityStatus.APPROVED,
+  E:\Projects\Mission-Automation\mission-automation\src\agents\originality_agent\agent.py:33:        )
+> E:\Projects\Mission-Automation\mission-automation\src\models\originality.py:10:class OriginalityStatus(str, Enum):
+  E:\Projects\Mission-Automation\mission-automation\src\models\originality.py:11:    PENDING = "pending"
+  E:\Projects\Mission-Automation\mission-automation\src\models\originality.py:12:    UNDER_REVIEW = "under_review"
+  E:\Projects\Mission-Automation\mission-automation\src\models\originality.py:13:    APPROVED = "approved"
+  E:\Projects\Mission-Automation\mission-automation\src\models\originality.py:14:    REVISION_REQUIRED = "revision_required"
+  E:\Projects\Mission-Automation\mission-automation\src\models\originality.py:15:    FAILED = "failed"
+  E:\Projects\Mission-Automation\mission-automation\src\models\originality.py:16:
+  E:\Projects\Mission-Automation\mission-automation\src\models\originality.py:17:
+> E:\Projects\Mission-Automation\mission-automation\src\models\originality.py:18:class OriginalityResult(MissionBaseModel):
+  E:\Projects\Mission-Automation\mission-automation\src\models\originality.py:19:    """Stores originality analysis for a generated script."""
+  E:\Projects\Mission-Automation\mission-automation\src\models\originality.py:20:
+  E:\Projects\Mission-Automation\mission-automation\src\models\originality.py:21:    script_id: str
+  E:\Projects\Mission-Automation\mission-automation\src\models\originality.py:22:
+  E:\Projects\Mission-Automation\mission-automation\src\models\originality.py:23:    originality_score: int = 0
+  E:\Projects\Mission-Automation\mission-automation\src\models\originality.py:24:    human_value_score: int = 0
+  E:\Projects\Mission-Automation\mission-automation\src\models\originality.py:25:    hook_strength_score: int = 0
+  E:\Projects\Mission-Automation\mission-automation\src\models\originality.py:26:
+  E:\Projects\Mission-Automation\mission-automation\src\models\originality.py:27:    strengths: list[str] = Field(default_factory=list)
+  E:\Projects\Mission-Automation\mission-automation\src\models\originality.py:28:    weaknesses: list[str] = Field(default_factory=list)
+  E:\Projects\Mission-Automation\mission-automation\src\models\originality.py:29:    recommendations: list[str] = Field(default_factory=list)
+  E:\Projects\Mission-Automation\mission-automation\src\models\originality.py:30:
+  E:\Projects\Mission-Automation\mission-automation\src\models\originality.py:31:    status: OriginalityStatus = OriginalityStatus.PENDING
+> E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:20:class ContentPipeline:
+  E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:21:    """Runs the complete core content-generation workflow."""
+  E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:22:
+  E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:23:    def __init__(
+  E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:24:        self,
+  E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:25:        *,
+  E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:26:        llm_service: LLMService,
+  E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:27:        research_pipeline: ResearchPipeline | None = None,
+  E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:28:        script_pipeline: ScriptPipeline | None = None,
+  E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:29:        originality_agent: OriginalityAgent | None = None,
+  E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:30:        scene_planner: ScenePlannerAgent | None = None,
+  E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:31:        research_profile_ids: list[str] | None = None,
+  E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:32:        research_estimated_cost_usd: float = 0.0,
+  E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:33:    ) -> None:
+  E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:34:        self.research_pipeline = (
+  E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:35:            research_pipeline
+  E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:36:            or ResearchPipeline(
+  E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:37:                llm_service=llm_service,
+  E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:38:                profile_ids=research_profile_ids,
+  E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:39:                estimated_cost_usd=(
+  E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:40:                    research_estimated_cost_usd
+  E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:41:                ),
+  E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:42:            )
+  E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:43:        )
+  E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:44:
+  E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:45:        self.script_pipeline = (
+  E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:46:    script_pipeline
+  E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:47:    or ScriptPipeline(
+  E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:48:        llm_service=llm_service,
+  E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:49:        profile_ids=research_profile_ids,
+  E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:50:        estimated_cost_usd=research_estimated_cost_usd,
+  E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:51:    )
+  E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:52:)
+  E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:53:        
+  E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:54:
+  E:\Projects\Mission-Automation\mission-automation\src\services\content_pipeline.py:55:        self.originality_agent = (
+> E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:14:class ResearchPipeline:
+  E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:15:    """Runs research generation and review as one feature."""
+  E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:16:
+  E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:17:    def __init__(
+  E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:18:        self,
+  E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:19:        *,
+  E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:20:        llm_service: LLMService,
+  E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:21:        research_agent: ResearchAgent | None = None,
+  E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:22:        review_service: ResearchReviewService | None = None,
+  E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:23:        profile_ids: list[str] | None = None,
+  E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:24:        estimated_cost_usd: float = 0.0,
+  E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:25:    ) -> None:
+  E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:26:        self.research_agent = (
+  E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:27:            research_agent
+  E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:28:            or ResearchAgent(
+  E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:29:                llm_service=llm_service,
+  E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:30:                profile_ids=profile_ids,
+  E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:31:                estimated_cost_usd=estimated_cost_usd,
+  E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:32:            )
+  E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:33:        )
+  E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:34:
+  E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:35:        self.review_service = (
+  E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:36:            review_service
+  E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:37:            or ResearchReviewService()
+  E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:38:        )
+  E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:39:
+  E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:40:    def run(
+  E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:41:        self,
+  E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:42:        topic: str,
+  E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:43:    ) -> ResearchResult:
+  E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:44:        """Generate research and send it through review."""
+  E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:45:
+  E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:46:        research = self.research_agent.research(topic)
+  E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:47:
+  E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:48:        research.status = ResearchStatus.UNDER_REVIEW
+  E:\Projects\Mission-Automation\mission-automation\src\services\research_pipeline.py:49:
+> E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:12:class ScriptPipeline:
+  E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:13:    """Generates a script and sends it through review."""
+  E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:14:
+  E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:15:    def __init__(
+  E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:16:        self,
+  E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:17:        *,
+  E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:18:        llm_service: LLMService,
+  E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:19:        script_agent: ScriptAgent | None = None,
+  E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:20:        review_service: ScriptReviewService | None = None,
+  E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:21:        profile_ids: list[str] | None = None,
+  E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:22:        estimated_cost_usd: float = 0.0,
+  E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:23:    ) -> None:
+  E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:24:        self.script_agent = (
+  E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:25:            script_agent
+  E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:26:            or ScriptAgent(
+  E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:27:                llm_service=llm_service,
+  E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:28:                profile_ids=profile_ids,
+  E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:29:                estimated_cost_usd=estimated_cost_usd,
+  E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:30:            )
+  E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:31:        )
+  E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:32:
+  E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:33:        self.review_service = (
+  E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:34:            review_service
+  E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:35:            or ScriptReviewService()
+  E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:36:        )
+  E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:37:
+  E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:38:    def run(
+  E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:39:        self,
+  E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:40:        research: ResearchResult,
+  E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:41:    ) -> Script:
+  E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:42:        """Generate a script and pass it through review."""
+  E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:43:
+  E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:44:        script = self.script_agent.generate(
+  E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:45:            research
+  E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:46:        )
+  E:\Projects\Mission-Automation\mission-automation\src\services\script_pipeline.py:47:
+
+=== 11. STAGE TEST FIXTURE BUILDERS ===
+
+--- tests\test_voice_stage.py ---
+
+--- tests\test_asset_stage.py ---
+
+--- tests\test_timeline_stage.py ---
+
+--- tests\test_render_stage.py ---
+
+=== 12. VIDEOJOB RENDER-STATE FIELDS ===
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:3:from pydantic import Field, model_validator
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:4:
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:5:from src.models.asset_state import SceneAssetState
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:6:from src.models.audio_timeline import AudioTimeline
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:7:from src.models.base import MissionBaseModel
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:8:from src.models.enums import (
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:9:    JobStatus,
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:10:    Platform,
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:13:)
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:14:from src.models.media_strategy import (
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:15:    SceneSourceType,
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:16:    VisualStrategy,
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:17:    VoiceStatus,
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:18:    VoiceStrategy,
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:19:)
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:20:from src.models.originality import OriginalityResult
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:21:from src.models.policy import PolicyComplianceReport
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:22:from src.models.render_result import RenderResult
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:23:from src.models.research import ResearchResult, ResearchStatus
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:24:from src.models.scene import Scene
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:25:from src.models.script import Script, ScriptStatus
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:26:from src.models.video_clip import VideoClip
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:27:from src.models.video_timeline import VideoTimeline
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:28:
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:29:
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:30:class VideoJob(MissionBaseModel):
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:31:    """Central workflow object for one Mission Automation video."""
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:42:
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:43:    status: JobStatus = JobStatus.PENDING
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:44:    current_stage: WorkflowStage = WorkflowStage.RESEARCH
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:45:
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:46:    visual_strategy: VisualStrategy = VisualStrategy.HYBRID
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:47:    default_visual_source: SceneSourceType = SceneSourceType.MANUAL_UPLOAD
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:48:    maximum_visual_budget: float = 0.0
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:49:
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:50:    voice_strategy: VoiceStrategy = VoiceStrategy.MANUAL_UPLOAD
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:51:    voice_status: VoiceStatus = VoiceStatus.PENDING
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:52:    voice_file: str | None = None
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:53:    voice_provider: str | None = None
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:54:
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:55:    research: ResearchResult | None = None
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:56:    script: Script | None = None
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:57:    originality_review: OriginalityResult | None = None
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:58:
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:59:    scenes: list[Scene] = Field(default_factory=list)
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:60:    scene_asset_states: list[SceneAssetState] = Field(default_factory=list)
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:61:    video_clips: list[VideoClip] = Field(default_factory=list)
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:62:
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:63:    audio_timeline: AudioTimeline | None = None
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:64:    video_timeline: VideoTimeline | None = None
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:65:    render_result: RenderResult | None = None
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:66:
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:67:    policy_report: PolicyComplianceReport | None = None
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:68:
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:69:    retry_count: int = 0
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:75:        """Prevent invalid workflow and media states."""
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:76:
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:77:        if self.script is not None:
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:78:            if self.research is None:
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:79:                raise ValueError("A script cannot exist without research.")
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:80:
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:81:            if self.research.status != ResearchStatus.APPROVED:
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:82:                raise ValueError("A script requires approved research.")
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:83:
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:84:        if self.originality_review is not None:
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:85:            if self.script is None:
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:86:                raise ValueError("Originality review requires a script.")
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:87:
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:88:            if self.script.status != ScriptStatus.APPROVED:
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:89:                raise ValueError("Originality review requires an approved script.")
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:90:
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:91:        if self.scenes:
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:92:            if self.script is None:
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:93:                raise ValueError("Scenes cannot exist without a script.")
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:94:
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:95:            if self.script.status != ScriptStatus.APPROVED:
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:96:                raise ValueError("Scene planning requires an approved script.")
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:97:
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:98:        if self.scene_asset_states and not self.scenes:
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:99:            raise ValueError("Scene asset states cannot exist without scenes.")
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:100:
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:101:        if self.scene_asset_states:
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:102:            scene_numbers = {scene.scene_number for scene in self.scenes}
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:103:
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:104:            state_numbers = {state.scene_number for state in self.scene_asset_states}
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:105:
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:106:            if not state_numbers.issubset(scene_numbers):
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:107:                raise ValueError(
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:108:                    "Every scene asset state must reference "
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:109:                    "an existing scene number."
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:110:                )
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:111:
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:112:        if self.video_clips and not self.scenes:
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:113:            raise ValueError("Video clips cannot exist without planned scenes.")
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:114:
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:115:        if (
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:116:            self.voice_strategy == VoiceStrategy.MANUAL_UPLOAD
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:117:            and self.voice_status == VoiceStatus.READY
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:118:            and not self.voice_file
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:119:        ):
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:120:            raise ValueError("Manual voiceover cannot be READY without a file.")
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:121:
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:122:        if (
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:123:            self.voice_strategy == VoiceStrategy.AUTO_GENERATE
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:124:            and self.voice_status == VoiceStatus.READY
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:125:            and not self.voice_file
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:126:        ):
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:127:            raise ValueError("Generated voiceover cannot be READY without a file.")
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:128:
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:129:        if self.audio_timeline is not None and not self.voice_file:
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:130:            raise ValueError("Audio timeline requires a voiceover file.")
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:131:
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:132:        if self.video_timeline is not None and not self.video_clips:
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:133:            raise ValueError("Video timeline requires ready video clips.")
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:134:
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:135:        if self.render_result is not None:
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:136:            if self.video_timeline is None:
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:137:                raise ValueError("Render result requires a video timeline.")
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:138:
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:139:            if self.audio_timeline is None:
+> E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:140:                raise ValueError("Render result requires an audio timeline.")
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:141:
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:142:        if self.policy_report is not None:
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:143:            if self.policy_report.source_mode != self.production_mode:
+  E:\Projects\Mission-Automation\mission-automation\src\models\video_job.py:144:                raise ValueError(
+
+=== 13. CURRENT STATUS ===
+?? master_audit_phase_a_repository_inventory.txt
+?? master_audit_phase_b_architecture_trace.txt
+?? master_audit_phase_c_duplicate_orphan_linkage.txt
+?? master_audit_phase_d_model_contract_reconciliation.txt
+?? master_audit_phase_e_local_asset_end_to_end.txt
+?? master_audit_phase_f_1_ffmpeg_integration_boundary.txt
+?? master_audit_phase_f_2_execution_plan_producers.txt
+?? master_audit_phase_f_3_render_runtime_contract.txt
+?? master_audit_phase_f_4d_ffmpeg_smoke.txt
+?? master_audit_phase_f_4e_1_real_render_fixture_contract.txt
+?? master_audit_phase_f_voice_editing_render_end_to_end.txt
+?? master_audit_phase_g_1_composition_root_contract.txt
+?? master_audit_phase_g_2_composition_dependencies.txt
+?? master_audit_phase_g_3a_composition_constructor_check.txt
+?? master_audit_phase_g_4_final_entrypoint_closure.txt
+?? master_audit_phase_g_production_entrypoint_full_workflow.txt
+?? master_audit_phase_h_1_end_to_end_workflow_trace.txt
+?? master_audit_phase_h_2_integration_evidence.txt
+?? master_audit_phase_h_2_step_2_exact_contracts.txt
+?? output.txt
+?? outputs/ffmpeg_runtime_smoke.mp4
+?? sprint_20_4a_voice_directive_production.txt
+?? sprint_20_4b_test_inspection.txt
+?? sprint_20_4c_runtime_assembly_contract.txt
+?? sprint_20_4c_test_contract.txt
+?? sprint_20_4d_test_contract_short.txt
+?? sprint_21_0_production_entrypoint_discovery.txt
+
+=== H.2 STEP 2 COMPLETE ===
