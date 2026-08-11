@@ -10,9 +10,20 @@ __pycache__/
 .idea/
 
 output/
+outputs/
 
 renders/
 
 temp/
 
 logs/
+
+# ad-hoc investigation/audit dumps from prior sessions - not project docs
+master_audit_phase_*.txt
+sprint_[0-9]*.txt
+diagnostics_search.txt
+hardening_search.txt
+pipeline_stage_search.txt
+project_structure.txt
+render_retry_fixture_inspection.txt
+output.txt
