@@ -22,6 +22,10 @@ from src.services.project_render_runtime_factory import (
 from src.services.project_specification_job_mapper import (
     ProjectSpecificationJobMapper,
 )
+from src.services.seo.seo_package_service import (
+    SEOPackageBuildResult,
+    SEOPackageService,
+)
 
 
 class MissionApplicationService:
@@ -54,6 +58,12 @@ class MissionApplicationService:
     Render execution, checkpoint loading, resume planning, user-input
     consumption, retry behavior, and normalized execution results remain
     delegated to RenderOrchestratorService.
+
+    SEO package generation (generate_seo_package) is a separate,
+    optional capability. It requires only research, script, and scene
+    content - all of which already exist once ContentPipeline has run
+    - so it does not depend on render execution, does not mutate
+    VideoJob, and does not interact with checkpoint/resume state.
     """
 
     def __init__(
@@ -62,12 +72,12 @@ class MissionApplicationService:
         job_mapper: ProjectSpecificationJobMapper,
         content_pipeline: ContentPipeline,
         render_runtime_factory: ProjectRenderRuntimeFactory,
+        seo_package_service: SEOPackageService | None = None,
     ) -> None:
         self._job_mapper = job_mapper
         self._content_pipeline = content_pipeline
-        self._render_runtime_factory = (
-            render_runtime_factory
-        )
+        self._render_runtime_factory = render_runtime_factory
+        self._seo_package_service = seo_package_service
 
     @property
     def job_mapper(
@@ -95,6 +105,49 @@ class MissionApplicationService:
 
         return self._render_runtime_factory
 
+    @property
+    def seo_package_service(
+        self,
+    ) -> SEOPackageService | None:
+        """Return the configured SEO package service, if any."""
+
+        return self._seo_package_service
+
+    def generate_seo_package(
+        self,
+        job: VideoJob,
+        *,
+        genre_id: str,
+        target_audience: str,
+        language_code: str = "en",
+        title_candidate_count: int = 5,
+        max_tags: int = 15,
+        max_hashtags: int = 8,
+    ) -> SEOPackageBuildResult:
+        """
+        Generate a validated SEOPackage for a job with an approved script.
+
+        This does not require job.render_result to be set: SEO metadata
+        only needs research, script and scene content. It can be called
+        any time after ContentPipeline has produced an approved script,
+        independent of whether or when render() has been executed.
+        """
+
+        if self._seo_package_service is None:
+            raise ValueError(
+                "SEO package generation requires a configured " "SEOPackageService."
+            )
+
+        return self._seo_package_service.build(
+            job,
+            genre_id=genre_id,
+            target_audience=target_audience,
+            language_code=language_code,
+            title_candidate_count=title_candidate_count,
+            max_tags=max_tags,
+            max_hashtags=max_hashtags,
+        )
+
     def execute(
         self,
         specification: ProjectSpecification,
@@ -104,10 +157,7 @@ class MissionApplicationService:
         language: str = "English",
         language_code: str = "en",
         voice_provider_name: str | None = None,
-        overrides_by_scene: (
-            dict[int, SceneEditingDirectives]
-            | None
-        ) = None,
+        overrides_by_scene: dict[int, SceneEditingDirectives] | None = None,
         output_resolution: str = "1920x1080",
         frame_rate: int = 30,
         warn_on_blueprint_fallbacks: bool = True,
@@ -136,32 +186,18 @@ class MissionApplicationService:
             niche=niche,
         )
 
-        prepared_job = (
-            self._content_pipeline.run(
-                job
-            )
-        )
+        prepared_job = self._content_pipeline.run(job)
 
-        render_orchestrator = (
-            self._render_runtime_factory.build(
-                job=prepared_job,
-                genre_id=genre_id,
-                language=language,
-                language_code=language_code,
-                voice_provider_name=(
-                    voice_provider_name
-                ),
-                overrides_by_scene=(
-                    overrides_by_scene
-                ),
-                output_resolution=(
-                    output_resolution
-                ),
-                frame_rate=frame_rate,
-                warn_on_blueprint_fallbacks=(
-                    warn_on_blueprint_fallbacks
-                ),
-            )
+        render_orchestrator = self._render_runtime_factory.build(
+            job=prepared_job,
+            genre_id=genre_id,
+            language=language,
+            language_code=language_code,
+            voice_provider_name=(voice_provider_name),
+            overrides_by_scene=(overrides_by_scene),
+            output_resolution=(output_resolution),
+            frame_rate=frame_rate,
+            warn_on_blueprint_fallbacks=(warn_on_blueprint_fallbacks),
         )
 
         return render_orchestrator.execute(
@@ -177,10 +213,7 @@ class MissionApplicationService:
         language: str = "English",
         language_code: str = "en",
         voice_provider_name: str | None = None,
-        overrides_by_scene: (
-            dict[int, SceneEditingDirectives]
-            | None
-        ) = None,
+        overrides_by_scene: dict[int, SceneEditingDirectives] | None = None,
         output_resolution: str = "1920x1080",
         frame_rate: int = 30,
         warn_on_blueprint_fallbacks: bool = True,
@@ -203,26 +236,16 @@ class MissionApplicationService:
         execution remain delegated to RenderOrchestratorService.
         """
 
-        render_orchestrator = (
-            self._render_runtime_factory.build(
-                job=job,
-                genre_id=genre_id,
-                language=language,
-                language_code=language_code,
-                voice_provider_name=(
-                    voice_provider_name
-                ),
-                overrides_by_scene=(
-                    overrides_by_scene
-                ),
-                output_resolution=(
-                    output_resolution
-                ),
-                frame_rate=frame_rate,
-                warn_on_blueprint_fallbacks=(
-                    warn_on_blueprint_fallbacks
-                ),
-            )
+        render_orchestrator = self._render_runtime_factory.build(
+            job=job,
+            genre_id=genre_id,
+            language=language,
+            language_code=language_code,
+            voice_provider_name=(voice_provider_name),
+            overrides_by_scene=(overrides_by_scene),
+            output_resolution=(output_resolution),
+            frame_rate=frame_rate,
+            warn_on_blueprint_fallbacks=(warn_on_blueprint_fallbacks),
         )
 
         return render_orchestrator.execute(

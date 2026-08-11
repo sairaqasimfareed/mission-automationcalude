@@ -5,7 +5,6 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from src.shared.exceptions import ConfigurationError
 from src.models.editing_directives import (
     SceneEditingDirectives,
 )
@@ -21,10 +20,13 @@ from src.models.project_specification import (
 from src.models.render_orchestration_result import (
     RenderOrchestrationResult,
 )
+from src.models.research import ResearchResult, ResearchStatus
+from src.models.script import Script, ScriptStatus
 from src.models.video_job import VideoJob
 from src.services.content_pipeline import (
     ContentPipeline,
 )
+from src.services.llm.llm_service import LLMServiceResult
 from src.services.mission_application_service import (
     MissionApplicationService,
 )
@@ -37,7 +39,16 @@ from src.services.project_specification_job_mapper import (
 from src.services.render_orchestrator_service import (
     RenderOrchestratorService,
 )
-
+from src.services.seo.seo_description_generation_service import (
+    SEODescriptionGenerationService,
+)
+from src.services.seo.seo_package_service import SEOPackageService
+from src.services.seo.seo_title_generation_service import (
+    SEOTitleGenerationService,
+)
+from src.shared.exceptions import ConfigurationError
+from src.shared.llm.models import LLMCallResult, LLMCallStatus, LLMProvider
+from src.shared.llm.request import LLMRequest
 
 T = TypeVar("T")
 
@@ -87,9 +98,7 @@ class FakeJobMapper:
         )
 
         if self.call_order is not None:
-            self.call_order.append(
-                "mapper"
-            )
+            self.call_order.append("mapper")
 
         if self.error is not None:
             raise self.error
@@ -120,9 +129,7 @@ class FakeContentPipeline:
         self.calls.append(job)
 
         if self.call_order is not None:
-            self.call_order.append(
-                "content"
-            )
+            self.call_order.append("content")
 
         if self.error is not None:
             raise self.error
@@ -170,9 +177,7 @@ class FakeRenderOrchestrator:
         )
 
         if self.call_order is not None:
-            self.call_order.append(
-                "render"
-            )
+            self.call_order.append("render")
 
         return self.result
 
@@ -241,9 +246,7 @@ class FakeRenderRuntimeFactory:
         )
 
         if self.call_order is not None:
-            self.call_order.append(
-                "runtime"
-            )
+            self.call_order.append("runtime")
 
         if self.error is not None:
             raise self.error
@@ -281,9 +284,7 @@ def build_result(
         failed_stage=WorkflowStage.RENDER,
         completed_stages=[],
         elapsed_seconds=0.1,
-        error_message=(
-            "Synthetic render failure."
-        ),
+        error_message=("Synthetic render failure."),
     )
 
 
@@ -300,6 +301,7 @@ def _service(
     mapper: FakeJobMapper,
     content: FakeContentPipeline,
     runtime_factory: FakeRenderRuntimeFactory,
+    seo_package_service: SEOPackageService | None = None,
 ) -> MissionApplicationService:
     return MissionApplicationService(
         job_mapper=_as(
@@ -314,6 +316,7 @@ def _service(
             ProjectRenderRuntimeFactory,
             runtime_factory,
         ),
+        seo_package_service=seo_package_service,
     )
 
 
@@ -342,10 +345,7 @@ def test_exposes_configured_dependencies() -> None:
 
     assert service.job_mapper is mapper
     assert service.content_pipeline is content
-    assert (
-        service.render_runtime_factory
-        is runtime_factory
-    )
+    assert service.render_runtime_factory is runtime_factory
 
 
 def test_execute_maps_runs_content_builds_runtime_and_renders() -> None:
@@ -355,13 +355,9 @@ def test_execute_maps_runs_content_builds_runtime_and_renders() -> None:
         project_name="Mapped Job",
     )
 
-    prepared_job = mapped_job.model_copy(
-        deep=True
-    )
+    prepared_job = mapped_job.model_copy(deep=True)
 
-    result = build_result(
-        prepared_job
-    )
+    result = build_result(prepared_job)
 
     mapper = FakeJobMapper(
         job=mapped_job,
@@ -400,9 +396,7 @@ def test_execute_maps_runs_content_builds_runtime_and_renders() -> None:
         )
     ]
 
-    assert content.calls == [
-        mapped_job
-    ]
+    assert content.calls == [mapped_job]
 
     assert len(runtime_factory.calls) == 1
 
@@ -545,11 +539,7 @@ def test_execute_forwards_runtime_configuration() -> None:
 def test_execute_propagates_mapper_configuration_error() -> None:
     specification = build_specification()
 
-    mapper = FakeJobMapper(
-        error=ConfigurationError(
-            "Unsupported specification."
-        )
-    )
+    mapper = FakeJobMapper(error=ConfigurationError("Unsupported specification."))
 
     content = FakeContentPipeline()
 
@@ -592,11 +582,7 @@ def test_execute_propagates_content_pipeline_error() -> None:
         job=job,
     )
 
-    content = FakeContentPipeline(
-        error=RuntimeError(
-            "Content generation failed."
-        )
-    )
+    content = FakeContentPipeline(error=RuntimeError("Content generation failed."))
 
     render = FakeRenderOrchestrator(
         result=build_result(job),
@@ -637,9 +623,7 @@ def test_execute_propagates_runtime_factory_error() -> None:
 
     runtime_factory = FakeRenderRuntimeFactory(
         orchestrator=render,
-        error=RuntimeError(
-            "Runtime composition failed."
-        ),
+        error=RuntimeError("Runtime composition failed."),
     )
 
     service = _service(
@@ -707,20 +691,12 @@ def test_execute_forwards_dry_run_false_by_default() -> None:
 def test_resume_bypasses_mapper_and_content_pipeline() -> None:
     job = build_job()
 
-    result = build_result(
-        job
-    )
+    result = build_result(job)
 
-    mapper = FakeJobMapper(
-        error=AssertionError(
-            "Mapper must not run during resume."
-        )
-    )
+    mapper = FakeJobMapper(error=AssertionError("Mapper must not run during resume."))
 
     content = FakeContentPipeline(
-        error=AssertionError(
-            "Content pipeline must not run during resume."
-        )
+        error=AssertionError("Content pipeline must not run during resume.")
     )
 
     render = FakeRenderOrchestrator(
@@ -818,9 +794,7 @@ def test_resume_forwards_runtime_configuration() -> None:
 def test_resume_forwards_checkpoint_user_input_and_dry_run() -> None:
     job = build_job()
 
-    result = build_result(
-        job
-    )
+    result = build_result(job)
 
     checkpoint_id = uuid4()
 
@@ -904,9 +878,7 @@ def test_execute_returns_orchestrator_result_unchanged() -> None:
     specification = build_specification()
     job = build_job()
 
-    expected = build_result(
-        job
-    )
+    expected = build_result(job)
 
     render = FakeRenderOrchestrator(
         result=expected,
@@ -931,3 +903,138 @@ def test_execute_returns_orchestrator_result_unchanged() -> None:
     )
 
     assert actual is expected
+
+
+def _approved_seo_job() -> VideoJob:
+    research = ResearchResult(
+        topic="Hidden underground cities",
+        research_summary="An overview of hidden underground cities.",
+        key_facts=["Fact one."],
+        prompt_version="research_prompt_v1.0.0",
+        status=ResearchStatus.APPROVED,
+    )
+
+    script = Script(
+        title="Hidden Underground Cities Explained",
+        content="Full script content about hidden underground cities.",
+        prompt_version="script_prompt_v1.0.0",
+        estimated_duration_seconds=600,
+        status=ScriptStatus.APPROVED,
+    )
+
+    return VideoJob(
+        project_name="Underground Cities Documentary",
+        channel_name="Mission Channel",
+        niche="History Documentary",
+        topic="Hidden underground cities",
+        platform=Platform.YOUTUBE,
+        research=research,
+        script=script,
+    )
+
+
+class _StubSEOLLMService:
+    def generate(
+        self,
+        request: LLMRequest,
+        *,
+        estimated_cost_usd: float = 0.0,
+        profile_ids: list[str] | None = None,
+    ) -> LLMServiceResult:
+        content = (
+            "Hidden Underground Cities Explained"
+            if request.prompt_version == "seo_title_prompt_v1.0.0"
+            else "A deep dive into hidden underground cities."
+        )
+
+        result = LLMCallResult(
+            status=LLMCallStatus.SUCCESS,
+            provider=LLMProvider.OPENAI,
+            model="test-model",
+            content=content,
+        )
+
+        return LLMServiceResult(result=result, selected_profile_id="openai-main")
+
+
+def _seo_package_service() -> SEOPackageService:
+    stub = _StubSEOLLMService()
+
+    return SEOPackageService(
+        title_generation_service=SEOTitleGenerationService(
+            llm_service=stub,  # type: ignore[arg-type]
+        ),
+        description_generation_service=SEODescriptionGenerationService(
+            llm_service=stub,  # type: ignore[arg-type]
+        ),
+    )
+
+
+def test_generate_seo_package_raises_when_not_configured() -> None:
+    service = _service(
+        mapper=FakeJobMapper(job=build_job()),
+        content=FakeContentPipeline(),
+        runtime_factory=FakeRenderRuntimeFactory(
+            orchestrator=FakeRenderOrchestrator(result=None),  # type: ignore[arg-type]
+        ),
+    )
+
+    with pytest.raises(ValueError, match="requires a configured"):
+        service.generate_seo_package(
+            _approved_seo_job(),
+            genre_id="genre.documentary",
+            target_audience="History enthusiasts",
+        )
+
+
+def test_generate_seo_package_returns_validated_package() -> None:
+    service = _service(
+        mapper=FakeJobMapper(job=build_job()),
+        content=FakeContentPipeline(),
+        runtime_factory=FakeRenderRuntimeFactory(
+            orchestrator=FakeRenderOrchestrator(result=None),  # type: ignore[arg-type]
+        ),
+        seo_package_service=_seo_package_service(),
+    )
+
+    result = service.generate_seo_package(
+        _approved_seo_job(),
+        genre_id="genre.documentary",
+        target_audience="History enthusiasts",
+    )
+
+    assert result.package.selected_title == "Hidden Underground Cities Explained"
+    assert result.validation.is_valid is True
+
+
+def test_generate_seo_package_does_not_require_render_result() -> None:
+    # The job has never been rendered - render_result is None - and
+    # generate_seo_package must still succeed, since SEO metadata only
+    # needs research/script/scene content.
+    job = _approved_seo_job()
+
+    assert job.render_result is None
+
+    service = _service(
+        mapper=FakeJobMapper(job=build_job()),
+        content=FakeContentPipeline(),
+        runtime_factory=FakeRenderRuntimeFactory(
+            orchestrator=FakeRenderOrchestrator(result=None),  # type: ignore[arg-type]
+        ),
+        seo_package_service=_seo_package_service(),
+    )
+
+    result = service.generate_seo_package(
+        job,
+        genre_id="genre.documentary",
+        target_audience="History enthusiasts",
+    )
+
+    assert result.package is not None
+    assert job.render_result is None
+    assert job.current_stage == WorkflowStage.RESEARCH
+    assert job.status == JobStatus.PENDING
+    assert job.script is not None
+    assert job.script.status == ScriptStatus.APPROVED
+    assert job.research is not None
+    assert job.research.status == ResearchStatus.APPROVED
