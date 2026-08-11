@@ -26,6 +26,7 @@ from src.services.scene_asset_workflow_service import (
     SceneAssetWorkflowService,
 )
 from src.services.secrets.provider_secret_manager import SecretStore
+from src.services.startup_diagnostics import StartupDiagnosticsReporter
 
 
 def build_production_runtime(
@@ -75,7 +76,18 @@ def build_production_runtime(
         checkpoint_storage_root=configuration.checkpoint_storage_root,
     ).build()
 
-    ProviderStartupValidator(runtime.infrastructure).validate()
+    validation_result = ProviderStartupValidator(
+        runtime.infrastructure,
+    ).validate()
+
+    reporter = StartupDiagnosticsReporter()
+
+    reporter.log_report(
+        reporter.build_report(
+            configuration=configuration,
+            validation_result=validation_result,
+        )
+    )
 
     return runtime
 
@@ -115,14 +127,29 @@ def main(
         ).build(provider_profiles=configuration.provider_profiles)
 
         validation_result = ProviderStartupValidator(infrastructure).validate()
+
+        reporter = StartupDiagnosticsReporter()
+
+        report = reporter.build_report(
+            configuration=configuration,
+            validation_result=validation_result,
+        )
+
+        reporter.log_report(report)
     except ValueError as exc:
         print(f"Mission Automation startup check failed: {exc}", file=sys.stderr)
 
         return 1
 
     print("Mission Automation startup check passed.")
+    print(f"Dry run: {report.dry_run}")
+    print(f"Healthy LLM providers: {', '.join(report.healthy_provider_profile_ids)}")
 
-    print("Healthy LLM providers: " + ", ".join(validation_result.healthy_profile_ids))
+    if report.unhealthy_provider_profile_ids:
+        print(
+            "Unhealthy LLM providers: "
+            + ", ".join(report.unhealthy_provider_profile_ids)
+        )
 
     print(
         "Note: asset_workflow_service and genre_timeline_service are not "
