@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from src.models.audio_timeline import AudioTimeline
 from src.models.editing_directives import (
     SceneEditingDirectives,
 )
@@ -15,20 +16,35 @@ from src.models.enums import (
     ProductionMode,
     WorkflowStage,
 )
+from src.models.media_strategy import SceneSourceStatus, SceneSourceType
 from src.models.project_specification import (
     ProjectSpecification,
 )
 from src.models.render_orchestration_result import (
     RenderOrchestrationResult,
 )
+from src.models.render_result import RenderResult, RenderStatus
 from src.models.research import ResearchResult, ResearchStatus
+from src.models.scene import Scene, SceneStatus
 from src.models.script import Script, ScriptStatus
+from src.models.seo import SEOPackage, SEOPlatformMetadata, TitleCandidate
+from src.models.thumbnail import (
+    ThumbnailArtifact,
+    ThumbnailConcept,
+    ThumbnailImageSourceType,
+    ThumbnailLayout,
+)
+from src.models.video_clip import VideoClip, VideoClipStatus
 from src.models.video_job import VideoJob
+from src.models.video_timeline import VideoTimeline
 from src.providers.dry_run_thumbnail_image_provider import (
     DryRunThumbnailImageProvider,
 )
 from src.services.content_pipeline import (
     ContentPipeline,
+)
+from src.services.final_export.final_export_service import (
+    FinalExportService,
 )
 from src.services.llm.llm_service import LLMServiceResult
 from src.services.mission_application_service import (
@@ -313,6 +329,7 @@ def _service(
     runtime_factory: FakeRenderRuntimeFactory,
     seo_package_service: SEOPackageService | None = None,
     thumbnail_package_service: ThumbnailPackageService | None = None,
+    final_export_service: FinalExportService | None = None,
 ) -> MissionApplicationService:
     return MissionApplicationService(
         job_mapper=_as(
@@ -329,6 +346,7 @@ def _service(
         ),
         seo_package_service=seo_package_service,
         thumbnail_package_service=thumbnail_package_service,
+        final_export_service=final_export_service,
     )
 
 
@@ -1152,3 +1170,151 @@ def test_generate_thumbnail_does_not_require_render_result(
     assert job.render_result is None
     assert job.current_stage == WorkflowStage.RESEARCH
     assert job.status == JobStatus.PENDING
+
+
+def _seo_package() -> SEOPackage:
+    return SEOPackage(
+        video_job_id=uuid4(),
+        title_candidates=[TitleCandidate(text="Great Video")],
+        selected_title="Great Video",
+        description="A complete, publish-ready description.",
+        platform_metadata=SEOPlatformMetadata(platform=Platform.YOUTUBE),
+        prompt_version="seo_prompt_v1.0.0",
+    )
+
+
+def _thumbnail_artifact() -> ThumbnailArtifact:
+    return ThumbnailArtifact(
+        video_job_id=uuid4(),
+        concept=ThumbnailConcept(
+            concept_summary="A diver facing a giant squid.",
+            hook_text="GIANT SQUID",
+            visual_prompt="A deep sea diver facing a giant squid.",
+        ),
+        layout=ThumbnailLayout(width=1280, height=720),
+        image_source_type=ThumbnailImageSourceType.AI_GENERATED,
+        provider_name="dry_run",
+        file_path="dry-run://thumbnail/1280x720.png",
+        file_size_bytes=0,
+    )
+
+
+def _successful_render_orchestration_result() -> RenderOrchestrationResult:
+    job = VideoJob(
+        project_name="Mission Test",
+        channel_name="Mission Channel",
+        niche="automation",
+        topic="Render orchestration",
+        status=JobStatus.COMPLETED,
+        current_stage=WorkflowStage.READY_FOR_UPLOAD,
+    )
+
+    job.research = ResearchResult.model_construct(status=ResearchStatus.APPROVED)
+
+    job.script = Script(
+        title="Synthetic orchestration script",
+        content="Synthetic narration for orchestration testing.",
+        prompt_version="test-1.0",
+        word_count=5,
+        estimated_duration_seconds=30,
+        status=ScriptStatus.APPROVED,
+    )
+
+    scene = Scene(
+        scene_number=1,
+        title="Synthetic Scene",
+        narration="Synthetic narration for orchestration testing.",
+        visual_prompt="Synthetic visual prompt.",
+        estimated_duration_seconds=30,
+        manual_file_path="assets/videos/manual/test_scene.mp4",
+        source_status=SceneSourceStatus.READY,
+        status=SceneStatus.READY,
+    )
+
+    clip = VideoClip(
+        scene_number=1,
+        source_type=SceneSourceType.MANUAL_UPLOAD,
+        duration_seconds=30,
+        prompt="Synthetic orchestration test scene.",
+        provider="Manual Upload",
+        local_file="assets/videos/manual/test_scene.mp4",
+        source_status=SceneSourceStatus.READY,
+        status=VideoClipStatus.READY,
+    )
+
+    job.scenes = [scene]
+    job.voice_file = "assets/audio/test_voice.wav"
+    job.video_clips = [clip]
+
+    job.video_timeline = VideoTimeline(clips=[clip])
+    job.video_timeline.calculate_duration()
+
+    job.audio_timeline = AudioTimeline()
+
+    job.render_result = RenderResult(
+        success=True,
+        output_file="outputs/final_video.mp4",
+        render_engine="ffmpeg",
+        render_time_seconds=2.0,
+        duration_seconds=30,
+        status=RenderStatus.COMPLETED,
+    )
+
+    return RenderOrchestrationResult.succeeded(
+        job=job,
+        completed_stages=[
+            WorkflowStage.RESEARCH,
+            WorkflowStage.SCRIPT,
+            WorkflowStage.RENDER,
+        ],
+        elapsed_seconds=3.5,
+    )
+
+
+def test_export_final_package_raises_when_not_configured() -> None:
+    service = _service(
+        mapper=FakeJobMapper(job=build_job()),
+        content=FakeContentPipeline(),
+        runtime_factory=FakeRenderRuntimeFactory(
+            orchestrator=FakeRenderOrchestrator(result=None),  # type: ignore[arg-type]
+        ),
+    )
+
+    with pytest.raises(ValueError, match="requires a configured"):
+        service.export_final_package(
+            _successful_render_orchestration_result(),
+            project_id="deep-sea-doc",
+            resolution="1920x1080",
+            frame_rate=30,
+            seo_package=_seo_package(),
+            thumbnail_artifact=_thumbnail_artifact(),
+        )
+
+
+def test_export_final_package_returns_validated_package(
+    tmp_path: Path,
+) -> None:
+    service = _service(
+        mapper=FakeJobMapper(job=build_job()),
+        content=FakeContentPipeline(),
+        runtime_factory=FakeRenderRuntimeFactory(
+            orchestrator=FakeRenderOrchestrator(result=None),  # type: ignore[arg-type]
+        ),
+        final_export_service=FinalExportService(
+            export_root=tmp_path / "exports",
+        ),
+    )
+
+    render_orchestration_result = _successful_render_orchestration_result()
+
+    result = service.export_final_package(
+        render_orchestration_result,
+        project_id="deep-sea-doc",
+        resolution="1920x1080",
+        frame_rate=30,
+        seo_package=_seo_package(),
+        thumbnail_artifact=_thumbnail_artifact(),
+    )
+
+    assert result.package.video_job_id == render_orchestration_result.job.id
+    assert result.package.duration_seconds == 30

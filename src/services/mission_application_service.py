@@ -12,10 +12,15 @@ from src.models.project_specification import (
 from src.models.render_orchestration_result import (
     RenderOrchestrationResult,
 )
-from src.models.thumbnail import ThumbnailTextPosition
+from src.models.seo import SEOPackage
+from src.models.thumbnail import ThumbnailArtifact, ThumbnailTextPosition
 from src.models.video_job import VideoJob
 from src.services.content_pipeline import (
     ContentPipeline,
+)
+from src.services.final_export.final_export_service import (
+    FinalExportBuildResult,
+    FinalExportService,
 )
 from src.services.project_render_runtime_factory import (
     ProjectRenderRuntimeFactory,
@@ -80,12 +85,14 @@ class MissionApplicationService:
         render_runtime_factory: ProjectRenderRuntimeFactory,
         seo_package_service: SEOPackageService | None = None,
         thumbnail_package_service: ThumbnailPackageService | None = None,
+        final_export_service: FinalExportService | None = None,
     ) -> None:
         self._job_mapper = job_mapper
         self._content_pipeline = content_pipeline
         self._render_runtime_factory = render_runtime_factory
         self._seo_package_service = seo_package_service
         self._thumbnail_package_service = thumbnail_package_service
+        self._final_export_service = final_export_service
 
     @property
     def job_mapper(
@@ -206,6 +213,46 @@ class MissionApplicationService:
             concept_count=concept_count,
             selected_seo_title=selected_seo_title,
             hook_text_position=hook_text_position,
+        )
+
+    @property
+    def final_export_service(
+        self,
+    ) -> FinalExportService | None:
+        """Return the configured final export service, if any."""
+
+        return self._final_export_service
+
+    def export_final_package(
+        self,
+        render_orchestration_result: RenderOrchestrationResult,
+        *,
+        project_id: str,
+        resolution: str,
+        frame_rate: int,
+        seo_package: SEOPackage,
+        thumbnail_artifact: ThumbnailArtifact,
+    ) -> FinalExportBuildResult:
+        """
+        Build a validated FinalExportPackage from a completed render.
+
+        Unlike generate_seo_package and generate_thumbnail, this
+        genuinely requires a successful render_orchestration_result:
+        the final video is the package's core deliverable. Call
+        execute()/resume(), generate_seo_package(), and
+        generate_thumbnail() first and pass their results in here.
+        """
+
+        if self._final_export_service is None:
+            raise ValueError("Final export requires a configured FinalExportService.")
+
+        return self._final_export_service.build(
+            render_orchestration_result,
+            project_id=project_id,
+            resolution=resolution,
+            frame_rate=frame_rate,
+            seo_package=seo_package,
+            thumbnail_artifact=thumbnail_artifact,
         )
 
     def execute(
