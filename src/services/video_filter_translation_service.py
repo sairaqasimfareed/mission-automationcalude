@@ -28,6 +28,7 @@ from src.models.subtitle_execution import (
 )
 from src.models.transition_execution import (
     TransitionExecution,
+    TransitionPlacement,
 )
 from src.models.video_filter_translation import (
     VideoFilterTranslation,
@@ -297,6 +298,143 @@ class VideoFilterTranslationService:
                 ),
             },
         )
+
+    def translate_timeline_fade(
+        self,
+        *,
+        render_node: RenderNode,
+        input_label: str,
+        output_label: str,
+        fade_start_seconds: float,
+        capabilities: FFmpegCapabilities,
+    ) -> VideoFilterTranslation:
+        """
+        Translate one timeline-in/out transition into an FFmpeg fade.
+
+        Unlike translate_transition() (a two-stream xfade crossfade
+        between adjacent scenes), a timeline-in/out transition has
+        only one stream to work with: the fully composed video fading
+        in from, or out to, black. cross_dissolve has no second stream
+        to dissolve with at a timeline boundary, so it degrades to the
+        same black fade as fade_black - the only other option would be
+        rejecting it outright, which is worse for a preset the caller
+        never asked to be told is unsupported here.
+        """
+
+        if (
+            render_node.node_type
+            != RenderNodeType.TRANSITION
+        ):
+            raise ValueError(
+                "Timeline fade translation requires "
+                "a transition render node."
+            )
+
+        execution = (
+            TransitionExecution.model_validate(
+                render_node.payload
+            )
+        )
+
+        if execution.placement not in (
+            TransitionPlacement.TIMELINE_IN,
+            TransitionPlacement.TIMELINE_OUT,
+        ):
+            raise ValueError(
+                "Timeline fade translation requires a "
+                "timeline-in or timeline-out transition."
+            )
+
+        if execution.duration_seconds <= 0.0:
+            raise ValueError(
+                "Timed FFmpeg timeline fade requires "
+                "positive duration."
+            )
+
+        if fade_start_seconds < 0.0:
+            raise ValueError(
+                "FFmpeg timeline fade start cannot "
+                "be negative."
+            )
+
+        source = self._clean_label(
+            input_label
+        )
+
+        output = self._clean_label(
+            output_label
+        )
+
+        fade_type = (
+            "in"
+            if execution.placement
+            == TransitionPlacement.TIMELINE_IN
+            else "out"
+        )
+
+        self._require_filter(
+            capabilities,
+            "fade",
+        )
+
+        filter_node = FilterNode(
+            media_type=(
+                FilterMediaType.VIDEO
+            ),
+            filter_name="fade",
+            input_labels=[
+                source
+            ],
+            output_labels=[
+                output
+            ],
+            options={
+                "t": fade_type,
+                "st": self._number(
+                    fade_start_seconds
+                ),
+                "d": self._number(
+                    execution.duration_seconds
+                ),
+                "color": "black",
+            },
+            source_render_node_id=str(
+                render_node.id
+            ),
+        )
+
+        translation = VideoFilterTranslation(
+            source_render_node_id=str(
+                render_node.id
+            ),
+            render_node_type=(
+                render_node.node_type
+            ),
+            input_labels=[
+                source
+            ],
+            output_label=output,
+            filters=[
+                filter_node
+            ],
+            metadata={
+                "transition_type": (
+                    execution.transition_type
+                ),
+                "ffmpeg_filter": "fade",
+            },
+        )
+
+        if (
+            execution.transition_type
+            == "cross_dissolve"
+        ):
+            translation.warnings.append(
+                "cross_dissolve has no second stream at a "
+                "timeline boundary; degraded to a black fade."
+            )
+
+        return translation
 
     def _translate_camera(
         self,

@@ -620,24 +620,56 @@ class FilterGraphBuilderService:
 
         translated_transition_count = 0
 
+        (
+            composed_label,
+            timeline_in_filters,
+            timeline_in_warnings,
+        ) = self._apply_timeline_in_fade(
+            composed_label=composed_label,
+            transition_nodes=transition_nodes,
+            capabilities=capabilities,
+            consumed_transition_ids=consumed_transition_ids,
+        )
+
+        composition_filters.extend(
+            timeline_in_filters
+        )
+
+        warnings.extend(
+            timeline_in_warnings
+        )
+
+        if timeline_in_filters:
+            translated_transition_count += 1
+
         if len(
             ordered_scene_numbers
         ) == 1:
-            output_filter = (
-                self._null_video_filter(
-                    input_label=(
-                        composed_label
-                    ),
-                    output_label=(
-                        "video_final"
-                    ),
-                    capabilities=capabilities,
-                )
+            (
+                final_filters,
+                final_warnings,
+            ) = self._finalize_video_output(
+                composed_label=composed_label,
+                composed_duration=composed_duration,
+                transition_nodes=transition_nodes,
+                capabilities=capabilities,
+                consumed_transition_ids=(
+                    consumed_transition_ids
+                ),
             )
 
-            composition_filters.append(
-                output_filter
+            composition_filters.extend(
+                final_filters
             )
+
+            warnings.extend(
+                final_warnings
+            )
+
+            if len(final_filters) == 1 and (
+                final_filters[0].filter_name == "fade"
+            ):
+                translated_transition_count += 1
 
             return (
                 FilterChain(
@@ -660,7 +692,7 @@ class FilterGraphBuilderService:
                         "scene_count": 1,
                     },
                 ),
-                warnings,
+                self._unique_text(warnings),
                 translated_transition_count,
             )
 
@@ -688,20 +720,9 @@ class FilterGraphBuilderService:
                 ]
             )
 
-            is_last = (
-                scene_index
-                == len(
-                    ordered_scene_numbers
-                ) - 1
-            )
-
             output_label = (
-                "video_final"
-                if is_last
-                else (
-                    f"video_composed_"
-                    f"{scene_index}"
-                )
+                f"video_composed_"
+                f"{scene_index}"
             )
 
             transition_node = (
@@ -843,6 +864,32 @@ class FilterGraphBuilderService:
                 translation.output_label
             )
 
+        (
+            final_filters,
+            final_warnings,
+        ) = self._finalize_video_output(
+            composed_label=composed_label,
+            composed_duration=composed_duration,
+            transition_nodes=transition_nodes,
+            capabilities=capabilities,
+            consumed_transition_ids=(
+                consumed_transition_ids
+            ),
+        )
+
+        composition_filters.extend(
+            final_filters
+        )
+
+        warnings.extend(
+            final_warnings
+        )
+
+        if len(final_filters) == 1 and (
+            final_filters[0].filter_name == "fade"
+        ):
+            translated_transition_count += 1
+
         self._validate_transition_consumption(
             transition_nodes=(
                 transition_nodes
@@ -886,6 +933,143 @@ class FilterGraphBuilderService:
             ),
             translated_transition_count,
         )
+
+    def _apply_timeline_in_fade(
+        self,
+        *,
+        composed_label: str,
+        transition_nodes: list[RenderNode],
+        capabilities: FFmpegCapabilities,
+        consumed_transition_ids: set[str],
+    ) -> tuple[str, list[FilterNode], list[str]]:
+        """
+        Apply a timeline-in fade to the start of the composed video.
+
+        Returns the (possibly unchanged) composed label, any filter
+        nodes to prepend, and any translation warnings. A cut preset
+        needs no filter and is simply marked consumed.
+        """
+
+        node = self._timeline_transition_node(
+            transition_nodes,
+            placement=TransitionPlacement.TIMELINE_IN,
+        )
+
+        if node is None:
+            return composed_label, [], []
+
+        execution = TransitionExecution.model_validate(
+            node.payload,
+        )
+
+        if execution.is_cut:
+            consumed_transition_ids.add(str(node.id))
+
+            return composed_label, [], []
+
+        translation = self._translation_service.translate_timeline_fade(
+            render_node=node,
+            input_label=composed_label,
+            output_label="video_timeline_in",
+            fade_start_seconds=0.0,
+            capabilities=capabilities,
+        )
+
+        consumed_transition_ids.add(str(node.id))
+
+        return (
+            translation.output_label,
+            translation.filters,
+            list(translation.warnings),
+        )
+
+    def _finalize_video_output(
+        self,
+        *,
+        composed_label: str,
+        composed_duration: float,
+        transition_nodes: list[RenderNode],
+        capabilities: FFmpegCapabilities,
+        consumed_transition_ids: set[str],
+    ) -> tuple[list[FilterNode], list[str]]:
+        """
+        Produce the final "video_final" stream.
+
+        Applies a timeline-out fade when configured (a cut preset
+        needs no filter and is simply marked consumed); otherwise
+        passes the composed stream through unchanged.
+        """
+
+        node = self._timeline_transition_node(
+            transition_nodes,
+            placement=TransitionPlacement.TIMELINE_OUT,
+        )
+
+        if node is not None:
+            execution = TransitionExecution.model_validate(
+                node.payload,
+            )
+
+            if execution.is_cut:
+                consumed_transition_ids.add(str(node.id))
+            else:
+                fade_start = max(
+                    0.0,
+                    composed_duration - execution.duration_seconds,
+                )
+
+                translation = (
+                    self._translation_service.translate_timeline_fade(
+                        render_node=node,
+                        input_label=composed_label,
+                        output_label="video_final",
+                        fade_start_seconds=fade_start,
+                        capabilities=capabilities,
+                    )
+                )
+
+                consumed_transition_ids.add(str(node.id))
+
+                return (
+                    translation.filters,
+                    list(translation.warnings),
+                )
+
+        output_filter = self._null_video_filter(
+            input_label=composed_label,
+            output_label="video_final",
+            capabilities=capabilities,
+        )
+
+        return [output_filter], []
+
+    @staticmethod
+    def _timeline_transition_node(
+        transition_nodes: list[RenderNode],
+        *,
+        placement: TransitionPlacement,
+    ) -> RenderNode | None:
+        """Resolve the unique timeline-in or timeline-out transition."""
+
+        matches: list[RenderNode] = []
+
+        for node in transition_nodes:
+            execution = TransitionExecution.model_validate(
+                node.payload,
+            )
+
+            if execution.placement == placement:
+                matches.append(node)
+
+        if len(matches) > 1:
+            raise ValueError(
+                f"Multiple {placement.value} transitions are configured."
+            )
+
+        if not matches:
+            return None
+
+        return matches[0]
 
     def _build_audio_chains(
         self,
