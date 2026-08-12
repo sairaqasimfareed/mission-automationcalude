@@ -144,3 +144,52 @@ def test_thumbnail_generation_failure_does_not_crash(
     window._detail_view._handle_generate_thumbnail("Ocean enthusiasts")
 
     assert window._job_store.get_thumbnail(job.id) is None
+
+
+def test_render_fails_cleanly_without_local_or_manual_assets(
+    qapp: QApplication,
+    no_blocking_dialogs: None,
+) -> None:
+    """
+    Render is reachable (SceneAssetAndTimelineInfrastructureFactory
+    closed the composition gap), but the default local-first
+    composition has no local asset library content and no manual
+    upload/visual_asset_router wired in, so scenes with no local match
+    are expected to fail at asset generation. This confirms that
+    failure is normalized into a RenderOrchestrationResult (not an
+    exception, not a hang) and that final export correctly refuses to
+    build from an unsuccessful render.
+    """
+
+    window = MainWindow()
+
+    window.show_new_project()
+    form = window._form_view
+
+    form._project_name.setText("Deep Sea Documentary")
+    form._channel_name.setText("Ocean Channel")
+    form._topic.setText("Deep sea creatures")
+    form._video_type.setText("long-form documentary")
+    form._niche.setText("ocean-life")
+    form._duration_seconds.setValue(600)
+
+    form._handle_create_clicked()
+
+    job = window._job_store.list_all()[0]
+    window._open_project(job.id)
+
+    window._detail_view._handle_run_research()
+    window._detail_view._handle_run_script()
+    window._detail_view._handle_run_originality()
+    window._detail_view._handle_plan_scenes()
+
+    window._detail_view._handle_run_render()
+
+    render_result = window._job_store.get_render_result(job.id)
+
+    assert render_result is not None
+    assert render_result.success is False
+
+    window._detail_view._handle_build_final_export()
+
+    assert window._job_store.get_final_export(job.id) is None

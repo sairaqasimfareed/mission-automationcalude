@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from src.models.final_export import FinalExportPackage
+from src.models.render_orchestration_result import RenderOrchestrationResult
 from src.models.seo import SEOPackage
 from src.models.thumbnail import ThumbnailArtifact
 from src.models.video_job import VideoJob
@@ -15,17 +17,16 @@ class InMemoryJobStore:
     This is deliberately not durable persistence. It exists only so
     the dashboard can show projects created in the current app
     session: PipelineCheckpointStorageService.list_job_ids() only
-    reflects jobs that have reached the render/checkpoint stage, and
-    job launch cannot reach that stage yet (ProjectRenderRuntimeFactory
-    requires asset_workflow_service/genre_timeline_service, which have
-    no automatic construction path - see MissionApplicationService and
-    src/entrypoint.py). Jobs are lost when the app closes.
+    reflects jobs that have reached the render/checkpoint stage. Jobs
+    are lost when the app closes.
     """
 
     def __init__(self) -> None:
         self._jobs: dict[UUID, VideoJob] = {}
         self._seo_packages: dict[UUID, SEOPackage] = {}
         self._thumbnails: dict[UUID, ThumbnailArtifact] = {}
+        self._render_results: dict[UUID, RenderOrchestrationResult] = {}
+        self._final_exports: dict[UUID, FinalExportPackage] = {}
 
     def add(self, job: VideoJob) -> None:
         self._jobs[job.id] = job
@@ -51,3 +52,23 @@ class InMemoryJobStore:
 
     def get_thumbnail(self, job_id: UUID) -> ThumbnailArtifact | None:
         return self._thumbnails.get(job_id)
+
+    def set_render_result(
+        self,
+        job_id: UUID,
+        render_result: RenderOrchestrationResult,
+    ) -> None:
+        self._render_results[job_id] = render_result
+
+    def get_render_result(self, job_id: UUID) -> RenderOrchestrationResult | None:
+        return self._render_results.get(job_id)
+
+    def set_final_export(
+        self,
+        job_id: UUID,
+        final_export: FinalExportPackage,
+    ) -> None:
+        self._final_exports[job_id] = final_export
+
+    def get_final_export(self, job_id: UUID) -> FinalExportPackage | None:
+        return self._final_exports.get(job_id)

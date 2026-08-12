@@ -17,8 +17,12 @@ from src.desktop.job_store import InMemoryJobStore
 from src.models.enums import WorkflowStage
 from src.models.video_job import VideoJob
 from src.services.content_pipeline import ContentPipeline
+from src.services.final_export.final_export_service import FinalExportService
 from src.services.genre_profile_registry_service import (
     GenreProfileRegistryService,
+)
+from src.services.project_render_runtime_factory import (
+    ProjectRenderRuntimeFactory,
 )
 from src.services.seo.seo_context_builder import SEOContextBuilder
 from src.services.seo.seo_package_service import SEOPackageService
@@ -54,13 +58,17 @@ class ProjectDetailView(QWidget):
     ContentPipeline.run() itself sequences, so no business logic is
     duplicated here - only the UI-facing sequencing.
 
-    Note: render/final export are not reachable from this UI yet -
-    ProjectRenderRuntimeFactory requires asset_workflow_service/
-    genre_timeline_service, which have no automatic construction path
-    (see MissionApplicationService and src/entrypoint.py). Voice
-    state, asset candidates, manual upload, waiting-job resume, and
-    retry controls all live inside that unreachable render pipeline,
-    so they are intentionally not built here.
+    Render runs in dry-run mode: the underlying render stage always uses
+    the real ProductionRenderService, but the default asset composition
+    has no visual_asset_router or manual-upload path wired in yet
+    (SceneAssetAndTimelineInfrastructureFactory deliberately omits
+    them - no dry-run VisualSourceProvider exists). So render currently
+    fails cleanly at asset generation ("manual upload requested") for
+    any scene with no local asset match, rather than hanging or
+    crashing. That failure is normalized into RenderOrchestrationResult
+    and shown here like any other step, not treated as an app error.
+    Final export only becomes available once a render actually
+    succeeds.
     """
 
     def __init__(
@@ -68,6 +76,8 @@ class ProjectDetailView(QWidget):
         *,
         job_store: InMemoryJobStore,
         content_pipeline: ContentPipeline,
+        render_runtime_factory: ProjectRenderRuntimeFactory,
+        final_export_service: FinalExportService,
         seo_package_service: SEOPackageService,
         thumbnail_package_service: ThumbnailPackageService,
         on_back: Callable[[], None],
@@ -76,6 +86,8 @@ class ProjectDetailView(QWidget):
 
         self._job_store = job_store
         self._content_pipeline = content_pipeline
+        self._render_runtime_factory = render_runtime_factory
+        self._final_export_service = final_export_service
         self._seo_package_service = seo_package_service
         self._thumbnail_package_service = thumbnail_package_service
         self._on_back = on_back
@@ -122,15 +134,6 @@ class ProjectDetailView(QWidget):
 
         self._content_layout.addWidget(QLabel(f"<h2>{job.project_name}</h2>"))
 
-        note = QLabel(
-            "Render and final export are not yet reachable from this "
-            "app. This page covers research, script, originality "
-            "review, scene planning, SEO package, and thumbnail "
-            "generation only."
-        )
-        note.setWordWrap(True)
-        self._content_layout.addWidget(note)
-
         self._build_project_card(job)
         self._build_workflow_card(job)
         self._build_research_card(job)
@@ -139,6 +142,8 @@ class ProjectDetailView(QWidget):
         self._build_scenes_card(job)
         self._build_seo_card(job)
         self._build_thumbnail_card(job)
+        self._build_render_card(job)
+        self._build_final_export_card(job)
 
     def _build_project_card(self, job: VideoJob) -> None:
         frame, layout = _card("Project")
@@ -357,6 +362,96 @@ class ProjectDetailView(QWidget):
 
         self._content_layout.addWidget(frame)
 
+    def _build_render_card(self, job: VideoJob) -> None:
+        frame, layout = _card("Render")
+
+        assert self._job_id is not None
+
+        render_result = self._job_store.get_render_result(self._job_id)
+
+        if render_result is not None:
+            layout.addWidget(
+                QLabel(f"Success: {render_result.success}"),
+            )
+            layout.addWidget(
+                QLabel(f"Status: {render_result.status.value}"),
+            )
+
+            if render_result.render_result is not None:
+                layout.addWidget(
+                    QLabel(
+                        "Output file: " f"{render_result.render_result.output_file}"
+                    ),
+                )
+
+            if render_result.errors:
+                errors_label = QLabel(
+                    "Errors:\n"
+                    + "\n".join(f"- {error}" for error in render_result.errors)
+                )
+                errors_label.setWordWrap(True)
+                errors_label.setStyleSheet("color: #b40000;")
+                layout.addWidget(errors_label)
+
+            if render_result.warnings:
+                warnings_label = QLabel(
+                    "Warnings:\n"
+                    + "\n".join(f"- {warning}" for warning in render_result.warnings)
+                )
+                warnings_label.setWordWrap(True)
+                warnings_label.setStyleSheet("color: #9a6700;")
+                layout.addWidget(warnings_label)
+
+            retry_button = QPushButton("Run render again")
+            retry_button.clicked.connect(self._handle_run_render)
+            layout.addWidget(retry_button)
+        elif job.scenes:
+            layout.addWidget(QLabel("Not rendered yet."))
+
+            render_button = QPushButton("Run render")
+            render_button.clicked.connect(self._handle_run_render)
+            layout.addWidget(render_button)
+        else:
+            layout.addWidget(QLabel("Requires planned scenes."))
+
+        self._content_layout.addWidget(frame)
+
+    def _build_final_export_card(self, job: VideoJob) -> None:
+        frame, layout = _card("Final export")
+
+        assert self._job_id is not None
+
+        final_export = self._job_store.get_final_export(self._job_id)
+        render_result = self._job_store.get_render_result(self._job_id)
+        seo_package = self._job_store.get_seo_package(self._job_id)
+        thumbnail = self._job_store.get_thumbnail(self._job_id)
+
+        if final_export is not None:
+            layout.addWidget(
+                QLabel(f"Status: {final_export.status.value}"),
+            )
+            layout.addWidget(
+                QLabel(f"Video: {final_export.final_video_path}"),
+            )
+            layout.addWidget(
+                QLabel(f"Export directory: {final_export.export_directory}"),
+            )
+        elif render_result is not None and render_result.success:
+            if seo_package is not None and thumbnail is not None:
+                layout.addWidget(QLabel("Not built yet."))
+
+                export_button = QPushButton("Build final export package")
+                export_button.clicked.connect(self._handle_build_final_export)
+                layout.addWidget(export_button)
+            else:
+                layout.addWidget(
+                    QLabel("Requires an SEO package and a thumbnail."),
+                )
+        else:
+            layout.addWidget(QLabel("Requires a successful render."))
+
+        self._content_layout.addWidget(frame)
+
     def _handle_run_research(self) -> None:
         job = self._current_job()
 
@@ -473,6 +568,62 @@ class ProjectDetailView(QWidget):
 
         assert self._job_id is not None
         self._job_store.set_thumbnail(self._job_id, result.artifact)
+        self.refresh()
+
+    def _handle_run_render(self) -> None:
+        job = self._current_job()
+
+        if job is None or not job.scenes:
+            return
+
+        genre_id = _DEFAULT_GENRE_IDS[0] if _DEFAULT_GENRE_IDS else "genre.default"
+
+        try:
+            render_orchestrator = self._render_runtime_factory.build(
+                job=job,
+                genre_id=genre_id,
+            )
+        except (RuntimeError, ValueError) as error:
+            self._record_error(job, f"Render setup failed: {error}")
+
+            return
+
+        result = render_orchestrator.execute(job, dry_run=True)
+
+        assert self._job_id is not None
+        self._job_store.set_render_result(self._job_id, result)
+        self.refresh()
+
+    def _handle_build_final_export(self) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        assert self._job_id is not None
+
+        render_result = self._job_store.get_render_result(self._job_id)
+        seo_package = self._job_store.get_seo_package(self._job_id)
+        thumbnail = self._job_store.get_thumbnail(self._job_id)
+
+        if render_result is None or seo_package is None or thumbnail is None:
+            return
+
+        try:
+            result = self._final_export_service.build(
+                render_result,
+                project_id=job.project_name,
+                resolution="1920x1080",
+                frame_rate=30,
+                seo_package=seo_package,
+                thumbnail_artifact=thumbnail,
+            )
+        except (RuntimeError, ValueError) as error:
+            self._record_error(job, f"Final export failed: {error}")
+
+            return
+
+        self._job_store.set_final_export(self._job_id, result.package)
         self.refresh()
 
     def _current_job(self) -> VideoJob | None:

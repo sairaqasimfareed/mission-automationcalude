@@ -3,19 +3,23 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
+from src.entrypoint import build_production_runtime
 from src.providers.dry_run_thumbnail_image_provider import (
     DryRunThumbnailImageProvider,
 )
 from src.services.application_infrastructure_factory import (
     ApplicationInfrastructure,
-    ApplicationInfrastructureFactory,
 )
 from src.services.content_pipeline import ContentPipeline
-from src.services.health.provider_startup_validator import (
-    ProviderStartupValidator,
-)
+from src.services.final_export.final_export_service import FinalExportService
 from src.services.pipeline_checkpoint_storage_service import (
     PipelineCheckpointStorageService,
+)
+from src.services.production_application_factory import (
+    ProductionApplicationRuntime,
+)
+from src.services.project_render_runtime_factory import (
+    ProjectRenderRuntimeFactory,
 )
 from src.services.runtime_configuration_loader import (
     RuntimeConfiguration,
@@ -40,6 +44,7 @@ from src.services.thumbnail.thumbnail_package_service import (
 
 CHECKPOINT_STORAGE_ROOT = Path("data/checkpoints")
 THUMBNAIL_STORAGE_ROOT = Path("data/thumbnails")
+FINAL_EXPORT_STORAGE_ROOT = Path("data/final_exports")
 
 
 @lru_cache
@@ -65,34 +70,51 @@ def get_runtime_configuration() -> RuntimeConfiguration:
 
 
 @lru_cache
+def get_production_runtime() -> ProductionApplicationRuntime:
+    """
+    Build the full production runtime (voice, asset, render, checkpoint
+    composition) once per process.
+
+    Reuses build_production_runtime() from the Sprint 21 entrypoint
+    boundary - the same composition root used by the CLI - so the
+    desktop app never maintains a second, divergent path for
+    provider/voice/render infrastructure. This also runs
+    ProviderStartupValidator: without it, every provider profile's
+    health_status stays UNKNOWN forever, so ProviderProfile.usable is
+    always False and every LLM call fails with "No usable LLM provider
+    profiles are available" - a real bug found by exercising this path
+    end to end, not just a test artifact.
+    """
+
+    return build_production_runtime()
+
+
+@lru_cache
 def get_infrastructure() -> ApplicationInfrastructure:
-    """
-    Build shared provider/LLM infrastructure once per process.
+    """Return the shared provider/LLM infrastructure."""
 
-    Also runs ProviderStartupValidator (Sprint 21.4): without it,
-    every provider profile's health_status stays UNKNOWN forever, so
-    ProviderProfile.usable is always False and every LLM call fails
-    with "No usable LLM provider profiles are available" - a real bug
-    found by exercising this path end to end, not just a test
-    artifact.
-    """
-
-    configuration = get_runtime_configuration()
-
-    infrastructure = ApplicationInfrastructureFactory(
-        secret_store=configuration.secret_store,
-    ).build(provider_profiles=configuration.provider_profiles)
-
-    ProviderStartupValidator(infrastructure).validate()
-
-    return infrastructure
+    return get_production_runtime().infrastructure
 
 
 @lru_cache
 def get_content_pipeline() -> ContentPipeline:
     """Return the shared content pipeline (research/script/scenes)."""
 
-    return ContentPipeline(llm_service=get_infrastructure().llm_service)
+    return get_production_runtime().application.content_pipeline
+
+
+@lru_cache
+def get_render_runtime_factory() -> ProjectRenderRuntimeFactory:
+    """Return the shared per-project render runtime factory."""
+
+    return get_production_runtime().application.render_runtime_factory
+
+
+@lru_cache
+def get_final_export_service() -> FinalExportService:
+    """Return the shared final export package orchestrator."""
+
+    return FinalExportService(export_root=FINAL_EXPORT_STORAGE_ROOT)
 
 
 @lru_cache
