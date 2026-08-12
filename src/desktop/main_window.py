@@ -1,0 +1,104 @@
+from __future__ import annotations
+
+from uuid import UUID
+
+from PySide6.QtGui import QAction
+from PySide6.QtWidgets import QMainWindow, QStackedWidget, QToolBar
+
+from src.desktop import services
+from src.desktop.job_store import InMemoryJobStore
+from src.desktop.views.dashboard_view import DashboardView
+from src.desktop.views.project_detail_view import ProjectDetailView
+from src.desktop.views.project_form_view import ProjectFormView
+from src.desktop.views.settings_view import SettingsView
+
+
+class MainWindow(QMainWindow):
+    """
+    Mission Automation desktop control panel.
+
+    Backend/UI boundary: this window and its views depend only on
+    src.desktop.services (which wraps ContentPipeline,
+    SEOPackageService, ThumbnailPackageService, and
+    PipelineCheckpointStorageService) and InMemoryJobStore. Nothing
+    here imports FFmpeg, a provider SDK, or other implementation
+    details directly - core services stay unaware a desktop UI exists.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+
+        self.setWindowTitle("Mission Automation")
+        self.resize(960, 640)
+
+        self._job_store = InMemoryJobStore()
+
+        self._stack = QStackedWidget()
+        self.setCentralWidget(self._stack)
+
+        self._dashboard_view = DashboardView(
+            job_store=self._job_store,
+            checkpoint_storage=services.get_checkpoint_storage_service(),
+            on_open_project=self._open_project,
+        )
+
+        self._form_view = ProjectFormView(
+            job_store=self._job_store,
+            content_pipeline=services.get_content_pipeline(),
+            on_created=self._open_project,
+        )
+
+        self._detail_view = ProjectDetailView(
+            job_store=self._job_store,
+            seo_package_service=services.get_seo_package_service(),
+            thumbnail_package_service=services.get_thumbnail_package_service(),
+            on_back=self.show_dashboard,
+        )
+
+        self._settings_view = SettingsView(
+            get_configuration=services.get_runtime_configuration,
+        )
+
+        for view in (
+            self._dashboard_view,
+            self._form_view,
+            self._detail_view,
+            self._settings_view,
+        ):
+            self._stack.addWidget(view)
+
+        self._build_toolbar()
+        self.show_dashboard()
+
+    def _build_toolbar(self) -> None:
+        toolbar = QToolBar("Main")
+        toolbar.setMovable(False)
+        self.addToolBar(toolbar)
+
+        dashboard_action = QAction("Dashboard", self)
+        dashboard_action.triggered.connect(self.show_dashboard)
+        toolbar.addAction(dashboard_action)
+
+        new_project_action = QAction("New Project", self)
+        new_project_action.triggered.connect(self.show_new_project)
+        toolbar.addAction(new_project_action)
+
+        settings_action = QAction("Settings", self)
+        settings_action.triggered.connect(self.show_settings)
+        toolbar.addAction(settings_action)
+
+    def show_dashboard(self) -> None:
+        self._dashboard_view.refresh()
+        self._stack.setCurrentWidget(self._dashboard_view)
+
+    def show_new_project(self) -> None:
+        self._form_view.reset()
+        self._stack.setCurrentWidget(self._form_view)
+
+    def show_settings(self) -> None:
+        self._settings_view.refresh()
+        self._stack.setCurrentWidget(self._settings_view)
+
+    def _open_project(self, job_id: UUID) -> None:
+        self._detail_view.set_job(job_id)
+        self._stack.setCurrentWidget(self._detail_view)

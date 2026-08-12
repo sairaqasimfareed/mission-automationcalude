@@ -31,9 +31,20 @@ class DryRunProviderAdapter(LLMProviderAdapter):
                     }
                 )
             else:
+                # Multiple short lines rather than one long sentence:
+                # consumers that treat content as a single block (word
+                # count minimums) and consumers that split content by
+                # line (newline-delimited candidate parsing) both stay
+                # satisfied, and no individual line risks exceeding a
+                # field's max-length constraint the way one long
+                # sentence would.
                 content = (
-                    f"Dry-run response from "
-                    f"{request.provider.value}/{request.model}"
+                    "Dry-run response line one for "
+                    f"{request.provider.value}/{request.model}.\n"
+                    "Dry-run response line two for prompt version "
+                    f"{request.prompt_version}.\n"
+                    "Dry-run response line three for development and "
+                    "testing purposes only."
                 )
 
             return LLMProviderResponse(

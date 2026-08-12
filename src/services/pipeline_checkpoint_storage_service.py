@@ -18,9 +18,7 @@ class PipelineCheckpointStorageError(RuntimeError):
     """Base error raised by checkpoint persistence."""
 
 
-class PipelineCheckpointCorruptError(
-    PipelineCheckpointStorageError
-):
+class PipelineCheckpointCorruptError(PipelineCheckpointStorageError):
     """Raised when a persisted checkpoint cannot be validated."""
 
 
@@ -53,11 +51,7 @@ class PipelineCheckpointStorageService:
         *,
         storage_root: str | Path,
     ) -> None:
-        self.storage_root = (
-            Path(storage_root)
-            .expanduser()
-            .resolve()
-        )
+        self.storage_root = Path(storage_root).expanduser().resolve()
 
         self.storage_root.mkdir(
             parents=True,
@@ -76,18 +70,14 @@ class PipelineCheckpointStorageService:
         checkpoint from becoming authoritative.
         """
 
-        job_directory = self._job_directory(
-            checkpoint.job_id
-        )
+        job_directory = self._job_directory(checkpoint.job_id)
 
         job_directory.mkdir(
             parents=True,
             exist_ok=True,
         )
 
-        destination = self._checkpoint_path(
-            checkpoint
-        )
+        destination = self._checkpoint_path(checkpoint)
 
         payload = checkpoint.model_dump(
             mode="json",
@@ -114,28 +104,21 @@ class PipelineCheckpointStorageService:
         persistence error instead of being treated as missing.
         """
 
-        path = (
-            self._job_directory(job_id)
-            / f"{checkpoint_id}{self.FILE_SUFFIX}"
-        )
+        path = self._job_directory(job_id) / f"{checkpoint_id}{self.FILE_SUFFIX}"
 
         if not path.exists():
             return None
 
-        checkpoint = self._load_path(
-            path
-        )
+        checkpoint = self._load_path(path)
 
         if checkpoint.job_id != job_id:
             raise PipelineCheckpointCorruptError(
-                "Persisted checkpoint job ID does not "
-                "match its storage location."
+                "Persisted checkpoint job ID does not " "match its storage location."
             )
 
         if checkpoint.checkpoint_id != checkpoint_id:
             raise PipelineCheckpointCorruptError(
-                "Persisted checkpoint ID does not "
-                "match its filename."
+                "Persisted checkpoint ID does not " "match its filename."
             )
 
         return checkpoint
@@ -152,41 +135,29 @@ class PipelineCheckpointStorageService:
         filesystem modification time.
         """
 
-        job_directory = self._job_directory(
-            job_id
-        )
+        job_directory = self._job_directory(job_id)
 
         if not job_directory.exists():
             return None
 
         if not job_directory.is_dir():
             raise PipelineCheckpointStorageError(
-                "Checkpoint job storage path is not "
-                "a directory."
+                "Checkpoint job storage path is not " "a directory."
             )
 
         checkpoint_paths = sorted(
             path
-            for path
-            in job_directory.iterdir()
-            if (
-                path.is_file()
-                and path.suffix
-                == self.FILE_SUFFIX
-            )
+            for path in job_directory.iterdir()
+            if (path.is_file() and path.suffix == self.FILE_SUFFIX)
         )
 
         if not checkpoint_paths:
             return None
 
-        checkpoints: list[
-            PipelineCheckpoint
-        ] = []
+        checkpoints: list[PipelineCheckpoint] = []
 
         for path in checkpoint_paths:
-            checkpoint = self._load_path(
-                path
-            )
+            checkpoint = self._load_path(path)
 
             if checkpoint.job_id != job_id:
                 raise PipelineCheckpointCorruptError(
@@ -194,30 +165,58 @@ class PipelineCheckpointStorageService:
                     "not match its storage location."
                 )
 
-            expected_name = (
-                f"{checkpoint.checkpoint_id}"
-                f"{self.FILE_SUFFIX}"
-            )
+            expected_name = f"{checkpoint.checkpoint_id}" f"{self.FILE_SUFFIX}"
 
             if path.name != expected_name:
                 raise PipelineCheckpointCorruptError(
-                    "Persisted checkpoint ID does not "
-                    "match its filename."
+                    "Persisted checkpoint ID does not " "match its filename."
                 )
 
-            checkpoints.append(
-                checkpoint
-            )
+            checkpoints.append(checkpoint)
 
         return max(
             checkpoints,
             key=lambda checkpoint: (
                 checkpoint.created_at,
-                str(
-                    checkpoint.checkpoint_id
-                ),
+                str(checkpoint.checkpoint_id),
             ),
         )
+
+    def list_job_ids(self) -> list[UUID]:
+        """
+        Return every job ID with at least one persisted checkpoint.
+
+        This scans storage_root's immediate subdirectories, each of
+        which is named after a job ID by construction (see
+        _job_directory). Only directories that parse as a valid UUID
+        and contain at least one checkpoint file are included, so
+        stray non-job directories or an emptied job directory are
+        silently skipped rather than raising.
+        """
+
+        if not self.storage_root.exists():
+            return []
+
+        job_ids: list[UUID] = []
+
+        for entry in sorted(self.storage_root.iterdir()):
+            if not entry.is_dir():
+                continue
+
+            try:
+                job_id = UUID(entry.name)
+            except ValueError:
+                continue
+
+            has_checkpoint = any(
+                path.is_file() and path.suffix == self.FILE_SUFFIX
+                for path in entry.iterdir()
+            )
+
+            if has_checkpoint:
+                job_ids.append(job_id)
+
+        return job_ids
 
     def exists(
         self,
@@ -227,15 +226,9 @@ class PipelineCheckpointStorageService:
     ) -> bool:
         """Return whether one checkpoint file exists."""
 
-        path = (
-            self._job_directory(job_id)
-            / f"{checkpoint_id}{self.FILE_SUFFIX}"
-        )
+        path = self._job_directory(job_id) / f"{checkpoint_id}{self.FILE_SUFFIX}"
 
-        return (
-            path.exists()
-            and path.is_file()
-        )
+        return path.exists() and path.is_file()
 
     def list_for_job(
         self,
@@ -249,36 +242,23 @@ class PipelineCheckpointStorageService:
         time, with checkpoint ID as a deterministic tie breaker.
         """
 
-        job_directory = self._job_directory(
-            job_id
-        )
+        job_directory = self._job_directory(job_id)
 
         if not job_directory.exists():
             return []
 
         if not job_directory.is_dir():
             raise PipelineCheckpointStorageError(
-                "Checkpoint job storage path is not "
-                "a directory."
+                "Checkpoint job storage path is not " "a directory."
             )
 
-        checkpoints: list[
-            PipelineCheckpoint
-        ] = []
+        checkpoints: list[PipelineCheckpoint] = []
 
-        for path in sorted(
-            job_directory.iterdir()
-        ):
-            if (
-                not path.is_file()
-                or path.suffix
-                != self.FILE_SUFFIX
-            ):
+        for path in sorted(job_directory.iterdir()):
+            if not path.is_file() or path.suffix != self.FILE_SUFFIX:
                 continue
 
-            checkpoint = self._load_path(
-                path
-            )
+            checkpoint = self._load_path(path)
 
             if checkpoint.job_id != job_id:
                 raise PipelineCheckpointCorruptError(
@@ -286,28 +266,20 @@ class PipelineCheckpointStorageService:
                     "not match its storage location."
                 )
 
-            expected_name = (
-                f"{checkpoint.checkpoint_id}"
-                f"{self.FILE_SUFFIX}"
-            )
+            expected_name = f"{checkpoint.checkpoint_id}" f"{self.FILE_SUFFIX}"
 
             if path.name != expected_name:
                 raise PipelineCheckpointCorruptError(
-                    "Persisted checkpoint ID does not "
-                    "match its filename."
+                    "Persisted checkpoint ID does not " "match its filename."
                 )
 
-            checkpoints.append(
-                checkpoint
-            )
+            checkpoints.append(checkpoint)
 
         return sorted(
             checkpoints,
             key=lambda checkpoint: (
                 checkpoint.created_at,
-                str(
-                    checkpoint.checkpoint_id
-                ),
+                str(checkpoint.checkpoint_id),
             ),
         )
 
@@ -323,10 +295,7 @@ class PipelineCheckpointStorageService:
         Returns False when the checkpoint does not exist.
         """
 
-        path = (
-            self._job_directory(job_id)
-            / f"{checkpoint_id}{self.FILE_SUFFIX}"
-        )
+        path = self._job_directory(job_id) / f"{checkpoint_id}{self.FILE_SUFFIX}"
 
         if not path.exists():
             return False
@@ -351,14 +320,8 @@ class PipelineCheckpointStorageService:
     ) -> Path:
         """Build the canonical path for one checkpoint."""
 
-        return (
-            self._job_directory(
-                checkpoint.job_id
-            )
-            / (
-                f"{checkpoint.checkpoint_id}"
-                f"{self.FILE_SUFFIX}"
-            )
+        return self._job_directory(checkpoint.job_id) / (
+            f"{checkpoint.checkpoint_id}" f"{self.FILE_SUFFIX}"
         )
 
     def _job_directory(
@@ -367,10 +330,7 @@ class PipelineCheckpointStorageService:
     ) -> Path:
         """Build the canonical directory for one job."""
 
-        return (
-            self.storage_root
-            / str(job_id)
-        )
+        return self.storage_root / str(job_id)
 
     @staticmethod
     def _load_path(
@@ -388,9 +348,7 @@ class PipelineCheckpointStorageService:
             ) from error
 
         try:
-            payload: Any = json.loads(
-                raw_text
-            )
+            payload: Any = json.loads(raw_text)
         except json.JSONDecodeError as error:
             raise PipelineCheckpointCorruptError(
                 "Checkpoint file contains invalid JSON."
@@ -405,16 +363,10 @@ class PipelineCheckpointStorageService:
             )
 
         try:
-            return (
-                PipelineCheckpoint
-                .model_validate(
-                    payload
-                )
-            )
+            return PipelineCheckpoint.model_validate(payload)
         except ValidationError as error:
             raise PipelineCheckpointCorruptError(
-                "Checkpoint file does not satisfy "
-                "the PipelineCheckpoint schema."
+                "Checkpoint file does not satisfy " "the PipelineCheckpoint schema."
             ) from error
 
     @staticmethod
@@ -433,9 +385,7 @@ class PipelineCheckpointStorageService:
                 encoding="utf-8",
                 newline="\n",
                 dir=destination.parent,
-                prefix=(
-                    f".{destination.stem}."
-                ),
+                prefix=(f".{destination.stem}."),
                 suffix=".tmp",
                 delete=False,
             ) as temporary_file:
@@ -447,23 +397,15 @@ class PipelineCheckpointStorageService:
                     sort_keys=True,
                 )
 
-                temporary_file.write(
-                    "\n"
-                )
+                temporary_file.write("\n")
 
                 temporary_file.flush()
 
-                os.fsync(
-                    temporary_file.fileno()
-                )
+                os.fsync(temporary_file.fileno())
 
-                temporary_path = Path(
-                    temporary_file.name
-                )
+                temporary_path = Path(temporary_file.name)
 
-            temporary_path.replace(
-                destination
-            )
+            temporary_path.replace(destination)
 
         except (
             OSError,
@@ -475,11 +417,7 @@ class PipelineCheckpointStorageService:
             ) from error
 
         finally:
-            if (
-                temporary_path
-                is not None
-                and temporary_path.exists()
-            ):
+            if temporary_path is not None and temporary_path.exists():
                 try:
                     temporary_path.unlink()
                 except OSError:

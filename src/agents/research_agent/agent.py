@@ -21,9 +21,7 @@ class ResearchAgent:
         estimated_cost_usd: float = 0.0,
     ) -> None:
         if estimated_cost_usd < 0:
-            raise ValueError(
-                "Estimated research cost cannot be negative."
-            )
+            raise ValueError("Estimated research cost cannot be negative.")
 
         self.llm_service = llm_service
         self.profile_ids = profile_ids
@@ -38,9 +36,7 @@ class ResearchAgent:
         normalized_topic = topic.strip()
 
         if not normalized_topic:
-            raise ValueError(
-                "Research topic cannot be empty."
-            )
+            raise ValueError("Research topic cannot be empty.")
 
         request = LLMRequest(
             provider=LLMProvider.OPENAI,
@@ -76,45 +72,30 @@ class ResearchAgent:
                 or "All configured LLM providers failed."
             )
 
-            raise RuntimeError(
-                "Research generation failed: "
-                f"{error_message}"
-            )
+            raise RuntimeError("Research generation failed: " f"{error_message}")
 
-        research_summary = (
-            service_result.result.content or ""
-        ).strip()
+        research_summary = (service_result.result.content or "").strip()
 
         if not research_summary:
-            raise RuntimeError(
-                "Research provider returned empty content."
-            )
+            raise RuntimeError("Research provider returned empty content.")
 
-        selected_profile_id = (
-            service_result.selected_profile_id
-            or "unknown"
-        )
+        selected_profile_id = service_result.selected_profile_id or "unknown"
 
         return ResearchResult(
             topic=normalized_topic,
             research_summary=research_summary,
             key_facts=[
+                ("Generated research must be reviewed " "before production."),
                 (
-                    "Generated research must be reviewed "
-                    "before production."
+                    f"Research summary length: "
+                    f"{len(research_summary.split())} words."
                 ),
             ],
             interesting_angles=[
-                (
-                    "Identify the strongest unusual or "
-                    "little-known angle."
-                ),
+                ("Identify the strongest unusual or " "little-known angle."),
             ],
             potential_hooks=[
-                (
-                    "Open with the most surprising verified "
-                    "fact from the research."
-                ),
+                ("Open with the most surprising verified " "fact from the research."),
             ],
             risk_notes=[
                 (
@@ -125,8 +106,7 @@ class ResearchAgent:
             sources=[
                 ResearchSource(
                     title=(
-                        "LLM-generated research draft via "
-                        f"{selected_profile_id}"
+                        "LLM-generated research draft via " f"{selected_profile_id}"
                     ),
                     confidence_score=70,
                 )
