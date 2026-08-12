@@ -4,6 +4,7 @@ from collections.abc import Callable
 from uuid import UUID
 
 from PySide6.QtWidgets import (
+    QFileDialog,
     QFrame,
     QLabel,
     QLineEdit,
@@ -58,15 +59,18 @@ class ProjectDetailView(QWidget):
     ContentPipeline.run() itself sequences, so no business logic is
     duplicated here - only the UI-facing sequencing.
 
-    Render runs in dry-run mode: the underlying render stage always uses
-    the real ProductionRenderService, but the default asset composition
-    has no visual_asset_router or manual-upload path wired in yet
-    (SceneAssetAndTimelineInfrastructureFactory deliberately omits
-    them - no dry-run VisualSourceProvider exists). So render currently
-    fails cleanly at asset generation ("manual upload requested") for
-    any scene with no local asset match, rather than hanging or
-    crashing. That failure is normalized into RenderOrchestrationResult
-    and shown here like any other step, not treated as an app error.
+    Render runs in dry-run mode. When a scene has no local asset match,
+    the asset stage pauses (WAITING_FOR_USER) rather than failing
+    outright, and the Render card asks for a manual upload file per
+    scene. Submitting those re-runs render on the same VideoJob with
+    the decisions attached as user_input - checkpoint persistence
+    (services.get_production_runtime()'s checkpoint_storage_root) lets
+    the retry resume from the asset stage instead of re-running
+    already-completed stages like voice generation against a job that
+    already has voice tracks. No stock-footage acquisition path is
+    wired in yet (it needs a VisualAssetRouter/StockFootageProvider
+    chain with real HTTP downloads and no dry-run implementation
+    exists), so manual upload is the only way a scene resolves today.
     Final export only becomes available once a render actually
     succeeds.
     """
@@ -92,6 +96,7 @@ class ProjectDetailView(QWidget):
         self._thumbnail_package_service = thumbnail_package_service
         self._on_back = on_back
         self._job_id: UUID | None = None
+        self._manual_upload_paths: dict[int, str] = {}
 
         self._outer_layout = QVBoxLayout(self)
 
@@ -106,6 +111,7 @@ class ProjectDetailView(QWidget):
         """Display one job, replacing any previously displayed job."""
 
         self._job_id = job_id
+        self._manual_upload_paths = {}
         self.refresh()
 
     def refresh(self) -> None:
@@ -367,9 +373,43 @@ class ProjectDetailView(QWidget):
 
         assert self._job_id is not None
 
+        waiting_scene_numbers = [
+            state.scene_number
+            for state in job.scene_asset_states
+            if state.requires_user_decision
+        ]
+
         render_result = self._job_store.get_render_result(self._job_id)
 
-        if render_result is not None:
+        if waiting_scene_numbers:
+            note = QLabel(
+                "These scenes need a manual video upload before render "
+                "can continue - no stock-footage source is configured."
+            )
+            note.setWordWrap(True)
+            layout.addWidget(note)
+
+            for scene_number in waiting_scene_numbers:
+                chosen_path = self._manual_upload_paths.get(scene_number)
+
+                scene_label = QLabel(
+                    f"Scene {scene_number}: {chosen_path or 'No file selected'}"
+                )
+                scene_label.setWordWrap(True)
+                layout.addWidget(scene_label)
+
+                choose_button = QPushButton(f"Choose file for scene {scene_number}")
+                choose_button.clicked.connect(
+                    lambda checked=False, n=scene_number: (
+                        self._handle_choose_manual_upload(n)
+                    ),
+                )
+                layout.addWidget(choose_button)
+
+            submit_button = QPushButton("Submit uploads and continue render")
+            submit_button.clicked.connect(self._handle_submit_manual_uploads)
+            layout.addWidget(submit_button)
+        elif render_result is not None:
             layout.addWidget(
                 QLabel(f"Success: {render_result.success}"),
             )
@@ -576,6 +616,67 @@ class ProjectDetailView(QWidget):
         if job is None or not job.scenes:
             return
 
+        self._execute_render(job)
+
+    def _handle_choose_manual_upload(self, scene_number: int) -> None:
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            f"Select video file for scene {scene_number}",
+            "",
+            "Video files (*.mp4 *.mov *.mkv *.webm *.avi *.m4v)",
+        )
+
+        if not file_path:
+            return
+
+        self._manual_upload_paths[scene_number] = file_path
+        self.refresh()
+
+    def _handle_submit_manual_uploads(self) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        waiting_scene_numbers = [
+            state.scene_number
+            for state in job.scene_asset_states
+            if state.requires_user_decision
+        ]
+
+        missing_scene_numbers = [
+            scene_number
+            for scene_number in waiting_scene_numbers
+            if scene_number not in self._manual_upload_paths
+        ]
+
+        if missing_scene_numbers:
+            self._record_error(
+                job,
+                "Choose a file for every scene before submitting: "
+                + ", ".join(str(number) for number in missing_scene_numbers),
+            )
+
+            return
+
+        asset_decisions = [
+            {
+                "scene_number": scene_number,
+                "decision": "manual_upload",
+                "manual_upload_path": self._manual_upload_paths[scene_number],
+                "project_id": job.project_name,
+            }
+            for scene_number in waiting_scene_numbers
+        ]
+
+        self._execute_render(job, user_input={"asset_decisions": asset_decisions})
+
+    def _execute_render(
+        self,
+        job: VideoJob,
+        *,
+        user_input: dict[str, object] | None = None,
+    ) -> None:
         genre_id = _DEFAULT_GENRE_IDS[0] if _DEFAULT_GENRE_IDS else "genre.default"
 
         try:
@@ -588,7 +689,11 @@ class ProjectDetailView(QWidget):
 
             return
 
-        result = render_orchestrator.execute(job, dry_run=True)
+        result = render_orchestrator.execute(
+            job,
+            dry_run=True,
+            user_input=user_input,
+        )
 
         assert self._job_id is not None
         self._job_store.set_render_result(self._job_id, result)

@@ -84,9 +84,18 @@ def get_production_runtime() -> ProductionApplicationRuntime:
     always False and every LLM call fails with "No usable LLM provider
     profiles are available" - a real bug found by exercising this path
     end to end, not just a test artifact.
+
+    checkpoint_storage_root is passed explicitly so render results can
+    be resumed: a scene render that pauses waiting for a manual-upload
+    decision needs a persisted checkpoint, or the next execute() call
+    re-runs already-completed stages (like voice generation) against a
+    job that already has voice tracks, which fails - a real bug found
+    by exercising the manual-upload path end to end.
     """
 
-    return build_production_runtime()
+    return build_production_runtime(
+        checkpoint_storage_root=CHECKPOINT_STORAGE_ROOT,
+    )
 
 
 @lru_cache
@@ -148,7 +157,20 @@ def get_thumbnail_package_service() -> ThumbnailPackageService:
 
 @lru_cache
 def get_checkpoint_storage_service() -> PipelineCheckpointStorageService:
-    """Return the shared checkpoint storage service."""
+    """
+    Return the shared checkpoint storage service.
+
+    Reuses the production runtime's own checkpoint storage service
+    (built from the same CHECKPOINT_STORAGE_ROOT) rather than a second,
+    separate instance pointed at the same directory.
+    """
+
+    runtime_checkpoint_storage_service = (
+        get_production_runtime().checkpoint_storage_service
+    )
+
+    if runtime_checkpoint_storage_service is not None:
+        return runtime_checkpoint_storage_service
 
     return PipelineCheckpointStorageService(
         storage_root=CHECKPOINT_STORAGE_ROOT,

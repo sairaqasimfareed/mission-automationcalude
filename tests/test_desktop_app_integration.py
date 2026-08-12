@@ -5,17 +5,20 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from collections.abc import Iterator  # noqa: E402
+from pathlib import Path  # noqa: E402
 
 import pytest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from src.desktop.main_window import MainWindow  # noqa: E402
 
-# QMessageBox.warning() opens a real modal dialog and calls exec(),
-# which blocks forever under the offscreen Qt platform (no display to
-# dismiss it). Every test in this module patches it out so a genuine
-# application error can never hang the test suite - discovered the
-# hard way while building this integration test.
+# QMessageBox.warning() and QFileDialog.getOpenFileName() both open a
+# real modal dialog and call exec(), which blocks forever under the
+# offscreen Qt platform (no display to dismiss it). Every test in this
+# module patches them out so a genuine application error, or a test
+# that exercises the manual-upload file picker, can never hang the
+# test suite - discovered the hard way while building this integration
+# test.
 
 
 @pytest.fixture(scope="module")
@@ -34,6 +37,10 @@ def no_blocking_dialogs(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "src.desktop.views.project_detail_view.QMessageBox.warning",
         lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "src.desktop.views.project_detail_view.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: ("", ""),
     )
 
 
@@ -146,19 +153,18 @@ def test_thumbnail_generation_failure_does_not_crash(
     assert window._job_store.get_thumbnail(job.id) is None
 
 
-def test_render_fails_cleanly_without_local_or_manual_assets(
+def test_render_pauses_for_manual_upload_without_local_assets(
     qapp: QApplication,
     no_blocking_dialogs: None,
 ) -> None:
     """
-    Render is reachable (SceneAssetAndTimelineInfrastructureFactory
-    closed the composition gap), but the default local-first
-    composition has no local asset library content and no manual
-    upload/visual_asset_router wired in, so scenes with no local match
-    are expected to fail at asset generation. This confirms that
-    failure is normalized into a RenderOrchestrationResult (not an
-    exception, not a hang) and that final export correctly refuses to
-    build from an unsuccessful render.
+    The default local-first composition has no local asset library
+    content and no stock-acquisition path wired in, so scenes with no
+    local match pause waiting for a manual upload decision rather than
+    hard-failing. This confirms that pause is normalized into a
+    RenderOrchestrationResult (not an exception, not a hang), surfaced
+    as per-scene upload prompts, and that final export correctly
+    refuses to build before a render actually succeeds.
     """
 
     window = MainWindow()
@@ -190,6 +196,85 @@ def test_render_fails_cleanly_without_local_or_manual_assets(
     assert render_result is not None
     assert render_result.success is False
 
+    waiting_scene_numbers = [
+        state.scene_number
+        for state in job.scene_asset_states
+        if state.requires_user_decision
+    ]
+
+    assert waiting_scene_numbers
+
     window._detail_view._handle_build_final_export()
 
     assert window._job_store.get_final_export(job.id) is None
+
+
+def test_manual_upload_resolves_asset_stage_and_builds_video_clips(
+    qapp: QApplication,
+    no_blocking_dialogs: None,
+) -> None:
+    """
+    Proves the asset-to-timeline bridge (SceneAssetVideoClipBuilderService)
+    actually works end to end: submitting a manual upload for every
+    waiting scene should let the asset stage complete and populate
+    VideoJob.video_clips, which nothing did before this fix - for any
+    source type. The render may still fail later (a separate,
+    pre-existing gap: FFmpeg has no translation for the default
+    timeline-in/out "cut" transition yet), so this does not assert
+    render_result.success - it asserts the asset-resolution gap
+    specifically is closed.
+    """
+
+    window = MainWindow()
+
+    window.show_new_project()
+    form = window._form_view
+
+    form._project_name.setText("Deep Sea Documentary")
+    form._channel_name.setText("Ocean Channel")
+    form._topic.setText("Deep sea creatures")
+    form._video_type.setText("long-form documentary")
+    form._niche.setText("ocean-life")
+    form._duration_seconds.setValue(600)
+
+    form._handle_create_clicked()
+
+    job = window._job_store.list_all()[0]
+    window._open_project(job.id)
+
+    window._detail_view._handle_run_research()
+    window._detail_view._handle_run_script()
+    window._detail_view._handle_run_originality()
+    window._detail_view._handle_plan_scenes()
+
+    window._detail_view._handle_run_render()
+
+    waiting_scene_numbers = [
+        state.scene_number
+        for state in job.scene_asset_states
+        if state.requires_user_decision
+    ]
+
+    assert waiting_scene_numbers
+
+    manual_upload_file = str(
+        Path(__file__).resolve().parent.parent
+        / "assets"
+        / "videos"
+        / "manual"
+        / "scene_001.mp4"
+    )
+
+    for scene_number in waiting_scene_numbers:
+        window._detail_view._manual_upload_paths[scene_number] = manual_upload_file
+
+    window._detail_view._handle_submit_manual_uploads()
+
+    render_result = window._job_store.get_render_result(job.id)
+
+    assert render_result is not None
+    assert job.video_clips
+    assert len(job.video_clips) == len(waiting_scene_numbers)
+    assert all(
+        "manual upload is requested" not in error for error in render_result.errors
+    )

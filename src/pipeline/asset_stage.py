@@ -5,7 +5,6 @@ from typing import Any
 
 from src.models.asset_state import (
     AssetUserDecision,
-    AssetWorkflowStatus,
     SceneAssetState,
 )
 from src.models.scene import Scene
@@ -16,6 +15,9 @@ from src.pipeline.pipeline_stage import (
 )
 from src.pipeline.stage_context import StageContext
 from src.pipeline.stage_result import StageResult
+from src.services.scene_asset_video_clip_builder_service import (
+    SceneAssetVideoClipBuilderService,
+)
 from src.services.scene_asset_workflow_service import (
     SceneAssetWorkflowService,
 )
@@ -51,6 +53,11 @@ class AssetPipelineStage(BasePipelineStage):
         }
 
     asset_decisions may contain decisions for one or more scenes.
+
+    Once every scene's SceneAssetState reaches a resolved, non-waiting
+    state, resolved scenes are bridged into VideoJob.video_clips via
+    SceneAssetVideoClipBuilderService - TimelinePipelineStage requires
+    video_clips, and nothing else in the pipeline ever populated it.
     """
 
     USER_INPUT_KEY = "asset_decisions"
@@ -59,9 +66,17 @@ class AssetPipelineStage(BasePipelineStage):
         self,
         *,
         asset_workflow_service: SceneAssetWorkflowService,
+        video_clip_builder_service: (
+            SceneAssetVideoClipBuilderService | None
+        ) = None,
     ) -> None:
         self._asset_workflow_service = (
             asset_workflow_service
+        )
+
+        self._video_clip_builder_service = (
+            video_clip_builder_service
+            or SceneAssetVideoClipBuilderService()
         )
 
     @property
@@ -200,6 +215,13 @@ class AssetPipelineStage(BasePipelineStage):
                 errors=[],
                 metadata=metadata,
             )
+
+        context.job.video_clips = (
+            self._video_clip_builder_service.build_clips(
+                scenes=scenes,
+                states=states,
+            )
+        )
 
         return StageResult(
             stage=self.stage_name,

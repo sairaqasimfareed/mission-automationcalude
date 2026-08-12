@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from src.models.asset_state import (
+    AssetCandidate,
     AssetWorkflowStatus,
     SceneAssetState,
 )
@@ -8,6 +9,7 @@ from src.models.enums import (
     JobStatus,
     WorkflowStage,
 )
+from src.models.media_strategy import SceneSourceType
 from src.models.research import (
     ResearchResult,
     ResearchStatus,
@@ -767,6 +769,86 @@ def test_metadata_counts_multiple_statuses() -> None:
             "waiting_for_manual_upload": 1,
         }
     )
+
+
+def test_ready_states_with_candidates_build_video_clips() -> None:
+    """
+    Regression test: resolved (READY, with a selected candidate) scene
+    asset states must be bridged into VideoJob.video_clips, or
+    TimelinePipelineStage fails with "requires ready video clips" -
+    nothing else in the pipeline ever populated it, for any source
+    type, before SceneAssetVideoClipBuilderService was wired in here.
+    """
+
+    job = build_job()
+
+    first_candidate = AssetCandidate(
+        title="Manual upload for scene 1",
+        source_type=SceneSourceType.MANUAL_UPLOAD,
+        file_path="/data/manual_uploads/scene_1.mp4",
+        approved=True,
+    )
+
+    second_candidate = AssetCandidate(
+        title="Manual upload for scene 2",
+        source_type=SceneSourceType.MANUAL_UPLOAD,
+        file_path="/data/manual_uploads/scene_2.mp4",
+        approved=True,
+    )
+
+    first_state = build_state(
+        scene_number=1,
+        status=AssetWorkflowStatus.READY,
+    )
+    first_state.selected_candidate = first_candidate
+    first_state.selected_source = SceneSourceType.MANUAL_UPLOAD
+
+    second_state = build_state(
+        scene_number=2,
+        status=AssetWorkflowStatus.READY,
+    )
+    second_state.selected_candidate = second_candidate
+    second_state.selected_source = SceneSourceType.MANUAL_UPLOAD
+
+    service = SyntheticAssetWorkflowService(
+        states_by_scene_number={
+            1: first_state,
+            2: second_state,
+        },
+    )
+
+    stage = AssetPipelineStage(
+        asset_workflow_service=service,
+    )
+
+    result = stage.execute(build_context(job))
+
+    assert result.status == PipelineStageStatus.COMPLETED
+
+    assert len(job.video_clips) == 2
+
+    clips_by_scene = {clip.scene_number: clip for clip in job.video_clips}
+
+    assert clips_by_scene[1].local_file == "/data/manual_uploads/scene_1.mp4"
+    assert clips_by_scene[2].local_file == "/data/manual_uploads/scene_2.mp4"
+    assert clips_by_scene[1].source_type == SceneSourceType.MANUAL_UPLOAD
+
+
+def test_waiting_states_do_not_build_video_clips() -> None:
+    job = build_job()
+
+    service = build_service(
+        first_status=AssetWorkflowStatus.WAITING_FOR_MANUAL_UPLOAD,
+    )
+
+    stage = AssetPipelineStage(
+        asset_workflow_service=service,
+    )
+
+    result = stage.execute(build_context(job))
+
+    assert result.status == PipelineStageStatus.WAITING_FOR_USER
+    assert job.video_clips == []
 
 
 def test_service_exception_propagates() -> None:

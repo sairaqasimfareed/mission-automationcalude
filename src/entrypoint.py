@@ -35,6 +35,7 @@ def build_production_runtime(
     asset_workflow_service: SceneAssetWorkflowService | None = None,
     genre_timeline_service: GenreTimelinePipelineService | None = None,
     local_asset_directories: list[str | Path] | None = None,
+    checkpoint_storage_root: str | Path | None = None,
     settings: Settings | None = None,
     secret_store: SecretStore | None = None,
 ) -> ProductionApplicationRuntime:
@@ -53,6 +54,14 @@ def build_production_runtime(
     SceneAssetAndTimelineInfrastructureFactory when omitted. Pass them
     explicitly to use different local asset directories or custom
     asset/stock providers.
+
+    checkpoint_storage_root overrides RuntimeConfiguration's own value,
+    which RuntimeConfigurationLoader always loads as None today (no
+    environment-driven construction path exists for it yet). Without
+    checkpoint persistence, a job that pauses for asset decisions
+    (WAITING_FOR_USER) cannot be resumed - re-running execute() from
+    scratch re-runs already-completed stages like voice generation
+    against a job that already has voice tracks, which fails.
     """
 
     configuration = RuntimeConfigurationLoader(
@@ -60,11 +69,17 @@ def build_production_runtime(
         secret_store=secret_store,
     ).load()
 
+    effective_checkpoint_storage_root = (
+        Path(checkpoint_storage_root)
+        if checkpoint_storage_root is not None
+        else configuration.checkpoint_storage_root
+    )
+
     RuntimeConfigurationValidator(
         secret_store=configuration.secret_store,
         provider_profiles=configuration.provider_profiles,
         voice_profiles=configuration.voice_profiles,
-        checkpoint_storage_root=configuration.checkpoint_storage_root,
+        checkpoint_storage_root=effective_checkpoint_storage_root,
     ).validate()
 
     if asset_workflow_service is None or genre_timeline_service is None:
@@ -93,7 +108,7 @@ def build_production_runtime(
         asset_workflow_service=asset_workflow_service,
         genre_timeline_service=genre_timeline_service,
         advanced_settings=configuration.advanced_settings,
-        checkpoint_storage_root=configuration.checkpoint_storage_root,
+        checkpoint_storage_root=effective_checkpoint_storage_root,
     ).build()
 
     validation_result = ProviderStartupValidator(
@@ -115,6 +130,7 @@ def build_production_runtime(
 def main(
     *,
     local_asset_directories: list[str | Path] | None = None,
+    checkpoint_storage_root: str | Path | None = None,
     settings: Settings | None = None,
     secret_store: SecretStore | None = None,
 ) -> int:
@@ -125,6 +141,7 @@ def main(
     try:
         runtime = build_production_runtime(
             local_asset_directories=local_asset_directories,
+            checkpoint_storage_root=checkpoint_storage_root,
             settings=settings,
             secret_store=secret_store,
         )

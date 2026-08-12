@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from src.models.asset_state import (
+    AssetCandidate,
     AssetWorkflowStatus,
     SceneAssetState,
 )
@@ -183,12 +184,25 @@ class SyntheticReadyAssetService(
             scene.scene_number
         )
 
-        return SceneAssetState.model_construct(
+        state = SceneAssetState.model_construct(
             scene_number=scene.scene_number,
             status=AssetWorkflowStatus.READY,
             warnings=[],
             errors=[],
         )
+
+        state.selected_source = SceneSourceType.MANUAL_UPLOAD
+        state.selected_candidate = AssetCandidate(
+            title=f"Synthetic asset for scene {scene.scene_number}",
+            source_type=SceneSourceType.MANUAL_UPLOAD,
+            file_path=(
+                "assets/videos/manual/"
+                f"scene_{scene.scene_number:03d}.mp4"
+            ),
+            approved=True,
+        )
+
+        return state
 
 
 class SyntheticWaitingAssetService(
