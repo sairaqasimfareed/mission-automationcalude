@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 from src.models.animation_execution import (
     AnimationExecution,
 )
@@ -864,12 +867,55 @@ class VideoFilterTranslationService:
 
         return translation
 
-    @staticmethod
+    # Per-platform fallback fonts for drawtext, tried in order. Windows
+    # FFmpeg builds commonly ship without fontconfig support at all, and
+    # even fontconfig-enabled builds fail without a configured
+    # fonts.conf (both observed running this app's own render on a
+    # stock Windows machine) - so drawtext must never rely on FFmpeg's
+    # own font=<name> resolution. Pointing fontfile= at a font that is
+    # virtually guaranteed present avoids that dependency entirely.
+    # Falling back to no fontfile (current historical behavior) if none
+    # of these exist keeps this change strictly additive - it can never
+    # make an already-working render fail.
+    _WINDOWS_FONT_CANDIDATES = (
+        r"C:\Windows\Fonts\arial.ttf",
+        r"C:\Windows\Fonts\segoeui.ttf",
+    )
+
+    _LINUX_FONT_CANDIDATES = (
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    )
+
+    _MACOS_FONT_CANDIDATES = (
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/System/Library/Fonts/Helvetica.ttc",
+    )
+
+    @classmethod
+    def _resolve_subtitle_font_file(cls) -> str | None:
+        """Return the first existing fallback font, FFmpeg-escaped."""
+
+        if sys.platform.startswith("win"):
+            candidates = cls._WINDOWS_FONT_CANDIDATES
+        elif sys.platform == "darwin":
+            candidates = cls._MACOS_FONT_CANDIDATES
+        else:
+            candidates = cls._LINUX_FONT_CANDIDATES
+
+        for candidate in candidates:
+            if Path(candidate).exists():
+                return candidate.replace("\\", "/").replace(":", r"\:")
+
+        return None
+
+    @classmethod
     def _subtitle_style(
+        cls,
         preset_id: str,
     ) -> dict[str, str]:
         if preset_id == "subtitle.default":
-            return {
+            style = {
                 "fontcolor": "white",
                 "fontsize": "48",
                 "borderw": "2",
@@ -877,9 +923,8 @@ class VideoFilterTranslationService:
                 "x": "(w-text_w)/2",
                 "y": "h-text_h-60",
             }
-
-        if preset_id == "subtitle.cinematic":
-            return {
+        elif preset_id == "subtitle.cinematic":
+            style = {
                 "fontcolor": "white",
                 "fontsize": "54",
                 "borderw": "3",
@@ -887,11 +932,18 @@ class VideoFilterTranslationService:
                 "x": "(w-text_w)/2",
                 "y": "h-text_h-90",
             }
+        else:
+            raise ValueError(
+                "Unsupported FFmpeg subtitle preset: "
+                f"{preset_id}."
+            )
 
-        raise ValueError(
-            "Unsupported FFmpeg subtitle preset: "
-            f"{preset_id}."
-        )
+        font_file = cls._resolve_subtitle_font_file()
+
+        if font_file is not None:
+            style["fontfile"] = f"'{font_file}'"
+
+        return style
 
     @staticmethod
     def _xfade_transition_name(

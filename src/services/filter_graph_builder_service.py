@@ -1289,8 +1289,11 @@ class FilterGraphBuilderService:
         """
         Ensure no transition silently disappears from rendering.
 
-        Timeline-in/out translation is intentionally rejected until
-        it has a dedicated renderer mapping.
+        A cut timeline-in/out transition needs no filter: the video
+        simply starts/ends with no fade or effect applied, exactly
+        like a cut between scenes needs no crossfade. Any other
+        timeline-in/out preset (fade, dissolve, etc.) is rejected
+        until it has a dedicated renderer mapping.
         """
 
         for node in transition_nodes:
@@ -1307,6 +1310,16 @@ class FilterGraphBuilderService:
                     node.payload
                 )
             )
+
+            if (
+                execution.placement
+                in (
+                    TransitionPlacement.TIMELINE_IN,
+                    TransitionPlacement.TIMELINE_OUT,
+                )
+                and execution.is_cut
+            ):
+                continue
 
             if (
                 execution.placement
