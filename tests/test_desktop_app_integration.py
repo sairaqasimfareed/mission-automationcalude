@@ -159,12 +159,12 @@ def test_render_pauses_for_manual_upload_without_local_assets(
 ) -> None:
     """
     The default local-first composition has no local asset library
-    content and no stock-acquisition path wired in, so scenes with no
-    local match pause waiting for a manual upload decision rather than
-    hard-failing. This confirms that pause is normalized into a
+    content, so scenes with no local match pause waiting for a user
+    decision (manual upload or stock search) rather than hard-failing.
+    This confirms that pause is normalized into a
     RenderOrchestrationResult (not an exception, not a hang), surfaced
-    as per-scene upload prompts, and that final export correctly
-    refuses to build before a render actually succeeds.
+    as per-scene choices, and that final export correctly refuses to
+    build before a render actually succeeds.
     """
 
     window = MainWindow()
@@ -267,7 +267,7 @@ def test_manual_upload_resolves_asset_stage_and_completes_render(
     for scene_number in waiting_scene_numbers:
         window._detail_view._manual_upload_paths[scene_number] = manual_upload_file
 
-    window._detail_view._handle_submit_manual_uploads()
+    window._detail_view._handle_submit_asset_decisions()
 
     render_result = window._job_store.get_render_result(job.id)
 
@@ -277,3 +277,70 @@ def test_manual_upload_resolves_asset_stage_and_completes_render(
     assert render_result.success is True
     assert render_result.render_result is not None
     assert render_result.render_result.output_file is not None
+
+
+def test_stock_search_and_select_completes_render(
+    qapp: QApplication,
+    no_blocking_dialogs: None,
+) -> None:
+    """
+    Proves the stock-footage path (the other half of "manual upload or
+    search stock" per scene) works end to end through the desktop UI:
+    searching populates SceneAssetState.stock_candidates in place,
+    selecting a result records the choice, and submitting acquires it
+    (SceneAssetWorkflowService.apply_decision()'s new USE_STOCK ->
+    acquire_selected_stock() auto-chain) within the same render call
+    that resumes from the paused asset stage.
+    """
+
+    window = MainWindow()
+
+    window.show_new_project()
+    form = window._form_view
+
+    form._project_name.setText("Deep Sea Documentary")
+    form._channel_name.setText("Ocean Channel")
+    form._topic.setText("Deep sea creatures")
+    form._video_type.setText("long-form documentary")
+    form._niche.setText("ocean-life")
+    form._duration_seconds.setValue(600)
+
+    form._handle_create_clicked()
+
+    job = window._job_store.list_all()[0]
+    window._open_project(job.id)
+
+    window._detail_view._handle_run_research()
+    window._detail_view._handle_run_script()
+    window._detail_view._handle_run_originality()
+    window._detail_view._handle_plan_scenes()
+
+    window._detail_view._handle_run_render()
+
+    waiting_scene_numbers = [
+        state.scene_number
+        for state in job.scene_asset_states
+        if state.requires_user_decision
+    ]
+
+    assert waiting_scene_numbers
+
+    for scene_number in waiting_scene_numbers:
+        window._detail_view._handle_search_stock(scene_number, "")
+
+    for scene_number in waiting_scene_numbers:
+        state = window._detail_view._scene_asset_state(job, scene_number)
+
+        assert state is not None
+        assert state.stock_candidates
+
+        window._detail_view._handle_select_stock_candidate(scene_number, 0)
+
+    window._detail_view._handle_submit_asset_decisions()
+
+    render_result = window._job_store.get_render_result(job.id)
+
+    assert render_result is not None
+    assert render_result.success is True
+    assert job.video_clips
+    assert all(clip.source_type.value == "stock_footage" for clip in job.video_clips)

@@ -3,6 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from src.models.asset_index import AssetIndex
+from src.providers.dry_run_stock_download_opener import (
+    dry_run_stock_download_opener,
+)
+from src.providers.stock_footage_provider import StockFootageProvider
 from src.services.asset_decision_service import AssetDecisionService
 from src.services.asset_manager import AssetManager
 from src.services.asset_search_service import AssetSearchService
@@ -24,8 +28,14 @@ from src.services.local_asset_library import LocalAssetLibrary
 from src.services.local_asset_search_service import LocalAssetSearchService
 from src.services.manual_upload_service import ManualUploadService
 from src.services.scene_asset_workflow_service import SceneAssetWorkflowService
+from src.services.stock_acquisition_service import StockAcquisitionService
+from src.services.stock_asset_storage_service import StockAssetStorageService
+from src.services.stock_download_service import StockDownloadService
+from src.services.visual_asset_router import VisualAssetRouter
 
 DEFAULT_MANUAL_UPLOAD_STORAGE_ROOT = Path("data/manual_uploads")
+DEFAULT_STOCK_STORAGE_ROOT = Path("data/stock_footage")
+DEFAULT_STOCK_DOWNLOAD_TEMPORARY_DIRECTORY = Path("data/stock_footage/tmp")
 
 
 class SceneAssetAndTimelineInfrastructureFactory:
@@ -38,13 +48,13 @@ class SceneAssetAndTimelineInfrastructureFactory:
     local infrastructure - asset library directories, search/stock/
     manual-upload providers - that varies per deployment. This factory
     supplies the local-first, dry-run-by-default composition: a local
-    asset library over the given directories, dry-run stock search
-    (AssetSearchService's own default), and a real ManualUploadService
-    backed by local disk storage - the only visual asset source that
-    can actually complete a render today, since acquiring a selected
-    stock candidate requires a VisualAssetRouter/StockFootageProvider
-    chain with real HTTP downloads and no dry-run implementation
-    exists yet, so visual_asset_router stays unset.
+    asset library over the given directories, a real ManualUploadService
+    backed by local disk storage, and a real stock-acquisition chain
+    (VisualAssetRouter -> StockFootageProvider -> StockAcquisitionService)
+    using dry-run stock search (AssetSearchService's own default) and a
+    dry-run download opener - no real stock-provider API key exists in
+    this codebase yet, so acquisition never makes a real HTTP request,
+    matching every other dry-run behavior in the application.
     """
 
     def __init__(
@@ -52,9 +62,15 @@ class SceneAssetAndTimelineInfrastructureFactory:
         *,
         local_asset_directories: list[str | Path] | None = None,
         manual_upload_storage_root: str | Path = (DEFAULT_MANUAL_UPLOAD_STORAGE_ROOT),
+        stock_storage_root: str | Path = DEFAULT_STOCK_STORAGE_ROOT,
+        stock_download_temporary_directory: str | Path = (
+            DEFAULT_STOCK_DOWNLOAD_TEMPORARY_DIRECTORY
+        ),
     ) -> None:
         self._local_asset_directories: list[str | Path] = local_asset_directories or []
         self._manual_upload_storage_root = manual_upload_storage_root
+        self._stock_storage_root = stock_storage_root
+        self._stock_download_temporary_directory = stock_download_temporary_directory
 
     def build_scene_asset_workflow_service(self) -> SceneAssetWorkflowService:
         local_library = LocalAssetLibrary(
@@ -68,13 +84,36 @@ class SceneAssetAndTimelineInfrastructureFactory:
             ),
         )
 
+        asset_search_service = AssetSearchService()
+
+        visual_asset_router = VisualAssetRouter(
+            providers=[
+                StockFootageProvider(
+                    asset_search_service=asset_search_service,
+                    stock_acquisition_service=StockAcquisitionService(
+                        download_service=StockDownloadService(
+                            temporary_directory=(
+                                self._stock_download_temporary_directory
+                            ),
+                            opener=dry_run_stock_download_opener,
+                        ),
+                        storage_service=StockAssetStorageService(
+                            storage_root=self._stock_storage_root,
+                            asset_index=AssetIndex(),
+                        ),
+                    ),
+                ),
+            ],
+        )
+
         return SceneAssetWorkflowService(
             asset_manager=AssetManager(
                 LocalAssetSearchService(local_library),
             ),
             decision_service=AssetDecisionService(),
-            asset_search_service=AssetSearchService(),
+            asset_search_service=asset_search_service,
             manual_upload_service=manual_upload_service,
+            visual_asset_router=visual_asset_router,
         )
 
     def build_genre_timeline_pipeline_service(

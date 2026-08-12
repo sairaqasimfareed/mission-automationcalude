@@ -28,6 +28,9 @@ from src.services.runtime_configuration_loader import (
 from src.services.runtime_configuration_validator import (
     RuntimeConfigurationValidator,
 )
+from src.services.scene_asset_workflow_service import (
+    SceneAssetWorkflowService,
+)
 from src.services.seo.seo_description_generation_service import (
     SEODescriptionGenerationService,
 )
@@ -117,6 +120,21 @@ def get_render_runtime_factory() -> ProjectRenderRuntimeFactory:
     """Return the shared per-project render runtime factory."""
 
     return get_production_runtime().application.render_runtime_factory
+
+
+@lru_cache
+def get_asset_workflow_service() -> SceneAssetWorkflowService:
+    """
+    Return the shared scene asset workflow service.
+
+    Lets the UI call search_stock() directly against an in-memory
+    SceneAssetState (already populated by an earlier render attempt)
+    without a full render execute() round trip - only submitting the
+    final decision (manual upload or a selected stock candidate) goes
+    through execute()'s user_input.
+    """
+
+    return get_production_runtime().asset_workflow_service
 
 
 @lru_cache

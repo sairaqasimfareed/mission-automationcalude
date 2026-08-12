@@ -51,6 +51,7 @@ class MainWindow(QMainWindow):
             job_store=self._job_store,
             content_pipeline=services.get_content_pipeline(),
             render_runtime_factory=services.get_render_runtime_factory(),
+            asset_workflow_service=services.get_asset_workflow_service(),
             final_export_service=services.get_final_export_service(),
             seo_package_service=services.get_seo_package_service(),
             thumbnail_package_service=services.get_thumbnail_package_service(),

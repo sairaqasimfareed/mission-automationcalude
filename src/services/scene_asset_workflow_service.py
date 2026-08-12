@@ -28,7 +28,6 @@ from src.services.asset_search_service import (
 )
 from src.services.manual_upload_service import (
     ManualUploadService,
-    
 )
 from src.services.visual_asset_router import (
     VisualAssetRouter,
@@ -164,6 +163,32 @@ class SceneAssetWorkflowService:
             return self.search_stock(
                 scene=scene,
                 state=updated_state,
+            )
+
+        if (
+            decision == AssetUserDecision.USE_STOCK
+            and updated_state.selected_source
+            == SceneSourceType.STOCK_FOOTAGE
+            and updated_state.selected_candidate is not None
+            and updated_state.selected_candidate.file_path is None
+        ):
+            # _select_candidate() only approves the chosen candidate;
+            # it never downloads it. Chaining straight into
+            # acquire_selected_stock() here means a UI only needs one
+            # "select this candidate" round trip, not a separate
+            # explicit acquisition step, matching how manual upload is
+            # also a single round trip.
+            scene.source_type = SceneSourceType.STOCK_FOOTAGE
+            scene.stock_query = (
+                scene.stock_query
+                or updated_state.stock_search_query
+                or scene.visual_prompt
+            )
+
+            self.acquire_selected_stock(
+                scene=scene,
+                state=updated_state,
+                project_id=project_id or "",
             )
 
         return updated_state

@@ -19,6 +19,10 @@ from src.models.scene import (
     Scene,
     SceneStatus,
 )
+from src.providers.dry_run_stock_download_opener import (
+    dry_run_stock_download_opener,
+)
+from src.providers.stock_footage_provider import StockFootageProvider
 from src.services.asset_decision_service import (
     AssetDecisionService,
 )
@@ -38,10 +42,14 @@ from src.services.manual_upload_service import (
 from src.services.scene_asset_workflow_service import (
     SceneAssetWorkflowService,
 )
+from src.services.stock_acquisition_service import StockAcquisitionService
+from src.services.stock_asset_storage_service import StockAssetStorageService
+from src.services.stock_download_service import StockDownloadService
 from src.services.stock_search_service import (
     DryRunStockProvider,
     StockSearchService,
 )
+from src.services.visual_asset_router import VisualAssetRouter
 
 
 def build_asset_search_service() -> AssetSearchService:
@@ -224,27 +232,40 @@ assert (
 )
 
 
-stock_ready_state = (
+stock_selected_state = (
     legacy_workflow.apply_decision(
         scene=missing_scene,
         state=stock_state,
         decision=AssetUserDecision.USE_STOCK,
         selected_candidate_index=0,
+        project_id="legacy-project",
     )
 )
 
+# apply_decision() now auto-chains a selected stock candidate straight
+# into acquire_selected_stock() (matching the single-round-trip manual
+# upload flow), instead of leaving it approved-but-never-downloaded.
+# legacy_workflow has no visual_asset_router configured, so
+# acquisition correctly fails and surfaces a recoverable failure -
+# this is more honest than the old behavior, which reported READY for
+# a candidate with no local file at all.
 assert (
-    stock_ready_state.status
-    == AssetWorkflowStatus.READY
+    stock_selected_state.status
+    == AssetWorkflowStatus.WAITING_FOR_RECOVERY_DECISION
 )
+assert stock_selected_state.active_failure is not None
 assert (
-    stock_ready_state.selected_source
+    stock_selected_state.selected_source
     == SceneSourceType.STOCK_FOOTAGE
 )
-assert stock_ready_state.selected_candidate is not None
+assert stock_selected_state.selected_candidate is not None
 assert (
-    stock_ready_state.selected_candidate.approved
+    stock_selected_state.selected_candidate.approved
     is True
+)
+assert (
+    stock_selected_state.selected_candidate.file_path
+    is None
 )
 
 
@@ -411,6 +432,94 @@ with TemporaryDirectory() as temporary_directory:
         == AssetFailureReason
         .INVALID_MANUAL_UPLOAD
     )
+
+
+# Verify production stock acquisition integration: apply_decision()'s
+# USE_STOCK auto-chain into acquire_selected_stock(), through the same
+# public API a UI drives, not a direct acquire_selected_stock() call.
+with TemporaryDirectory() as stock_temporary_directory:
+    stock_root = Path(stock_temporary_directory)
+
+    stock_asset_index = AssetIndex()
+
+    stock_router = VisualAssetRouter(
+        providers=[
+            StockFootageProvider(
+                asset_search_service=asset_search_service,
+                stock_acquisition_service=StockAcquisitionService(
+                    download_service=StockDownloadService(
+                        temporary_directory=(stock_root / "downloads"),
+                        opener=dry_run_stock_download_opener,
+                    ),
+                    storage_service=StockAssetStorageService(
+                        storage_root=(stock_root / "storage"),
+                        asset_index=stock_asset_index,
+                    ),
+                ),
+            ),
+        ],
+    )
+
+    stock_integrated_workflow = SceneAssetWorkflowService(
+        asset_manager=AssetManager(
+            LocalAssetSearchService(AssetIndex()),
+        ),
+        decision_service=AssetDecisionService(),
+        asset_search_service=asset_search_service,
+        visual_asset_router=stock_router,
+    )
+
+    stock_integration_scene = Scene(
+        scene_number=3,
+        title="Coral Reef",
+        narration="The camera glides over a coral reef.",
+        visual_prompt="Vibrant coral reef teeming with fish",
+        estimated_duration_seconds=8,
+        status=SceneStatus.READY,
+    )
+
+    stock_integration_state = stock_integrated_workflow.start(
+        stock_integration_scene,
+    )
+
+    stock_integration_state = stock_integrated_workflow.apply_decision(
+        scene=stock_integration_scene,
+        state=stock_integration_state,
+        decision=AssetUserDecision.DECLINE_MANUAL_UPLOAD,
+    )
+
+    assert stock_integration_state.stock_candidates
+
+    stock_integration_ready_state = stock_integrated_workflow.apply_decision(
+        scene=stock_integration_scene,
+        state=stock_integration_state,
+        decision=AssetUserDecision.USE_STOCK,
+        selected_candidate_index=0,
+        project_id="coral-project",
+    )
+
+    print(
+        "Stock integration status:",
+        stock_integration_ready_state.status,
+    )
+
+    assert stock_integration_ready_state.status == AssetWorkflowStatus.READY
+    assert (
+        stock_integration_ready_state.selected_source
+        == SceneSourceType.STOCK_FOOTAGE
+    )
+    assert stock_integration_ready_state.selected_candidate is not None
+    assert (
+        stock_integration_ready_state.selected_candidate.file_path is not None
+    )
+    assert Path(
+        stock_integration_ready_state.selected_candidate.file_path
+    ).exists()
+    assert (
+        stock_integration_scene.source_type == SceneSourceType.STOCK_FOOTAGE
+    )
+    assert stock_integration_scene.selected_asset_path is not None
+    assert len(stock_asset_index.assets) == 1
 
 
 class FailingAssetSearchService(

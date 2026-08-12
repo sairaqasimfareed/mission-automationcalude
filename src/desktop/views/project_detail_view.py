@@ -15,7 +15,9 @@ from PySide6.QtWidgets import (
 )
 
 from src.desktop.job_store import InMemoryJobStore
+from src.models.asset_state import SceneAssetState
 from src.models.enums import WorkflowStage
+from src.models.scene import Scene
 from src.models.video_job import VideoJob
 from src.services.content_pipeline import ContentPipeline
 from src.services.final_export.final_export_service import FinalExportService
@@ -24,6 +26,9 @@ from src.services.genre_profile_registry_service import (
 )
 from src.services.project_render_runtime_factory import (
     ProjectRenderRuntimeFactory,
+)
+from src.services.scene_asset_workflow_service import (
+    SceneAssetWorkflowService,
 )
 from src.services.seo.seo_context_builder import SEOContextBuilder
 from src.services.seo.seo_package_service import SEOPackageService
@@ -61,18 +66,21 @@ class ProjectDetailView(QWidget):
 
     Render runs in dry-run mode. When a scene has no local asset match,
     the asset stage pauses (WAITING_FOR_USER) rather than failing
-    outright, and the Render card asks for a manual upload file per
-    scene. Submitting those re-runs render on the same VideoJob with
-    the decisions attached as user_input - checkpoint persistence
+    outright, and the Render card lets the user resolve each scene
+    either by choosing a local file to upload, or by searching stock
+    footage and selecting a result. Stock search runs immediately
+    in-process (SceneAssetWorkflowService.search_stock(), mutating the
+    same SceneAssetState objects already stored on the VideoJob from
+    the paused render) - it does not need a render round trip.
+    Submitting the final per-scene decisions re-runs render on the
+    same VideoJob with them attached as user_input; selecting a stock
+    candidate acquires it (downloads and stores it locally) within
+    that same call. Checkpoint persistence
     (services.get_production_runtime()'s checkpoint_storage_root) lets
-    the retry resume from the asset stage instead of re-running
+    that retry resume from the asset stage instead of re-running
     already-completed stages like voice generation against a job that
-    already has voice tracks. No stock-footage acquisition path is
-    wired in yet (it needs a VisualAssetRouter/StockFootageProvider
-    chain with real HTTP downloads and no dry-run implementation
-    exists), so manual upload is the only way a scene resolves today.
-    Final export only becomes available once a render actually
-    succeeds.
+    already has voice tracks. Final export only becomes available once
+    a render actually succeeds.
     """
 
     def __init__(
@@ -81,6 +89,7 @@ class ProjectDetailView(QWidget):
         job_store: InMemoryJobStore,
         content_pipeline: ContentPipeline,
         render_runtime_factory: ProjectRenderRuntimeFactory,
+        asset_workflow_service: SceneAssetWorkflowService,
         final_export_service: FinalExportService,
         seo_package_service: SEOPackageService,
         thumbnail_package_service: ThumbnailPackageService,
@@ -91,12 +100,14 @@ class ProjectDetailView(QWidget):
         self._job_store = job_store
         self._content_pipeline = content_pipeline
         self._render_runtime_factory = render_runtime_factory
+        self._asset_workflow_service = asset_workflow_service
         self._final_export_service = final_export_service
         self._seo_package_service = seo_package_service
         self._thumbnail_package_service = thumbnail_package_service
         self._on_back = on_back
         self._job_id: UUID | None = None
         self._manual_upload_paths: dict[int, str] = {}
+        self._selected_stock_candidate_index: dict[int, int] = {}
 
         self._outer_layout = QVBoxLayout(self)
 
@@ -112,6 +123,7 @@ class ProjectDetailView(QWidget):
 
         self._job_id = job_id
         self._manual_upload_paths = {}
+        self._selected_stock_candidate_index = {}
         self.refresh()
 
     def refresh(self) -> None:
@@ -383,31 +395,22 @@ class ProjectDetailView(QWidget):
 
         if waiting_scene_numbers:
             note = QLabel(
-                "These scenes need a manual video upload before render "
-                "can continue - no stock-footage source is configured."
+                "These scenes need a visual asset before render can "
+                "continue. For each one, either choose a local file to "
+                "upload, or search stock footage and select a result."
             )
             note.setWordWrap(True)
             layout.addWidget(note)
 
             for scene_number in waiting_scene_numbers:
-                chosen_path = self._manual_upload_paths.get(scene_number)
-
-                scene_label = QLabel(
-                    f"Scene {scene_number}: {chosen_path or 'No file selected'}"
+                self._build_scene_asset_choice(
+                    layout,
+                    job=job,
+                    scene_number=scene_number,
                 )
-                scene_label.setWordWrap(True)
-                layout.addWidget(scene_label)
 
-                choose_button = QPushButton(f"Choose file for scene {scene_number}")
-                choose_button.clicked.connect(
-                    lambda checked=False, n=scene_number: (
-                        self._handle_choose_manual_upload(n)
-                    ),
-                )
-                layout.addWidget(choose_button)
-
-            submit_button = QPushButton("Submit uploads and continue render")
-            submit_button.clicked.connect(self._handle_submit_manual_uploads)
+            submit_button = QPushButton("Submit choices and continue render")
+            submit_button.clicked.connect(self._handle_submit_asset_decisions)
             layout.addWidget(submit_button)
         elif render_result is not None:
             layout.addWidget(
@@ -455,6 +458,78 @@ class ProjectDetailView(QWidget):
             layout.addWidget(QLabel("Requires planned scenes."))
 
         self._content_layout.addWidget(frame)
+
+    def _build_scene_asset_choice(
+        self,
+        layout: QVBoxLayout,
+        *,
+        job: VideoJob,
+        scene_number: int,
+    ) -> None:
+        frame, inner_layout = _card(f"Scene {scene_number}")
+
+        state = self._scene_asset_state(job, scene_number)
+        stock_index = self._selected_stock_candidate_index.get(scene_number)
+        manual_path = self._manual_upload_paths.get(scene_number)
+
+        if (
+            stock_index is not None
+            and state is not None
+            and 0 <= stock_index < len(state.stock_candidates)
+        ):
+            candidate = state.stock_candidates[stock_index]
+            inner_layout.addWidget(
+                QLabel(
+                    f"Selected stock result: {candidate.title} ({candidate.provider})"
+                )
+            )
+        elif manual_path is not None:
+            inner_layout.addWidget(QLabel(f"Manual upload: {manual_path}"))
+        else:
+            inner_layout.addWidget(QLabel("No choice made yet."))
+
+        choose_button = QPushButton("Choose file for manual upload")
+        choose_button.clicked.connect(
+            lambda checked=False, n=scene_number: (
+                self._handle_choose_manual_upload(n)
+            ),
+        )
+        inner_layout.addWidget(choose_button)
+
+        query_input = QLineEdit()
+
+        if state is not None and state.stock_search_query:
+            query_input.setPlaceholderText(state.stock_search_query)
+
+        inner_layout.addWidget(query_input)
+
+        search_button = QPushButton("Search stock footage")
+        search_button.clicked.connect(
+            lambda checked=False, n=scene_number, q=query_input: (
+                self._handle_search_stock(n, q.text())
+            ),
+        )
+        inner_layout.addWidget(search_button)
+
+        if state is not None and state.stock_candidates:
+            for index, candidate in enumerate(state.stock_candidates):
+                candidate_label = QLabel(
+                    f"{index + 1}. {candidate.title} - "
+                    f"{candidate.provider or 'Unknown provider'} "
+                    f"({candidate.license_type or 'unknown license'})"
+                )
+                candidate_label.setWordWrap(True)
+                inner_layout.addWidget(candidate_label)
+
+                select_button = QPushButton(f"Select result {index + 1}")
+                select_button.clicked.connect(
+                    lambda checked=False, n=scene_number, i=index: (
+                        self._handle_select_stock_candidate(n, i)
+                    ),
+                )
+                inner_layout.addWidget(select_button)
+
+        layout.addWidget(frame)
 
     def _build_final_export_card(self, job: VideoJob) -> None:
         frame, layout = _card("Final export")
@@ -630,9 +705,45 @@ class ProjectDetailView(QWidget):
             return
 
         self._manual_upload_paths[scene_number] = file_path
+        self._selected_stock_candidate_index.pop(scene_number, None)
         self.refresh()
 
-    def _handle_submit_manual_uploads(self) -> None:
+    def _handle_search_stock(self, scene_number: int, query_text: str) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        scene = self._scene_by_number(job, scene_number)
+        state = self._scene_asset_state(job, scene_number)
+
+        if scene is None or state is None:
+            return
+
+        cleaned_query = query_text.strip()
+
+        if cleaned_query:
+            scene.stock_query = cleaned_query
+
+        try:
+            self._asset_workflow_service.search_stock(scene=scene, state=state)
+        except (RuntimeError, ValueError) as error:
+            self._record_error(job, f"Stock search failed: {error}")
+
+            return
+
+        self.refresh()
+
+    def _handle_select_stock_candidate(
+        self,
+        scene_number: int,
+        candidate_index: int,
+    ) -> None:
+        self._selected_stock_candidate_index[scene_number] = candidate_index
+        self._manual_upload_paths.pop(scene_number, None)
+        self.refresh()
+
+    def _handle_submit_asset_decisions(self) -> None:
         job = self._current_job()
 
         if job is None:
@@ -648,26 +759,42 @@ class ProjectDetailView(QWidget):
             scene_number
             for scene_number in waiting_scene_numbers
             if scene_number not in self._manual_upload_paths
+            and scene_number not in self._selected_stock_candidate_index
         ]
 
         if missing_scene_numbers:
             self._record_error(
                 job,
-                "Choose a file for every scene before submitting: "
+                "Choose a file or select stock footage for every scene "
+                "before submitting: "
                 + ", ".join(str(number) for number in missing_scene_numbers),
             )
 
             return
 
-        asset_decisions = [
-            {
-                "scene_number": scene_number,
-                "decision": "manual_upload",
-                "manual_upload_path": self._manual_upload_paths[scene_number],
-                "project_id": job.project_name,
-            }
-            for scene_number in waiting_scene_numbers
-        ]
+        asset_decisions: list[dict[str, object]] = []
+
+        for scene_number in waiting_scene_numbers:
+            if scene_number in self._selected_stock_candidate_index:
+                asset_decisions.append(
+                    {
+                        "scene_number": scene_number,
+                        "decision": "use_stock",
+                        "selected_candidate_index": (
+                            self._selected_stock_candidate_index[scene_number]
+                        ),
+                        "project_id": job.project_name,
+                    }
+                )
+            else:
+                asset_decisions.append(
+                    {
+                        "scene_number": scene_number,
+                        "decision": "manual_upload",
+                        "manual_upload_path": (self._manual_upload_paths[scene_number]),
+                        "project_id": job.project_name,
+                    }
+                )
 
         self._execute_render(job, user_input={"asset_decisions": asset_decisions})
 
@@ -736,6 +863,25 @@ class ProjectDetailView(QWidget):
             return None
 
         return self._job_store.get(self._job_id)
+
+    @staticmethod
+    def _scene_by_number(job: VideoJob, scene_number: int) -> Scene | None:
+        for scene in job.scenes:
+            if scene.scene_number == scene_number:
+                return scene
+
+        return None
+
+    @staticmethod
+    def _scene_asset_state(
+        job: VideoJob,
+        scene_number: int,
+    ) -> SceneAssetState | None:
+        for state in job.scene_asset_states:
+            if state.scene_number == scene_number:
+                return state
+
+        return None
 
     def _record_error(self, job: VideoJob, message: str) -> None:
         job.errors.append(message)
