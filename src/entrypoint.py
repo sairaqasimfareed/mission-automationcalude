@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 from src.config.settings import Settings
-from src.services.application_infrastructure_factory import (
-    ApplicationInfrastructureFactory,
-)
 from src.services.genre_timeline_pipeline_service import (
     GenreTimelinePipelineService,
 )
@@ -22,6 +20,9 @@ from src.services.runtime_configuration_loader import (
 from src.services.runtime_configuration_validator import (
     RuntimeConfigurationValidator,
 )
+from src.services.scene_asset_and_timeline_infrastructure_factory import (
+    SceneAssetAndTimelineInfrastructureFactory,
+)
 from src.services.scene_asset_workflow_service import (
     SceneAssetWorkflowService,
 )
@@ -31,8 +32,9 @@ from src.services.startup_diagnostics import StartupDiagnosticsReporter
 
 def build_production_runtime(
     *,
-    asset_workflow_service: SceneAssetWorkflowService,
-    genre_timeline_service: GenreTimelinePipelineService,
+    asset_workflow_service: SceneAssetWorkflowService | None = None,
+    genre_timeline_service: GenreTimelinePipelineService | None = None,
+    local_asset_directories: list[str | Path] | None = None,
     settings: Settings | None = None,
     secret_store: SecretStore | None = None,
 ) -> ProductionApplicationRuntime:
@@ -46,10 +48,11 @@ def build_production_runtime(
     environment fails fast with an actionable error before any
     content generation is attempted.
 
-    asset_workflow_service and genre_timeline_service must still be
-    supplied by the caller: Mission Automation has no
-    environment-variable-driven construction path for local asset
-    infrastructure or genre/timeline wiring yet.
+    asset_workflow_service and genre_timeline_service are built with
+    local-first, dry-run-by-default defaults via
+    SceneAssetAndTimelineInfrastructureFactory when omitted. Pass them
+    explicitly to use different local asset directories or custom
+    asset/stock providers.
     """
 
     configuration = RuntimeConfigurationLoader(
@@ -63,6 +66,23 @@ def build_production_runtime(
         voice_profiles=configuration.voice_profiles,
         checkpoint_storage_root=configuration.checkpoint_storage_root,
     ).validate()
+
+    if asset_workflow_service is None or genre_timeline_service is None:
+        infrastructure_factory = SceneAssetAndTimelineInfrastructureFactory(
+            local_asset_directories=local_asset_directories,
+        )
+
+        if asset_workflow_service is None:
+            asset_workflow_service = (
+                infrastructure_factory.build_scene_asset_workflow_service()
+            )
+
+        if genre_timeline_service is None:
+            genre_timeline_service = (
+                infrastructure_factory.build_genre_timeline_pipeline_service(
+                    genre_registry=configuration.genre_registry,
+                )
+            )
 
     runtime = ProductionApplicationFactory(
         secret_store=configuration.secret_store,
@@ -94,70 +114,36 @@ def build_production_runtime(
 
 def main(
     *,
+    local_asset_directories: list[str | Path] | None = None,
     settings: Settings | None = None,
     secret_store: SecretStore | None = None,
 ) -> int:
     """
-    Run standalone startup composition and report readiness.
-
-    Local asset and genre/timeline infrastructure have no
-    environment-driven construction path yet, so standalone execution
-    cannot complete full composition. This entrypoint runs the parts
-    that are fully environment-driven today - configuration loading,
-    configuration validation, and provider startup validation - and
-    reports the result, rather than crashing on a missing dependency
-    it has no way to supply from the command line.
+    Compose the full production runtime and report readiness.
     """
 
     try:
-        configuration = RuntimeConfigurationLoader(
+        runtime = build_production_runtime(
+            local_asset_directories=local_asset_directories,
             settings=settings,
             secret_store=secret_store,
-        ).load()
-
-        RuntimeConfigurationValidator(
-            secret_store=configuration.secret_store,
-            provider_profiles=configuration.provider_profiles,
-            voice_profiles=configuration.voice_profiles,
-            checkpoint_storage_root=configuration.checkpoint_storage_root,
-        ).validate()
-
-        infrastructure = ApplicationInfrastructureFactory(
-            secret_store=configuration.secret_store,
-        ).build(provider_profiles=configuration.provider_profiles)
-
-        validation_result = ProviderStartupValidator(infrastructure).validate()
-
-        reporter = StartupDiagnosticsReporter()
-
-        report = reporter.build_report(
-            configuration=configuration,
-            validation_result=validation_result,
         )
-
-        reporter.log_report(report)
     except ValueError as exc:
         print(f"Mission Automation startup check failed: {exc}", file=sys.stderr)
 
         return 1
 
+    profiles = runtime.infrastructure.provider_registry.list_all()
+    healthy_ids = [profile.profile_id for profile in profiles if profile.usable]
+    unhealthy_ids = [profile.profile_id for profile in profiles if not profile.usable]
+
     print("Mission Automation startup check passed.")
-    print(f"Dry run: {report.dry_run}")
-    print(f"Healthy LLM providers: {', '.join(report.healthy_provider_profile_ids)}")
+    print(f"Healthy LLM providers: {', '.join(healthy_ids)}")
 
-    if report.unhealthy_provider_profile_ids:
-        print(
-            "Unhealthy LLM providers: "
-            + ", ".join(report.unhealthy_provider_profile_ids)
-        )
+    if unhealthy_ids:
+        print(f"Unhealthy LLM providers: {', '.join(unhealthy_ids)}")
 
-    print(
-        "Note: asset_workflow_service and genre_timeline_service are not "
-        "yet configurable from the environment, so the full application "
-        "runtime cannot be composed from the command line. Use "
-        "build_production_runtime() directly once those services are "
-        "available."
-    )
+    print("Full application runtime composed and ready (execute()/resume()).")
 
     return 0
 
