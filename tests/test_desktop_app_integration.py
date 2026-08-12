@@ -209,20 +209,19 @@ def test_render_pauses_for_manual_upload_without_local_assets(
     assert window._job_store.get_final_export(job.id) is None
 
 
-def test_manual_upload_resolves_asset_stage_and_builds_video_clips(
+def test_manual_upload_resolves_asset_stage_and_completes_render(
     qapp: QApplication,
     no_blocking_dialogs: None,
 ) -> None:
     """
-    Proves the asset-to-timeline bridge (SceneAssetVideoClipBuilderService)
-    actually works end to end: submitting a manual upload for every
-    waiting scene should let the asset stage complete and populate
-    VideoJob.video_clips, which nothing did before this fix - for any
-    source type. The render may still fail later (a separate,
-    pre-existing gap: FFmpeg has no translation for the default
-    timeline-in/out "cut" transition yet), so this does not assert
-    render_result.success - it asserts the asset-resolution gap
-    specifically is closed.
+    Proves every render-pipeline gap closed this session adds up to a
+    genuinely successful render from the desktop UI, not just "gets
+    further than before": the asset-to-timeline bridge
+    (SceneAssetVideoClipBuilderService), the transition.cut no-op fix,
+    and dry-run rendering using the legacy RenderService instead of
+    real FFmpeg (which would otherwise fail trying to read dry-run
+    voice generation's placeholder "dry-run://voice/..." paths as real
+    audio).
     """
 
     window = MainWindow()
@@ -275,6 +274,6 @@ def test_manual_upload_resolves_asset_stage_and_builds_video_clips(
     assert render_result is not None
     assert job.video_clips
     assert len(job.video_clips) == len(waiting_scene_numbers)
-    assert all(
-        "manual upload is requested" not in error for error in render_result.errors
-    )
+    assert render_result.success is True
+    assert render_result.render_result is not None
+    assert render_result.render_result.output_file is not None

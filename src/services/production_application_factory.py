@@ -15,11 +15,11 @@ from src.services.content_pipeline import ContentPipeline
 from src.services.genre_profile_registry_service import (
     GenreProfileRegistryService,
 )
-from src.services.genre_voice_directive_generation_service import (
-    GenreVoiceDirectiveGenerationService,
-)
 from src.services.genre_timeline_pipeline_service import (
     GenreTimelinePipelineService,
+)
+from src.services.genre_voice_directive_generation_service import (
+    GenreVoiceDirectiveGenerationService,
 )
 from src.services.mission_application_service import (
     MissionApplicationService,
@@ -42,6 +42,7 @@ from src.services.project_render_runtime_factory import (
 from src.services.project_specification_job_mapper import (
     ProjectSpecificationJobMapper,
 )
+from src.services.render_service import RenderService
 from src.services.render_workflow_stage_factory import (
     RenderWorkflowStageFactory,
 )
@@ -100,7 +101,7 @@ class ProductionApplicationRuntime:
 
     render_runtime_factory: ProjectRenderRuntimeFactory
 
-    production_render_service: ProductionRenderService
+    production_render_service: ProductionRenderService | None
 
     checkpoint_storage_service: (
         PipelineCheckpointStorageService | None
@@ -232,10 +233,25 @@ class ProductionApplicationFactory:
 
         self._llm_gateway = llm_gateway
 
-        self._production_render_service = (
-            production_render_service
-            or ProductionRenderService()
-        )
+        if production_render_service is not None:
+            self._production_render_service: (
+                ProductionRenderService | None
+            ) = production_render_service
+        elif self._advanced_settings.dry_run:
+            # Dry-run mode already fakes LLM calls and voice
+            # generation, but real FFmpeg rendering was never gated
+            # on it - a real render then tries to encode dry-run
+            # voice generation's placeholder "dry-run://voice/..."
+            # paths as actual audio input and fails. Leaving this
+            # None here means build() uses the legacy dry-run-safe
+            # RenderService instead, matching every other dry-run
+            # behavior in the application. Passing
+            # production_render_service explicitly always overrides
+            # this, for callers that want a real render during an
+            # otherwise dry-run execution.
+            self._production_render_service = None
+        else:
+            self._production_render_service = ProductionRenderService()
 
     @property
     def secret_store(
@@ -300,7 +316,7 @@ class ProductionApplicationFactory:
     @property
     def production_render_service(
         self,
-    ) -> ProductionRenderService:
+    ) -> ProductionRenderService | None:
         return self._production_render_service
 
     def build(
@@ -385,8 +401,23 @@ class ProductionApplicationFactory:
                 genre_timeline_service=(
                     self._genre_timeline_service
                 ),
-                production_render_service=(
-                    self._production_render_service
+                **(
+                    {
+                        "production_render_service": (
+                            self._production_render_service
+                        ),
+                    }
+                    if self._production_render_service
+                    is not None
+                    # RenderWorkflowStageFactory defaults an omitted
+                    # production_render_service to a real
+                    # ProductionRenderService() itself, so a bare None
+                    # here would silently re-enable real FFmpeg
+                    # rendering during dry-run. render_service must be
+                    # passed explicitly instead.
+                    else {
+                        "render_service": RenderService(),
+                    }
                 ),
             )
         )

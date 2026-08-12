@@ -5,6 +5,7 @@ from typing import cast
 
 import pytest
 
+from src.models.advanced_settings import AdvancedSettings
 from src.models.provider_profile import (
     ProviderProfile,
 )
@@ -123,6 +124,7 @@ def _factory(
     production_render_service: (
         ProductionRenderService | None
     ) = None,
+    advanced_settings: AdvancedSettings | None = None,
 ) -> ProductionApplicationFactory:
     """Build one production application factory for composition tests."""
 
@@ -153,6 +155,7 @@ def _factory(
         production_render_service=(
             production_render_service
         ),
+        advanced_settings=advanced_settings,
     )
 
 
@@ -311,6 +314,41 @@ def test_factory_preserves_explicit_production_renderer() -> None:
         .production_render_service
         is renderer
     )
+
+
+def test_dry_run_uses_legacy_render_service_not_real_ffmpeg() -> None:
+    """
+    Regression test: dry-run mode already fakes LLM calls and voice
+    generation, but real FFmpeg rendering was never gated on it - a
+    real render then tries to encode dry-run voice generation's
+    placeholder "dry-run://voice/..." paths as actual audio input and
+    fails. This is a real bug found by exercising a full render end to
+    end in dry-run mode.
+    """
+
+    runtime = _factory(
+        advanced_settings=AdvancedSettings(dry_run=True),
+    ).build()
+
+    assert runtime.production_render_service is None
+
+    assert (
+        runtime.render_stage_factory.production_render_enabled is False
+    )
+
+    assert runtime.render_stage_factory.render_service is not None
+
+
+def test_dry_run_still_honors_an_explicit_production_renderer() -> None:
+    renderer = ProductionRenderService()
+
+    runtime = _factory(
+        advanced_settings=AdvancedSettings(dry_run=True),
+        production_render_service=renderer,
+    ).build()
+
+    assert runtime.production_render_service is renderer
+    assert runtime.render_stage_factory.production_render_enabled is True
 
 
 @pytest.mark.parametrize(

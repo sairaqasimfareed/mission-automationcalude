@@ -16,6 +16,8 @@ renders/
 
 data/
 
+tests/.pytest_checkpoints/
+
 temp/
 
 logs/

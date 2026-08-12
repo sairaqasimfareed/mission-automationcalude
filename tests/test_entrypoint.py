@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import cast
 
 import pytest
@@ -176,3 +177,113 @@ def test_build_production_runtime_default_infrastructure_completes_execute() -> 
     assert result.job.research is not None
     assert result.job.script is not None
     assert result.job.scenes
+
+
+def test_dry_run_render_succeeds_end_to_end_with_manual_upload() -> None:
+    """
+    Proves every render-pipeline gap closed this session actually adds
+    up to a genuinely successful render, not just "gets further than
+    before": composition (SceneAssetAndTimelineInfrastructureFactory),
+    the asset-to-timeline bridge (SceneAssetVideoClipBuilderService),
+    the transition.cut no-op fix, and dry-run rendering using the
+    legacy RenderService instead of real FFmpeg (which would otherwise
+    fail trying to read dry-run voice generation's placeholder
+    "dry-run://voice/..." paths as real audio).
+
+    Mirrors the exact manual round trip a desktop user drives through
+    ProjectDetailView: a first execute() call populates scene asset
+    states and pauses waiting for upload decisions; a second execute()
+    call on the same VideoJob, with those decisions attached as
+    user_input, resumes from the paused stage instead of restarting
+    the whole pipeline.
+    """
+
+    runtime = build_production_runtime(
+        settings=_settings(),
+        checkpoint_storage_root=(
+            Path(__file__).resolve().parent
+            / ".pytest_checkpoints"
+            / "dry_run_render_manual_upload"
+        ),
+    )
+
+    specification = ProjectSpecification(
+        general=GeneralSettings(
+            project_name="Deep Sea Documentary",
+            channel_name="Ocean Channel",
+            topic="Deep sea creatures",
+            video_type="long-form documentary",
+        ),
+        duration=DurationConfig(
+            mode=DurationMode.EXACT,
+            target_duration_seconds=600,
+        ),
+        audience=AudienceSettings(
+            language="English",
+            target_country="United States",
+            target_audience="General audience",
+        ),
+        video=VideoSettings(),
+        visual=VisualSettings(),
+        voice=VoiceSettings(),
+        music=MusicSettings(),
+        providers=ProviderPreferences(),
+        upload=UploadSettings(),
+        packaging=PackagingSettings(),
+        budget=BudgetSettings(),
+        advanced=AdvancedSettings(),
+    )
+
+    job = runtime.application.job_mapper.map(
+        specification,
+        niche="ocean-life",
+    )
+    job = runtime.application.content_pipeline.run(job)
+
+    first_result = runtime.application.render_runtime_factory.build(
+        job=job,
+        genre_id="genre.default",
+    ).execute(job, dry_run=True)
+
+    assert first_result.success is False
+
+    waiting_scene_numbers = [
+        state.scene_number
+        for state in job.scene_asset_states
+        if state.requires_user_decision
+    ]
+
+    assert waiting_scene_numbers
+
+    manual_upload_file = str(
+        Path(__file__).resolve().parent.parent
+        / "assets"
+        / "videos"
+        / "manual"
+        / "scene_001.mp4"
+    )
+
+    asset_decisions = [
+        {
+            "scene_number": scene_number,
+            "decision": "manual_upload",
+            "manual_upload_path": manual_upload_file,
+            "project_id": "deep-sea-documentary",
+        }
+        for scene_number in waiting_scene_numbers
+    ]
+
+    second_result = runtime.application.render_runtime_factory.build(
+        job=job,
+        genre_id="genre.default",
+    ).execute(
+        job,
+        dry_run=True,
+        user_input={"asset_decisions": asset_decisions},
+    )
+
+    assert second_result.success is True
+    assert second_result.status.value == "completed"
+    assert second_result.render_result is not None
+    assert second_result.render_result.success is True
+    assert second_result.render_result.output_file is not None
