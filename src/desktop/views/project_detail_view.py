@@ -14,7 +14,9 @@ from PySide6.QtWidgets import (
 )
 
 from src.desktop.job_store import InMemoryJobStore
+from src.models.enums import WorkflowStage
 from src.models.video_job import VideoJob
+from src.services.content_pipeline import ContentPipeline
 from src.services.genre_profile_registry_service import (
     GenreProfileRegistryService,
 )
@@ -44,18 +46,28 @@ class ProjectDetailView(QWidget):
     """
     Project detail view.
 
+    Content generation (research, script, originality review, scene
+    planning) runs as four separate, explicitly triggered steps rather
+    than one atomic call, so current stage and progress stay genuinely
+    observable (Sprint 26) instead of hidden inside ContentPipeline.run().
+    Each step delegates to the same ContentPipeline sub-components
+    ContentPipeline.run() itself sequences, so no business logic is
+    duplicated here - only the UI-facing sequencing.
+
     Note: render/final export are not reachable from this UI yet -
     ProjectRenderRuntimeFactory requires asset_workflow_service/
     genre_timeline_service, which have no automatic construction path
-    (see MissionApplicationService and src/entrypoint.py). This view
-    covers research, script, SEO package, and thumbnail generation
-    only.
+    (see MissionApplicationService and src/entrypoint.py). Voice
+    state, asset candidates, manual upload, waiting-job resume, and
+    retry controls all live inside that unreachable render pipeline,
+    so they are intentionally not built here.
     """
 
     def __init__(
         self,
         *,
         job_store: InMemoryJobStore,
+        content_pipeline: ContentPipeline,
         seo_package_service: SEOPackageService,
         thumbnail_package_service: ThumbnailPackageService,
         on_back: Callable[[], None],
@@ -63,6 +75,7 @@ class ProjectDetailView(QWidget):
         super().__init__()
 
         self._job_store = job_store
+        self._content_pipeline = content_pipeline
         self._seo_package_service = seo_package_service
         self._thumbnail_package_service = thumbnail_package_service
         self._on_back = on_back
@@ -109,21 +122,21 @@ class ProjectDetailView(QWidget):
 
         self._content_layout.addWidget(QLabel(f"<h2>{job.project_name}</h2>"))
 
-        self._content_layout.addWidget(
-            QLabel(f"Stage: {job.current_stage.value} | " f"Status: {job.status.value}")
-        )
-
         note = QLabel(
             "Render and final export are not yet reachable from this "
-            "app. This page covers research, script, SEO package, "
-            "and thumbnail generation only."
+            "app. This page covers research, script, originality "
+            "review, scene planning, SEO package, and thumbnail "
+            "generation only."
         )
         note.setWordWrap(True)
         self._content_layout.addWidget(note)
 
         self._build_project_card(job)
+        self._build_workflow_card(job)
         self._build_research_card(job)
         self._build_script_card(job)
+        self._build_originality_card(job)
+        self._build_scenes_card(job)
         self._build_seo_card(job)
         self._build_thumbnail_card(job)
 
@@ -133,6 +146,53 @@ class ProjectDetailView(QWidget):
         layout.addWidget(QLabel(f"Topic: {job.topic}"))
         layout.addWidget(QLabel(f"Niche: {job.niche}"))
         layout.addWidget(QLabel(f"Platform: {job.platform.value}"))
+
+        self._content_layout.addWidget(frame)
+
+    def _build_workflow_card(self, job: VideoJob) -> None:
+        frame, layout = _card("Workflow")
+
+        layout.addWidget(
+            QLabel(
+                f"Current stage: {job.current_stage.value} | "
+                f"Status: {job.status.value}"
+            )
+        )
+
+        if job.errors:
+            errors_label = QLabel(
+                "Errors:\n" + "\n".join(f"- {error}" for error in job.errors)
+            )
+            errors_label.setWordWrap(True)
+            errors_label.setStyleSheet("color: #b40000;")
+            layout.addWidget(errors_label)
+
+        if job.warnings:
+            warnings_label = QLabel(
+                "Warnings:\n" + "\n".join(f"- {warning}" for warning in job.warnings)
+            )
+            warnings_label.setWordWrap(True)
+            warnings_label.setStyleSheet("color: #9a6700;")
+            layout.addWidget(warnings_label)
+
+        if job.research is None:
+            button = QPushButton("Run research")
+            button.clicked.connect(self._handle_run_research)
+            layout.addWidget(button)
+        elif job.script is None:
+            button = QPushButton("Run script")
+            button.clicked.connect(self._handle_run_script)
+            layout.addWidget(button)
+        elif job.originality_review is None:
+            button = QPushButton("Run originality review")
+            button.clicked.connect(self._handle_run_originality)
+            layout.addWidget(button)
+        elif not job.scenes:
+            button = QPushButton("Plan scenes")
+            button.clicked.connect(self._handle_plan_scenes)
+            layout.addWidget(button)
+        else:
+            layout.addWidget(QLabel("Content generation steps are complete."))
 
         self._content_layout.addWidget(frame)
 
@@ -147,6 +207,13 @@ class ProjectDetailView(QWidget):
             summary = QLabel(research.research_summary)
             summary.setWordWrap(True)
             layout.addWidget(summary)
+
+            if research.claude_review_notes:
+                notes = QLabel(
+                    "Review notes: " + "; ".join(research.claude_review_notes)
+                )
+                notes.setWordWrap(True)
+                layout.addWidget(notes)
         else:
             layout.addWidget(QLabel("No research yet."))
 
@@ -164,8 +231,60 @@ class ProjectDetailView(QWidget):
             content = QLabel(script.content)
             content.setWordWrap(True)
             layout.addWidget(content)
+
+            if script.claude_review_notes:
+                notes = QLabel("Review notes: " + "; ".join(script.claude_review_notes))
+                notes.setWordWrap(True)
+                layout.addWidget(notes)
         else:
             layout.addWidget(QLabel("No script yet."))
+
+        self._content_layout.addWidget(frame)
+
+    def _build_originality_card(self, job: VideoJob) -> None:
+        frame, layout = _card("Originality review")
+
+        review = job.originality_review
+
+        if review is not None:
+            layout.addWidget(QLabel(f"Status: {review.status.value}"))
+            layout.addWidget(
+                QLabel(
+                    f"Originality: {review.originality_score} | "
+                    f"Human value: {review.human_value_score} | "
+                    f"Hook strength: {review.hook_strength_score}"
+                )
+            )
+
+            if review.strengths:
+                layout.addWidget(QLabel("Strengths: " + ", ".join(review.strengths)))
+
+            if review.weaknesses:
+                layout.addWidget(QLabel("Weaknesses: " + ", ".join(review.weaknesses)))
+
+            if review.recommendations:
+                layout.addWidget(
+                    QLabel("Recommendations: " + ", ".join(review.recommendations))
+                )
+        else:
+            layout.addWidget(QLabel("Not reviewed yet."))
+
+        self._content_layout.addWidget(frame)
+
+    def _build_scenes_card(self, job: VideoJob) -> None:
+        frame, layout = _card(f"Scenes ({len(job.scenes)})")
+
+        if job.scenes:
+            for scene in job.scenes:
+                scene_label = QLabel(
+                    f"#{scene.scene_number} {scene.title} "
+                    f"({scene.estimated_duration_seconds}s): "
+                    f"{scene.narration}"
+                )
+                scene_label.setWordWrap(True)
+                layout.addWidget(scene_label)
+        else:
+            layout.addWidget(QLabel("No scenes planned yet."))
 
         self._content_layout.addWidget(frame)
 
@@ -191,7 +310,7 @@ class ProjectDetailView(QWidget):
             layout.addWidget(
                 QLabel(f"Hashtags: {' '.join(seo_package.hashtags)}"),
             )
-        else:
+        elif job.script is not None and job.script.status.value == "approved":
             layout.addWidget(QLabel("Not generated yet."))
 
             audience_input = QLineEdit("General audience")
@@ -202,6 +321,8 @@ class ProjectDetailView(QWidget):
                 lambda: self._handle_generate_seo(audience_input.text()),
             )
             layout.addWidget(generate_button)
+        else:
+            layout.addWidget(QLabel("Requires an approved script."))
 
         self._content_layout.addWidget(frame)
 
@@ -220,7 +341,7 @@ class ProjectDetailView(QWidget):
                 QLabel(f"Source: {thumbnail.image_source_type.value}"),
             )
             layout.addWidget(QLabel(f"File: {thumbnail.file_path}"))
-        else:
+        elif job.script is not None and job.script.status.value == "approved":
             layout.addWidget(QLabel("Not generated yet."))
 
             audience_input = QLineEdit("General audience")
@@ -231,13 +352,80 @@ class ProjectDetailView(QWidget):
                 lambda: self._handle_generate_thumbnail(audience_input.text()),
             )
             layout.addWidget(generate_button)
+        else:
+            layout.addWidget(QLabel("Requires an approved script."))
 
         self._content_layout.addWidget(frame)
 
-    def _handle_generate_seo(self, target_audience: str) -> None:
-        assert self._job_id is not None
+    def _handle_run_research(self) -> None:
+        job = self._current_job()
 
-        job = self._job_store.get(self._job_id)
+        if job is None:
+            return
+
+        try:
+            research = self._content_pipeline.research_pipeline.run(job.topic)
+        except (RuntimeError, ValueError) as error:
+            self._record_error(job, f"Research generation failed: {error}")
+
+            return
+
+        job.research = research
+        job.current_stage = WorkflowStage.SCRIPT
+        self.refresh()
+
+    def _handle_run_script(self) -> None:
+        job = self._current_job()
+
+        if job is None or job.research is None:
+            return
+
+        try:
+            script = self._content_pipeline.script_pipeline.run(job.research)
+        except (RuntimeError, ValueError) as error:
+            self._record_error(job, f"Script generation failed: {error}")
+
+            return
+
+        job.script = script
+        job.current_stage = WorkflowStage.ORIGINALITY_REVIEW
+        self.refresh()
+
+    def _handle_run_originality(self) -> None:
+        job = self._current_job()
+
+        if job is None or job.script is None:
+            return
+
+        try:
+            review = self._content_pipeline.originality_agent.analyze(job.script)
+        except (RuntimeError, ValueError) as error:
+            self._record_error(job, f"Originality review failed: {error}")
+
+            return
+
+        job.originality_review = review
+        self.refresh()
+
+    def _handle_plan_scenes(self) -> None:
+        job = self._current_job()
+
+        if job is None or job.script is None:
+            return
+
+        try:
+            scenes = self._content_pipeline.scene_planner.plan(job.script)
+        except (RuntimeError, ValueError) as error:
+            self._record_error(job, f"Scene planning failed: {error}")
+
+            return
+
+        job.scenes = scenes
+        job.current_stage = WorkflowStage.QUALITY_CHECK
+        self.refresh()
+
+    def _handle_generate_seo(self, target_audience: str) -> None:
+        job = self._current_job()
 
         if job is None:
             return
@@ -251,17 +439,16 @@ class ProjectDetailView(QWidget):
                 target_audience=target_audience,
             )
         except (RuntimeError, ValueError) as error:
-            QMessageBox.warning(self, "SEO generation failed", str(error))
+            self._record_error(job, f"SEO generation failed: {error}")
 
             return
 
+        assert self._job_id is not None
         self._job_store.set_seo_package(self._job_id, result.package)
         self.refresh()
 
     def _handle_generate_thumbnail(self, target_audience: str) -> None:
-        assert self._job_id is not None
-
-        job = self._job_store.get(self._job_id)
+        job = self._current_job()
 
         if job is None:
             return
@@ -280,9 +467,21 @@ class ProjectDetailView(QWidget):
                 project_id=job.project_name,
             )
         except (RuntimeError, ValueError) as error:
-            QMessageBox.warning(self, "Thumbnail generation failed", str(error))
+            self._record_error(job, f"Thumbnail generation failed: {error}")
 
             return
 
+        assert self._job_id is not None
         self._job_store.set_thumbnail(self._job_id, result.artifact)
+        self.refresh()
+
+    def _current_job(self) -> VideoJob | None:
+        if self._job_id is None:
+            return None
+
+        return self._job_store.get(self._job_id)
+
+    def _record_error(self, job: VideoJob, message: str) -> None:
+        job.errors.append(message)
+        QMessageBox.warning(self, "Step failed", message)
         self.refresh()

@@ -53,7 +53,7 @@ def test_main_window_constructs_and_navigates(
     assert window._stack.currentWidget() is window._dashboard_view
 
 
-def test_create_project_runs_content_pipeline_and_generates_seo(
+def test_create_project_runs_workflow_steps_and_generates_seo(
     qapp: QApplication,
     no_blocking_dialogs: None,
 ) -> None:
@@ -77,12 +77,24 @@ def test_create_project_runs_content_pipeline_and_generates_seo(
 
     job = jobs[0]
 
-    assert job.research is not None
-    assert job.script is not None
+    assert job.research is None
+    assert job.script is None
 
     window._open_project(job.id)
 
     assert window._detail_view._job_id == job.id
+
+    window._detail_view._handle_run_research()
+    assert job.research is not None
+
+    window._detail_view._handle_run_script()
+    assert job.script is not None
+
+    window._detail_view._handle_run_originality()
+    assert job.originality_review is not None
+
+    window._detail_view._handle_plan_scenes()
+    assert job.scenes
 
     window._detail_view._handle_generate_seo("Ocean enthusiasts")
 
@@ -125,6 +137,9 @@ def test_thumbnail_generation_failure_does_not_crash(
 
     job = window._job_store.list_all()[0]
     window._open_project(job.id)
+
+    window._detail_view._handle_run_research()
+    window._detail_view._handle_run_script()
 
     window._detail_view._handle_generate_thumbnail("Ocean enthusiasts")
 

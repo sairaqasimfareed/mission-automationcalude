@@ -30,7 +30,6 @@ from src.models.upload_settings import UploadSettings
 from src.models.video_settings import VideoSettings
 from src.models.visual_settings import VisualSettings
 from src.models.voice_settings import VoiceSettings
-from src.services.content_pipeline import ContentPipeline
 from src.services.genre_profile_registry_service import (
     GenreProfileRegistryService,
 )
@@ -48,25 +47,23 @@ class ProjectFormView(QWidget):
     """
     Project creation form.
 
-    Submitting maps the entered values into a ProjectSpecification,
-    then a VideoJob, then runs ContentPipeline synchronously
-    (research + script + scenes). This is a blocking call on the UI
-    thread - acceptable for a local, single-user desktop foundation;
-    Sprint 28/29 territory is where background execution and progress
-    reporting would belong.
+    Submitting only maps the entered values into a ProjectSpecification
+    and then a VideoJob - it does not run any content generation.
+    Research, script, originality review, and scene planning are each
+    separate, explicitly triggered steps on ProjectDetailView, so
+    current stage and progress are genuinely observable (Sprint 26)
+    rather than hidden inside one atomic call.
     """
 
     def __init__(
         self,
         *,
         job_store: InMemoryJobStore,
-        content_pipeline: ContentPipeline,
         on_created: Callable[[UUID], None],
     ) -> None:
         super().__init__()
 
         self._job_store = job_store
-        self._content_pipeline = content_pipeline
         self._on_created = on_created
         self._job_mapper = ProjectSpecificationJobMapper()
 
@@ -111,7 +108,7 @@ class ProjectFormView(QWidget):
 
         layout.addLayout(form)
 
-        create_button = QPushButton("Create and generate content")
+        create_button = QPushButton("Create project")
         create_button.clicked.connect(self._handle_create_clicked)
         layout.addWidget(create_button)
 
@@ -162,8 +159,6 @@ class ProjectFormView(QWidget):
             )
 
             job = self._job_mapper.map(specification, niche=self._niche.text())
-
-            prepared_job = self._content_pipeline.run(job)
         except (ValidationError, ValueError) as error:
             QMessageBox.warning(
                 self,
@@ -173,5 +168,5 @@ class ProjectFormView(QWidget):
 
             return
 
-        self._job_store.add(prepared_job)
-        self._on_created(prepared_job.id)
+        self._job_store.add(job)
+        self._on_created(job.id)

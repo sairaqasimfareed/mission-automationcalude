@@ -44,12 +44,12 @@ class MainWindow(QMainWindow):
 
         self._form_view = ProjectFormView(
             job_store=self._job_store,
-            content_pipeline=services.get_content_pipeline(),
             on_created=self._open_project,
         )
 
         self._detail_view = ProjectDetailView(
             job_store=self._job_store,
+            content_pipeline=services.get_content_pipeline(),
             seo_package_service=services.get_seo_package_service(),
             thumbnail_package_service=services.get_thumbnail_package_service(),
             on_back=self.show_dashboard,
