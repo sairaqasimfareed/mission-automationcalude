@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QMainWindow, QStackedWidget, QToolBar
 
 from src.desktop import services
 from src.desktop.icons import app_icon, primary_icon
-from src.desktop.job_store import InMemoryJobStore
+from src.desktop.job_store import JobStore
 from src.desktop.views.dashboard_view import DashboardView
 from src.desktop.views.project_detail_view import ProjectDetailView
 from src.desktop.views.project_form_view import ProjectFormView
@@ -22,13 +22,14 @@ class MainWindow(QMainWindow):
 
     Backend/UI boundary: this window and its views depend only on
     src.desktop.services (which wraps ContentPipeline,
-    SEOPackageService, ThumbnailPackageService, and
-    PipelineCheckpointStorageService) and InMemoryJobStore. Nothing
-    here imports FFmpeg, a provider SDK, or other implementation
-    details directly - core services stay unaware a desktop UI exists.
+    SEOPackageService, ThumbnailPackageService,
+    PipelineCheckpointStorageService, and the durable JobStore).
+    Nothing here imports FFmpeg, a provider SDK, or other
+    implementation details directly - core services stay unaware a
+    desktop UI exists.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, job_store: JobStore | None = None) -> None:
         super().__init__()
 
         self.setWindowTitle("Mission Automation")
@@ -36,7 +37,9 @@ class MainWindow(QMainWindow):
         self.resize(1180, 760)
         self.setMinimumSize(900, 600)
 
-        self._job_store = InMemoryJobStore()
+        self._job_store = (
+            job_store if job_store is not None else services.get_job_store()
+        )
 
         self._stack = QStackedWidget()
         self.setCentralWidget(self._stack)

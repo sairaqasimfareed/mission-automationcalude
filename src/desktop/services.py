@@ -3,6 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
+from src.desktop.job_store import JsonJobStore
 from src.entrypoint import build_production_runtime
 from src.providers.dry_run_thumbnail_image_provider import (
     DryRunThumbnailImageProvider,
@@ -56,6 +57,7 @@ CHECKPOINT_STORAGE_ROOT = Path("data/checkpoints")
 THUMBNAIL_STORAGE_ROOT = Path("data/thumbnails")
 FINAL_EXPORT_STORAGE_ROOT = Path("data/final_exports")
 PROVIDER_PROFILE_STORAGE_PATH = Path("data/provider_profiles.json")
+PROJECTS_STORAGE_ROOT = Path("data/projects")
 
 
 @lru_cache
@@ -220,6 +222,20 @@ def get_provider_profile_management_service() -> ProviderProfileManagementServic
         repository=_get_provider_profile_repository(),
         secret_manager=infrastructure.provider_secret_manager,
     )
+
+
+@lru_cache
+def get_job_store() -> JsonJobStore:
+    """
+    Return the shared, durable project store.
+
+    Backed by JSON files under PROJECTS_STORAGE_ROOT rather than
+    InMemoryJobStore's process-lifetime dict, so projects and their
+    downstream artifacts (SEO package, thumbnail, render result,
+    final export package) survive an app restart.
+    """
+
+    return JsonJobStore(storage_root=PROJECTS_STORAGE_ROOT)
 
 
 @lru_cache

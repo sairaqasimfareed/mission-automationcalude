@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.desktop.job_store import InMemoryJobStore
+from src.desktop.job_store import JobStore
 from src.desktop.widgets import button, heading, muted, row, small_muted
 from src.services.pipeline_checkpoint_storage_service import (
     PipelineCheckpointStorageService,
@@ -23,17 +23,16 @@ class DashboardView(QWidget):
     """
     Project dashboard.
 
-    Shows projects created in this app session (from InMemoryJobStore)
-    plus a count of job IDs with at least one persisted render
-    checkpoint (from PipelineCheckpointStorageService). Neither list
-    is a durable project registry - see InMemoryJobStore's docstring
-    for why.
+    Shows every project known to the injected JobStore, plus a count
+    of job IDs with at least one persisted render checkpoint (from
+    PipelineCheckpointStorageService, a separate store scoped to the
+    render stage only).
     """
 
     def __init__(
         self,
         *,
-        job_store: InMemoryJobStore,
+        job_store: JobStore,
         checkpoint_storage: PipelineCheckpointStorageService,
         on_open_project: Callable[[UUID], None],
     ) -> None:

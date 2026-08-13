@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.desktop.job_store import InMemoryJobStore
+from src.desktop.job_store import JobStore
 from src.desktop.widgets import (
     badge,
     button,
@@ -88,7 +88,7 @@ class ProjectDetailView(QWidget):
     def __init__(
         self,
         *,
-        job_store: InMemoryJobStore,
+        job_store: JobStore,
         content_pipeline: ContentPipeline,
         render_runtime_factory: ProjectRenderRuntimeFactory,
         asset_workflow_service: SceneAssetWorkflowService,
@@ -169,6 +169,14 @@ class ProjectDetailView(QWidget):
             self._content_layout.addWidget(muted("Project not found."))
 
             return
+
+        # VideoJob is mutated in place by the handlers below (e.g.
+        # `job.research = research`) rather than replaced, so refresh()
+        # - called after every mutation - is where the store actually
+        # sees the change. InMemoryJobStore.add() is a harmless
+        # reference re-assignment; JsonJobStore.add() is where the
+        # write-through to disk actually happens.
+        self._job_store.add(job)
 
         self._content_layout.addWidget(heading(job.project_name))
 

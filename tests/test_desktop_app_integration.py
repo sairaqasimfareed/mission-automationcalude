@@ -10,6 +10,7 @@ from pathlib import Path  # noqa: E402
 import pytest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
+from src.desktop.job_store import InMemoryJobStore  # noqa: E402
 from src.desktop.main_window import MainWindow  # noqa: E402
 
 # QMessageBox.warning() and QFileDialog.getOpenFileName() both open a
@@ -48,7 +49,7 @@ def test_main_window_constructs_and_navigates(
     qapp: QApplication,
     no_blocking_dialogs: None,
 ) -> None:
-    window = MainWindow()
+    window = MainWindow(job_store=InMemoryJobStore())
 
     window.show_new_project()
     assert window._stack.currentWidget() is window._form_view
@@ -64,7 +65,7 @@ def test_create_project_runs_workflow_steps_and_generates_seo(
     qapp: QApplication,
     no_blocking_dialogs: None,
 ) -> None:
-    window = MainWindow()
+    window = MainWindow(job_store=InMemoryJobStore())
 
     window.show_new_project()
     form = window._form_view
@@ -128,7 +129,7 @@ def test_thumbnail_generation_failure_does_not_crash(
     hanging.
     """
 
-    window = MainWindow()
+    window = MainWindow(job_store=InMemoryJobStore())
 
     window.show_new_project()
     form = window._form_view
@@ -167,7 +168,7 @@ def test_render_pauses_for_manual_upload_without_local_assets(
     build before a render actually succeeds.
     """
 
-    window = MainWindow()
+    window = MainWindow(job_store=InMemoryJobStore())
 
     window.show_new_project()
     form = window._form_view
@@ -224,7 +225,7 @@ def test_manual_upload_resolves_asset_stage_and_completes_render(
     audio).
     """
 
-    window = MainWindow()
+    window = MainWindow(job_store=InMemoryJobStore())
 
     window.show_new_project()
     form = window._form_view
@@ -293,7 +294,7 @@ def test_stock_search_and_select_completes_render(
     that resumes from the paused asset stage.
     """
 
-    window = MainWindow()
+    window = MainWindow(job_store=InMemoryJobStore())
 
     window.show_new_project()
     form = window._form_view

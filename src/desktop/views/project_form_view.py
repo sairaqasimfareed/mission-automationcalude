@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.desktop.job_store import InMemoryJobStore
+from src.desktop.job_store import JobStore
 from src.desktop.widgets import button, card, heading, muted
 from src.models.advanced_settings import AdvancedSettings
 from src.models.audience_settings import AudienceSettings
@@ -60,7 +60,7 @@ class ProjectFormView(QWidget):
     def __init__(
         self,
         *,
-        job_store: InMemoryJobStore,
+        job_store: JobStore,
         on_created: Callable[[UUID], None],
     ) -> None:
         super().__init__()
