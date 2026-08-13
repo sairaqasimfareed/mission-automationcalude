@@ -21,6 +21,12 @@ from src.services.production_application_factory import (
 from src.services.project_render_runtime_factory import (
     ProjectRenderRuntimeFactory,
 )
+from src.services.provider_profile_management_service import (
+    ProviderProfileManagementService,
+)
+from src.services.registry.provider_profile_repository import (
+    JsonProviderProfileRepository,
+)
 from src.services.runtime_configuration_loader import (
     RuntimeConfiguration,
     RuntimeConfigurationLoader,
@@ -31,6 +37,7 @@ from src.services.runtime_configuration_validator import (
 from src.services.scene_asset_workflow_service import (
     SceneAssetWorkflowService,
 )
+from src.services.secrets.keyring_secret_store import KeyringSecretStore
 from src.services.seo.seo_description_generation_service import (
     SEODescriptionGenerationService,
 )
@@ -48,6 +55,7 @@ from src.services.thumbnail.thumbnail_package_service import (
 CHECKPOINT_STORAGE_ROOT = Path("data/checkpoints")
 THUMBNAIL_STORAGE_ROOT = Path("data/thumbnails")
 FINAL_EXPORT_STORAGE_ROOT = Path("data/final_exports")
+PROVIDER_PROFILE_STORAGE_PATH = Path("data/provider_profiles.json")
 
 
 @lru_cache
@@ -94,11 +102,31 @@ def get_production_runtime() -> ProductionApplicationRuntime:
     re-runs already-completed stages (like voice generation) against a
     job that already has voice tracks, which fails - a real bug found
     by exercising the manual-upload path end to end.
+
+    secret_store uses KeyringSecretStore instead of
+    RuntimeConfigurationLoader's InMemorySecretStore default, so
+    provider secrets created through the desktop Provider Manager
+    survive an app restart. Provider profiles saved through Provider
+    Manager are then seeded into the shared provider_registry here,
+    before anything else reads it, so they are usable for real content
+    generation from app launch - not only once the user happens to
+    open the Provider Manager screen.
     """
 
-    return build_production_runtime(
+    runtime = build_production_runtime(
         checkpoint_storage_root=CHECKPOINT_STORAGE_ROOT,
+        secret_store=KeyringSecretStore(),
     )
+
+    for profile in _get_provider_profile_repository().load_all():
+        runtime.infrastructure.provider_registry.register(profile, replace=True)
+
+    return runtime
+
+
+@lru_cache
+def _get_provider_profile_repository() -> JsonProviderProfileRepository:
+    return JsonProviderProfileRepository(PROVIDER_PROFILE_STORAGE_PATH)
 
 
 @lru_cache
@@ -170,6 +198,27 @@ def get_thumbnail_package_service() -> ThumbnailPackageService:
         ),
         image_provider=DryRunThumbnailImageProvider(),
         storage_root=THUMBNAIL_STORAGE_ROOT,
+    )
+
+
+@lru_cache
+def get_provider_profile_management_service() -> ProviderProfileManagementService:
+    """
+    Return the shared provider profile management service.
+
+    Wired to the same provider_registry and provider_secret_manager as
+    the rest of the running application (via get_infrastructure()), so
+    a profile created or edited through Provider Manager is
+    immediately usable for real content generation, not just visible
+    in the management screen.
+    """
+
+    infrastructure = get_infrastructure()
+
+    return ProviderProfileManagementService(
+        registry=infrastructure.provider_registry,
+        repository=_get_provider_profile_repository(),
+        secret_manager=infrastructure.provider_secret_manager,
     )
 
 

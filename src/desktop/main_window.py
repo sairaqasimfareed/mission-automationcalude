@@ -12,6 +12,7 @@ from src.desktop.job_store import InMemoryJobStore
 from src.desktop.views.dashboard_view import DashboardView
 from src.desktop.views.project_detail_view import ProjectDetailView
 from src.desktop.views.project_form_view import ProjectFormView
+from src.desktop.views.provider_manager_view import ProviderManagerView
 from src.desktop.views.settings_view import SettingsView
 
 
@@ -66,11 +67,16 @@ class MainWindow(QMainWindow):
             get_configuration=services.get_runtime_configuration,
         )
 
+        self._provider_manager_view = ProviderManagerView(
+            management_service=services.get_provider_profile_management_service(),
+        )
+
         for view in (
             self._dashboard_view,
             self._form_view,
             self._detail_view,
             self._settings_view,
+            self._provider_manager_view,
         ):
             self._stack.addWidget(view)
 
@@ -92,6 +98,10 @@ class MainWindow(QMainWindow):
         new_project_action.triggered.connect(self.show_new_project)
         toolbar.addAction(new_project_action)
 
+        provider_manager_action = QAction(primary_icon("shield"), "Providers", self)
+        provider_manager_action.triggered.connect(self.show_provider_manager)
+        toolbar.addAction(provider_manager_action)
+
         settings_action = QAction(primary_icon("settings"), "Settings", self)
         settings_action.triggered.connect(self.show_settings)
         toolbar.addAction(settings_action)
@@ -107,6 +117,10 @@ class MainWindow(QMainWindow):
     def show_settings(self) -> None:
         self._settings_view.refresh()
         self._stack.setCurrentWidget(self._settings_view)
+
+    def show_provider_manager(self) -> None:
+        self._provider_manager_view.refresh()
+        self._stack.setCurrentWidget(self._provider_manager_view)
 
     def _open_project(self, job_id: UUID) -> None:
         self._detail_view.set_job(job_id)
