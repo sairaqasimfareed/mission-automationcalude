@@ -52,9 +52,9 @@ class ProjectFormView(QWidget):
     Submitting only maps the entered values into a ProjectSpecification
     and then a VideoJob - it does not run any content generation.
     Research, script, originality review, and scene planning are each
-    separate, explicitly triggered steps on ProjectDetailView, so
-    current stage and progress are genuinely observable (Sprint 26)
-    rather than hidden inside one atomic call.
+    separate, explicitly triggered steps on ContentStudioView (part of
+    ProjectWorkspaceView), so current stage and progress are genuinely
+    observable (Sprint 26) rather than hidden inside one atomic call.
     """
 
     def __init__(

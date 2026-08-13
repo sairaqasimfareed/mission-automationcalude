@@ -10,8 +10,8 @@ from src.desktop import services
 from src.desktop.icons import app_icon, primary_icon
 from src.desktop.job_store import JobStore
 from src.desktop.views.dashboard_view import DashboardView
-from src.desktop.views.project_detail_view import ProjectDetailView
 from src.desktop.views.project_form_view import ProjectFormView
+from src.desktop.views.project_workspace_view import ProjectWorkspaceView
 from src.desktop.views.provider_manager_view import ProviderManagerView
 from src.desktop.views.settings_view import SettingsView
 
@@ -55,7 +55,7 @@ class MainWindow(QMainWindow):
             on_created=self._open_project,
         )
 
-        self._detail_view = ProjectDetailView(
+        self._detail_view = ProjectWorkspaceView(
             job_store=self._job_store,
             content_pipeline=services.get_content_pipeline(),
             render_runtime_factory=services.get_render_runtime_factory(),

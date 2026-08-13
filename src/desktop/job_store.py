@@ -133,9 +133,10 @@ class JsonJobStore:
     updated on every write. This is not just a performance cache: it
     is what keeps get()'s reference semantics identical to
     InMemoryJobStore's. VideoJob is mutated in place throughout
-    ProjectDetailView's handlers (e.g. `job.research = research`)
-    rather than replaced, then persisted via a later add() call (see
-    ProjectDetailView.refresh()) - without the cache, that later
+    ProjectWorkspaceView's workspace handlers (e.g.
+    `job.research = research` in ContentStudioView) rather than
+    replaced, then persisted via a later add() call (see
+    ProjectWorkspaceView.refresh()) - without the cache, that later
     add(job) would be writing a *different* object than the one a
     fresh disk read would hand back, and the mutation would appear to
     work for the rest of the session but silently never be persisted.

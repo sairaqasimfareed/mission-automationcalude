@@ -191,7 +191,7 @@ def test_dry_run_render_succeeds_end_to_end_with_manual_upload() -> None:
     "dry-run://voice/..." paths as real audio).
 
     Mirrors the exact manual round trip a desktop user drives through
-    ProjectDetailView: a first execute() call populates scene asset
+    the Render Workspace: a first execute() call populates scene asset
     states and pauses waiting for upload decisions; a second execute()
     call on the same VideoJob, with those decisions attached as
     user_input, resumes from the paused stage instead of restarting

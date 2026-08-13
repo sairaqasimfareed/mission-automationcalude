@@ -173,9 +173,9 @@ def test_json_store_get_returns_same_instance_within_one_store(tmp_path: Path) -
     """
     get() must return the exact object add() was given, not a fresh
     deserialize, within the lifetime of one store instance -
-    ProjectDetailView mutates the returned VideoJob in place
-    (`job.research = research`) and relies on a later add(job) call
-    persisting that same mutated object.
+    ProjectWorkspaceView's workspace views mutate the returned VideoJob
+    in place (`job.research = research`) and rely on a later add(job)
+    call persisting that same mutated object.
     """
 
     store = JsonJobStore(storage_root=tmp_path)
@@ -253,10 +253,11 @@ def test_json_store_mutate_in_place_then_add_persists_across_restart(
     tmp_path: Path,
 ) -> None:
     """
-    Reproduces ProjectDetailView's exact pattern: fetch the job, mutate
-    it in place, then call add() again (as refresh() does) - a fresh
-    store pointed at the same storage_root afterward must see the
-    mutation, not the original value.
+    Reproduces the workspace views' exact pattern: fetch the job,
+    mutate it in place, then call add() again (as
+    ProjectWorkspaceView.refresh() does) - a fresh store pointed at
+    the same storage_root afterward must see the mutation, not the
+    original value.
     """
 
     first_instance = JsonJobStore(storage_root=tmp_path)

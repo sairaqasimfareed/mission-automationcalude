@@ -19,7 +19,9 @@ from src.desktop.main_window import MainWindow  # noqa: E402
 # module patches them out so a genuine application error, or a test
 # that exercises the manual-upload file picker, can never hang the
 # test suite - discovered the hard way while building this integration
-# test.
+# test. Each workspace view (ContentStudioView, RenderWorkspaceView,
+# PackagingView) imports QMessageBox itself, so each needs its own
+# patch target rather than one shared module.
 
 
 @pytest.fixture(scope="module")
@@ -36,13 +38,35 @@ def no_blocking_dialogs(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
-        "src.desktop.views.project_detail_view.QMessageBox.warning",
+        "src.desktop.views.content_studio_view.QMessageBox.warning",
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
-        "src.desktop.views.project_detail_view.QFileDialog.getOpenFileName",
+        "src.desktop.views.render_workspace_view.QMessageBox.warning",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "src.desktop.views.render_workspace_view.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: ("", ""),
     )
+    monkeypatch.setattr(
+        "src.desktop.views.packaging_view.QMessageBox.warning",
+        lambda *args, **kwargs: None,
+    )
+
+
+def _create_project(window: MainWindow) -> None:
+    window.show_new_project()
+    form = window._form_view
+
+    form._project_name.setText("Deep Sea Documentary")
+    form._channel_name.setText("Ocean Channel")
+    form._topic.setText("Deep sea creatures")
+    form._video_type.setText("long-form documentary")
+    form._niche.setText("ocean-life")
+    form._duration_seconds.setValue(600)
+
+    form._handle_create_clicked()
 
 
 def test_main_window_constructs_and_navigates(
@@ -67,17 +91,7 @@ def test_create_project_runs_workflow_steps_and_generates_seo(
 ) -> None:
     window = MainWindow(job_store=InMemoryJobStore())
 
-    window.show_new_project()
-    form = window._form_view
-
-    form._project_name.setText("Deep Sea Documentary")
-    form._channel_name.setText("Ocean Channel")
-    form._topic.setText("Deep sea creatures")
-    form._video_type.setText("long-form documentary")
-    form._niche.setText("ocean-life")
-    form._duration_seconds.setValue(600)
-
-    form._handle_create_clicked()
+    _create_project(window)
 
     jobs = window._job_store.list_all()
 
@@ -92,19 +106,21 @@ def test_create_project_runs_workflow_steps_and_generates_seo(
 
     assert window._detail_view._job_id == job.id
 
-    window._detail_view._handle_run_research()
+    workspace = window._detail_view
+
+    workspace.content_studio._handle_run_research()
     assert job.research is not None
 
-    window._detail_view._handle_run_script()
+    workspace.content_studio._handle_run_script()
     assert job.script is not None
 
-    window._detail_view._handle_run_originality()
+    workspace.content_studio._handle_run_originality()
     assert job.originality_review is not None
 
-    window._detail_view._handle_plan_scenes()
+    workspace.content_studio._handle_plan_scenes()
     assert job.scenes
 
-    window._detail_view._handle_generate_seo("Ocean enthusiasts")
+    workspace.packaging._handle_generate_seo("Ocean enthusiasts")
 
     seo_package = window._job_store.get_seo_package(job.id)
 
@@ -133,25 +149,16 @@ def test_thumbnail_generation_succeeds_in_dry_run(
 
     window = MainWindow(job_store=InMemoryJobStore())
 
-    window.show_new_project()
-    form = window._form_view
-
-    form._project_name.setText("Deep Sea Documentary")
-    form._channel_name.setText("Ocean Channel")
-    form._topic.setText("Deep sea creatures")
-    form._video_type.setText("long-form documentary")
-    form._niche.setText("ocean-life")
-    form._duration_seconds.setValue(600)
-
-    form._handle_create_clicked()
+    _create_project(window)
 
     job = window._job_store.list_all()[0]
     window._open_project(job.id)
+    workspace = window._detail_view
 
-    window._detail_view._handle_run_research()
-    window._detail_view._handle_run_script()
+    workspace.content_studio._handle_run_research()
+    workspace.content_studio._handle_run_script()
 
-    window._detail_view._handle_generate_thumbnail("Ocean enthusiasts")
+    workspace.packaging._handle_generate_thumbnail("Ocean enthusiasts")
 
     thumbnail = window._job_store.get_thumbnail(job.id)
 
@@ -176,27 +183,18 @@ def test_render_pauses_for_manual_upload_without_local_assets(
 
     window = MainWindow(job_store=InMemoryJobStore())
 
-    window.show_new_project()
-    form = window._form_view
-
-    form._project_name.setText("Deep Sea Documentary")
-    form._channel_name.setText("Ocean Channel")
-    form._topic.setText("Deep sea creatures")
-    form._video_type.setText("long-form documentary")
-    form._niche.setText("ocean-life")
-    form._duration_seconds.setValue(600)
-
-    form._handle_create_clicked()
+    _create_project(window)
 
     job = window._job_store.list_all()[0]
     window._open_project(job.id)
+    workspace = window._detail_view
 
-    window._detail_view._handle_run_research()
-    window._detail_view._handle_run_script()
-    window._detail_view._handle_run_originality()
-    window._detail_view._handle_plan_scenes()
+    workspace.content_studio._handle_run_research()
+    workspace.content_studio._handle_run_script()
+    workspace.content_studio._handle_run_originality()
+    workspace.content_studio._handle_plan_scenes()
 
-    window._detail_view._handle_run_render()
+    workspace.render_workspace._handle_run_render()
 
     render_result = window._job_store.get_render_result(job.id)
 
@@ -211,7 +209,7 @@ def test_render_pauses_for_manual_upload_without_local_assets(
 
     assert waiting_scene_numbers
 
-    window._detail_view._handle_build_final_export()
+    workspace.packaging._handle_build_final_export()
 
     assert window._job_store.get_final_export(job.id) is None
 
@@ -233,27 +231,18 @@ def test_manual_upload_resolves_asset_stage_and_completes_render(
 
     window = MainWindow(job_store=InMemoryJobStore())
 
-    window.show_new_project()
-    form = window._form_view
-
-    form._project_name.setText("Deep Sea Documentary")
-    form._channel_name.setText("Ocean Channel")
-    form._topic.setText("Deep sea creatures")
-    form._video_type.setText("long-form documentary")
-    form._niche.setText("ocean-life")
-    form._duration_seconds.setValue(600)
-
-    form._handle_create_clicked()
+    _create_project(window)
 
     job = window._job_store.list_all()[0]
     window._open_project(job.id)
+    workspace = window._detail_view
 
-    window._detail_view._handle_run_research()
-    window._detail_view._handle_run_script()
-    window._detail_view._handle_run_originality()
-    window._detail_view._handle_plan_scenes()
+    workspace.content_studio._handle_run_research()
+    workspace.content_studio._handle_run_script()
+    workspace.content_studio._handle_run_originality()
+    workspace.content_studio._handle_plan_scenes()
 
-    window._detail_view._handle_run_render()
+    workspace.render_workspace._handle_run_render()
 
     waiting_scene_numbers = [
         state.scene_number
@@ -272,9 +261,11 @@ def test_manual_upload_resolves_asset_stage_and_completes_render(
     )
 
     for scene_number in waiting_scene_numbers:
-        window._detail_view._manual_upload_paths[scene_number] = manual_upload_file
+        workspace.render_workspace._manual_upload_paths[scene_number] = (
+            manual_upload_file
+        )
 
-    window._detail_view._handle_submit_asset_decisions()
+    workspace.render_workspace._handle_submit_asset_decisions()
 
     render_result = window._job_store.get_render_result(job.id)
 
@@ -302,27 +293,18 @@ def test_stock_search_and_select_completes_render(
 
     window = MainWindow(job_store=InMemoryJobStore())
 
-    window.show_new_project()
-    form = window._form_view
-
-    form._project_name.setText("Deep Sea Documentary")
-    form._channel_name.setText("Ocean Channel")
-    form._topic.setText("Deep sea creatures")
-    form._video_type.setText("long-form documentary")
-    form._niche.setText("ocean-life")
-    form._duration_seconds.setValue(600)
-
-    form._handle_create_clicked()
+    _create_project(window)
 
     job = window._job_store.list_all()[0]
     window._open_project(job.id)
+    workspace = window._detail_view
 
-    window._detail_view._handle_run_research()
-    window._detail_view._handle_run_script()
-    window._detail_view._handle_run_originality()
-    window._detail_view._handle_plan_scenes()
+    workspace.content_studio._handle_run_research()
+    workspace.content_studio._handle_run_script()
+    workspace.content_studio._handle_run_originality()
+    workspace.content_studio._handle_plan_scenes()
 
-    window._detail_view._handle_run_render()
+    workspace.render_workspace._handle_run_render()
 
     waiting_scene_numbers = [
         state.scene_number
@@ -333,17 +315,17 @@ def test_stock_search_and_select_completes_render(
     assert waiting_scene_numbers
 
     for scene_number in waiting_scene_numbers:
-        window._detail_view._handle_search_stock(scene_number, "")
+        workspace.render_workspace._handle_search_stock(scene_number, "")
 
     for scene_number in waiting_scene_numbers:
-        state = window._detail_view._scene_asset_state(job, scene_number)
+        state = workspace.render_workspace._scene_asset_state(job, scene_number)
 
         assert state is not None
         assert state.stock_candidates
 
-        window._detail_view._handle_select_stock_candidate(scene_number, 0)
+        workspace.render_workspace._handle_select_stock_candidate(scene_number, 0)
 
-    window._detail_view._handle_submit_asset_decisions()
+    workspace.render_workspace._handle_submit_asset_decisions()
 
     render_result = window._job_store.get_render_result(job.id)
 
@@ -371,28 +353,18 @@ def test_full_pipeline_reaches_final_export(
 
     window = MainWindow(job_store=InMemoryJobStore())
 
-    window.show_new_project()
-    form = window._form_view
-
-    form._project_name.setText("Deep Sea Documentary")
-    form._channel_name.setText("Ocean Channel")
-    form._topic.setText("Deep sea creatures")
-    form._video_type.setText("long-form documentary")
-    form._niche.setText("ocean-life")
-    form._duration_seconds.setValue(600)
-
-    form._handle_create_clicked()
+    _create_project(window)
 
     job = window._job_store.list_all()[0]
     window._open_project(job.id)
-    detail = window._detail_view
+    workspace = window._detail_view
 
-    detail._handle_run_research()
-    detail._handle_run_script()
-    detail._handle_run_originality()
-    detail._handle_plan_scenes()
+    workspace.content_studio._handle_run_research()
+    workspace.content_studio._handle_run_script()
+    workspace.content_studio._handle_run_originality()
+    workspace.content_studio._handle_plan_scenes()
 
-    detail._handle_run_render()
+    workspace.render_workspace._handle_run_render()
 
     waiting_scene_numbers = [
         state.scene_number
@@ -403,26 +375,66 @@ def test_full_pipeline_reaches_final_export(
     assert waiting_scene_numbers
 
     for scene_number in waiting_scene_numbers:
-        detail._handle_search_stock(scene_number, "")
-        detail._handle_select_stock_candidate(scene_number, 0)
+        workspace.render_workspace._handle_search_stock(scene_number, "")
+        workspace.render_workspace._handle_select_stock_candidate(scene_number, 0)
 
-    detail._handle_submit_asset_decisions()
+    workspace.render_workspace._handle_submit_asset_decisions()
 
     render_result = window._job_store.get_render_result(job.id)
     assert render_result is not None
     assert render_result.success is True
 
-    detail._handle_generate_seo("Ocean enthusiasts")
+    workspace.packaging._handle_generate_seo("Ocean enthusiasts")
     seo_package = window._job_store.get_seo_package(job.id)
     assert seo_package is not None
 
-    detail._handle_generate_thumbnail("Ocean enthusiasts")
+    workspace.packaging._handle_generate_thumbnail("Ocean enthusiasts")
     thumbnail = window._job_store.get_thumbnail(job.id)
     assert thumbnail is not None
 
-    detail._handle_build_final_export()
+    workspace.packaging._handle_build_final_export()
     final_export = window._job_store.get_final_export(job.id)
 
     assert final_export is not None
     assert final_export.final_video_path
     assert not job.errors
+
+    # Quality Center is a genuinely new trigger (PolicyService existed
+    # in the backend but was wired into no UI before this workspace
+    # split) - confirm it evaluates the completed job without error.
+    workspace.quality_center._handle_run_check()
+    assert job.policy_report is not None
+
+    # Clip Workspace, Production Audio, and Editing Timeline are review
+    # panels over the same job/render data - confirm switching to each
+    # renders the fully-populated state without crashing.
+    for _nav_button, target in workspace._nav_buttons:
+        workspace._show_workspace(target)
+
+    assert window._stack.currentWidget() is window._detail_view
+
+
+def test_workspace_views_refresh_without_crashing_on_a_fresh_project(
+    qapp: QApplication,
+    no_blocking_dialogs: None,
+) -> None:
+    """
+    Clip Workspace, Production Audio, and Editing Timeline are new
+    review panels with no prior test coverage for the empty/minimal
+    state (no scenes, no clips, no audio_timeline, no video_timeline).
+    A freshly created project exercises exactly that state for all
+    seven workspaces at once.
+    """
+
+    window = MainWindow(job_store=InMemoryJobStore())
+
+    _create_project(window)
+
+    job = window._job_store.list_all()[0]
+    window._open_project(job.id)
+    workspace = window._detail_view
+
+    for _label, _icon, target in workspace._workspaces:
+        workspace._show_workspace(target)
+
+    assert workspace._stack.currentWidget() is workspace.packaging
