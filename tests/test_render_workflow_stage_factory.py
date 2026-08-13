@@ -15,12 +15,14 @@ from src.models.resolved_voice_blueprint import (
 from src.pipeline.asset_stage import (
     AssetPipelineStage,
 )
+from src.pipeline.music_stage import MusicPipelineStage
 from src.pipeline.pipeline_stage import (
     PipelineStageName,
 )
 from src.pipeline.render_stage import (
     RenderPipelineStage,
 )
+from src.pipeline.sound_effect_stage import SoundEffectPipelineStage
 from src.pipeline.timeline_stage import (
     TimelinePipelineStage,
 )
@@ -30,6 +32,7 @@ from src.pipeline.voice_stage import (
 from src.services.genre_timeline_pipeline_service import (
     GenreTimelinePipelineService,
 )
+from src.services.music_generation_service import MusicGenerationService
 from src.services.production_render_service import (
     ProductionRenderService,
 )
@@ -42,13 +45,15 @@ from src.services.render_workflow_stage_factory import (
 from src.services.scene_asset_workflow_service import (
     SceneAssetWorkflowService,
 )
+from src.services.sound_effect_generation_service import (
+    SoundEffectGenerationService,
+)
 from src.services.voice_generation_service import (
     VoiceGenerationService,
 )
 from src.services.voice_timeline_service import (
     VoiceTimelineService,
 )
-
 
 T = TypeVar("T")
 
@@ -86,17 +91,10 @@ def _blueprint(
 
     return ResolvedVoiceBlueprint(
         scene_number=scene_number,
-        status=(
-            VoiceBlueprintResolutionStatus
-            .RESOLVED
-        ),
+        status=(VoiceBlueprintResolutionStatus.RESOLVED),
         profile=ResolvedVoiceProfileReference(
-            requested_profile_id=(
-                "voice.test_narrator"
-            ),
-            resolved_profile_id=(
-                "voice.test_narrator"
-            ),
+            requested_profile_id=("voice.test_narrator"),
+            resolved_profile_id=("voice.test_narrator"),
             display_name="Test Narrator",
             found_exact_match=True,
             used_fallback=False,
@@ -108,9 +106,7 @@ def _blueprint(
 def _factory(
     *,
     render_service: RenderService | None = None,
-    production_render_service: (
-        ProductionRenderService | None
-    ) = None,
+    production_render_service: ProductionRenderService | None = None,
 ) -> RenderWorkflowStageFactory:
     """
     Build the render workflow factory with typed identity dependencies.
@@ -121,122 +117,62 @@ def _factory(
     """
 
     return RenderWorkflowStageFactory(
-        voice_generation_service=_dependency(
-            VoiceGenerationService
-        ),
-        voice_timeline_service=_dependency(
-            VoiceTimelineService
-        ),
-        asset_workflow_service=_dependency(
-            SceneAssetWorkflowService
-        ),
-        genre_timeline_service=_dependency(
-            GenreTimelinePipelineService
-        ),
+        voice_generation_service=_dependency(VoiceGenerationService),
+        voice_timeline_service=_dependency(VoiceTimelineService),
+        asset_workflow_service=_dependency(SceneAssetWorkflowService),
+        genre_timeline_service=_dependency(GenreTimelinePipelineService),
         render_service=render_service,
-        production_render_service=(
-            production_render_service
-        ),
+        production_render_service=(production_render_service),
     )
 
 
 def test_factory_preserves_injected_dependencies() -> None:
-    voice_generation_service = _dependency(
-        VoiceGenerationService
-    )
+    voice_generation_service = _dependency(VoiceGenerationService)
 
-    voice_timeline_service = _dependency(
-        VoiceTimelineService
-    )
+    voice_timeline_service = _dependency(VoiceTimelineService)
 
-    asset_workflow_service = _dependency(
-        SceneAssetWorkflowService
-    )
+    asset_workflow_service = _dependency(SceneAssetWorkflowService)
 
-    genre_timeline_service = _dependency(
-        GenreTimelinePipelineService
-    )
+    genre_timeline_service = _dependency(GenreTimelinePipelineService)
 
-    render_service = _dependency(
-        RenderService
-    )
+    render_service = _dependency(RenderService)
 
     factory = RenderWorkflowStageFactory(
-        voice_generation_service=(
-            voice_generation_service
-        ),
-        voice_timeline_service=(
-            voice_timeline_service
-        ),
-        asset_workflow_service=(
-            asset_workflow_service
-        ),
-        genre_timeline_service=(
-            genre_timeline_service
-        ),
+        voice_generation_service=(voice_generation_service),
+        voice_timeline_service=(voice_timeline_service),
+        asset_workflow_service=(asset_workflow_service),
+        genre_timeline_service=(genre_timeline_service),
         render_service=render_service,
     )
 
-    assert (
-        factory.voice_generation_service
-        is voice_generation_service
-    )
+    assert factory.voice_generation_service is voice_generation_service
 
-    assert (
-        factory.voice_timeline_service
-        is voice_timeline_service
-    )
+    assert factory.voice_timeline_service is voice_timeline_service
 
-    assert (
-        factory.asset_workflow_service
-        is asset_workflow_service
-    )
+    assert factory.asset_workflow_service is asset_workflow_service
 
-    assert (
-        factory.genre_timeline_service
-        is genre_timeline_service
-    )
+    assert factory.genre_timeline_service is genre_timeline_service
 
-    assert (
-        factory.render_service
-        is render_service
-    )
+    assert factory.render_service is render_service
 
-    assert (
-        factory.production_render_service
-        is None
-    )
+    assert factory.production_render_service is None
 
-    assert (
-        factory.production_render_enabled
-        is False
-    )
+    assert factory.production_render_enabled is False
 
 
 def test_factory_enables_production_render_by_default() -> None:
     factory = _factory()
 
-    assert (
-        factory.production_render_enabled
-        is True
+    assert factory.production_render_enabled is True
+
+    assert factory.production_render_service is not None
+
+    assert isinstance(
+        factory.production_render_service,
+        ProductionRenderService,
     )
 
-    assert (
-        factory.production_render_service
-        is not None
-    )
-
-    assert (
-        isinstance(
-            factory.production_render_service,
-            ProductionRenderService,
-        )
-    )
-
-    assert (
-        factory.render_service
-        is None
-    )
+    assert factory.render_service is None
 
 
 def test_factory_preserves_explicit_legacy_renderer() -> None:
@@ -246,47 +182,25 @@ def test_factory_preserves_explicit_legacy_renderer() -> None:
         render_service=legacy_render_service,
     )
 
-    assert (
-        factory.production_render_enabled
-        is False
-    )
+    assert factory.production_render_enabled is False
 
-    assert (
-        factory.production_render_service
-        is None
-    )
+    assert factory.production_render_service is None
 
-    assert (
-        factory.render_service
-        is legacy_render_service
-    )
+    assert factory.render_service is legacy_render_service
 
 
 def test_factory_preserves_explicit_production_renderer() -> None:
-    production_render_service = (
-        ProductionRenderService()
-    )
+    production_render_service = ProductionRenderService()
 
     factory = _factory(
-        production_render_service=(
-            production_render_service
-        ),
+        production_render_service=(production_render_service),
     )
 
-    assert (
-        factory.production_render_enabled
-        is True
-    )
+    assert factory.production_render_enabled is True
 
-    assert (
-        factory.production_render_service
-        is production_render_service
-    )
+    assert factory.production_render_service is production_render_service
 
-    assert (
-        factory.render_service
-        is None
-    )
+    assert factory.render_service is None
 
 
 def test_factory_rejects_two_render_engines() -> None:
@@ -300,9 +214,7 @@ def test_factory_rejects_two_render_engines() -> None:
     ):
         _factory(
             render_service=RenderService(),
-            production_render_service=(
-                ProductionRenderService()
-            ),
+            production_render_service=(ProductionRenderService()),
         )
 
 
@@ -338,15 +250,40 @@ def test_build_returns_required_stage_order() -> None:
         RenderPipelineStage,
     )
 
-    assert [
-        stage.stage_name
-        for stage in stages
-    ] == [
+    assert [stage.stage_name for stage in stages] == [
         PipelineStageName.VOICE,
         PipelineStageName.ASSET_SELECTION,
         PipelineStageName.VIDEO_TIMELINE,
         PipelineStageName.RENDER,
     ]
+
+
+def test_build_inserts_music_and_sound_effect_stages_when_configured() -> None:
+    factory = RenderWorkflowStageFactory(
+        voice_generation_service=_dependency(VoiceGenerationService),
+        voice_timeline_service=_dependency(VoiceTimelineService),
+        asset_workflow_service=_dependency(SceneAssetWorkflowService),
+        genre_timeline_service=_dependency(GenreTimelinePipelineService),
+        music_generation_service=_dependency(MusicGenerationService),
+        sound_effect_generation_service=_dependency(SoundEffectGenerationService),
+    )
+
+    stages = factory.build(
+        voice_blueprints=[_blueprint()],
+        genre_id="documentary",
+    )
+
+    assert [stage.stage_name for stage in stages] == [
+        PipelineStageName.VOICE,
+        PipelineStageName.ASSET_SELECTION,
+        PipelineStageName.VIDEO_TIMELINE,
+        PipelineStageName.BACKGROUND_MUSIC,
+        PipelineStageName.SOUND_EFFECTS,
+        PipelineStageName.RENDER,
+    ]
+
+    assert isinstance(stages[3], MusicPipelineStage)
+    assert isinstance(stages[4], SoundEffectPipelineStage)
 
 
 def test_build_creates_fresh_stage_instances() -> None:
@@ -373,10 +310,7 @@ def test_build_creates_fresh_stage_instances() -> None:
         second,
         strict=True,
     ):
-        assert (
-            first_stage
-            is not second_stage
-        )
+        assert first_stage is not second_stage
 
 
 def test_build_preserves_job_specific_voice_blueprints() -> None:
@@ -384,16 +318,12 @@ def test_build_preserves_job_specific_voice_blueprints() -> None:
 
     first_blueprint = _blueprint(
         scene_number=1,
-        narration_text=(
-            "First scene narration."
-        ),
+        narration_text=("First scene narration."),
     )
 
     second_blueprint = _blueprint(
         scene_number=2,
-        narration_text=(
-            "Second scene narration."
-        ),
+        narration_text=("Second scene narration."),
     )
 
     stages = factory.build(
@@ -409,13 +339,10 @@ def test_build_preserves_job_specific_voice_blueprints() -> None:
         stages[0],
     )
 
-    assert (
-        voice_stage._blueprints
-        == [
-            first_blueprint,
-            second_blueprint,
-        ]
-    )
+    assert voice_stage._blueprints == [
+        first_blueprint,
+        second_blueprint,
+    ]
 
 
 def test_build_passes_voice_blueprints_to_production_render_stage() -> None:
@@ -444,20 +371,11 @@ def test_build_passes_voice_blueprints_to_production_render_stage() -> None:
         stages[3],
     )
 
-    assert (
-        render_stage.production_render_enabled
-        is True
-    )
+    assert render_stage.production_render_enabled is True
 
-    assert (
-        render_stage._voice_blueprints
-        == blueprints
-    )
+    assert render_stage._voice_blueprints == blueprints
 
-    assert (
-        render_stage._voice_blueprints
-        is not blueprints
-    )
+    assert render_stage._voice_blueprints is not blueprints
 
 
 def test_build_forwards_voice_provider_name() -> None:
@@ -468,9 +386,7 @@ def test_build_forwards_voice_provider_name() -> None:
             _blueprint(),
         ],
         genre_id="documentary",
-        voice_provider_name=(
-            "  elevenlabs  "
-        ),
+        voice_provider_name=("  elevenlabs  "),
     )
 
     voice_stage = cast(
@@ -478,10 +394,7 @@ def test_build_forwards_voice_provider_name() -> None:
         stages[0],
     )
 
-    assert (
-        voice_stage._provider_name
-        == "elevenlabs"
-    )
+    assert voice_stage._provider_name == "elevenlabs"
 
 
 def test_build_forwards_timeline_configuration() -> None:
@@ -493,9 +406,7 @@ def test_build_forwards_timeline_configuration() -> None:
             SceneEditingDirectives,
         ],
         {
-            1: _dependency(
-                SceneEditingDirectives
-            ),
+            1: _dependency(SceneEditingDirectives),
         },
     )
 
@@ -515,33 +426,15 @@ def test_build_forwards_timeline_configuration() -> None:
         stages[2],
     )
 
-    assert (
-        timeline_stage.genre_id
-        == "documentary"
-    )
+    assert timeline_stage.genre_id == "documentary"
 
-    assert (
-        timeline_stage
-        ._overrides_by_scene
-        == overrides
-    )
+    assert timeline_stage._overrides_by_scene == overrides
 
-    assert (
-        timeline_stage
-        ._output_resolution
-        == "3840x2160"
-    )
+    assert timeline_stage._output_resolution == "3840x2160"
 
-    assert (
-        timeline_stage._frame_rate
-        == 60
-    )
+    assert timeline_stage._frame_rate == 60
 
-    assert (
-        timeline_stage
-        ._warn_on_blueprint_fallbacks
-        is False
-    )
+    assert timeline_stage._warn_on_blueprint_fallbacks is False
 
 
 def test_build_copies_timeline_overrides() -> None:
@@ -553,9 +446,7 @@ def test_build_copies_timeline_overrides() -> None:
             SceneEditingDirectives,
         ],
         {
-            1: _dependency(
-                SceneEditingDirectives
-            ),
+            1: _dependency(SceneEditingDirectives),
         },
     )
 
@@ -572,23 +463,13 @@ def test_build_copies_timeline_overrides() -> None:
         stages[2],
     )
 
-    assert (
-        timeline_stage
-        ._overrides_by_scene
-        == overrides
-    )
+    assert timeline_stage._overrides_by_scene == overrides
 
-    assert (
-        timeline_stage
-        ._overrides_by_scene
-        is not overrides
-    )
+    assert timeline_stage._overrides_by_scene is not overrides
 
 
 def test_build_uses_injected_legacy_render_service() -> None:
-    render_service = _dependency(
-        RenderService
-    )
+    render_service = _dependency(RenderService)
 
     factory = _factory(
         render_service=render_service,
@@ -606,20 +487,11 @@ def test_build_uses_injected_legacy_render_service() -> None:
         stages[3],
     )
 
-    assert (
-        render_stage._render_service
-        is render_service
-    )
+    assert render_stage._render_service is render_service
 
-    assert (
-        render_stage.production_render_enabled
-        is False
-    )
+    assert render_stage.production_render_enabled is False
 
-    assert (
-        render_stage._voice_blueprints
-        == []
-    )
+    assert render_stage._voice_blueprints == []
 
 
 def test_build_uses_production_renderer_by_default() -> None:
@@ -637,26 +509,16 @@ def test_build_uses_production_renderer_by_default() -> None:
         stages[3],
     )
 
-    assert (
-        render_stage.production_render_enabled
-        is True
-    )
+    assert render_stage.production_render_enabled is True
 
-    assert (
-        render_stage._production_render_service
-        is factory.production_render_service
-    )
+    assert render_stage._production_render_service is factory.production_render_service
 
 
 def test_build_uses_explicit_production_renderer() -> None:
-    production_render_service = (
-        ProductionRenderService()
-    )
+    production_render_service = ProductionRenderService()
 
     factory = _factory(
-        production_render_service=(
-            production_render_service
-        ),
+        production_render_service=(production_render_service),
     )
 
     stages = factory.build(
@@ -671,15 +533,9 @@ def test_build_uses_explicit_production_renderer() -> None:
         stages[3],
     )
 
-    assert (
-        render_stage.production_render_enabled
-        is True
-    )
+    assert render_stage.production_render_enabled is True
 
-    assert (
-        render_stage._production_render_service
-        is production_render_service
-    )
+    assert render_stage._production_render_service is production_render_service
 
 
 def test_build_rejects_empty_voice_blueprints() -> None:
@@ -688,8 +544,7 @@ def test_build_rejects_empty_voice_blueprints() -> None:
     with pytest.raises(
         ValueError,
         match=(
-            "Voice pipeline stage requires "
-            "at least one resolved voice blueprint"
+            "Voice pipeline stage requires " "at least one resolved voice blueprint"
         ),
     ):
         factory.build(
@@ -708,15 +563,11 @@ def test_build_rejects_duplicate_voice_scene_numbers() -> None:
             voice_blueprints=[
                 _blueprint(
                     scene_number=1,
-                    narration_text=(
-                        "First narration."
-                    ),
+                    narration_text=("First narration."),
                 ),
                 _blueprint(
                     scene_number=1,
-                    narration_text=(
-                        "Duplicate scene narration."
-                    ),
+                    narration_text=("Duplicate scene narration."),
                 ),
             ],
             genre_id="documentary",
@@ -739,10 +590,7 @@ def test_build_rejects_blank_genre_id(
 
     with pytest.raises(
         ValueError,
-        match=(
-            "Timeline pipeline stage requires "
-            "a genre ID"
-        ),
+        match=("Timeline pipeline stage requires " "a genre ID"),
     ):
         factory.build(
             voice_blueprints=[
@@ -767,10 +615,7 @@ def test_build_rejects_non_positive_frame_rate(
 
     with pytest.raises(
         ValueError,
-        match=(
-            "Timeline pipeline stage frame rate "
-            "must be positive"
-        ),
+        match=("Timeline pipeline stage frame rate " "must be positive"),
     ):
         factory.build(
             voice_blueprints=[
@@ -797,17 +642,12 @@ def test_build_rejects_blank_output_resolution(
 
     with pytest.raises(
         ValueError,
-        match=(
-            "Timeline pipeline stage requires "
-            "an output resolution"
-        ),
+        match=("Timeline pipeline stage requires " "an output resolution"),
     ):
         factory.build(
             voice_blueprints=[
                 _blueprint(),
             ],
             genre_id="documentary",
-            output_resolution=(
-                output_resolution
-            ),
+            output_resolution=(output_resolution),
         )

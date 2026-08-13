@@ -6,6 +6,12 @@ from pathlib import Path
 from src.models.advanced_settings import AdvancedSettings
 from src.models.provider_profile import ProviderProfile
 from src.models.voice_profile import VoiceProfile
+from src.providers.dry_run_music_provider import DryRunMusicProvider
+from src.providers.dry_run_sound_effect_provider import (
+    DryRunSoundEffectProvider,
+)
+from src.providers.music_provider import MusicProvider
+from src.providers.sound_effect_provider import SoundEffectProvider
 from src.providers.voice_provider import VoiceProvider
 from src.services.application_infrastructure_factory import (
     ApplicationInfrastructure,
@@ -24,6 +30,7 @@ from src.services.genre_voice_directive_generation_service import (
 from src.services.mission_application_service import (
     MissionApplicationService,
 )
+from src.services.music_generation_service import MusicGenerationService
 from src.services.pipeline_checkpoint_service import (
     PipelineCheckpointService,
 )
@@ -51,6 +58,9 @@ from src.services.scene_asset_workflow_service import (
 )
 from src.services.secrets.provider_secret_manager import (
     SecretStore,
+)
+from src.services.sound_effect_generation_service import (
+    SoundEffectGenerationService,
 )
 from src.services.voice_generation_service import (
     VoiceGenerationService,
@@ -103,17 +113,11 @@ class ProductionApplicationRuntime:
 
     production_render_service: ProductionRenderService | None
 
-    checkpoint_storage_service: (
-        PipelineCheckpointStorageService | None
-    )
+    checkpoint_storage_service: PipelineCheckpointStorageService | None
 
-    checkpoint_service: (
-        PipelineCheckpointService | None
-    )
+    checkpoint_service: PipelineCheckpointService | None
 
-    resume_planner_service: (
-        PipelineResumePlannerService | None
-    )
+    resume_planner_service: PipelineResumePlannerService | None
 
 
 class ProductionApplicationFactory:
@@ -167,54 +171,41 @@ class ProductionApplicationFactory:
         genre_registry: GenreProfileRegistryService,
         asset_workflow_service: SceneAssetWorkflowService,
         genre_timeline_service: GenreTimelinePipelineService,
+        music_providers: list[MusicProvider] | None = None,
+        sound_effect_providers: list[SoundEffectProvider] | None = None,
         advanced_settings: AdvancedSettings | None = None,
         checkpoint_storage_root: str | Path | None = None,
         llm_gateway: LLMGateway | None = None,
-        production_render_service: (
-            ProductionRenderService | None
-        ) = None,
+        production_render_service: ProductionRenderService | None = None,
     ) -> None:
         if not provider_profiles:
             raise ValueError(
-                "Production application requires "
-                "at least one provider profile."
+                "Production application requires " "at least one provider profile."
             )
 
         if not voice_profiles:
             raise ValueError(
-                "Production application requires "
-                "at least one voice profile."
+                "Production application requires " "at least one voice profile."
             )
 
         if not voice_providers:
             raise ValueError(
-                "Production application requires "
-                "at least one voice provider."
+                "Production application requires " "at least one voice provider."
             )
 
         self._secret_store = secret_store
 
-        self._provider_profiles = list(
-            provider_profiles
-        )
+        self._provider_profiles = list(provider_profiles)
 
-        self._voice_profiles = list(
-            voice_profiles
-        )
+        self._voice_profiles = list(voice_profiles)
 
-        self._voice_providers = list(
-            voice_providers
-        )
+        self._voice_providers = list(voice_providers)
 
         self._genre_registry = genre_registry
 
-        self._asset_workflow_service = (
-            asset_workflow_service
-        )
+        self._asset_workflow_service = asset_workflow_service
 
-        self._genre_timeline_service = (
-            genre_timeline_service
-        )
+        self._genre_timeline_service = genre_timeline_service
 
         self._advanced_settings = (
             advanced_settings
@@ -224,19 +215,41 @@ class ProductionApplicationFactory:
             )
         )
 
+        # Unlike voice, music and sound effects are optional
+        # enhancements with no required production adapter yet: if the
+        # caller supplied real providers, use them; otherwise fall
+        # back to the dry-run adapters only in dry-run mode, matching
+        # every other dry-run-gated behavior in this application.
+        # Outside dry-run with nothing configured, build() below
+        # leaves the music/sound-effect stages unregistered entirely
+        # rather than failing the whole application - a video without
+        # them is still a valid, deliverable video.
+        self._music_providers: list[MusicProvider] = (
+            list(music_providers)
+            if music_providers
+            else ([DryRunMusicProvider()] if self._advanced_settings.dry_run else [])
+        )
+
+        self._sound_effect_providers: list[SoundEffectProvider] = (
+            list(sound_effect_providers)
+            if sound_effect_providers
+            else (
+                [DryRunSoundEffectProvider()] if self._advanced_settings.dry_run else []
+            )
+        )
+
         self._checkpoint_storage_root = (
             Path(checkpoint_storage_root)
-            if checkpoint_storage_root
-            is not None
+            if checkpoint_storage_root is not None
             else None
         )
 
         self._llm_gateway = llm_gateway
 
         if production_render_service is not None:
-            self._production_render_service: (
-                ProductionRenderService | None
-            ) = production_render_service
+            self._production_render_service: ProductionRenderService | None = (
+                production_render_service
+            )
         elif self._advanced_settings.dry_run:
             # Dry-run mode already fakes LLM calls and voice
             # generation, but real FFmpeg rendering was never gated
@@ -263,25 +276,19 @@ class ProductionApplicationFactory:
     def provider_profiles(
         self,
     ) -> list[ProviderProfile]:
-        return list(
-            self._provider_profiles
-        )
+        return list(self._provider_profiles)
 
     @property
     def voice_profiles(
         self,
     ) -> list[VoiceProfile]:
-        return list(
-            self._voice_profiles
-        )
+        return list(self._voice_profiles)
 
     @property
     def voice_providers(
         self,
     ) -> list[VoiceProvider]:
-        return list(
-            self._voice_providers
-        )
+        return list(self._voice_providers)
 
     @property
     def genre_registry(
@@ -330,96 +337,70 @@ class ProductionApplicationFactory:
         runtime adapters and registries.
         """
 
-        infrastructure = (
-            ApplicationInfrastructureFactory(
-                secret_store=(
-                    self._secret_store
-                ),
-            )
-            .build(
-                provider_profiles=(
-                    list(
-                        self._provider_profiles
-                    )
-                ),
-                llm_gateway=(
-                    self._llm_gateway
-                ),
-            )
+        infrastructure = ApplicationInfrastructureFactory(
+            secret_store=(self._secret_store),
+        ).build(
+            provider_profiles=(list(self._provider_profiles)),
+            llm_gateway=(self._llm_gateway),
         )
 
         content_pipeline = ContentPipeline(
-            llm_service=(
-                infrastructure.llm_service
+            llm_service=(infrastructure.llm_service),
+        )
+
+        voice_resolution_runtime = VoiceResolutionRuntimeFactory().build(
+            profiles=list(self._voice_profiles),
+        )
+
+        voice_generation_service = VoiceGenerationService(
+            providers=list(self._voice_providers),
+        )
+
+        voice_timeline_service = VoiceTimelineService()
+
+        voice_directive_generation_service = GenreVoiceDirectiveGenerationService(
+            genre_registry=(self._genre_registry),
+            voice_profile_registry=(voice_resolution_runtime.voice_profile_registry),
+        )
+
+        music_generation_service = (
+            MusicGenerationService(
+                providers=list(self._music_providers),
+            )
+            if self._music_providers
+            else None
+        )
+
+        sound_effect_generation_service = (
+            SoundEffectGenerationService(
+                providers=list(self._sound_effect_providers),
+            )
+            if self._sound_effect_providers
+            else None
+        )
+
+        render_stage_factory = RenderWorkflowStageFactory(
+            voice_generation_service=(voice_generation_service),
+            voice_timeline_service=(voice_timeline_service),
+            asset_workflow_service=(self._asset_workflow_service),
+            genre_timeline_service=(self._genre_timeline_service),
+            music_generation_service=music_generation_service,
+            sound_effect_generation_service=(sound_effect_generation_service),
+            **(
+                {
+                    "production_render_service": (self._production_render_service),
+                }
+                if self._production_render_service is not None
+                # RenderWorkflowStageFactory defaults an omitted
+                # production_render_service to a real
+                # ProductionRenderService() itself, so a bare None
+                # here would silently re-enable real FFmpeg
+                # rendering during dry-run. render_service must be
+                # passed explicitly instead.
+                else {
+                    "render_service": RenderService(),
+                }
             ),
-        )
-
-        voice_resolution_runtime = (
-            VoiceResolutionRuntimeFactory()
-            .build(
-                profiles=list(
-                    self._voice_profiles
-                ),
-            )
-        )
-
-        voice_generation_service = (
-            VoiceGenerationService(
-                providers=list(
-                    self._voice_providers
-                ),
-            )
-        )
-
-        voice_timeline_service = (
-            VoiceTimelineService()
-        )
-
-        voice_directive_generation_service = (
-            GenreVoiceDirectiveGenerationService(
-                genre_registry=(
-                    self._genre_registry
-                ),
-                voice_profile_registry=(
-                    voice_resolution_runtime
-                    .voice_profile_registry
-                ),
-            )
-        )
-
-        render_stage_factory = (
-            RenderWorkflowStageFactory(
-                voice_generation_service=(
-                    voice_generation_service
-                ),
-                voice_timeline_service=(
-                    voice_timeline_service
-                ),
-                asset_workflow_service=(
-                    self._asset_workflow_service
-                ),
-                genre_timeline_service=(
-                    self._genre_timeline_service
-                ),
-                **(
-                    {
-                        "production_render_service": (
-                            self._production_render_service
-                        ),
-                    }
-                    if self._production_render_service
-                    is not None
-                    # RenderWorkflowStageFactory defaults an omitted
-                    # production_render_service to a real
-                    # ProductionRenderService() itself, so a bare None
-                    # here would silently re-enable real FFmpeg
-                    # rendering during dry-run. render_service must be
-                    # passed explicitly instead.
-                    else {
-                        "render_service": RenderService(),
-                    }
-                ),
-            )
         )
 
         (
@@ -428,83 +409,37 @@ class ProductionApplicationFactory:
             resume_planner_service,
         ) = self._build_checkpoint_services()
 
-        render_runtime_factory = (
-            ProjectRenderRuntimeFactory(
-                voice_directive_generation_service=(
-                    voice_directive_generation_service
-                ),
-                voice_resolution_runtime=(
-                    voice_resolution_runtime
-                ),
-                stage_factory=(
-                    render_stage_factory
-                ),
-                advanced_settings=(
-                    self._advanced_settings
-                ),
-                checkpoint_storage_service=(
-                    checkpoint_storage_service
-                ),
-                checkpoint_service=(
-                    checkpoint_service
-                ),
-                resume_planner_service=(
-                    resume_planner_service
-                ),
-            )
+        render_runtime_factory = ProjectRenderRuntimeFactory(
+            voice_directive_generation_service=(voice_directive_generation_service),
+            voice_resolution_runtime=(voice_resolution_runtime),
+            stage_factory=(render_stage_factory),
+            advanced_settings=(self._advanced_settings),
+            checkpoint_storage_service=(checkpoint_storage_service),
+            checkpoint_service=(checkpoint_service),
+            resume_planner_service=(resume_planner_service),
         )
 
         application = MissionApplicationService(
-            job_mapper=(
-                ProjectSpecificationJobMapper()
-            ),
-            content_pipeline=(
-                content_pipeline
-            ),
-            render_runtime_factory=(
-                render_runtime_factory
-            ),
+            job_mapper=(ProjectSpecificationJobMapper()),
+            content_pipeline=(content_pipeline),
+            render_runtime_factory=(render_runtime_factory),
         )
 
         return ProductionApplicationRuntime(
             application=application,
             infrastructure=infrastructure,
-            voice_resolution_runtime=(
-                voice_resolution_runtime
-            ),
-            genre_registry=(
-                self._genre_registry
-            ),
-            voice_generation_service=(
-                voice_generation_service
-            ),
-            voice_timeline_service=(
-                voice_timeline_service
-            ),
-            asset_workflow_service=(
-                self._asset_workflow_service
-            ),
-            genre_timeline_service=(
-                self._genre_timeline_service
-            ),
-            render_stage_factory=(
-                render_stage_factory
-            ),
-            render_runtime_factory=(
-                render_runtime_factory
-            ),
-            production_render_service=(
-                self._production_render_service
-            ),
-            checkpoint_storage_service=(
-                checkpoint_storage_service
-            ),
-            checkpoint_service=(
-                checkpoint_service
-            ),
-            resume_planner_service=(
-                resume_planner_service
-            ),
+            voice_resolution_runtime=(voice_resolution_runtime),
+            genre_registry=(self._genre_registry),
+            voice_generation_service=(voice_generation_service),
+            voice_timeline_service=(voice_timeline_service),
+            asset_workflow_service=(self._asset_workflow_service),
+            genre_timeline_service=(self._genre_timeline_service),
+            render_stage_factory=(render_stage_factory),
+            render_runtime_factory=(render_runtime_factory),
+            production_render_service=(self._production_render_service),
+            checkpoint_storage_service=(checkpoint_storage_service),
+            checkpoint_service=(checkpoint_service),
+            resume_planner_service=(resume_planner_service),
         )
 
     def build_application(
@@ -533,9 +468,7 @@ class ProductionApplicationFactory:
         together, preventing a partially wired resume architecture.
         """
 
-        storage_root = (
-            self._checkpoint_storage_root
-        )
+        storage_root = self._checkpoint_storage_root
 
         if storage_root is None:
             return (
@@ -544,10 +477,8 @@ class ProductionApplicationFactory:
                 None,
             )
 
-        storage_service = (
-            PipelineCheckpointStorageService(
-                storage_root=storage_root,
-            )
+        storage_service = PipelineCheckpointStorageService(
+            storage_root=storage_root,
         )
 
         return (

@@ -19,18 +19,12 @@ class EffectRegistryService:
 
     DEFAULT_FALLBACK_IDS = {
         EffectCategory.CAMERA: "camera.none",
-        EffectCategory.TRANSITION: (
-            "transition.cut"
-        ),
+        EffectCategory.TRANSITION: ("transition.cut"),
         EffectCategory.VISUAL: "visual.none",
-        EffectCategory.ANIMATION: (
-            "animation.none"
-        ),
+        EffectCategory.ANIMATION: ("animation.none"),
         EffectCategory.MUSIC: "music.none",
         EffectCategory.SOUND_EFFECT: "sfx.none",
-        EffectCategory.SUBTITLE: (
-            "subtitle.default"
-        ),
+        EffectCategory.SUBTITLE: ("subtitle.default"),
         EffectCategory.GENRE: "genre.default",
     }
 
@@ -54,17 +48,11 @@ class EffectRegistryService:
     ) -> None:
         """Register one effect preset."""
 
-        existing = self._presets.get(
-            preset.preset_id
-        )
+        existing = self._presets.get(preset.preset_id)
 
-        if (
-            existing is not None
-            and not replace
-        ):
+        if existing is not None and not replace:
             raise ValueError(
-                "Effect preset is already registered: "
-                f"{preset.preset_id}"
+                "Effect preset is already registered: " f"{preset.preset_id}"
             )
 
         self._presets[preset.preset_id] = preset
@@ -75,19 +63,12 @@ class EffectRegistryService:
     ) -> EffectPreset:
         """Remove and return one registered preset."""
 
-        normalized_id = normalize_effect_id(
-            preset_id
-        )
+        normalized_id = normalize_effect_id(preset_id)
 
         if normalized_id not in self._presets:
-            raise KeyError(
-                "Effect preset is not registered: "
-                f"{normalized_id}"
-            )
+            raise KeyError("Effect preset is not registered: " f"{normalized_id}")
 
-        return self._presets.pop(
-            normalized_id
-        )
+        return self._presets.pop(normalized_id)
 
     def get(
         self,
@@ -95,15 +76,10 @@ class EffectRegistryService:
     ) -> EffectPreset:
         """Return one registered preset."""
 
-        normalized_id = normalize_effect_id(
-            preset_id
-        )
+        normalized_id = normalize_effect_id(preset_id)
 
         if normalized_id not in self._presets:
-            raise KeyError(
-                "Effect preset is not registered: "
-                f"{normalized_id}"
-            )
+            raise KeyError("Effect preset is not registered: " f"{normalized_id}")
 
         return self._presets[normalized_id]
 
@@ -113,9 +89,7 @@ class EffectRegistryService:
     ) -> bool:
         """Return whether one preset is registered."""
 
-        normalized_id = normalize_effect_id(
-            preset_id
-        )
+        normalized_id = normalize_effect_id(preset_id)
 
         return normalized_id in self._presets
 
@@ -126,16 +100,10 @@ class EffectRegistryService:
     ) -> list[EffectPreset]:
         """Return all registered presets."""
 
-        presets = list(
-            self._presets.values()
-        )
+        presets = list(self._presets.values())
 
         if active_only:
-            presets = [
-                preset
-                for preset in presets
-                if preset.usable
-            ]
+            presets = [preset for preset in presets if preset.usable]
 
         return sorted(
             presets,
@@ -175,23 +143,14 @@ class EffectRegistryService:
         or deprecated presets may use a safe category fallback.
         """
 
-        normalized_id = normalize_effect_id(
-            preset_id
-        )
+        normalized_id = normalize_effect_id(preset_id)
 
-        exact_preset = self._presets.get(
-            normalized_id
-        )
+        exact_preset = self._presets.get(normalized_id)
 
-        if (
-            exact_preset is not None
-            and exact_preset.usable
-        ):
+        if exact_preset is not None and exact_preset.usable:
             return EffectResolutionResult(
                 requested_preset_id=normalized_id,
-                resolved_preset_id=(
-                    exact_preset.preset_id
-                ),
+                resolved_preset_id=(exact_preset.preset_id),
                 preset=exact_preset,
                 found_exact_match=True,
                 used_fallback=False,
@@ -211,14 +170,9 @@ class EffectRegistryService:
             preset=exact_preset,
         )
 
-        fallback_preset = self._presets.get(
-            fallback_id
-        )
+        fallback_preset = self._presets.get(fallback_id)
 
-        if (
-            fallback_preset is None
-            or not fallback_preset.usable
-        ):
+        if fallback_preset is None or not fallback_preset.usable:
             return EffectResolutionResult(
                 requested_preset_id=normalized_id,
                 warning=(
@@ -233,9 +187,7 @@ class EffectRegistryService:
 
         return EffectResolutionResult(
             requested_preset_id=normalized_id,
-            resolved_preset_id=(
-                fallback_preset.preset_id
-            ),
+            resolved_preset_id=(fallback_preset.preset_id),
             preset=fallback_preset,
             found_exact_match=False,
             used_fallback=True,
@@ -274,20 +226,12 @@ class EffectRegistryService:
     ) -> str:
         """Return the explicit or category default fallback."""
 
-        if (
-            preset is not None
-            and preset.fallback_preset_id
-            is not None
-        ):
+        if preset is not None and preset.fallback_preset_id is not None:
             return preset.fallback_preset_id
 
-        category = self._category_from_id(
-            requested_id
-        )
+        category = self._category_from_id(requested_id)
 
-        return self.DEFAULT_FALLBACK_IDS[
-            category
-        ]
+        return self.DEFAULT_FALLBACK_IDS[category]
 
     @staticmethod
     def _category_from_id(
@@ -311,24 +255,12 @@ class EffectRegistryService:
         """Build a human-readable resolution warning."""
 
         if preset is None:
-            return (
-                "Requested effect preset is not "
-                f"registered: {requested_id}."
-            )
+            return "Requested effect preset is not " f"registered: {requested_id}."
 
-        if (
-            preset.status
-            == EffectPresetStatus.DISABLED
-        ):
-            return (
-                "Requested effect preset is disabled: "
-                f"{requested_id}."
-            )
+        if preset.status == EffectPresetStatus.DISABLED:
+            return "Requested effect preset is disabled: " f"{requested_id}."
 
-        return (
-            "Requested effect preset is not active: "
-            f"{requested_id}."
-        )
+        return "Requested effect preset is not active: " f"{requested_id}."
 
     @classmethod
     def with_default_presets(
@@ -336,13 +268,10 @@ class EffectRegistryService:
     ) -> EffectRegistryService:
         """Create a registry with safe foundation presets."""
 
-        return cls(
-            presets=cls._build_default_presets()
-        )
+        return cls(presets=cls._build_default_presets())
 
     @staticmethod
-    def _build_default_presets(
-    ) -> list[EffectPreset]:
+    def _build_default_presets() -> list[EffectPreset]:
         """Return the initial built-in preset library."""
 
         return [
@@ -377,9 +306,7 @@ class EffectRegistryService:
             ),
             EffectPreset(
                 preset_id="transition.cut",
-                category=(
-                    EffectCategory.TRANSITION
-                ),
+                category=(EffectCategory.TRANSITION),
                 display_name="Standard Cut",
                 implementation={
                     "type": "cut",
@@ -391,16 +318,10 @@ class EffectRegistryService:
                 ],
             ),
             EffectPreset(
-                preset_id=(
-                    "transition.fade_black"
-                ),
-                category=(
-                    EffectCategory.TRANSITION
-                ),
+                preset_id=("transition.fade_black"),
+                category=(EffectCategory.TRANSITION),
                 display_name="Fade Through Black",
-                fallback_preset_id=(
-                    "transition.cut"
-                ),
+                fallback_preset_id=("transition.cut"),
                 implementation={
                     "type": "fade_black",
                     "default_duration_seconds": 0.8,
@@ -411,16 +332,10 @@ class EffectRegistryService:
                 ],
             ),
             EffectPreset(
-                preset_id=(
-                    "transition.cross_dissolve"
-                ),
-                category=(
-                    EffectCategory.TRANSITION
-                ),
+                preset_id=("transition.cross_dissolve"),
+                category=(EffectCategory.TRANSITION),
                 display_name="Cross Dissolve",
-                fallback_preset_id=(
-                    "transition.cut"
-                ),
+                fallback_preset_id=("transition.cut"),
                 implementation={
                     "type": "cross_dissolve",
                     "default_duration_seconds": 0.6,
@@ -443,9 +358,7 @@ class EffectRegistryService:
                 ],
             ),
             EffectPreset(
-                preset_id=(
-                    "visual.horror_dark_grade"
-                ),
+                preset_id=("visual.horror_dark_grade"),
                 category=EffectCategory.VISUAL,
                 display_name="Horror Dark Grade",
                 fallback_preset_id="visual.none",
@@ -461,9 +374,7 @@ class EffectRegistryService:
                 ],
             ),
             EffectPreset(
-                preset_id=(
-                    "visual.vignette_soft"
-                ),
+                preset_id=("visual.vignette_soft"),
                 category=EffectCategory.VISUAL,
                 display_name="Soft Vignette",
                 fallback_preset_id="visual.none",
@@ -489,14 +400,10 @@ class EffectRegistryService:
                 ],
             ),
             EffectPreset(
-                preset_id=(
-                    "animation.slow_parallax"
-                ),
+                preset_id=("animation.slow_parallax"),
                 category=EffectCategory.ANIMATION,
                 display_name="Slow Parallax",
-                fallback_preset_id=(
-                    "animation.none"
-                ),
+                fallback_preset_id=("animation.none"),
                 implementation={
                     "animation": "parallax",
                     "speed": "slow",
@@ -507,14 +414,10 @@ class EffectRegistryService:
                 ],
             ),
             EffectPreset(
-                preset_id=(
-                    "animation.subtitle_fade"
-                ),
+                preset_id=("animation.subtitle_fade"),
                 category=EffectCategory.ANIMATION,
                 display_name="Subtitle Fade",
-                fallback_preset_id=(
-                    "animation.none"
-                ),
+                fallback_preset_id=("animation.none"),
                 implementation={
                     "animation": "fade",
                     "target": "subtitle",
@@ -537,16 +440,12 @@ class EffectRegistryService:
                 ],
             ),
             EffectPreset(
-                preset_id=(
-                    "music.horror_low_drone"
-                ),
+                preset_id=("music.horror_low_drone"),
                 category=EffectCategory.MUSIC,
                 display_name="Horror Low Drone",
                 fallback_preset_id="music.none",
                 implementation={
-                    "library_query": (
-                        "dark low suspense drone"
-                    ),
+                    "library_query": ("dark low suspense drone"),
                     "loop": True,
                 },
                 tags=[
@@ -555,10 +454,78 @@ class EffectRegistryService:
                 ],
             ),
             EffectPreset(
+                preset_id="music.documentary_calm_ambient",
+                category=EffectCategory.MUSIC,
+                display_name="Documentary Calm Ambient",
+                fallback_preset_id="music.none",
+                implementation={
+                    "library_query": "calm ambient documentary background",
+                    "loop": True,
+                },
+                tags=[
+                    "documentary",
+                    "calm",
+                ],
+            ),
+            EffectPreset(
+                preset_id="music.history_dramatic_orchestral",
+                category=EffectCategory.MUSIC,
+                display_name="History Dramatic Orchestral",
+                fallback_preset_id="music.none",
+                implementation={
+                    "library_query": "dramatic orchestral historical narrative",
+                    "loop": True,
+                },
+                tags=[
+                    "history",
+                    "dramatic",
+                ],
+            ),
+            EffectPreset(
+                preset_id="music.travel_upbeat_acoustic",
+                category=EffectCategory.MUSIC,
+                display_name="Travel Upbeat Acoustic",
+                fallback_preset_id="music.none",
+                implementation={
+                    "library_query": "upbeat acoustic travel adventure",
+                    "loop": True,
+                },
+                tags=[
+                    "travel",
+                    "upbeat",
+                ],
+            ),
+            EffectPreset(
+                preset_id="music.top10_energetic_electronic",
+                category=EffectCategory.MUSIC,
+                display_name="Top 10 Energetic Electronic",
+                fallback_preset_id="music.none",
+                implementation={
+                    "library_query": "energetic upbeat electronic countdown",
+                    "loop": True,
+                },
+                tags=[
+                    "top10",
+                    "energetic",
+                ],
+            ),
+            EffectPreset(
+                preset_id="music.storytelling_emotional_piano",
+                category=EffectCategory.MUSIC,
+                display_name="Storytelling Emotional Piano",
+                fallback_preset_id="music.none",
+                implementation={
+                    "library_query": "emotional piano storytelling",
+                    "loop": True,
+                },
+                tags=[
+                    "storytelling",
+                    "emotional",
+                ],
+            ),
+            EffectPreset(
                 preset_id="sfx.none",
-                category=(
-                    EffectCategory.SOUND_EFFECT
-                ),
+                category=(EffectCategory.SOUND_EFFECT),
                 display_name="No Sound Effect",
                 implementation={
                     "asset_reference": None,
@@ -570,15 +537,11 @@ class EffectRegistryService:
             ),
             EffectPreset(
                 preset_id="sfx.door_creak",
-                category=(
-                    EffectCategory.SOUND_EFFECT
-                ),
+                category=(EffectCategory.SOUND_EFFECT),
                 display_name="Door Creak",
                 fallback_preset_id="sfx.none",
                 implementation={
-                    "library_query": (
-                        "wooden door slow creak"
-                    ),
+                    "library_query": ("wooden door slow creak"),
                     "one_shot": True,
                 },
                 tags=[
@@ -588,20 +551,70 @@ class EffectRegistryService:
             ),
             EffectPreset(
                 preset_id="sfx.heartbeat_low",
-                category=(
-                    EffectCategory.SOUND_EFFECT
-                ),
+                category=(EffectCategory.SOUND_EFFECT),
                 display_name="Low Heartbeat",
                 fallback_preset_id="sfx.none",
                 implementation={
-                    "library_query": (
-                        "slow low heartbeat"
-                    ),
+                    "library_query": ("slow low heartbeat"),
                     "one_shot": False,
                 },
                 tags=[
                     "horror",
                     "tension",
+                ],
+            ),
+            EffectPreset(
+                preset_id="sfx.riser_impact",
+                category=EffectCategory.SOUND_EFFECT,
+                display_name="Riser Impact",
+                fallback_preset_id="sfx.none",
+                implementation={
+                    "library_query": "cinematic riser impact hit",
+                    "one_shot": True,
+                },
+                tags=[
+                    "documentary",
+                    "history",
+                    "dramatic",
+                ],
+            ),
+            EffectPreset(
+                preset_id="sfx.camera_shutter",
+                category=EffectCategory.SOUND_EFFECT,
+                display_name="Camera Shutter",
+                fallback_preset_id="sfx.none",
+                implementation={
+                    "library_query": "camera shutter click",
+                    "one_shot": True,
+                },
+                tags=[
+                    "travel",
+                ],
+            ),
+            EffectPreset(
+                preset_id="sfx.whoosh_transition",
+                category=EffectCategory.SOUND_EFFECT,
+                display_name="Whoosh Transition",
+                fallback_preset_id="sfx.none",
+                implementation={
+                    "library_query": "fast whoosh transition swipe",
+                    "one_shot": True,
+                },
+                tags=[
+                    "top10",
+                ],
+            ),
+            EffectPreset(
+                preset_id="sfx.page_turn",
+                category=EffectCategory.SOUND_EFFECT,
+                display_name="Page Turn",
+                fallback_preset_id="sfx.none",
+                implementation={
+                    "library_query": "page turn book flip",
+                    "one_shot": True,
+                },
+                tags=[
+                    "storytelling",
                 ],
             ),
             EffectPreset(
@@ -620,9 +633,7 @@ class EffectRegistryService:
                 preset_id="subtitle.cinematic",
                 category=EffectCategory.SUBTITLE,
                 display_name="Cinematic Subtitle",
-                fallback_preset_id=(
-                    "subtitle.default"
-                ),
+                fallback_preset_id=("subtitle.default"),
                 implementation={
                     "style": "cinematic",
                     "placement": "lower_center",
@@ -636,16 +647,10 @@ class EffectRegistryService:
                 category=EffectCategory.GENRE,
                 display_name="Default Genre",
                 implementation={
-                    "camera_preset_id": (
-                        "camera.none"
-                    ),
-                    "transition_preset_id": (
-                        "transition.cut"
-                    ),
+                    "camera_preset_id": ("camera.none"),
+                    "transition_preset_id": ("transition.cut"),
                     "visual_preset_ids": [],
-                    "music_preset_id": (
-                        "music.none"
-                    ),
+                    "music_preset_id": ("music.none"),
                 },
                 tags=[
                     "safe",
@@ -658,19 +663,13 @@ class EffectRegistryService:
                 display_name="Horror Genre",
                 fallback_preset_id="genre.default",
                 implementation={
-                    "camera_preset_id": (
-                        "camera.slow_zoom_in"
-                    ),
-                    "transition_preset_id": (
-                        "transition.fade_black"
-                    ),
+                    "camera_preset_id": ("camera.slow_zoom_in"),
+                    "transition_preset_id": ("transition.fade_black"),
                     "visual_preset_ids": [
                         "visual.horror_dark_grade",
                         "visual.vignette_soft",
                     ],
-                    "music_preset_id": (
-                        "music.horror_low_drone"
-                    ),
+                    "music_preset_id": ("music.horror_low_drone"),
                 },
                 tags=[
                     "horror",

@@ -4,7 +4,13 @@ from collections.abc import Callable
 from uuid import UUID
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QMessageBox, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QFrame,
+    QMessageBox,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
 
 from src.desktop.job_store import JobStore
 from src.desktop.widgets import badge, button, card, muted, small_muted, status_label
@@ -42,9 +48,20 @@ class ContentStudioView(QWidget):
         self._on_change = on_change
         self._job_id: UUID | None = None
 
-        self._layout = QVBoxLayout(self)
-        self._layout.setContentsMargins(0, 12, 0, 0)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+
+        content_container = QWidget()
+        self._layout = QVBoxLayout(content_container)
+        self._layout.setContentsMargins(0, 12, 4, 0)
         self._layout.setSpacing(16)
+
+        scroll_area.setWidget(content_container)
+        outer_layout.addWidget(scroll_area)
 
     def set_job(self, job_id: UUID) -> None:
         self._job_id = job_id

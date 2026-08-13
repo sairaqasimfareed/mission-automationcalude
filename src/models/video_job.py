@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from src.models.asset_state import SceneAssetState
 from src.models.audio_timeline import AudioTimeline
@@ -40,6 +40,8 @@ class VideoJob(MissionBaseModel):
     target_country: str = "United States"
     production_mode: ProductionMode = ProductionMode.PREMIUM
 
+    genre_id: str = "genre.default"
+
     status: JobStatus = JobStatus.PENDING
     current_stage: WorkflowStage = WorkflowStage.RESEARCH
 
@@ -69,6 +71,19 @@ class VideoJob(MissionBaseModel):
     retry_count: int = 0
     errors: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+
+    @field_validator("genre_id")
+    @classmethod
+    def validate_genre_id(cls, value: str) -> str:
+        normalized = value.strip().lower()
+
+        if not normalized.startswith("genre."):
+            raise ValueError("Genre ID must start with 'genre.'.")
+
+        if normalized == "genre.":
+            raise ValueError("Genre ID requires a name.")
+
+        return normalized
 
     @model_validator(mode="after")
     def validate_workflow_state(self) -> VideoJob:

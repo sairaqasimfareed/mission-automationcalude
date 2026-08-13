@@ -175,6 +175,7 @@ class ProjectFormView(QWidget):
             )
 
             job = self._job_mapper.map(specification, niche=self._niche.text())
+            job.genre_id = self._genre.currentText()
         except (ValidationError, ValueError) as error:
             QMessageBox.warning(
                 self,

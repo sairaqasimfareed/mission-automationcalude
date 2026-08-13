@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QLineEdit,
     QMessageBox,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -30,7 +31,6 @@ from src.services.project_render_runtime_factory import ProjectRenderRuntimeFact
 from src.services.scene_asset_workflow_service import SceneAssetWorkflowService
 
 _LEFT = Qt.AlignmentFlag.AlignLeft
-_DEFAULT_GENRE_ID = "genre.default"
 
 
 class RenderWorkspaceView(QWidget):
@@ -70,9 +70,20 @@ class RenderWorkspaceView(QWidget):
         self._manual_upload_paths: dict[int, str] = {}
         self._selected_stock_candidate_index: dict[int, int] = {}
 
-        self._layout = QVBoxLayout(self)
-        self._layout.setContentsMargins(0, 12, 0, 0)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+
+        content_container = QWidget()
+        self._layout = QVBoxLayout(content_container)
+        self._layout.setContentsMargins(0, 12, 4, 0)
         self._layout.setSpacing(16)
+
+        scroll_area.setWidget(content_container)
+        outer_layout.addWidget(scroll_area)
 
     def set_job(self, job_id: UUID) -> None:
         self._job_id = job_id
@@ -395,7 +406,7 @@ class RenderWorkspaceView(QWidget):
         try:
             render_orchestrator = self._render_runtime_factory.build(
                 job=job,
-                genre_id=_DEFAULT_GENRE_ID,
+                genre_id=job.genre_id,
             )
         except (RuntimeError, ValueError) as error:
             self._record_error(job, f"Render setup failed: {error}")
