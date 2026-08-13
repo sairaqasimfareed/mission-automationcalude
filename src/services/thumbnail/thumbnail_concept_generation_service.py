@@ -10,6 +10,21 @@ from src.shared.llm.request import LLMRequest
 
 _BLOCK_SEPARATOR_PATTERN = re.compile(r"\n\s*-{3,}\s*\n")
 
+# DryRunProviderAdapter's generic filler text has no CONCEPT/HOOK/PROMPT
+# labels, so _parse_concepts() finds nothing and generation always fails
+# under MISSION_AUTOMATION_DRY_RUN - the one step in the full pipeline
+# that could never be dry-run-tested end to end. Supplying this as the
+# request's dry_run_response gives the dry-run adapter a response
+# shaped the way a real, instruction-following LLM would return one.
+_DRY_RUN_CONCEPT_RESPONSE = "\n---\n".join(
+    f"CONCEPT: Dry-run thumbnail concept {ordinal} for development "
+    "and testing purposes only.\n"
+    f"HOOK: Dry Run Hook {ordinal}\n"
+    f"PROMPT: Dry-run visual prompt {ordinal} for development and "
+    "testing purposes only."
+    for ordinal in ("One", "Two", "Three")
+)
+
 
 class ThumbnailConceptGenerationService:
     """
@@ -69,6 +84,7 @@ class ThumbnailConceptGenerationService:
                 "enough to read at a glance."
             ),
             prompt_version="thumbnail_concept_prompt_v1.0.0",
+            dry_run_response=_DRY_RUN_CONCEPT_RESPONSE,
             metadata={
                 "agent": "ThumbnailConceptGenerationService",
                 "workflow": "thumbnail_concept",

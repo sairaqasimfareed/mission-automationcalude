@@ -21,7 +21,9 @@ class DryRunProviderAdapter(LLMProviderAdapter):
         request: LLMRequest,
     ) -> Callable[[], LLMProviderResponse]:
         def operation() -> LLMProviderResponse:
-            if request.expect_json:
+            if request.dry_run_response is not None:
+                content = request.dry_run_response
+            elif request.expect_json:
                 content = json.dumps(
                     {
                         "dry_run": True,

@@ -27,6 +27,14 @@ class LLMRequest(MissionBaseModel):
 
     response_schema: dict[str, Any] | None = None
 
+    # DryRunProviderAdapter returns this verbatim instead of its
+    # generic filler text when set. Real provider adapters never read
+    # this field. Only needed by callers whose response parsing
+    # requires a specific shape (e.g. labeled CONCEPT/HOOK/PROMPT
+    # blocks) that the generic dry-run text does not satisfy - most
+    # callers that just need "some text" don't need this.
+    dry_run_response: str | None = None
+
     temperature: float = Field(
         default=0.7,
         ge=0.0,
@@ -68,15 +76,14 @@ class LLMRequest(MissionBaseModel):
         cleaned = value.strip()
 
         if not cleaned:
-            raise ValueError(
-                "Required LLM request text cannot be empty."
-            )
+            raise ValueError("Required LLM request text cannot be empty.")
 
         return cleaned
 
     @field_validator(
         "system_prompt",
         "provider_profile_id",
+        "dry_run_response",
     )
     @classmethod
     def clean_optional_text(
@@ -93,24 +100,17 @@ class LLMRequest(MissionBaseModel):
     @model_validator(mode="after")
     def validate_structured_output(
         self,
-    ) -> "LLMRequest":
+    ) -> LLMRequest:
         """Validate JSON and schema-related options."""
 
-        if (
-            self.response_schema is not None
-            and not self.expect_json
-        ):
-            raise ValueError(
-                "response_schema requires expect_json to be enabled."
-            )
+        if self.response_schema is not None and not self.expect_json:
+            raise ValueError("response_schema requires expect_json to be enabled.")
 
         if (
             self.expect_json
             and self.response_schema is not None
             and not self.response_schema
         ):
-            raise ValueError(
-                "response_schema cannot be empty."
-            )
+            raise ValueError("response_schema cannot be empty.")
 
         return self

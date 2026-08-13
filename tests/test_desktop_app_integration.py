@@ -116,17 +116,19 @@ def test_create_project_runs_workflow_steps_and_generates_seo(
     assert window._dashboard_view._table.rowCount() == 1
 
 
-def test_thumbnail_generation_failure_does_not_crash(
+def test_thumbnail_generation_succeeds_in_dry_run(
     qapp: QApplication,
     no_blocking_dialogs: None,
 ) -> None:
     """
-    Thumbnail generation is expected to fail cleanly in dry-run mode
-    (documented Sprint 23 limitation: the generic dry-run LLM stub
-    cannot produce the structured CONCEPT/HOOK/PROMPT format thumbnail
-    parsing requires). This confirms the failure is caught and shown
-    through the (patched-out) dialog rather than propagating or
-    hanging.
+    Thumbnail concept generation used to fail unconditionally under
+    MISSION_AUTOMATION_DRY_RUN: DryRunProviderAdapter's generic filler
+    text has no CONCEPT/HOOK/PROMPT labels, so the concept parser found
+    nothing. ThumbnailConceptGenerationService now supplies a properly
+    labeled dry_run_response (see dry_run_provider.py /
+    thumbnail_concept_generation_service.py), which fixes the one gap
+    that previously made a full dry-run pipeline run - through final
+    export - impossible.
     """
 
     window = MainWindow(job_store=InMemoryJobStore())
@@ -151,7 +153,11 @@ def test_thumbnail_generation_failure_does_not_crash(
 
     window._detail_view._handle_generate_thumbnail("Ocean enthusiasts")
 
-    assert window._job_store.get_thumbnail(job.id) is None
+    thumbnail = window._job_store.get_thumbnail(job.id)
+
+    assert thumbnail is not None
+    assert thumbnail.concept.hook_text
+    assert not job.errors
 
 
 def test_render_pauses_for_manual_upload_without_local_assets(
@@ -345,3 +351,78 @@ def test_stock_search_and_select_completes_render(
     assert render_result.success is True
     assert job.video_clips
     assert all(clip.source_type.value == "stock_footage" for clip in job.video_clips)
+
+
+def test_full_pipeline_reaches_final_export(
+    qapp: QApplication,
+    no_blocking_dialogs: None,
+) -> None:
+    """
+    Drives the complete pipeline through the desktop UI, exactly as a
+    user would click through it: create -> research -> script ->
+    originality review -> scene planning -> render (paused for asset
+    decisions) -> resolve via stock search -> SEO -> thumbnail ->
+    final export. Every stage before this test was already proven
+    individually; this proves they chain together into one successful
+    run all the way to a built FinalExportPackage, with no errors
+    recorded on the job and the render itself succeeding - not just
+    "gets further than before".
+    """
+
+    window = MainWindow(job_store=InMemoryJobStore())
+
+    window.show_new_project()
+    form = window._form_view
+
+    form._project_name.setText("Deep Sea Documentary")
+    form._channel_name.setText("Ocean Channel")
+    form._topic.setText("Deep sea creatures")
+    form._video_type.setText("long-form documentary")
+    form._niche.setText("ocean-life")
+    form._duration_seconds.setValue(600)
+
+    form._handle_create_clicked()
+
+    job = window._job_store.list_all()[0]
+    window._open_project(job.id)
+    detail = window._detail_view
+
+    detail._handle_run_research()
+    detail._handle_run_script()
+    detail._handle_run_originality()
+    detail._handle_plan_scenes()
+
+    detail._handle_run_render()
+
+    waiting_scene_numbers = [
+        state.scene_number
+        for state in job.scene_asset_states
+        if state.requires_user_decision
+    ]
+
+    assert waiting_scene_numbers
+
+    for scene_number in waiting_scene_numbers:
+        detail._handle_search_stock(scene_number, "")
+        detail._handle_select_stock_candidate(scene_number, 0)
+
+    detail._handle_submit_asset_decisions()
+
+    render_result = window._job_store.get_render_result(job.id)
+    assert render_result is not None
+    assert render_result.success is True
+
+    detail._handle_generate_seo("Ocean enthusiasts")
+    seo_package = window._job_store.get_seo_package(job.id)
+    assert seo_package is not None
+
+    detail._handle_generate_thumbnail("Ocean enthusiasts")
+    thumbnail = window._job_store.get_thumbnail(job.id)
+    assert thumbnail is not None
+
+    detail._handle_build_final_export()
+    final_export = window._job_store.get_final_export(job.id)
+
+    assert final_export is not None
+    assert final_export.final_video_path
+    assert not job.errors

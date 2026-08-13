@@ -178,6 +178,39 @@ def test_generate_rejects_concept_count_below_one() -> None:
         service.generate(_context(), concept_count=0)
 
 
+def test_dry_run_response_is_itself_parseable() -> None:
+    """
+    Regression test: DryRunProviderAdapter returns LLMRequest's
+    dry_run_response verbatim as its content when set (see
+    dry_run_provider.py). This proves that response round-trips
+    through _parse_concepts() successfully - without it,
+    MISSION_AUTOMATION_DRY_RUN could never produce a thumbnail, since
+    the adapter's old generic filler text had no CONCEPT/HOOK/PROMPT
+    labels for the parser to find.
+    """
+
+    probe = _StubLLMService(content=_TWO_CONCEPT_BLOCK)
+
+    service = ThumbnailConceptGenerationService(
+        llm_service=probe,  # type: ignore[arg-type]
+    )
+
+    service.generate(_context(), concept_count=3)
+
+    assert probe.last_request is not None
+    assert probe.last_request.dry_run_response is not None
+
+    replay = _StubLLMService(content=probe.last_request.dry_run_response)
+    replay_service = ThumbnailConceptGenerationService(
+        llm_service=replay,  # type: ignore[arg-type]
+    )
+
+    concepts = replay_service.generate(_context(), concept_count=3)
+
+    assert len(concepts) == 3
+    assert all(concept.hook_text for concept in concepts)
+
+
 def test_constructor_rejects_negative_estimated_cost() -> None:
     stub = _StubLLMService(content=_TWO_CONCEPT_BLOCK)
 
