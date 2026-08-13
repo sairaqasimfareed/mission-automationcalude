@@ -3,18 +3,28 @@ from __future__ import annotations
 from collections.abc import Callable
 from uuid import UUID
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
-    QLabel,
     QLineEdit,
     QMessageBox,
-    QPushButton,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
 
 from src.desktop.job_store import InMemoryJobStore
+from src.desktop.widgets import (
+    badge,
+    button,
+    card,
+    heading,
+    muted,
+    small_muted,
+    status_label,
+    subheading,
+)
 from src.models.asset_state import SceneAssetState
 from src.models.enums import WorkflowStage
 from src.models.scene import Scene
@@ -41,15 +51,7 @@ _DEFAULT_GENRE_IDS = [
     for profile in GenreProfileRegistryService.with_default_profiles().list_all()
 ]
 
-
-def _card(title: str) -> tuple[QFrame, QVBoxLayout]:
-    frame = QFrame()
-    frame.setFrameShape(QFrame.Shape.StyledPanel)
-
-    layout = QVBoxLayout(frame)
-    layout.addWidget(QLabel(f"<h3>{title}</h3>"))
-
-    return frame, layout
+_LEFT = Qt.AlignmentFlag.AlignLeft
 
 
 class ProjectDetailView(QWidget):
@@ -110,13 +112,31 @@ class ProjectDetailView(QWidget):
         self._selected_stock_candidate_index: dict[int, int] = {}
 
         self._outer_layout = QVBoxLayout(self)
+        self._outer_layout.setContentsMargins(24, 20, 24, 20)
+        self._outer_layout.setSpacing(16)
 
-        back_button = QPushButton("< Back to dashboard")
+        back_button = button("Back to dashboard", variant="ghost", icon_name="back")
         back_button.clicked.connect(lambda: self._on_back())
-        self._outer_layout.addWidget(back_button)
+        self._outer_layout.addWidget(back_button, alignment=_LEFT)
 
-        self._content_layout = QVBoxLayout()
-        self._outer_layout.addLayout(self._content_layout)
+        # A project can grow to 9+ cards (project, workflow, research,
+        # script, originality, scenes, SEO, thumbnail, render - each
+        # with per-scene sub-cards, plus final export). Without a
+        # scroll area, that content is squeezed to fit the window
+        # instead of extending below it, which visibly corrupts every
+        # card's layout once the total height exceeds the window -
+        # found by actually rendering this view, not by inspection.
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+
+        content_container = QWidget()
+        self._content_layout = QVBoxLayout(content_container)
+        self._content_layout.setSpacing(16)
+        self._content_layout.setContentsMargins(0, 0, 4, 0)
+
+        scroll_area.setWidget(content_container)
+        self._outer_layout.addWidget(scroll_area)
 
     def set_job(self, job_id: UUID) -> None:
         """Display one job, replacing any previously displayed job."""
@@ -146,11 +166,11 @@ class ProjectDetailView(QWidget):
         job = self._job_store.get(self._job_id)
 
         if job is None:
-            self._content_layout.addWidget(QLabel("Project not found."))
+            self._content_layout.addWidget(muted("Project not found."))
 
             return
 
-        self._content_layout.addWidget(QLabel(f"<h2>{job.project_name}</h2>"))
+        self._content_layout.addWidget(heading(job.project_name))
 
         self._build_project_card(job)
         self._build_workflow_card(job)
@@ -164,155 +184,166 @@ class ProjectDetailView(QWidget):
         self._build_final_export_card(job)
 
     def _build_project_card(self, job: VideoJob) -> None:
-        frame, layout = _card("Project")
+        frame, layout = card("Project", icon_name="folder")
 
-        layout.addWidget(QLabel(f"Topic: {job.topic}"))
-        layout.addWidget(QLabel(f"Niche: {job.niche}"))
-        layout.addWidget(QLabel(f"Platform: {job.platform.value}"))
+        layout.addWidget(muted(f"Topic: {job.topic}"))
+        layout.addWidget(muted(f"Niche: {job.niche}"))
+        layout.addWidget(muted(f"Platform: {job.platform.value}"))
 
         self._content_layout.addWidget(frame)
 
     def _build_workflow_card(self, job: VideoJob) -> None:
-        frame, layout = _card("Workflow")
+        frame, layout = card("Workflow", icon_name="dashboard")
 
         layout.addWidget(
-            QLabel(
-                f"Current stage: {job.current_stage.value} | "
-                f"Status: {job.status.value}"
-            )
+            badge(f"{job.current_stage.value} · {job.status.value}"),
         )
 
         if job.errors:
-            errors_label = QLabel(
-                "Errors:\n" + "\n".join(f"- {error}" for error in job.errors)
+            layout.addWidget(
+                status_label(
+                    "Errors:\n" + "\n".join(f"- {error}" for error in job.errors),
+                    role="error",
+                )
             )
-            errors_label.setWordWrap(True)
-            errors_label.setStyleSheet("color: #b40000;")
-            layout.addWidget(errors_label)
 
         if job.warnings:
-            warnings_label = QLabel(
-                "Warnings:\n" + "\n".join(f"- {warning}" for warning in job.warnings)
+            layout.addWidget(
+                status_label(
+                    "Warnings:\n"
+                    + "\n".join(f"- {warning}" for warning in job.warnings),
+                    role="warning",
+                )
             )
-            warnings_label.setWordWrap(True)
-            warnings_label.setStyleSheet("color: #9a6700;")
-            layout.addWidget(warnings_label)
 
         if job.research is None:
-            button = QPushButton("Run research")
-            button.clicked.connect(self._handle_run_research)
-            layout.addWidget(button)
+            action = button("Run research", variant="primary", icon_name="research")
+            action.clicked.connect(self._handle_run_research)
+            layout.addWidget(action, alignment=_LEFT)
         elif job.script is None:
-            button = QPushButton("Run script")
-            button.clicked.connect(self._handle_run_script)
-            layout.addWidget(button)
+            action = button("Run script", variant="primary", icon_name="script")
+            action.clicked.connect(self._handle_run_script)
+            layout.addWidget(action, alignment=_LEFT)
         elif job.originality_review is None:
-            button = QPushButton("Run originality review")
-            button.clicked.connect(self._handle_run_originality)
-            layout.addWidget(button)
+            action = button(
+                "Run originality review", variant="primary", icon_name="shield"
+            )
+            action.clicked.connect(self._handle_run_originality)
+            layout.addWidget(action, alignment=_LEFT)
         elif not job.scenes:
-            button = QPushButton("Plan scenes")
-            button.clicked.connect(self._handle_plan_scenes)
-            layout.addWidget(button)
+            action = button("Plan scenes", variant="primary", icon_name="clapper")
+            action.clicked.connect(self._handle_plan_scenes)
+            layout.addWidget(action, alignment=_LEFT)
         else:
-            layout.addWidget(QLabel("Content generation steps are complete."))
+            layout.addWidget(
+                status_label("Content generation steps are complete.", role="success")
+            )
 
         self._content_layout.addWidget(frame)
 
     def _build_research_card(self, job: VideoJob) -> None:
-        frame, layout = _card("Research")
+        frame, layout = card("Research", icon_name="research")
 
         research = job.research
 
         if research is not None:
-            layout.addWidget(QLabel(f"Status: {research.status.value}"))
-
-            summary = QLabel(research.research_summary)
-            summary.setWordWrap(True)
-            layout.addWidget(summary)
+            layout.addWidget(badge(research.status.value))
+            layout.addWidget(muted(research.research_summary))
 
             if research.claude_review_notes:
-                notes = QLabel(
-                    "Review notes: " + "; ".join(research.claude_review_notes)
+                layout.addWidget(
+                    small_muted(
+                        "Review notes: " + "; ".join(research.claude_review_notes)
+                    )
                 )
-                notes.setWordWrap(True)
-                layout.addWidget(notes)
         else:
-            layout.addWidget(QLabel("No research yet."))
+            layout.addWidget(small_muted("No research yet."))
 
         self._content_layout.addWidget(frame)
 
     def _build_script_card(self, job: VideoJob) -> None:
-        frame, layout = _card("Script")
+        frame, layout = card("Script", icon_name="script")
 
         script = job.script
 
         if script is not None:
-            layout.addWidget(QLabel(f"Status: {script.status.value}"))
-            layout.addWidget(QLabel(f"Word count: {script.word_count}"))
-
-            content = QLabel(script.content)
-            content.setWordWrap(True)
-            layout.addWidget(content)
+            layout.addWidget(
+                badge(f"{script.status.value} · {script.word_count} words")
+            )
+            layout.addWidget(muted(script.content))
 
             if script.claude_review_notes:
-                notes = QLabel("Review notes: " + "; ".join(script.claude_review_notes))
-                notes.setWordWrap(True)
-                layout.addWidget(notes)
+                layout.addWidget(
+                    small_muted(
+                        "Review notes: " + "; ".join(script.claude_review_notes)
+                    )
+                )
         else:
-            layout.addWidget(QLabel("No script yet."))
+            layout.addWidget(small_muted("No script yet."))
 
         self._content_layout.addWidget(frame)
 
     def _build_originality_card(self, job: VideoJob) -> None:
-        frame, layout = _card("Originality review")
+        frame, layout = card("Originality review", icon_name="shield")
 
         review = job.originality_review
 
         if review is not None:
-            layout.addWidget(QLabel(f"Status: {review.status.value}"))
+            layout.addWidget(badge(review.status.value))
             layout.addWidget(
-                QLabel(
-                    f"Originality: {review.originality_score} | "
-                    f"Human value: {review.human_value_score} | "
+                muted(
+                    f"Originality: {review.originality_score} · "
+                    f"Human value: {review.human_value_score} · "
                     f"Hook strength: {review.hook_strength_score}"
                 )
             )
 
             if review.strengths:
-                layout.addWidget(QLabel("Strengths: " + ", ".join(review.strengths)))
+                layout.addWidget(
+                    small_muted("Strengths: " + ", ".join(review.strengths))
+                )
 
             if review.weaknesses:
-                layout.addWidget(QLabel("Weaknesses: " + ", ".join(review.weaknesses)))
+                layout.addWidget(
+                    small_muted("Weaknesses: " + ", ".join(review.weaknesses))
+                )
 
             if review.recommendations:
                 layout.addWidget(
-                    QLabel("Recommendations: " + ", ".join(review.recommendations))
+                    small_muted("Recommendations: " + ", ".join(review.recommendations))
                 )
         else:
-            layout.addWidget(QLabel("Not reviewed yet."))
+            layout.addWidget(small_muted("Not reviewed yet."))
 
         self._content_layout.addWidget(frame)
 
     def _build_scenes_card(self, job: VideoJob) -> None:
-        frame, layout = _card(f"Scenes ({len(job.scenes)})")
+        frame, layout = card(f"Scenes ({len(job.scenes)})", icon_name="clapper")
 
         if job.scenes:
             for scene in job.scenes:
-                scene_label = QLabel(
-                    f"#{scene.scene_number} {scene.title} "
-                    f"({scene.estimated_duration_seconds}s): "
-                    f"{scene.narration}"
+                row = QFrame()
+                row.setProperty("sceneRow", True)
+                row_layout = QVBoxLayout(row)
+                row_layout.setContentsMargins(12, 8, 12, 8)
+                row_layout.setSpacing(2)
+
+                row_layout.addWidget(
+                    subheading(
+                        f"#{scene.scene_number} {scene.title} "
+                        f"({scene.estimated_duration_seconds}s)"
+                    )
                 )
-                scene_label.setWordWrap(True)
-                layout.addWidget(scene_label)
+                row_layout.addWidget(small_muted(scene.narration))
+
+                layout.addWidget(row)
         else:
-            layout.addWidget(QLabel("No scenes planned yet."))
+            layout.addWidget(small_muted("No scenes planned yet."))
 
         self._content_layout.addWidget(frame)
 
     def _build_seo_card(self, job: VideoJob) -> None:
-        frame, layout = _card("SEO package")
+        frame, layout = card("SEO package", icon_name="tag")
 
         assert self._job_id is not None
 
@@ -320,68 +351,62 @@ class ProjectDetailView(QWidget):
 
         if seo_package is not None:
             layout.addWidget(
-                QLabel(f"Selected title: {seo_package.selected_title}"),
+                subheading(seo_package.selected_title or ""),
             )
-
-            description = QLabel(seo_package.description)
-            description.setWordWrap(True)
-            layout.addWidget(description)
-
-            layout.addWidget(
-                QLabel(f"Tags: {', '.join(seo_package.tags)}"),
-            )
-            layout.addWidget(
-                QLabel(f"Hashtags: {' '.join(seo_package.hashtags)}"),
-            )
+            layout.addWidget(muted(seo_package.description))
+            layout.addWidget(small_muted(f"Tags: {', '.join(seo_package.tags)}"))
+            layout.addWidget(small_muted(f"Hashtags: {' '.join(seo_package.hashtags)}"))
         elif job.script is not None and job.script.status.value == "approved":
-            layout.addWidget(QLabel("Not generated yet."))
+            layout.addWidget(small_muted("Not generated yet."))
 
             audience_input = QLineEdit("General audience")
             layout.addWidget(audience_input)
 
-            generate_button = QPushButton("Generate SEO package")
+            generate_button = button(
+                "Generate SEO package", variant="primary", icon_name="tag"
+            )
             generate_button.clicked.connect(
                 lambda: self._handle_generate_seo(audience_input.text()),
             )
-            layout.addWidget(generate_button)
+            layout.addWidget(generate_button, alignment=_LEFT)
         else:
-            layout.addWidget(QLabel("Requires an approved script."))
+            layout.addWidget(small_muted("Requires an approved script."))
 
         self._content_layout.addWidget(frame)
 
     def _build_thumbnail_card(self, job: VideoJob) -> None:
-        frame, layout = _card("Thumbnail")
+        frame, layout = card("Thumbnail", icon_name="image")
 
         assert self._job_id is not None
 
         thumbnail = self._job_store.get_thumbnail(self._job_id)
 
         if thumbnail is not None:
+            layout.addWidget(subheading(thumbnail.concept.hook_text))
             layout.addWidget(
-                QLabel(f"Hook text: {thumbnail.concept.hook_text}"),
+                small_muted(f"Source: {thumbnail.image_source_type.value}")
             )
-            layout.addWidget(
-                QLabel(f"Source: {thumbnail.image_source_type.value}"),
-            )
-            layout.addWidget(QLabel(f"File: {thumbnail.file_path}"))
+            layout.addWidget(small_muted(f"File: {thumbnail.file_path}"))
         elif job.script is not None and job.script.status.value == "approved":
-            layout.addWidget(QLabel("Not generated yet."))
+            layout.addWidget(small_muted("Not generated yet."))
 
             audience_input = QLineEdit("General audience")
             layout.addWidget(audience_input)
 
-            generate_button = QPushButton("Generate thumbnail")
+            generate_button = button(
+                "Generate thumbnail", variant="primary", icon_name="image"
+            )
             generate_button.clicked.connect(
                 lambda: self._handle_generate_thumbnail(audience_input.text()),
             )
-            layout.addWidget(generate_button)
+            layout.addWidget(generate_button, alignment=_LEFT)
         else:
-            layout.addWidget(QLabel("Requires an approved script."))
+            layout.addWidget(small_muted("Requires an approved script."))
 
         self._content_layout.addWidget(frame)
 
     def _build_render_card(self, job: VideoJob) -> None:
-        frame, layout = _card("Render")
+        frame, layout = card("Render", icon_name="play")
 
         assert self._job_id is not None
 
@@ -394,13 +419,13 @@ class ProjectDetailView(QWidget):
         render_result = self._job_store.get_render_result(self._job_id)
 
         if waiting_scene_numbers:
-            note = QLabel(
-                "These scenes need a visual asset before render can "
-                "continue. For each one, either choose a local file to "
-                "upload, or search stock footage and select a result."
+            layout.addWidget(
+                muted(
+                    "These scenes need a visual asset before render can "
+                    "continue. For each one, either choose a local file to "
+                    "upload, or search stock footage and select a result."
+                )
             )
-            note.setWordWrap(True)
-            layout.addWidget(note)
 
             for scene_number in waiting_scene_numbers:
                 self._build_scene_asset_choice(
@@ -409,53 +434,59 @@ class ProjectDetailView(QWidget):
                     scene_number=scene_number,
                 )
 
-            submit_button = QPushButton("Submit choices and continue render")
+            submit_button = button(
+                "Submit choices and continue render",
+                variant="primary",
+                icon_name="play",
+            )
             submit_button.clicked.connect(self._handle_submit_asset_decisions)
-            layout.addWidget(submit_button)
+            layout.addWidget(submit_button, alignment=_LEFT)
         elif render_result is not None:
             layout.addWidget(
-                QLabel(f"Success: {render_result.success}"),
+                status_label("Render succeeded.", role="success")
+                if render_result.success
+                else status_label("Render failed.", role="error")
             )
-            layout.addWidget(
-                QLabel(f"Status: {render_result.status.value}"),
-            )
+            layout.addWidget(badge(render_result.status.value))
 
             if render_result.render_result is not None:
                 layout.addWidget(
-                    QLabel(
-                        "Output file: " f"{render_result.render_result.output_file}"
+                    small_muted(
+                        f"Output file: {render_result.render_result.output_file}"
                     ),
                 )
 
             if render_result.errors:
-                errors_label = QLabel(
-                    "Errors:\n"
-                    + "\n".join(f"- {error}" for error in render_result.errors)
+                layout.addWidget(
+                    status_label(
+                        "Errors:\n"
+                        + "\n".join(f"- {error}" for error in render_result.errors),
+                        role="error",
+                    )
                 )
-                errors_label.setWordWrap(True)
-                errors_label.setStyleSheet("color: #b40000;")
-                layout.addWidget(errors_label)
 
             if render_result.warnings:
-                warnings_label = QLabel(
-                    "Warnings:\n"
-                    + "\n".join(f"- {warning}" for warning in render_result.warnings)
+                layout.addWidget(
+                    status_label(
+                        "Warnings:\n"
+                        + "\n".join(
+                            f"- {warning}" for warning in render_result.warnings
+                        ),
+                        role="warning",
+                    )
                 )
-                warnings_label.setWordWrap(True)
-                warnings_label.setStyleSheet("color: #9a6700;")
-                layout.addWidget(warnings_label)
 
-            retry_button = QPushButton("Run render again")
+            retry_button = button("Run render again", variant="ghost", icon_name="play")
             retry_button.clicked.connect(self._handle_run_render)
-            layout.addWidget(retry_button)
+            layout.addWidget(retry_button, alignment=_LEFT)
         elif job.scenes:
-            layout.addWidget(QLabel("Not rendered yet."))
+            layout.addWidget(small_muted("Not rendered yet."))
 
-            render_button = QPushButton("Run render")
+            render_button = button("Run render", variant="primary", icon_name="play")
             render_button.clicked.connect(self._handle_run_render)
-            layout.addWidget(render_button)
+            layout.addWidget(render_button, alignment=_LEFT)
         else:
-            layout.addWidget(QLabel("Requires planned scenes."))
+            layout.addWidget(small_muted("Requires planned scenes."))
 
         self._content_layout.addWidget(frame)
 
@@ -466,7 +497,14 @@ class ProjectDetailView(QWidget):
         job: VideoJob,
         scene_number: int,
     ) -> None:
-        frame, inner_layout = _card(f"Scene {scene_number}")
+        frame = QFrame()
+        frame.setProperty("sceneRow", True)
+
+        inner_layout = QVBoxLayout(frame)
+        inner_layout.setContentsMargins(12, 12, 12, 12)
+        inner_layout.setSpacing(8)
+
+        inner_layout.addWidget(subheading(f"Scene {scene_number}"))
 
         state = self._scene_asset_state(job, scene_number)
         stock_index = self._selected_stock_candidate_index.get(scene_number)
@@ -479,60 +517,76 @@ class ProjectDetailView(QWidget):
         ):
             candidate = state.stock_candidates[stock_index]
             inner_layout.addWidget(
-                QLabel(
-                    f"Selected stock result: {candidate.title} ({candidate.provider})"
+                status_label(
+                    f"Selected stock result: {candidate.title} "
+                    f"({candidate.provider})",
+                    role="success",
                 )
             )
         elif manual_path is not None:
-            inner_layout.addWidget(QLabel(f"Manual upload: {manual_path}"))
+            inner_layout.addWidget(
+                status_label(f"Manual upload: {manual_path}", role="success")
+            )
         else:
-            inner_layout.addWidget(QLabel("No choice made yet."))
+            inner_layout.addWidget(small_muted("No choice made yet."))
 
-        choose_button = QPushButton("Choose file for manual upload")
+        choose_button = button("Choose file for manual upload", icon_name="upload")
         choose_button.clicked.connect(
             lambda checked=False, n=scene_number: (
                 self._handle_choose_manual_upload(n)
             ),
         )
-        inner_layout.addWidget(choose_button)
+        inner_layout.addWidget(choose_button, alignment=_LEFT)
 
         query_input = QLineEdit()
+        query_input.setPlaceholderText("Stock search query (optional)")
 
         if state is not None and state.stock_search_query:
             query_input.setPlaceholderText(state.stock_search_query)
 
         inner_layout.addWidget(query_input)
 
-        search_button = QPushButton("Search stock footage")
+        search_button = button("Search stock footage", icon_name="search")
         search_button.clicked.connect(
             lambda checked=False, n=scene_number, q=query_input: (
                 self._handle_search_stock(n, q.text())
             ),
         )
-        inner_layout.addWidget(search_button)
+        inner_layout.addWidget(search_button, alignment=_LEFT)
 
         if state is not None and state.stock_candidates:
             for index, candidate in enumerate(state.stock_candidates):
-                candidate_label = QLabel(
-                    f"{index + 1}. {candidate.title} - "
-                    f"{candidate.provider or 'Unknown provider'} "
-                    f"({candidate.license_type or 'unknown license'})"
-                )
-                candidate_label.setWordWrap(True)
-                inner_layout.addWidget(candidate_label)
+                candidate_row = QFrame()
+                candidate_layout = QVBoxLayout(candidate_row)
+                candidate_layout.setContentsMargins(0, 4, 0, 4)
+                candidate_layout.setSpacing(4)
 
-                select_button = QPushButton(f"Select result {index + 1}")
+                candidate_layout.addWidget(
+                    small_muted(
+                        f"{index + 1}. {candidate.title} - "
+                        f"{candidate.provider or 'Unknown provider'} "
+                        f"({candidate.license_type or 'unknown license'})"
+                    )
+                )
+
+                select_button = button(
+                    f"Select result {index + 1}",
+                    variant="ghost",
+                    icon_name="check",
+                )
                 select_button.clicked.connect(
                     lambda checked=False, n=scene_number, i=index: (
                         self._handle_select_stock_candidate(n, i)
                     ),
                 )
-                inner_layout.addWidget(select_button)
+                candidate_layout.addWidget(select_button, alignment=_LEFT)
+
+                inner_layout.addWidget(candidate_row)
 
         layout.addWidget(frame)
 
     def _build_final_export_card(self, job: VideoJob) -> None:
-        frame, layout = _card("Final export")
+        frame, layout = card("Final export", icon_name="export")
 
         assert self._job_id is not None
 
@@ -543,27 +597,29 @@ class ProjectDetailView(QWidget):
 
         if final_export is not None:
             layout.addWidget(
-                QLabel(f"Status: {final_export.status.value}"),
+                status_label(f"Status: {final_export.status.value}", role="success")
             )
+            layout.addWidget(small_muted(f"Video: {final_export.final_video_path}"))
             layout.addWidget(
-                QLabel(f"Video: {final_export.final_video_path}"),
-            )
-            layout.addWidget(
-                QLabel(f"Export directory: {final_export.export_directory}"),
+                small_muted(f"Export directory: {final_export.export_directory}")
             )
         elif render_result is not None and render_result.success:
             if seo_package is not None and thumbnail is not None:
-                layout.addWidget(QLabel("Not built yet."))
+                layout.addWidget(small_muted("Not built yet."))
 
-                export_button = QPushButton("Build final export package")
+                export_button = button(
+                    "Build final export package",
+                    variant="primary",
+                    icon_name="export",
+                )
                 export_button.clicked.connect(self._handle_build_final_export)
-                layout.addWidget(export_button)
+                layout.addWidget(export_button, alignment=_LEFT)
             else:
                 layout.addWidget(
-                    QLabel("Requires an SEO package and a thumbnail."),
+                    small_muted("Requires an SEO package and a thumbnail."),
                 )
         else:
-            layout.addWidget(QLabel("Requires a successful render."))
+            layout.addWidget(small_muted("Requires a successful render."))
 
         self._content_layout.addWidget(frame)
 

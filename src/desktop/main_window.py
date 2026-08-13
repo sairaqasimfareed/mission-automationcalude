@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMainWindow, QStackedWidget, QToolBar
 
 from src.desktop import services
+from src.desktop.icons import app_icon, primary_icon
 from src.desktop.job_store import InMemoryJobStore
 from src.desktop.views.dashboard_view import DashboardView
 from src.desktop.views.project_detail_view import ProjectDetailView
@@ -29,7 +31,9 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         self.setWindowTitle("Mission Automation")
-        self.resize(960, 640)
+        self.setWindowIcon(app_icon())
+        self.resize(1180, 760)
+        self.setMinimumSize(900, 600)
 
         self._job_store = InMemoryJobStore()
 
@@ -76,17 +80,19 @@ class MainWindow(QMainWindow):
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Main")
         toolbar.setMovable(False)
+        toolbar.setIconSize(QSize(18, 18))
+        toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.addToolBar(toolbar)
 
-        dashboard_action = QAction("Dashboard", self)
+        dashboard_action = QAction(primary_icon("dashboard"), "Dashboard", self)
         dashboard_action.triggered.connect(self.show_dashboard)
         toolbar.addAction(dashboard_action)
 
-        new_project_action = QAction("New Project", self)
+        new_project_action = QAction(primary_icon("add"), "New Project", self)
         new_project_action.triggered.connect(self.show_new_project)
         toolbar.addAction(new_project_action)
 
-        settings_action = QAction("Settings", self)
+        settings_action = QAction(primary_icon("settings"), "Settings", self)
         settings_action.triggered.connect(self.show_settings)
         toolbar.addAction(settings_action)
 

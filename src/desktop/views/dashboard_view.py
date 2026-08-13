@@ -5,10 +5,7 @@ from uuid import UUID
 
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QHBoxLayout,
     QHeaderView,
-    QLabel,
-    QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -16,6 +13,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.desktop.job_store import InMemoryJobStore
+from src.desktop.widgets import button, heading, muted, row, small_muted
 from src.services.pipeline_checkpoint_storage_service import (
     PipelineCheckpointStorageService,
 )
@@ -47,10 +45,12 @@ class DashboardView(QWidget):
         self._job_ids: list[UUID] = []
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(12)
 
-        layout.addWidget(QLabel("<h2>Projects</h2>"))
+        layout.addWidget(heading("Projects"))
 
-        self._empty_label = QLabel("No projects yet. Use New Project to create one.")
+        self._empty_label = muted("No projects yet. Use New Project to create one.")
         layout.addWidget(self._empty_label)
 
         self._table = QTableWidget(0, 4)
@@ -60,17 +60,16 @@ class DashboardView(QWidget):
         )
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._table.setAlternatingRowColors(True)
+        self._table.verticalHeader().setVisible(False)
         self._table.itemDoubleClicked.connect(self._handle_row_activated)
         layout.addWidget(self._table)
 
-        buttons = QHBoxLayout()
-        open_button = QPushButton("Open selected")
+        open_button = button("Open selected", variant="primary", icon_name="folder")
         open_button.clicked.connect(self._handle_open_clicked)
-        buttons.addWidget(open_button)
-        buttons.addStretch()
-        layout.addLayout(buttons)
+        layout.addLayout(row(open_button))
 
-        self._checkpoint_label = QLabel()
+        self._checkpoint_label = small_muted("")
         layout.addWidget(self._checkpoint_label)
 
     def refresh(self) -> None:
@@ -84,11 +83,11 @@ class DashboardView(QWidget):
 
         self._table.setRowCount(len(jobs))
 
-        for row, job in enumerate(jobs):
-            self._table.setItem(row, 0, QTableWidgetItem(job.project_name))
-            self._table.setItem(row, 1, QTableWidgetItem(job.topic))
-            self._table.setItem(row, 2, QTableWidgetItem(job.current_stage.value))
-            self._table.setItem(row, 3, QTableWidgetItem(job.status.value))
+        for row_index, job in enumerate(jobs):
+            self._table.setItem(row_index, 0, QTableWidgetItem(job.project_name))
+            self._table.setItem(row_index, 1, QTableWidgetItem(job.topic))
+            self._table.setItem(row_index, 2, QTableWidgetItem(job.current_stage.value))
+            self._table.setItem(row_index, 3, QTableWidgetItem(job.status.value))
 
         checkpointed_count = len(self._checkpoint_storage.list_job_ids())
 
@@ -105,6 +104,6 @@ class DashboardView(QWidget):
         if selected:
             self._open_row(selected[0].row())
 
-    def _open_row(self, row: int) -> None:
-        if 0 <= row < len(self._job_ids):
-            self._on_open_project(self._job_ids[row])
+    def _open_row(self, row_index: int) -> None:
+        if 0 <= row_index < len(self._job_ids):
+            self._on_open_project(self._job_ids[row_index])

@@ -4,19 +4,19 @@ from collections.abc import Callable
 from uuid import UUID
 
 from pydantic import ValidationError
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QFormLayout,
-    QLabel,
     QLineEdit,
     QMessageBox,
-    QPushButton,
     QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
 from src.desktop.job_store import InMemoryJobStore
+from src.desktop.widgets import button, card, heading, muted
 from src.models.advanced_settings import AdvancedSettings
 from src.models.audience_settings import AudienceSettings
 from src.models.budget_settings import BudgetSettings
@@ -41,6 +41,8 @@ _DEFAULT_GENRE_IDS = [
     profile.genre_id
     for profile in GenreProfileRegistryService.with_default_profiles().list_all()
 ]
+
+_LEFT = Qt.AlignmentFlag.AlignLeft
 
 
 class ProjectFormView(QWidget):
@@ -68,9 +70,19 @@ class ProjectFormView(QWidget):
         self._job_mapper = ProjectSpecificationJobMapper()
 
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("<h2>New Project</h2>"))
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(16)
+
+        layout.addWidget(heading("New Project"))
+        layout.addWidget(
+            muted("Describe the video you want produced. Nothing runs yet.")
+        )
+
+        frame, card_layout = card("Project details", icon_name="add")
 
         form = QFormLayout()
+        form.setSpacing(10)
+        form.setLabelAlignment(_LEFT)
 
         self._project_name = QLineEdit()
         form.addRow("Project name", self._project_name)
@@ -106,11 +118,15 @@ class ProjectFormView(QWidget):
         self._target_audience = QLineEdit("General audience")
         form.addRow("Target audience", self._target_audience)
 
-        layout.addLayout(form)
+        card_layout.addLayout(form)
 
-        create_button = QPushButton("Create project")
+        layout.addWidget(frame)
+
+        create_button = button("Create project", variant="primary", icon_name="add")
         create_button.clicked.connect(self._handle_create_clicked)
-        layout.addWidget(create_button)
+        layout.addWidget(create_button, alignment=_LEFT)
+
+        layout.addStretch()
 
     def reset(self) -> None:
         """Clear all fields for a fresh project."""

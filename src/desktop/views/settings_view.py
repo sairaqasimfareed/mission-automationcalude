@@ -4,13 +4,13 @@ from collections.abc import Callable
 
 from PySide6.QtWidgets import (
     QHeaderView,
-    QLabel,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
+from src.desktop.widgets import badge, heading
 from src.services.runtime_configuration_loader import RuntimeConfiguration
 
 _COLUMNS = ["Profile ID", "Provider", "Category", "Enabled", "Health", "Secret"]
@@ -34,9 +34,12 @@ class SettingsView(QWidget):
         self._get_configuration = get_configuration
 
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("<h2>Provider settings</h2>"))
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(12)
 
-        self._dry_run_label = QLabel()
+        layout.addWidget(heading("Provider settings"))
+
+        self._dry_run_label = badge("")
         layout.addWidget(self._dry_run_label)
 
         self._table = QTableWidget(0, len(_COLUMNS))
@@ -45,6 +48,8 @@ class SettingsView(QWidget):
             QHeaderView.ResizeMode.Stretch
         )
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.setAlternatingRowColors(True)
+        self._table.verticalHeader().setVisible(False)
         layout.addWidget(self._table)
 
     def refresh(self) -> None:
