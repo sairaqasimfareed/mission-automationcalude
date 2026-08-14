@@ -524,6 +524,62 @@ class EffectRegistryService:
                 ],
             ),
             EffectPreset(
+                preset_id="music.medical_calm_piano",
+                category=EffectCategory.MUSIC,
+                display_name="Medical Calm Piano",
+                fallback_preset_id="music.none",
+                implementation={
+                    "library_query": "calm gentle piano educational",
+                    "loop": True,
+                },
+                tags=[
+                    "medical",
+                    "calm",
+                ],
+            ),
+            EffectPreset(
+                preset_id="music.mystery_tense_strings",
+                category=EffectCategory.MUSIC,
+                display_name="Mystery Tense Strings",
+                fallback_preset_id="music.none",
+                implementation={
+                    "library_query": "tense mystery strings suspense",
+                    "loop": True,
+                },
+                tags=[
+                    "mystery",
+                    "suspense",
+                ],
+            ),
+            EffectPreset(
+                preset_id="music.reaction_upbeat_pop",
+                category=EffectCategory.MUSIC,
+                display_name="Reaction Upbeat Pop",
+                fallback_preset_id="music.none",
+                implementation={
+                    "library_query": "upbeat energetic pop reaction",
+                    "loop": True,
+                },
+                tags=[
+                    "reaction",
+                    "energetic",
+                ],
+            ),
+            EffectPreset(
+                preset_id="music.survival_tense_percussion",
+                category=EffectCategory.MUSIC,
+                display_name="Survival Tense Percussion",
+                fallback_preset_id="music.none",
+                implementation={
+                    "library_query": "tense tribal percussion survival",
+                    "loop": True,
+                },
+                tags=[
+                    "survival",
+                    "tense",
+                ],
+            ),
+            EffectPreset(
                 preset_id="sfx.none",
                 category=(EffectCategory.SOUND_EFFECT),
                 display_name="No Sound Effect",

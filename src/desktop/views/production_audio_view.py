@@ -7,7 +7,7 @@ from PySide6.QtWidgets import QFrame, QScrollArea, QVBoxLayout, QWidget
 
 from src.desktop.job_store import JobStore
 from src.desktop.widgets import badge, card, muted, small_muted, subheading
-from src.models.audio_track import AudioTrack
+from src.models.audio_track import AudioTrack, AudioTrackType
 from src.models.video_job import VideoJob
 
 
@@ -130,4 +130,48 @@ class ProductionAudioView(QWidget):
             )
         )
 
+        directive_summary = ProductionAudioView._directive_summary(track)
+
+        if directive_summary:
+            row_layout.addWidget(small_muted(directive_summary))
+
         return row_layout
+
+    @staticmethod
+    def _directive_summary(track: AudioTrack) -> str | None:
+        """
+        Summarize the creative directive that produced this track.
+
+        Voiceover tracks carry the resolved voice blueprint's
+        emotion/pace/energy/speed (set by VoiceGenerationService);
+        music and sound-effect tracks carry the resolved preset and
+        library query (set by MusicGenerationService/
+        SoundEffectGenerationService). Neither was previously shown
+        anywhere - only the resulting audio file path was.
+        """
+
+        metadata = track.metadata
+
+        if track.track_type == AudioTrackType.VOICEOVER:
+            parts = [
+                f"{label}: {metadata[key]}"
+                for label, key in (
+                    ("emotion", "emotion"),
+                    ("pace", "pace"),
+                    ("energy", "energy"),
+                    ("speed", "speed"),
+                )
+                if key in metadata
+            ]
+        else:
+            parts = [
+                f"{label}: {metadata[key]}"
+                for label, key in (
+                    ("preset", "resolved_preset_id"),
+                    ("intensity", "intensity"),
+                    ("query", "library_query"),
+                )
+                if key in metadata
+            ]
+
+        return " · ".join(parts) if parts else None

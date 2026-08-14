@@ -77,7 +77,69 @@ class QualityCenterView(QWidget):
             if widget is not None:
                 widget.deleteLater()
 
+        self._build_checklist_card(job)
         self._build_policy_card(job)
+
+    def _build_checklist_card(self, job: VideoJob) -> None:
+        """
+        Consolidated post-render readiness summary.
+
+        Render success, SEO, thumbnail, the policy check, and final
+        export each live in their own workspace - this pulls all five
+        into one place instead of requiring a separate check in each.
+        """
+
+        frame, layout = card("Post-render checklist", icon_name="check-circle")
+
+        assert self._job_id is not None
+
+        render_result = self._job_store.get_render_result(self._job_id)
+        render_ok = render_result is not None and render_result.success
+
+        seo_package = self._job_store.get_seo_package(self._job_id)
+        thumbnail = self._job_store.get_thumbnail(self._job_id)
+        final_export = self._job_store.get_final_export(self._job_id)
+
+        checks = (
+            ("Render", render_ok),
+            ("SEO package", seo_package is not None),
+            ("Thumbnail", thumbnail is not None),
+            ("Quality and policy check", job.policy_report is not None),
+            ("Final export", final_export is not None),
+        )
+
+        for label, passed in checks:
+            layout.addWidget(
+                status_label(
+                    f"{label}: {'done' if passed else 'not done'}",
+                    role="success" if passed else "warning",
+                )
+            )
+
+        ready_for_export = (
+            render_ok and seo_package is not None and thumbnail is not None
+        )
+
+        if final_export is not None:
+            layout.addWidget(
+                status_label("Final export already built.", role="success")
+            )
+        elif ready_for_export:
+            layout.addWidget(
+                status_label(
+                    "Ready to build the final export package - see Packaging.",
+                    role="success",
+                )
+            )
+        else:
+            layout.addWidget(
+                small_muted(
+                    "Not ready for final export yet - see the items marked "
+                    "'not done' above."
+                )
+            )
+
+        self._layout.addWidget(frame)
 
     def _build_policy_card(self, job: VideoJob) -> None:
         frame, layout = card("Quality and policy check", icon_name="shield")

@@ -9,11 +9,7 @@ from src.services.genre_profile_registry_service import (
     GenreProfileRegistryService,
 )
 
-
-registry = (
-    GenreProfileRegistryService
-    .with_default_profiles()
-)
+registry = GenreProfileRegistryService.with_default_profiles()
 
 print(
     "Genre profiles:",
@@ -28,17 +24,16 @@ expected_genres = {
     "genre.travel",
     "genre.top10",
     "genre.storytelling",
+    "genre.medical",
+    "genre.mystery",
+    "genre.reaction",
+    "genre.survival",
 }
 
-assert {
-    profile.genre_id
-    for profile in registry.list_all()
-} == expected_genres
+assert {profile.genre_id for profile in registry.list_all()} == expected_genres
 
 
-horror = registry.get(
-    "genre.horror"
-)
+horror = registry.get("genre.horror")
 
 print("Horror voice:", horror.voice.voice_profile_id)
 print(
@@ -47,42 +42,20 @@ print(
 )
 
 assert horror.usable is True
-assert (
-    horror.voice.voice_profile_id
-    == "voice.horror_whisper"
-)
-assert (
-    horror.editing.camera_preset_id
-    == "camera.slow_zoom_in"
-)
-assert (
-    horror.editing.music_preset_id
-    == "music.horror_low_drone"
-)
-assert (
-    "visual.horror_dark_grade"
-    in horror.editing.visual_preset_ids
-)
+assert horror.voice.voice_profile_id == "voice.horror_whisper"
+assert horror.editing.camera_preset_id == "camera.slow_zoom_in"
+assert horror.editing.music_preset_id == "music.horror_low_drone"
+assert "visual.horror_dark_grade" in horror.editing.visual_preset_ids
 
 
-documentary_result = registry.resolve(
-    "genre.documentary"
-)
+documentary_result = registry.resolve("genre.documentary")
 
 assert documentary_result.is_resolved is True
-assert (
-    documentary_result.found_exact_match
-    is True
-)
-assert (
-    documentary_result.used_fallback
-    is False
-)
+assert documentary_result.found_exact_match is True
+assert documentary_result.used_fallback is False
 
 
-unknown_result = registry.resolve(
-    "genre.unknown"
-)
+unknown_result = registry.resolve("genre.unknown")
 
 print(
     "Unknown fallback:",
@@ -91,10 +64,7 @@ print(
 
 assert unknown_result.is_resolved is True
 assert unknown_result.used_fallback is True
-assert (
-    unknown_result.resolved_genre_id
-    == "genre.default"
-)
+assert unknown_result.resolved_genre_id == "genre.default"
 assert unknown_result.warning is not None
 
 
@@ -105,20 +75,13 @@ disabled_profile = GenreProfile(
     fallback_genre_id="genre.horror",
 )
 
-registry.register(
-    disabled_profile
-)
+registry.register(disabled_profile)
 
-disabled_result = registry.resolve(
-    "genre.disabled_test"
-)
+disabled_result = registry.resolve("genre.disabled_test")
 
 assert disabled_result.is_resolved is True
 assert disabled_result.used_fallback is True
-assert (
-    disabled_result.resolved_genre_id
-    == "genre.horror"
-)
+assert disabled_result.resolved_genre_id == "genre.horror"
 assert disabled_result.warning is not None
 
 
@@ -127,12 +90,8 @@ custom_profile = GenreProfile(
     display_name="Finance",
     editing=GenreEditingProfile(
         camera_preset_id="camera.none",
-        transition_in_preset_id=(
-            "transition.cut"
-        ),
-        transition_out_preset_id=(
-            "transition.cut"
-        ),
+        transition_in_preset_id=("transition.cut"),
+        transition_out_preset_id=("transition.cut"),
         music_preset_id="music.none",
     ),
     tags=[
@@ -142,17 +101,11 @@ custom_profile = GenreProfile(
     ],
 )
 
-registry.register(
-    custom_profile
-)
+registry.register(custom_profile)
 
-assert registry.contains(
-    "genre.finance"
-)
+assert registry.contains("genre.finance")
 
-assert registry.get(
-    "genre.finance"
-).tags == [
+assert registry.get("genre.finance").tags == [
     "finance",
     "business",
 ]
@@ -168,26 +121,14 @@ registry.register(
     replace=True,
 )
 
-assert (
-    registry.get(
-        "genre.finance"
-    ).display_name
-    == "Finance Updated"
-)
+assert registry.get("genre.finance").display_name == "Finance Updated"
 
 
-removed_profile = registry.unregister(
-    "genre.finance"
-)
+removed_profile = registry.unregister("genre.finance")
 
-assert (
-    removed_profile.genre_id
-    == "genre.finance"
-)
+assert removed_profile.genre_id == "genre.finance"
 
-assert not registry.contains(
-    "genre.finance"
-)
+assert not registry.contains("genre.finance")
 
 
 try:
@@ -198,27 +139,17 @@ try:
         )
     )
 except ValueError:
-    print(
-        "Duplicate genre successfully blocked."
-    )
+    print("Duplicate genre successfully blocked.")
 else:
-    raise AssertionError(
-        "Duplicate genre registration should fail."
-    )
+    raise AssertionError("Duplicate genre registration should fail.")
 
 
 try:
-    registry.unregister(
-        "genre.default"
-    )
+    registry.unregister("genre.default")
 except ValueError:
-    print(
-        "Default genre removal successfully blocked."
-    )
+    print("Default genre removal successfully blocked.")
 else:
-    raise AssertionError(
-        "Default genre must not be removable."
-    )
+    raise AssertionError("Default genre must not be removable.")
 
 
 try:
@@ -228,47 +159,28 @@ try:
         fallback_genre_id="genre.invalid",
     )
 except ValueError:
-    print(
-        "Self fallback successfully blocked."
-    )
+    print("Self fallback successfully blocked.")
 else:
-    raise AssertionError(
-        "A genre cannot fallback to itself."
-    )
+    raise AssertionError("A genre cannot fallback to itself.")
 
 
 try:
     GenreEditingProfile(
-        transition_in_preset_id=(
-            "transition.fade_black"
-        ),
-        transition_out_preset_id=(
-            "transition.cut"
-        ),
+        transition_in_preset_id=("transition.fade_black"),
+        transition_out_preset_id=("transition.cut"),
         default_transition_duration_seconds=0.0,
     )
 except ValueError:
-    print(
-        "Missing transition duration "
-        "successfully blocked."
-    )
+    print("Missing transition duration " "successfully blocked.")
 else:
-    raise AssertionError(
-        "Non-cut genre transition requires duration."
-    )
+    raise AssertionError("Non-cut genre transition requires duration.")
 
 
 active_profiles = registry.list_all(
     active_only=True,
 )
 
-assert all(
-    profile.usable
-    for profile in active_profiles
-)
+assert all(profile.usable for profile in active_profiles)
 
 
-print(
-    "Genre Profile Registry Service tests "
-    "completed successfully."
-)
+print("Genre Profile Registry Service tests " "completed successfully.")

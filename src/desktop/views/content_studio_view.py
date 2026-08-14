@@ -5,7 +5,10 @@ from uuid import UUID
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QComboBox,
+    QFormLayout,
     QFrame,
+    QLineEdit,
     QMessageBox,
     QScrollArea,
     QVBoxLayout,
@@ -14,11 +17,19 @@ from PySide6.QtWidgets import (
 
 from src.desktop.job_store import JobStore
 from src.desktop.widgets import badge, button, card, muted, small_muted, status_label
-from src.models.enums import WorkflowStage
+from src.models.enums import Platform, ProductionMode, WorkflowStage
 from src.models.video_job import VideoJob
 from src.services.content_pipeline import ContentPipeline
+from src.services.genre_profile_registry_service import (
+    GenreProfileRegistryService,
+)
 
 _LEFT = Qt.AlignmentFlag.AlignLeft
+
+_GENRE_IDS = [
+    profile.genre_id
+    for profile in GenreProfileRegistryService.with_default_profiles().list_all()
+]
 
 
 class ContentStudioView(QWidget):
@@ -78,11 +89,58 @@ class ContentStudioView(QWidget):
             if widget is not None:
                 widget.deleteLater()
 
+        self._build_settings_card(job)
         self._build_workflow_card(job)
         self._build_research_card(job)
         self._build_script_card(job)
         self._build_originality_card(job)
         self._build_scenes_card(job)
+
+    def _build_settings_card(self, job: VideoJob) -> None:
+        frame, layout = card("Project settings", icon_name="settings")
+
+        form = QFormLayout()
+        form.setSpacing(8)
+
+        genre_select = QComboBox()
+        genre_select.addItems(_GENRE_IDS)
+
+        if job.genre_id in _GENRE_IDS:
+            genre_select.setCurrentIndex(_GENRE_IDS.index(job.genre_id))
+
+        form.addRow("Genre", genre_select)
+
+        platform_select = QComboBox()
+        platform_select.addItems([platform.value for platform in Platform])
+        platform_select.setCurrentText(job.platform.value)
+        form.addRow("Platform", platform_select)
+
+        production_mode_select = QComboBox()
+        production_mode_select.addItems([mode.value for mode in ProductionMode])
+        production_mode_select.setCurrentText(job.production_mode.value)
+        form.addRow("Production mode", production_mode_select)
+
+        language_input = QLineEdit(job.language)
+        form.addRow("Language", language_input)
+
+        target_country_input = QLineEdit(job.target_country)
+        form.addRow("Target country", target_country_input)
+
+        layout.addLayout(form)
+
+        save_button = button("Save settings", variant="primary", icon_name="check")
+        save_button.clicked.connect(
+            lambda: self._handle_save_settings(
+                genre_select=genre_select,
+                platform_select=platform_select,
+                production_mode_select=production_mode_select,
+                language_input=language_input,
+                target_country_input=target_country_input,
+            )
+        )
+        layout.addWidget(save_button, alignment=_LEFT)
+
+        self._layout.addWidget(frame)
 
     def _build_workflow_card(self, job: VideoJob) -> None:
         frame, layout = card("Content workflow", icon_name="dashboard")
@@ -269,6 +327,33 @@ class ContentStudioView(QWidget):
             return
 
         job.originality_review = review
+        self._on_change()
+
+    def _handle_save_settings(
+        self,
+        *,
+        genre_select: QComboBox,
+        platform_select: QComboBox,
+        production_mode_select: QComboBox,
+        language_input: QLineEdit,
+        target_country_input: QLineEdit,
+    ) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        try:
+            job.genre_id = genre_select.currentText()
+            job.platform = Platform(platform_select.currentText())
+            job.production_mode = ProductionMode(production_mode_select.currentText())
+            job.language = language_input.text()
+            job.target_country = target_country_input.text()
+        except ValueError as error:
+            self._record_error(job, f"Could not save project settings: {error}")
+
+            return
+
         self._on_change()
 
     def _handle_plan_scenes(self) -> None:

@@ -5,6 +5,7 @@ from pydantic import Field, field_validator, model_validator
 from src.models.asset_state import SceneAssetState
 from src.models.audio_timeline import AudioTimeline
 from src.models.base import MissionBaseModel
+from src.models.editing_directives import SceneEditingDirectives
 from src.models.enums import (
     JobStatus,
     Platform,
@@ -61,6 +62,9 @@ class VideoJob(MissionBaseModel):
     scenes: list[Scene] = Field(default_factory=list)
     scene_asset_states: list[SceneAssetState] = Field(default_factory=list)
     video_clips: list[VideoClip] = Field(default_factory=list)
+    scene_editing_overrides: dict[int, SceneEditingDirectives] = Field(
+        default_factory=dict
+    )
 
     audio_timeline: AudioTimeline | None = None
     video_timeline: VideoTimeline | None = None
@@ -126,6 +130,27 @@ class VideoJob(MissionBaseModel):
 
         if self.video_clips and not self.scenes:
             raise ValueError("Video clips cannot exist without planned scenes.")
+
+        if self.scene_editing_overrides:
+            scene_numbers = {scene.scene_number for scene in self.scenes}
+            override_numbers = set(self.scene_editing_overrides)
+
+            if not override_numbers.issubset(scene_numbers):
+                raise ValueError(
+                    "Every scene editing override must reference "
+                    "an existing scene number."
+                )
+
+            mismatched = {
+                scene_number
+                for scene_number, override in self.scene_editing_overrides.items()
+                if override.scene_number != scene_number
+            }
+
+            if mismatched:
+                raise ValueError(
+                    "Scene editing override scene_number must match " "its dict key."
+                )
 
         if (
             self.voice_strategy == VoiceStrategy.MANUAL_UPLOAD

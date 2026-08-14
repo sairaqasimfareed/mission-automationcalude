@@ -27,6 +27,7 @@ from src.desktop.widgets import (
 from src.models.asset_state import SceneAssetState
 from src.models.scene import Scene
 from src.models.video_job import VideoJob
+from src.services.policy_service import PolicyService
 from src.services.project_render_runtime_factory import ProjectRenderRuntimeFactory
 from src.services.scene_asset_workflow_service import SceneAssetWorkflowService
 
@@ -69,6 +70,7 @@ class RenderWorkspaceView(QWidget):
         self._job_id: UUID | None = None
         self._manual_upload_paths: dict[int, str] = {}
         self._selected_stock_candidate_index: dict[int, int] = {}
+        self._policy_service = PolicyService()
 
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -407,6 +409,7 @@ class RenderWorkspaceView(QWidget):
             render_orchestrator = self._render_runtime_factory.build(
                 job=job,
                 genre_id=job.genre_id,
+                overrides_by_scene=job.scene_editing_overrides or None,
             )
         except (RuntimeError, ValueError) as error:
             self._record_error(job, f"Render setup failed: {error}")
@@ -418,6 +421,14 @@ class RenderWorkspaceView(QWidget):
             dry_run=True,
             user_input=user_input,
         )
+
+        if result.success:
+            # Run the quality/policy check automatically as soon as
+            # there's a completed render to evaluate, rather than
+            # requiring a separate manual click in Quality Center - it
+            # can still be re-run manually there after later changes
+            # (e.g. a new SEO package or thumbnail).
+            self._policy_service.evaluate(job)
 
         assert self._job_id is not None
         self._job_store.set_render_result(self._job_id, result)
