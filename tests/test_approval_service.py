@@ -112,6 +112,7 @@ assert rejected.state == ApprovalState.REJECTED
 for action in (
     HumanApprovalAction.EDIT,
     HumanApprovalAction.REGENERATE,
+    HumanApprovalAction.SELECT_ALTERNATIVE,
     HumanApprovalAction.REQUEST_MORE_OPTIONS,
     HumanApprovalAction.RETURN_TO_PREVIOUS,
 ):

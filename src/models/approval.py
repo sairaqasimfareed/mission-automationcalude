@@ -33,6 +33,7 @@ class HumanApprovalAction(str, Enum):
     EDIT = "edit"
     REJECT = "reject"
     REGENERATE = "regenerate"
+    SELECT_ALTERNATIVE = "select_alternative"
     REQUEST_MORE_OPTIONS = "request_more_options"
     RETURN_TO_PREVIOUS = "return_to_previous"
 
