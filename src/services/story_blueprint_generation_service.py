@@ -1,0 +1,232 @@
+from __future__ import annotations
+
+from src.models.audience_promise import AudiencePromise
+from src.models.story_angle import StoryAngle
+from src.models.story_blueprint import StoryBeat, StoryBeatType, StoryBlueprint
+from src.services.llm.labeled_block_parser import extract_labeled_field, split_blocks
+from src.services.llm.llm_service import LLMService
+from src.shared.llm.models import LLMProvider
+from src.shared.llm.request import LLMRequest
+
+_VALID_BEAT_TYPES = {beat_type.value for beat_type in StoryBeatType}
+
+_DRY_RUN_RESPONSE = "\n---\n".join(
+    [
+        (
+            "BEAT_TYPE: hook\n"
+            "START: 0\n"
+            "END: 7\n"
+            "PURPOSE: Dry-run hook purpose for development and "
+            "testing purposes only.\n"
+            "TENSION: 60"
+        ),
+        (
+            "BEAT_TYPE: setup\n"
+            "START: 7\n"
+            "END: 20\n"
+            "PURPOSE: Dry-run setup purpose for development and "
+            "testing purposes only.\n"
+            "TENSION: 30"
+        ),
+        (
+            "BEAT_TYPE: climax\n"
+            "START: 20\n"
+            "END: 28\n"
+            "PURPOSE: Dry-run climax purpose for development and "
+            "testing purposes only.\n"
+            "TENSION: 95"
+        ),
+        (
+            "BEAT_TYPE: payoff\n"
+            "START: 28\n"
+            "END: 30\n"
+            "PURPOSE: Dry-run payoff purpose for development and "
+            "testing purposes only.\n"
+            "TENSION: 50"
+        ),
+    ]
+)
+
+
+class StoryBlueprintGenerationService:
+    """
+    Plans the structural blueprint for one video through the central
+    LLM service, before full narration begins (spec section 26).
+
+    Beat sequence, count, and timing are entirely decided by the LLM
+    call based on genre, duration, and the selected story angle - this
+    service does not hardcode any fixed beat template, per spec
+    section 26's explicit warning against exactly that.
+    """
+
+    def __init__(
+        self,
+        *,
+        llm_service: LLMService,
+        profile_ids: list[str] | None = None,
+        estimated_cost_usd: float = 0.0,
+    ) -> None:
+        if estimated_cost_usd < 0:
+            raise ValueError("Estimated story blueprint cost cannot be negative.")
+
+        self.llm_service = llm_service
+        self.profile_ids = profile_ids
+        self.estimated_cost_usd = estimated_cost_usd
+
+    def generate(
+        self,
+        *,
+        topic: str,
+        genre_id: str,
+        target_duration_seconds: int,
+        story_angle: StoryAngle,
+        audience_promise: AudiencePromise,
+    ) -> StoryBlueprint:
+        """Generate a duration- and genre-aware structural blueprint."""
+
+        normalized_topic = topic.strip()
+
+        if not normalized_topic:
+            raise ValueError("Story blueprint topic cannot be empty.")
+
+        request = LLMRequest(
+            provider=LLMProvider.OPENAI,
+            model="provider-default-model",
+            prompt=self._build_prompt(
+                topic=normalized_topic,
+                genre_id=genre_id,
+                target_duration_seconds=target_duration_seconds,
+                story_angle=story_angle,
+                audience_promise=audience_promise,
+            ),
+            system_prompt=(
+                "You are an expert story structure editor for "
+                "long-form video. Design a beat-by-beat structural "
+                "blueprint tailored to this genre and duration - do "
+                "not reuse a generic template. Vary tension over time "
+                "rather than keeping it at maximum throughout; use "
+                "small releases before stronger escalation."
+            ),
+            prompt_version="story_blueprint_prompt_v1.0.0",
+            dry_run_response=_DRY_RUN_RESPONSE,
+            metadata={
+                "agent": "StoryBlueprintGenerationService",
+                "workflow": "story_blueprint_generation",
+                "topic": normalized_topic,
+            },
+        )
+
+        service_result = self.llm_service.generate(
+            request,
+            estimated_cost_usd=self.estimated_cost_usd,
+            profile_ids=self.profile_ids,
+        )
+
+        if not service_result.is_success:
+            error_message = (
+                service_result.result.error_message
+                or "All configured LLM providers failed."
+            )
+
+            raise RuntimeError(f"Story blueprint generation failed: {error_message}")
+
+        content = (service_result.result.content or "").strip()
+
+        if not content:
+            raise RuntimeError("Story blueprint provider returned empty content.")
+
+        beats = self._parse_beats(content)
+
+        if not beats:
+            raise RuntimeError("Story blueprint provider returned no usable beats.")
+
+        return StoryBlueprint(
+            topic=normalized_topic,
+            genre_id=genre_id,
+            target_duration_seconds=target_duration_seconds,
+            beats=beats,
+            prompt_version=request.prompt_version,
+        )
+
+    @staticmethod
+    def _build_prompt(
+        *,
+        topic: str,
+        genre_id: str,
+        target_duration_seconds: int,
+        story_angle: StoryAngle,
+        audience_promise: AudiencePromise,
+    ) -> str:
+        available_types = ", ".join(beat_type.value for beat_type in StoryBeatType)
+
+        return (
+            f"Topic: {topic}\n"
+            f"Genre: {genre_id}\n"
+            f"Target duration: {target_duration_seconds} seconds\n"
+            f"Selected angle [{story_angle.style.value}]: {story_angle.title} - "
+            f"{story_angle.description}\n"
+            f"Expected payoff: {audience_promise.expected_payoff}\n\n"
+            f"Design a beat-by-beat structure covering the full "
+            f"{target_duration_seconds} seconds. Available beat "
+            f"types: {available_types}. Use only the beats that fit "
+            "this genre, duration, and story - do not force every "
+            "type in, and do not reuse a fixed template.\n\n"
+            "Return one block per beat, in chronological order, "
+            "separated by a line of three or more dashes:\n"
+            "BEAT_TYPE: <one type from the available list>\n"
+            "START: <seconds from 0>\n"
+            "END: <seconds, greater than START>\n"
+            "PURPOSE: <what this beat accomplishes>\n"
+            "TENSION: <0-100, vary this across beats rather than "
+            "keeping it constant>"
+        )
+
+    @classmethod
+    def _parse_beats(cls, content: str) -> list[StoryBeat]:
+        beats: list[StoryBeat] = []
+
+        for block in split_blocks(content):
+            beat_type_raw = extract_labeled_field(block, "BEAT_TYPE")
+            start_raw = extract_labeled_field(block, "START")
+            end_raw = extract_labeled_field(block, "END")
+            purpose = extract_labeled_field(block, "PURPOSE")
+            tension_raw = extract_labeled_field(block, "TENSION")
+
+            if not (
+                beat_type_raw and start_raw and end_raw and purpose and tension_raw
+            ):
+                continue
+
+            normalized_type = beat_type_raw.strip().lower()
+
+            if normalized_type not in _VALID_BEAT_TYPES:
+                continue
+
+            start = cls._parse_number(start_raw)
+            end = cls._parse_number(end_raw)
+            tension = cls._parse_number(tension_raw)
+
+            if start is None or end is None or tension is None:
+                continue
+
+            try:
+                beats.append(
+                    StoryBeat(
+                        beat_type=StoryBeatType(normalized_type),
+                        start_seconds=start,
+                        end_seconds=end,
+                        purpose=purpose,
+                        tension_level=int(tension),
+                    )
+                )
+            except ValueError:
+                continue
+
+        return beats
+
+    @staticmethod
+    def _parse_number(raw: str) -> float | None:
+        try:
+            return float(raw.strip())
+        except ValueError:
+            return None
