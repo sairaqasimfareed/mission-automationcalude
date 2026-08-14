@@ -401,11 +401,12 @@ class GenreProfileRegistryService:
                     energy=(DirectiveIntensity.MEDIUM),
                 ),
                 editing=GenreEditingProfile(
-                    camera_preset_id=("camera.slow_zoom_in"),
+                    camera_preset_id=("camera.slow_zoom_out"),
                     transition_in_preset_id=("transition.cross_dissolve"),
                     transition_out_preset_id=("transition.cross_dissolve"),
                     visual_preset_ids=[
                         "visual.grayscale",
+                        "visual.sepia_tone",
                     ],
                     music_preset_id="music.history_dramatic_orchestral",
                     sound_effect_preset_ids=[
@@ -454,9 +455,9 @@ class GenreProfileRegistryService:
                     energy=DirectiveIntensity.HIGH,
                 ),
                 editing=GenreEditingProfile(
-                    camera_preset_id=("camera.slow_zoom_in"),
-                    transition_in_preset_id=("transition.cross_dissolve"),
-                    transition_out_preset_id=("transition.cross_dissolve"),
+                    camera_preset_id=("camera.pan_right"),
+                    transition_in_preset_id=("transition.slide_left"),
+                    transition_out_preset_id=("transition.slide_left"),
                     visual_preset_ids=[
                         "visual.lut_vibrant_punch",
                     ],
@@ -511,9 +512,9 @@ class GenreProfileRegistryService:
                     emphasis_style="rank_numbers",
                 ),
                 editing=GenreEditingProfile(
-                    camera_preset_id=("camera.slow_zoom_in"),
-                    transition_in_preset_id=("transition.cut"),
-                    transition_out_preset_id=("transition.cut"),
+                    camera_preset_id=("camera.fast_zoom_in"),
+                    transition_in_preset_id=("transition.wipe_left"),
+                    transition_out_preset_id=("transition.pixelize"),
                     visual_preset_ids=[
                         "visual.high_contrast_punch",
                     ],
@@ -523,7 +524,7 @@ class GenreProfileRegistryService:
                     ],
                     subtitle_preset_id=("subtitle.default"),
                     maximum_active_effects=10,
-                    default_transition_duration_seconds=0.0,
+                    default_transition_duration_seconds=0.35,
                     default_music_volume_percent=32.0,
                 ),
                 thumbnail=GenreThumbnailProfile(
@@ -573,7 +574,7 @@ class GenreProfileRegistryService:
                 editing=GenreEditingProfile(
                     camera_preset_id=("camera.slow_zoom_in"),
                     transition_in_preset_id=("transition.cross_dissolve"),
-                    transition_out_preset_id=("transition.cross_dissolve"),
+                    transition_out_preset_id=("transition.circle_crop"),
                     visual_preset_ids=[
                         "visual.vignette_soft",
                         "visual.lut_teal_orange",
@@ -691,7 +692,7 @@ class GenreProfileRegistryService:
                     emphasis_style="selective",
                 ),
                 editing=GenreEditingProfile(
-                    camera_preset_id="camera.slow_zoom_in",
+                    camera_preset_id="camera.pan_left",
                     transition_in_preset_id="transition.fade_black",
                     transition_out_preset_id="transition.fade_black",
                     visual_preset_ids=[
@@ -756,7 +757,7 @@ class GenreProfileRegistryService:
                 editing=GenreEditingProfile(
                     camera_preset_id="camera.none",
                     transition_in_preset_id="transition.cut",
-                    transition_out_preset_id="transition.cut",
+                    transition_out_preset_id="transition.wipe_right",
                     visual_preset_ids=[
                         "visual.high_contrast_punch",
                     ],
@@ -766,7 +767,7 @@ class GenreProfileRegistryService:
                     ],
                     subtitle_preset_id="subtitle.default",
                     maximum_active_effects=10,
-                    default_transition_duration_seconds=0.0,
+                    default_transition_duration_seconds=0.3,
                     default_music_volume_percent=20.0,
                 ),
                 thumbnail=GenreThumbnailProfile(
