@@ -107,11 +107,11 @@ assert horror_directives.music.enabled is True
 
 assert len(
     horror_directives.visual_effects
-) == 2
+) == 3
 
 assert len(
     horror_directives.animations
-) == 1
+) == 2
 
 assert len(
     horror_directives.sound_effects

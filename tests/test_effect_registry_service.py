@@ -148,33 +148,33 @@ assert all(
 
 
 custom_preset = EffectPreset(
-    preset_id="camera.pan_left",
+    preset_id="camera.pan_diagonal",
     category=EffectCategory.CAMERA,
-    display_name="Pan Left",
+    display_name="Pan Diagonal",
     fallback_preset_id="camera.none",
     implementation={
         "motion": "pan",
-        "direction": "left",
+        "direction": "diagonal",
     },
 )
 
 registry.register(custom_preset)
 
 assert registry.contains(
-    "camera.pan_left"
+    "camera.pan_diagonal"
 )
 
 removed_preset = registry.unregister(
-    "camera.pan_left"
+    "camera.pan_diagonal"
 )
 
 assert (
     removed_preset.preset_id
-    == "camera.pan_left"
+    == "camera.pan_diagonal"
 )
 
 assert not registry.contains(
-    "camera.pan_left"
+    "camera.pan_diagonal"
 )
 
 
@@ -224,6 +224,99 @@ assert len(bulk_results) == 3
 assert bulk_results[0].found_exact_match is True
 assert bulk_results[1].found_exact_match is True
 assert bulk_results[2].used_fallback is True
+
+
+new_camera_presets = [
+    "camera.slow_zoom_out",
+    "camera.fast_zoom_in",
+    "camera.pan_left",
+    "camera.pan_right",
+]
+
+new_transition_presets = [
+    "transition.wipe_left",
+    "transition.wipe_right",
+    "transition.slide_left",
+    "transition.circle_crop",
+    "transition.pixelize",
+]
+
+new_visual_presets = [
+    "visual.grayscale",
+    "visual.sepia_tone",
+    "visual.high_contrast_punch",
+    "visual.film_grain_light",
+    "visual.cool_blue_grade",
+]
+
+new_lut_presets = [
+    "visual.lut_teal_orange",
+    "visual.lut_bleach_bypass",
+    "visual.lut_kodak_warm",
+    "visual.lut_moody_desaturated",
+    "visual.lut_vibrant_punch",
+]
+
+new_animation_presets = [
+    "animation.slow_parallax_reverse",
+    "animation.slow_pan_vertical",
+    "animation.gentle_zoom_pulse",
+]
+
+all_new_presets = (
+    new_camera_presets
+    + new_transition_presets
+    + new_visual_presets
+    + new_lut_presets
+    + new_animation_presets
+)
+
+for preset_id in all_new_presets:
+    assert registry.contains(
+        preset_id
+    ), f"Expected registered preset: {preset_id}"
+
+    result = registry.resolve(preset_id)
+
+    assert result.is_resolved is True
+    assert result.found_exact_match is True
+    assert result.used_fallback is False
+
+
+for preset_id in new_lut_presets:
+    lut_result = registry.resolve(preset_id)
+
+    assert lut_result.preset is not None
+    assert "lut" in lut_result.preset.tags
+
+
+assert len(
+    registry.list_by_category(
+        EffectCategory.CAMERA,
+        active_only=True,
+    )
+) == 6
+
+assert len(
+    registry.list_by_category(
+        EffectCategory.TRANSITION,
+        active_only=True,
+    )
+) == 8
+
+assert len(
+    registry.list_by_category(
+        EffectCategory.VISUAL,
+        active_only=True,
+    )
+) == 13
+
+assert len(
+    registry.list_by_category(
+        EffectCategory.ANIMATION,
+        active_only=True,
+    )
+) == 6
 
 
 print(

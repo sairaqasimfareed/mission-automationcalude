@@ -427,6 +427,330 @@ class EffectRegistryService:
                     "subtle",
                 ],
             ),
+            # --- Camera: additional zoom variants + new pan motion ---
+            EffectPreset(
+                preset_id="camera.slow_zoom_out",
+                category=EffectCategory.CAMERA,
+                display_name="Slow Zoom Out",
+                fallback_preset_id="camera.none",
+                implementation={
+                    "motion": "zoom",
+                    "direction": "out",
+                    "default_start_scale": 1.08,
+                    "default_end_scale": 1.0,
+                },
+                tags=[
+                    "cinematic",
+                    "documentary",
+                ],
+            ),
+            EffectPreset(
+                preset_id="camera.fast_zoom_in",
+                category=EffectCategory.CAMERA,
+                display_name="Fast Zoom In",
+                fallback_preset_id="camera.none",
+                implementation={
+                    "motion": "zoom",
+                    "direction": "in",
+                    "default_start_scale": 1.0,
+                    "default_end_scale": 1.18,
+                },
+                tags=[
+                    "reaction",
+                    "top10",
+                    "energetic",
+                ],
+            ),
+            EffectPreset(
+                preset_id="camera.pan_left",
+                category=EffectCategory.CAMERA,
+                display_name="Pan Left",
+                fallback_preset_id="camera.none",
+                implementation={
+                    "motion": "pan",
+                    "direction": "left",
+                },
+                tags=[
+                    "cinematic",
+                    "horror",
+                ],
+            ),
+            EffectPreset(
+                preset_id="camera.pan_right",
+                category=EffectCategory.CAMERA,
+                display_name="Pan Right",
+                fallback_preset_id="camera.none",
+                implementation={
+                    "motion": "pan",
+                    "direction": "right",
+                },
+                tags=[
+                    "cinematic",
+                    "travel",
+                ],
+            ),
+            # --- Transitions: additional xfade-native styles ---
+            EffectPreset(
+                preset_id="transition.wipe_left",
+                category=EffectCategory.TRANSITION,
+                display_name="Wipe Left",
+                fallback_preset_id="transition.cut",
+                implementation={
+                    "type": "wipe_left",
+                    "default_duration_seconds": 0.5,
+                },
+                tags=[
+                    "reaction",
+                    "top10",
+                ],
+            ),
+            EffectPreset(
+                preset_id="transition.wipe_right",
+                category=EffectCategory.TRANSITION,
+                display_name="Wipe Right",
+                fallback_preset_id="transition.cut",
+                implementation={
+                    "type": "wipe_right",
+                    "default_duration_seconds": 0.5,
+                },
+                tags=[
+                    "reaction",
+                    "top10",
+                ],
+            ),
+            EffectPreset(
+                preset_id="transition.slide_left",
+                category=EffectCategory.TRANSITION,
+                display_name="Slide Left",
+                fallback_preset_id="transition.cut",
+                implementation={
+                    "type": "slide_left",
+                    "default_duration_seconds": 0.6,
+                },
+                tags=[
+                    "travel",
+                    "energetic",
+                ],
+            ),
+            EffectPreset(
+                preset_id="transition.circle_crop",
+                category=EffectCategory.TRANSITION,
+                display_name="Circle Crop",
+                fallback_preset_id="transition.cut",
+                implementation={
+                    "type": "circle_crop",
+                    "default_duration_seconds": 0.6,
+                },
+                tags=[
+                    "storytelling",
+                    "playful",
+                ],
+            ),
+            EffectPreset(
+                preset_id="transition.pixelize",
+                category=EffectCategory.TRANSITION,
+                display_name="Pixelize",
+                fallback_preset_id="transition.cut",
+                implementation={
+                    "type": "pixelize",
+                    "default_duration_seconds": 0.5,
+                },
+                tags=[
+                    "reaction",
+                    "top10",
+                    "energetic",
+                ],
+            ),
+            # --- Visual effects / filters ---
+            EffectPreset(
+                preset_id="visual.grayscale",
+                category=EffectCategory.VISUAL,
+                display_name="Grayscale",
+                fallback_preset_id="visual.none",
+                implementation={
+                    "filter": "grayscale",
+                },
+                tags=[
+                    "documentary",
+                    "history",
+                    "archival",
+                ],
+            ),
+            EffectPreset(
+                preset_id="visual.sepia_tone",
+                category=EffectCategory.VISUAL,
+                display_name="Sepia Tone",
+                fallback_preset_id="visual.none",
+                implementation={
+                    "filter": "sepia_tone",
+                },
+                tags=[
+                    "history",
+                    "vintage",
+                ],
+            ),
+            EffectPreset(
+                preset_id="visual.high_contrast_punch",
+                category=EffectCategory.VISUAL,
+                display_name="High Contrast Punch",
+                fallback_preset_id="visual.none",
+                implementation={
+                    "filter": "high_contrast_punch",
+                },
+                tags=[
+                    "reaction",
+                    "top10",
+                    "energetic",
+                ],
+            ),
+            EffectPreset(
+                preset_id="visual.film_grain_light",
+                category=EffectCategory.VISUAL,
+                display_name="Light Film Grain",
+                fallback_preset_id="visual.none",
+                implementation={
+                    "filter": "film_grain_light",
+                },
+                tags=[
+                    "horror",
+                    "mystery",
+                    "cinematic",
+                ],
+            ),
+            EffectPreset(
+                preset_id="visual.cool_blue_grade",
+                category=EffectCategory.VISUAL,
+                display_name="Cool Blue Grade",
+                fallback_preset_id="visual.none",
+                implementation={
+                    "filter": "cool_blue_grade",
+                },
+                tags=[
+                    "mystery",
+                    "medical",
+                    "cool",
+                ],
+            ),
+            # --- "LUT" presets: parametric color-grade approximations.
+            # No .cube/lut3d engine exists in this codebase - these use
+            # the same eq+colorbalance mechanism as the entries above,
+            # tagged "lut" for discoverability as cinematic grades.
+            EffectPreset(
+                preset_id="visual.lut_teal_orange",
+                category=EffectCategory.VISUAL,
+                display_name="LUT: Teal & Orange",
+                fallback_preset_id="visual.none",
+                implementation={
+                    "filter": "lut_teal_orange",
+                },
+                tags=[
+                    "lut",
+                    "cinematic",
+                    "storytelling",
+                ],
+            ),
+            EffectPreset(
+                preset_id="visual.lut_bleach_bypass",
+                category=EffectCategory.VISUAL,
+                display_name="LUT: Bleach Bypass",
+                fallback_preset_id="visual.none",
+                implementation={
+                    "filter": "lut_bleach_bypass",
+                },
+                tags=[
+                    "lut",
+                    "survival",
+                    "gritty",
+                ],
+            ),
+            EffectPreset(
+                preset_id="visual.lut_kodak_warm",
+                category=EffectCategory.VISUAL,
+                display_name="LUT: Kodak Warm",
+                fallback_preset_id="visual.none",
+                implementation={
+                    "filter": "lut_kodak_warm",
+                },
+                tags=[
+                    "lut",
+                    "documentary",
+                    "warm",
+                ],
+            ),
+            EffectPreset(
+                preset_id="visual.lut_moody_desaturated",
+                category=EffectCategory.VISUAL,
+                display_name="LUT: Moody Desaturated",
+                fallback_preset_id="visual.none",
+                implementation={
+                    "filter": "lut_moody_desaturated",
+                },
+                tags=[
+                    "lut",
+                    "mystery",
+                    "medical",
+                ],
+            ),
+            EffectPreset(
+                preset_id="visual.lut_vibrant_punch",
+                category=EffectCategory.VISUAL,
+                display_name="LUT: Vibrant Punch",
+                fallback_preset_id="visual.none",
+                implementation={
+                    "filter": "lut_vibrant_punch",
+                },
+                tags=[
+                    "lut",
+                    "travel",
+                    "top10",
+                ],
+            ),
+            # --- Animation: additional motion styles ---
+            EffectPreset(
+                preset_id="animation.slow_parallax_reverse",
+                category=EffectCategory.ANIMATION,
+                display_name="Slow Parallax Reverse",
+                fallback_preset_id="animation.none",
+                implementation={
+                    "animation": "parallax",
+                    "speed": "slow",
+                    "direction": "reverse",
+                },
+                tags=[
+                    "cinematic",
+                    "image",
+                ],
+            ),
+            EffectPreset(
+                preset_id="animation.slow_pan_vertical",
+                category=EffectCategory.ANIMATION,
+                display_name="Slow Vertical Pan",
+                fallback_preset_id="animation.none",
+                implementation={
+                    "animation": "pan",
+                    "axis": "vertical",
+                    "speed": "slow",
+                },
+                tags=[
+                    "cinematic",
+                    "image",
+                ],
+            ),
+            EffectPreset(
+                preset_id="animation.gentle_zoom_pulse",
+                category=EffectCategory.ANIMATION,
+                display_name="Gentle Zoom Pulse",
+                fallback_preset_id="animation.none",
+                implementation={
+                    "animation": "zoom_pulse",
+                    "speed": "slow",
+                },
+                tags=[
+                    "medical",
+                    "mystery",
+                    "subtle",
+                ],
+            ),
             EffectPreset(
                 preset_id="music.none",
                 category=EffectCategory.MUSIC,

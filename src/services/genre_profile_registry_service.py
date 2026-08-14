@@ -286,9 +286,11 @@ class GenreProfileRegistryService:
                     visual_preset_ids=[
                         "visual.horror_dark_grade",
                         "visual.vignette_soft",
+                        "visual.film_grain_light",
                     ],
                     animation_preset_ids=[
                         "animation.slow_parallax",
+                        "animation.gentle_zoom_pulse",
                     ],
                     music_preset_id=("music.horror_low_drone"),
                     sound_effect_preset_ids=[
@@ -348,7 +350,9 @@ class GenreProfileRegistryService:
                     camera_preset_id=("camera.slow_zoom_in"),
                     transition_in_preset_id=("transition.cross_dissolve"),
                     transition_out_preset_id=("transition.cross_dissolve"),
-                    visual_preset_ids=[],
+                    visual_preset_ids=[
+                        "visual.lut_kodak_warm",
+                    ],
                     music_preset_id="music.documentary_calm_ambient",
                     sound_effect_preset_ids=[
                         "sfx.riser_impact",
@@ -400,6 +404,9 @@ class GenreProfileRegistryService:
                     camera_preset_id=("camera.slow_zoom_in"),
                     transition_in_preset_id=("transition.cross_dissolve"),
                     transition_out_preset_id=("transition.cross_dissolve"),
+                    visual_preset_ids=[
+                        "visual.grayscale",
+                    ],
                     music_preset_id="music.history_dramatic_orchestral",
                     sound_effect_preset_ids=[
                         "sfx.riser_impact",
@@ -450,6 +457,9 @@ class GenreProfileRegistryService:
                     camera_preset_id=("camera.slow_zoom_in"),
                     transition_in_preset_id=("transition.cross_dissolve"),
                     transition_out_preset_id=("transition.cross_dissolve"),
+                    visual_preset_ids=[
+                        "visual.lut_vibrant_punch",
+                    ],
                     music_preset_id="music.travel_upbeat_acoustic",
                     sound_effect_preset_ids=[
                         "sfx.camera_shutter",
@@ -504,6 +514,9 @@ class GenreProfileRegistryService:
                     camera_preset_id=("camera.slow_zoom_in"),
                     transition_in_preset_id=("transition.cut"),
                     transition_out_preset_id=("transition.cut"),
+                    visual_preset_ids=[
+                        "visual.high_contrast_punch",
+                    ],
                     music_preset_id="music.top10_energetic_electronic",
                     sound_effect_preset_ids=[
                         "sfx.whoosh_transition",
@@ -563,6 +576,7 @@ class GenreProfileRegistryService:
                     transition_out_preset_id=("transition.cross_dissolve"),
                     visual_preset_ids=[
                         "visual.vignette_soft",
+                        "visual.lut_teal_orange",
                     ],
                     music_preset_id="music.storytelling_emotional_piano",
                     sound_effect_preset_ids=[
@@ -622,6 +636,9 @@ class GenreProfileRegistryService:
                     camera_preset_id="camera.none",
                     transition_in_preset_id="transition.cross_dissolve",
                     transition_out_preset_id="transition.cross_dissolve",
+                    visual_preset_ids=[
+                        "visual.cool_blue_grade",
+                    ],
                     music_preset_id="music.medical_calm_piano",
                     subtitle_preset_id="subtitle.cinematic",
                     default_transition_duration_seconds=0.6,
@@ -679,6 +696,10 @@ class GenreProfileRegistryService:
                     transition_out_preset_id="transition.fade_black",
                     visual_preset_ids=[
                         "visual.vignette_soft",
+                        "visual.lut_moody_desaturated",
+                    ],
+                    animation_preset_ids=[
+                        "animation.slow_parallax_reverse",
                     ],
                     music_preset_id="music.mystery_tense_strings",
                     sound_effect_preset_ids=[
@@ -736,6 +757,9 @@ class GenreProfileRegistryService:
                     camera_preset_id="camera.none",
                     transition_in_preset_id="transition.cut",
                     transition_out_preset_id="transition.cut",
+                    visual_preset_ids=[
+                        "visual.high_contrast_punch",
+                    ],
                     music_preset_id="music.reaction_upbeat_pop",
                     sound_effect_preset_ids=[
                         "sfx.whoosh_transition",
@@ -796,6 +820,10 @@ class GenreProfileRegistryService:
                     transition_out_preset_id="transition.fade_black",
                     visual_preset_ids=[
                         "visual.horror_dark_grade",
+                        "visual.lut_bleach_bypass",
+                    ],
+                    animation_preset_ids=[
+                        "animation.slow_pan_vertical",
                     ],
                     music_preset_id="music.survival_tense_percussion",
                     sound_effect_preset_ids=[

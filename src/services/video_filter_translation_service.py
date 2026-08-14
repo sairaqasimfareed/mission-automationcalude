@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 from src.models.animation_execution import (
     AnimationExecution,
@@ -35,6 +36,15 @@ from src.models.video_filter_translation import (
 )
 
 
+class _ParametricGradeSpec(NamedTuple):
+    """One eq(+colorbalance) color-grade preset's FFmpeg parameters."""
+
+    brightness: float
+    contrast: float
+    saturation: float
+    color_balance: dict[str, str] | None
+
+
 class VideoFilterTranslationService:
     """
     Translate approved render executions into concrete FFmpeg filters.
@@ -48,6 +58,13 @@ class VideoFilterTranslationService:
         RenderNodeType.VISUAL_EFFECT,
         RenderNodeType.ANIMATION,
         RenderNodeType.SUBTITLE,
+    }
+
+    _SUPPORTED_ANIMATION_PRESETS = {
+        "animation.slow_parallax",
+        "animation.slow_parallax_reverse",
+        "animation.slow_pan_vertical",
+        "animation.gentle_zoom_pulse",
     }
 
     def translate_scene_node(
@@ -463,104 +480,183 @@ class VideoFilterTranslationService:
                 ),
             )
 
-        if not execution.is_zoom:
-            raise ValueError(
-                "Unsupported FFmpeg camera motion: "
-                f"{execution.motion_type}."
+        if execution.is_zoom:
+            if (
+                execution.zoom_start is None
+                or execution.zoom_end is None
+            ):
+                raise ValueError(
+                    "FFmpeg zoom translation requires "
+                    "resolved zoom values."
+                )
+
+            self._require_filter(
+                capabilities,
+                "zoompan",
             )
 
-        if (
-            execution.zoom_start is None
-            or execution.zoom_end is None
-        ):
-            raise ValueError(
-                "FFmpeg zoom translation requires "
-                "resolved zoom values."
+            start_frame = max(
+                0,
+                round(
+                    execution
+                    .local_start_offset_seconds
+                    * frame_rate
+                ),
             )
 
-        self._require_filter(
-            capabilities,
-            "zoompan",
-        )
-
-        start_frame = max(
-            0,
-            round(
-                execution
-                .local_start_offset_seconds
-                * frame_rate
-            ),
-        )
-
-        end_frame = max(
-            start_frame + 1,
-            round(
-                execution
-                .local_end_offset_seconds
-                * frame_rate
-            ),
-        )
-
-        zoom_start = execution.zoom_start
-        zoom_end = execution.zoom_end
-
-        difference = (
-            zoom_end
-            - zoom_start
-        )
-
-        zoom_expression = (
-            "'if("
-            f"lt(on,{start_frame}),"
-            "1,"
-            "if("
-            f"lte(on,{end_frame}),"
-            f"{self._number(zoom_start)}"
-            f"+({self._number(difference)})"
-            f"*((on-{start_frame})/"
-            f"{end_frame - start_frame}),"
-            f"{self._number(zoom_end)}"
-            ")"
-            ")'"
-        )
-
-        filter_node = FilterNode(
-            media_type=(
-                FilterMediaType.VIDEO
-            ),
-            filter_name="zoompan",
-            input_labels=[
-                input_label
-            ],
-            output_labels=[
-                output_label
-            ],
-            options={
-                "z": zoom_expression,
-                "x": (
-                    "'iw/2-(iw/zoom/2)'"
+            end_frame = max(
+                start_frame + 1,
+                round(
+                    execution
+                    .local_end_offset_seconds
+                    * frame_rate
                 ),
-                "y": (
-                    "'ih/2-(ih/zoom/2)'"
-                ),
-                "d": "1",
-                "s": f"{width}x{height}",
-                "fps": self._number(
-                    frame_rate
-                ),
-            },
-            source_render_node_id=str(
-                render_node.id
-            ),
-        )
+            )
 
-        return self._active(
-            render_node=render_node,
-            input_label=input_label,
-            output_label=output_label,
-            filters=[
-                filter_node
-            ],
+            zoom_start = execution.zoom_start
+            zoom_end = execution.zoom_end
+
+            difference = (
+                zoom_end
+                - zoom_start
+            )
+
+            zoom_expression = (
+                "'if("
+                f"lt(on,{start_frame}),"
+                "1,"
+                "if("
+                f"lte(on,{end_frame}),"
+                f"{self._number(zoom_start)}"
+                f"+({self._number(difference)})"
+                f"*((on-{start_frame})/"
+                f"{end_frame - start_frame}),"
+                f"{self._number(zoom_end)}"
+                ")"
+                ")'"
+            )
+
+            filter_node = FilterNode(
+                media_type=(
+                    FilterMediaType.VIDEO
+                ),
+                filter_name="zoompan",
+                input_labels=[
+                    input_label
+                ],
+                output_labels=[
+                    output_label
+                ],
+                options={
+                    "z": zoom_expression,
+                    "x": (
+                        "'iw/2-(iw/zoom/2)'"
+                    ),
+                    "y": (
+                        "'ih/2-(ih/zoom/2)'"
+                    ),
+                    "d": "1",
+                    "s": f"{width}x{height}",
+                    "fps": self._number(
+                        frame_rate
+                    ),
+                },
+                source_render_node_id=str(
+                    render_node.id
+                ),
+            )
+
+            return self._active(
+                render_node=render_node,
+                input_label=input_label,
+                output_label=output_label,
+                filters=[
+                    filter_node
+                ],
+            )
+
+        if execution.motion_type == "pan":
+            self._require_filter(
+                capabilities,
+                "zoompan",
+            )
+
+            start_frame = max(
+                0,
+                round(
+                    execution
+                    .local_start_offset_seconds
+                    * frame_rate
+                ),
+            )
+
+            end_frame = max(
+                start_frame + 1,
+                round(
+                    execution
+                    .local_end_offset_seconds
+                    * frame_rate
+                ),
+            )
+
+            total_frames = end_frame - start_frame
+
+            # zoompan's x/y only have room to move when the
+            # frame is over-zoomed; at z=1 (iw-iw/zoom) is
+            # always 0, so a real pan needs a small fixed
+            # zoom margin to pan across.
+            pan_zoom = "1.15"
+
+            progress = (
+                f"((on-{start_frame})/{total_frames})"
+            )
+
+            direction = execution.direction or "left"
+
+            if direction == "left":
+                x_expression = f"'(iw-iw/zoom)*(1-{progress})'"
+                y_expression = "'(ih-ih/zoom)/2'"
+            elif direction == "right":
+                x_expression = f"'(iw-iw/zoom)*{progress}'"
+                y_expression = "'(ih-ih/zoom)/2'"
+            elif direction == "up":
+                x_expression = "'(iw-iw/zoom)/2'"
+                y_expression = f"'(ih-ih/zoom)*(1-{progress})'"
+            elif direction == "down":
+                x_expression = "'(iw-iw/zoom)/2'"
+                y_expression = f"'(ih-ih/zoom)*{progress}'"
+            else:
+                raise ValueError(
+                    "Unsupported FFmpeg camera pan direction: "
+                    f"{direction}."
+                )
+
+            filter_node = FilterNode(
+                media_type=FilterMediaType.VIDEO,
+                filter_name="zoompan",
+                input_labels=[input_label],
+                output_labels=[output_label],
+                options={
+                    "z": pan_zoom,
+                    "x": x_expression,
+                    "y": y_expression,
+                    "d": "1",
+                    "s": f"{width}x{height}",
+                    "fps": self._number(frame_rate),
+                },
+                source_render_node_id=str(render_node.id),
+            )
+
+            return self._active(
+                render_node=render_node,
+                input_label=input_label,
+                output_label=output_label,
+                filters=[filter_node],
+            )
+
+        raise ValueError(
+            "Unsupported FFmpeg camera motion: "
+            f"{execution.motion_type}."
         )
 
     def _translate_effect(
@@ -774,10 +870,228 @@ class VideoFilterTranslationService:
                 ],
             )
 
+        if execution.preset_id == "visual.sepia_tone":
+            self._require_filter(
+                capabilities,
+                "colorchannelmixer",
+            )
+
+            filter_node = FilterNode(
+                media_type=FilterMediaType.VIDEO,
+                filter_name="colorchannelmixer",
+                input_labels=[input_label],
+                output_labels=[output_label],
+                options={
+                    "rr": "0.393",
+                    "rg": "0.769",
+                    "rb": "0.189",
+                    "gr": "0.349",
+                    "gg": "0.686",
+                    "gb": "0.168",
+                    "br": "0.272",
+                    "bg": "0.534",
+                    "bb": "0.131",
+                    "enable": enable,
+                },
+                source_render_node_id=str(render_node.id),
+            )
+
+            return self._active(
+                render_node=render_node,
+                input_label=input_label,
+                output_label=output_label,
+                filters=[filter_node],
+            )
+
+        if execution.preset_id == "visual.film_grain_light":
+            self._require_filter(
+                capabilities,
+                "noise",
+            )
+
+            filter_node = FilterNode(
+                media_type=FilterMediaType.VIDEO,
+                filter_name="noise",
+                input_labels=[input_label],
+                output_labels=[output_label],
+                options={
+                    "alls": "12",
+                    "allf": "t",
+                    "enable": enable,
+                },
+                source_render_node_id=str(render_node.id),
+            )
+
+            return self._active(
+                render_node=render_node,
+                input_label=input_label,
+                output_label=output_label,
+                filters=[filter_node],
+            )
+
+        grade_params = self._PARAMETRIC_GRADE_PRESETS.get(
+            execution.preset_id
+        )
+
+        if grade_params is not None:
+            filters = self._parametric_grade_filters(
+                render_node=render_node,
+                input_label=input_label,
+                output_label=output_label,
+                capabilities=capabilities,
+                enable=enable,
+                brightness=grade_params.brightness,
+                contrast=grade_params.contrast,
+                saturation=grade_params.saturation,
+                color_balance=grade_params.color_balance,
+            )
+
+            return self._active(
+                render_node=render_node,
+                input_label=input_label,
+                output_label=output_label,
+                filters=filters,
+            )
+
         raise ValueError(
             "Unsupported FFmpeg visual preset: "
             f"{execution.preset_id}."
         )
+
+    # Simple single-pass color-grade presets (grayscale, punch,
+    # cool grades, and the parametric "LUT" presets - this codebase
+    # has no real .cube/lut3d engine, so these approximate a LUT's
+    # bundled color transform via the same eq+colorbalance mechanism
+    # already used by visual.horror_dark_grade) share one FFmpeg
+    # shape: an eq filter for brightness/contrast/saturation,
+    # optionally chained into a colorbalance filter for tint.
+    _PARAMETRIC_GRADE_PRESETS: dict[str, _ParametricGradeSpec] = {
+        "visual.grayscale": _ParametricGradeSpec(
+            brightness=0.0,
+            contrast=1.0,
+            saturation=0.0,
+            color_balance=None,
+        ),
+        "visual.high_contrast_punch": _ParametricGradeSpec(
+            brightness=0.0,
+            contrast=1.4,
+            saturation=1.15,
+            color_balance=None,
+        ),
+        "visual.cool_blue_grade": _ParametricGradeSpec(
+            brightness=-0.02,
+            contrast=1.08,
+            saturation=0.92,
+            color_balance={"bs": "0.10", "rs": "-0.05"},
+        ),
+        "visual.lut_teal_orange": _ParametricGradeSpec(
+            brightness=0.0,
+            contrast=1.15,
+            saturation=1.05,
+            color_balance={
+                "bs": "0.08",
+                "rs": "0.06",
+                "gs": "-0.04",
+            },
+        ),
+        "visual.lut_bleach_bypass": _ParametricGradeSpec(
+            brightness=0.02,
+            contrast=1.25,
+            saturation=0.35,
+            color_balance=None,
+        ),
+        "visual.lut_kodak_warm": _ParametricGradeSpec(
+            brightness=0.03,
+            contrast=1.05,
+            saturation=1.08,
+            color_balance={"rm": "0.08", "gm": "0.02"},
+        ),
+        "visual.lut_moody_desaturated": _ParametricGradeSpec(
+            brightness=-0.04,
+            contrast=1.02,
+            saturation=0.55,
+            color_balance={"bs": "0.05"},
+        ),
+        "visual.lut_vibrant_punch": _ParametricGradeSpec(
+            brightness=0.02,
+            contrast=1.2,
+            saturation=1.35,
+            color_balance=None,
+        ),
+    }
+
+    def _parametric_grade_filters(
+        self,
+        *,
+        render_node: RenderNode,
+        input_label: str,
+        output_label: str,
+        capabilities: FFmpegCapabilities,
+        enable: str,
+        brightness: float,
+        contrast: float,
+        saturation: float,
+        color_balance: dict[str, str] | None,
+    ) -> list[FilterNode]:
+        self._require_filter(
+            capabilities,
+            "eq",
+        )
+
+        eq_output = f"{output_label}_eq"
+
+        filters = [
+            FilterNode(
+                media_type=FilterMediaType.VIDEO,
+                filter_name="eq",
+                input_labels=[input_label],
+                output_labels=[eq_output],
+                options={
+                    "brightness": self._number(
+                        float(brightness)
+                    ),
+                    "contrast": self._number(
+                        float(contrast)
+                    ),
+                    "saturation": self._number(
+                        float(saturation)
+                    ),
+                    "enable": enable,
+                },
+                source_render_node_id=str(render_node.id),
+            )
+        ]
+
+        if color_balance is not None:
+            self._require_filter(
+                capabilities,
+                "colorbalance",
+            )
+
+            options = dict(color_balance)
+            options["enable"] = enable
+
+            filters.append(
+                FilterNode(
+                    media_type=FilterMediaType.VIDEO,
+                    filter_name="colorbalance",
+                    input_labels=[eq_output],
+                    output_labels=[output_label],
+                    options=options,
+                    source_render_node_id=str(render_node.id),
+                )
+            )
+        else:
+            filters.append(
+                self._null_filter(
+                    input_label=eq_output,
+                    output_label=output_label,
+                    source_render_node_id=str(render_node.id),
+                    capabilities=capabilities,
+                )
+            )
+
+        return filters
 
     def _translate_animation(
         self,
@@ -817,7 +1131,7 @@ class VideoFilterTranslationService:
 
         if (
             execution.preset_id
-            != "animation.slow_parallax"
+            not in self._SUPPORTED_ANIMATION_PRESETS
         ):
             raise ValueError(
                 "Unsupported FFmpeg animation preset: "
@@ -837,13 +1151,80 @@ class VideoFilterTranslationService:
             ),
         )
 
-        zoom_expression = (
-            "'min("
-            "1.03,"
-            "1+0.03*on/"
-            f"{total_frames}"
-            ")'"
-        )
+        if execution.preset_id == "animation.slow_parallax":
+            zoom_expression = (
+                "'min("
+                "1.03,"
+                "1+0.03*on/"
+                f"{total_frames}"
+                ")'"
+            )
+            x_expression = (
+                "'(iw-iw/zoom)"
+                "*on/"
+                f"{total_frames}'"
+            )
+            y_expression = "'(ih-ih/zoom)/2'"
+            warning = (
+                "Slow parallax uses an FFmpeg "
+                "single-layer pan/zoom approximation."
+            )
+
+        elif (
+            execution.preset_id
+            == "animation.slow_parallax_reverse"
+        ):
+            zoom_expression = (
+                "'min("
+                "1.03,"
+                "1+0.03*on/"
+                f"{total_frames}"
+                ")'"
+            )
+            x_expression = (
+                "'(iw-iw/zoom)*(1-on/"
+                f"{total_frames})'"
+            )
+            y_expression = "'(ih-ih/zoom)/2'"
+            warning = (
+                "Slow parallax reverse uses an FFmpeg "
+                "single-layer pan/zoom approximation."
+            )
+
+        elif (
+            execution.preset_id
+            == "animation.slow_pan_vertical"
+        ):
+            zoom_expression = (
+                "'min("
+                "1.03,"
+                "1+0.03*on/"
+                f"{total_frames}"
+                ")'"
+            )
+            x_expression = "'(iw-iw/zoom)/2'"
+            y_expression = (
+                "'(ih-ih/zoom)"
+                "*on/"
+                f"{total_frames}'"
+            )
+            warning = (
+                "Slow vertical pan uses an FFmpeg "
+                "single-layer pan/zoom approximation."
+            )
+
+        else:
+            zoom_expression = (
+                "'1+0.015*(1+sin(2*PI*on/"
+                f"{total_frames}"
+                "))'"
+            )
+            x_expression = "'iw/2-(iw/zoom/2)'"
+            y_expression = "'ih/2-(ih/zoom/2)'"
+            warning = (
+                "Gentle zoom pulse uses an FFmpeg "
+                "single-layer oscillating-zoom approximation."
+            )
 
         filter_node = FilterNode(
             media_type=(
@@ -858,14 +1239,8 @@ class VideoFilterTranslationService:
             ],
             options={
                 "z": zoom_expression,
-                "x": (
-                    "'(iw-iw/zoom)"
-                    "*on/"
-                    f"{total_frames}'"
-                ),
-                "y": (
-                    "'(ih-ih/zoom)/2'"
-                ),
+                "x": x_expression,
+                "y": y_expression,
                 "d": "1",
                 "s": f"{width}x{height}",
                 "fps": self._number(
@@ -887,8 +1262,7 @@ class VideoFilterTranslationService:
         )
 
         translation.warnings.append(
-            "Slow parallax uses an FFmpeg "
-            "single-layer pan/zoom approximation."
+            warning
         )
 
         return translation
@@ -1090,6 +1464,11 @@ class VideoFilterTranslationService:
         mapping = {
             "cross_dissolve": "fade",
             "fade_black": "fadeblack",
+            "wipe_left": "wipeleft",
+            "wipe_right": "wiperight",
+            "slide_left": "slideleft",
+            "circle_crop": "circlecrop",
+            "pixelize": "pixelize",
         }
 
         result = mapping.get(
