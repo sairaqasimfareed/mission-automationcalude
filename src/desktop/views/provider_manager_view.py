@@ -9,17 +9,20 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
+    QFrame,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
     QPlainTextEdit,
+    QScrollArea,
     QSpinBox,
     QSplitter,
     QVBoxLayout,
     QWidget,
 )
 
+from src.desktop.theme import SPACE_SM
 from src.desktop.widgets import badge, button, card, heading, muted, row, separator
 from src.models.http_adapter_config import (
     HttpAdapterConfig,
@@ -123,6 +126,24 @@ class ProviderManagerView(QWidget):
 
         self._health_badge = badge("")
         card_layout.addLayout(row(self._health_badge))
+
+        # The form has grown to 30+ rows (base fields + the advanced
+        # no-code HTTP section), which routinely exceeds the card's
+        # available height. QFormLayout has no scrolling of its own -
+        # when its content doesn't fit, it compresses row spacing
+        # instead of growing the window, but widgets with a hard
+        # setFixedHeight() (the 3 QPlainTextEdit rows below) can't
+        # actually shrink, so they overflow into the next row and
+        # visually overlap it. A QScrollArea gives the form its full,
+        # uncompressed natural height and scrolls instead.
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(0, 0, 0, 0)
+        scroll_layout.setSpacing(SPACE_SM)
 
         form = QFormLayout()
         form.setSpacing(10)
@@ -285,11 +306,14 @@ class ProviderManagerView(QWidget):
         self._advanced_form = form
         self._update_response_mode_visibility()
 
-        card_layout.addLayout(form)
-        card_layout.addWidget(separator())
+        scroll_layout.addLayout(form)
+        scroll_layout.addWidget(separator())
 
         self._secret_status = muted("")
-        card_layout.addWidget(self._secret_status)
+        scroll_layout.addWidget(self._secret_status)
+
+        scroll_area.setWidget(scroll_content)
+        card_layout.addWidget(scroll_area, stretch=1)
 
         save_button = button("Save", variant="primary", icon_name="check")
         save_button.clicked.connect(self._handle_save_clicked)
