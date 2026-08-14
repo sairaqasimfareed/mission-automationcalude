@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Iterable
-from pathlib import Path
+from collections.abc import Callable, Iterable
 from typing import Any
 from uuid import UUID
 
@@ -16,6 +15,7 @@ from src.models.enums import (
 from src.models.render_orchestration_result import (
     RenderOrchestrationResult,
 )
+from src.models.render_progress import RenderProgress
 from src.models.video_job import VideoJob
 from src.pipeline.base_stage import BasePipelineStage
 from src.pipeline.pipeline_checkpoint import (
@@ -73,67 +73,39 @@ class RenderOrchestratorService:
         *,
         stages: Iterable[BasePipelineStage],
         advanced_settings: AdvancedSettings | None = None,
-        checkpoint_storage_service: (
-            PipelineCheckpointStorageService
-            | None
-        ) = None,
-        checkpoint_service: (
-            PipelineCheckpointService
-            | None
-        ) = None,
-        resume_planner_service: (
-            PipelineResumePlannerService
-            | None
-        ) = None,
+        checkpoint_storage_service: PipelineCheckpointStorageService | None = None,
+        checkpoint_service: PipelineCheckpointService | None = None,
+        resume_planner_service: PipelineResumePlannerService | None = None,
     ) -> None:
-        stage_list = list(
-            stages
-        )
+        stage_list = list(stages)
 
         if not stage_list:
             raise ValueError(
-                "Render orchestrator requires at least "
-                "one pipeline stage."
+                "Render orchestrator requires at least " "one pipeline stage."
             )
 
-        self._validate_stage_order(
-            stage_list
-        )
+        self._validate_stage_order(stage_list)
 
-        self._advanced_settings = (
-            advanced_settings
-        )
+        self._advanced_settings = advanced_settings
 
-        self._checkpoint_storage_service = (
-            checkpoint_storage_service
-        )
+        self._checkpoint_storage_service = checkpoint_storage_service
 
-        self._checkpoint_service = (
-            checkpoint_service
-            or PipelineCheckpointService()
-        )
+        self._checkpoint_service = checkpoint_service or PipelineCheckpointService()
 
         self._resume_planner_service = (
-            resume_planner_service
-            or PipelineResumePlannerService()
+            resume_planner_service or PipelineResumePlannerService()
         )
 
         runner = PipelineRunner(
-            advanced_settings=(
-                advanced_settings
-            ),
+            advanced_settings=(advanced_settings),
         )
 
         for stage in stage_list:
-            runner.register(
-                stage
-            )
+            runner.register(stage)
 
         self._runner = runner
 
-        self._engine = PipelineEngine(
-            runner
-        )
+        self._engine = PipelineEngine(runner)
 
     @property
     def stages(
@@ -169,6 +141,7 @@ class RenderOrchestratorService:
         dry_run: bool = False,
         checkpoint_id: UUID | None = None,
         user_input: dict[str, Any] | None = None,
+        progress_callback: Callable[[RenderProgress], None] | None = None,
     ) -> RenderOrchestrationResult:
         """
         Execute the registered render workflow for one VideoJob.
@@ -182,364 +155,202 @@ class RenderOrchestratorService:
         - an explicitly requested checkpoint_id; or
         - the latest persisted checkpoint for the supplied VideoJob.
 
+        progress_callback, when supplied, is forwarded to the render
+        stage via StageContext.services and is only ever invoked when
+        a real FFmpeg render actually runs - the legacy dry-run render
+        stub has no intermediate state to report.
+
         Exceptions raised by pipeline stages or checkpoint orchestration
         are normalized into failed orchestration results instead of
         crossing the public orchestration boundary.
         """
 
-        start_time = (
-            time.perf_counter()
-        )
+        start_time = time.perf_counter()
 
         effective_dry_run = (
             self._advanced_settings.dry_run
-            if self._advanced_settings
-            is not None
+            if self._advanced_settings is not None
             else dry_run
         )
 
-        loaded_checkpoint: (
-            PipelineCheckpoint
-            | None
-        ) = None
+        loaded_checkpoint: PipelineCheckpoint | None = None
 
-        resume_plan: (
-            PipelineResumePlan
-            | None
-        ) = None
+        resume_plan: PipelineResumePlan | None = None
 
         try:
-            loaded_checkpoint = (
-                self._load_resume_checkpoint(
-                    job=job,
-                    checkpoint_id=checkpoint_id,
-                )
+            loaded_checkpoint = self._load_resume_checkpoint(
+                job=job,
+                checkpoint_id=checkpoint_id,
             )
 
             if loaded_checkpoint is not None:
-                resume_plan = (
-                    self._build_resume_plan(
-                        job=job,
-                        checkpoint=(
-                            loaded_checkpoint
-                        ),
-                    )
+                resume_plan = self._build_resume_plan(
+                    job=job,
+                    checkpoint=(loaded_checkpoint),
                 )
 
         except Exception as error:
-            elapsed_seconds = (
-                time.perf_counter()
-                - start_time
-            )
+            elapsed_seconds = time.perf_counter() - start_time
 
-            message = (
-                self._checkpoint_exception_message(
-                    error
-                )
-            )
+            message = self._checkpoint_exception_message(error)
 
             self._append_unique(
                 job.errors,
                 message,
             )
 
-            job.status = (
-                JobStatus.FAILED
+            job.status = JobStatus.FAILED
+
+            failed_stage = self._current_workflow_stage(job)
+
+            job.current_stage = failed_stage
+
+            return RenderOrchestrationResult.failed(
+                job=job,
+                failed_stage=(failed_stage),
+                completed_stages=[],
+                elapsed_seconds=(elapsed_seconds),
+                error_message=(message),
+                warnings=list(job.warnings),
+                metadata={
+                    "dry_run": (effective_dry_run),
+                    "exception_type": (type(error).__name__),
+                    "checkpoint_phase": ("resume_preparation"),
+                },
             )
 
-            failed_stage = (
-                self._current_workflow_stage(
-                    job
-                )
-            )
+        job.status = JobStatus.RUNNING
 
-            job.current_stage = (
-                failed_stage
-            )
+        starting_pipeline_stage = self._starting_pipeline_stage(resume_plan)
 
-            return (
-                RenderOrchestrationResult
-                .failed(
-                    job=job,
-                    failed_stage=(
-                        failed_stage
-                    ),
-                    completed_stages=[],
-                    elapsed_seconds=(
-                        elapsed_seconds
-                    ),
-                    error_message=(
-                        message
-                    ),
-                    warnings=list(
-                        job.warnings
-                    ),
-                    metadata={
-                        "dry_run": (
-                            effective_dry_run
-                        ),
-                        "exception_type": (
-                            type(
-                                error
-                            ).__name__
-                        ),
-                        "checkpoint_phase": (
-                            "resume_preparation"
-                        ),
-                    },
-                )
-            )
-
-        job.status = (
-            JobStatus.RUNNING
+        job.current_stage = self._workflow_stage_for_pipeline_stage(
+            starting_pipeline_stage
         )
 
-        starting_pipeline_stage = (
-            self._starting_pipeline_stage(
-                resume_plan
-            )
-        )
-
-        job.current_stage = (
-            self._workflow_stage_for_pipeline_stage(
-                starting_pipeline_stage
-            )
+        services = (
+            {"progress_callback": progress_callback}
+            if progress_callback is not None
+            else {}
         )
 
         try:
             context = self._engine.run(
                 job,
-                dry_run=(
-                    effective_dry_run
-                ),
-                resume_plan=(
-                    resume_plan
-                ),
-                user_input=(
-                    user_input
-                ),
+                dry_run=(effective_dry_run),
+                resume_plan=(resume_plan),
+                user_input=(user_input),
+                services=services,
             )
 
         except Exception as error:
-            elapsed_seconds = (
-                time.perf_counter()
-                - start_time
-            )
+            elapsed_seconds = time.perf_counter() - start_time
 
-            failed_stage = (
-                self._current_workflow_stage(
-                    job
-                )
-            )
+            failed_stage = self._current_workflow_stage(job)
 
-            message = (
-                self._exception_message(
-                    error
-                )
-            )
+            message = self._exception_message(error)
 
             self._append_unique(
                 job.errors,
                 message,
             )
 
-            job.status = (
-                JobStatus.FAILED
+            job.status = JobStatus.FAILED
+
+            job.current_stage = failed_stage
+
+            return RenderOrchestrationResult.failed(
+                job=job,
+                failed_stage=(failed_stage),
+                completed_stages=[],
+                elapsed_seconds=(elapsed_seconds),
+                error_message=(message),
+                warnings=list(job.warnings),
+                metadata={
+                    "dry_run": (effective_dry_run),
+                    "exception_type": (type(error).__name__),
+                    "resumed": (resume_plan is not None and resume_plan.resume_enabled),
+                    "loaded_checkpoint_id": (
+                        str(loaded_checkpoint.checkpoint_id)
+                        if loaded_checkpoint is not None
+                        else None
+                    ),
+                },
             )
 
-            job.current_stage = (
-                failed_stage
-            )
-
-            return (
-                RenderOrchestrationResult
-                .failed(
-                    job=job,
-                    failed_stage=(
-                        failed_stage
-                    ),
-                    completed_stages=[],
-                    elapsed_seconds=(
-                        elapsed_seconds
-                    ),
-                    error_message=(
-                        message
-                    ),
-                    warnings=list(
-                        job.warnings
-                    ),
-                    metadata={
-                        "dry_run": (
-                            effective_dry_run
-                        ),
-                        "exception_type": (
-                            type(
-                                error
-                            ).__name__
-                        ),
-                        "resumed": (
-                            resume_plan
-                            is not None
-                            and resume_plan
-                            .resume_enabled
-                        ),
-                        "loaded_checkpoint_id": (
-                            str(
-                                loaded_checkpoint
-                                .checkpoint_id
-                            )
-                            if loaded_checkpoint
-                            is not None
-                            else None
-                        ),
-                    },
-                )
-            )
-
-        elapsed_seconds = (
-            time.perf_counter()
-            - start_time
-        )
+        elapsed_seconds = time.perf_counter() - start_time
 
         self._synchronize_diagnostics(
             job=job,
             context=context,
         )
 
-        persisted_checkpoint: (
-            PipelineCheckpoint
-            | None
-        ) = None
+        persisted_checkpoint: PipelineCheckpoint | None = None
 
         try:
-            persisted_checkpoint = (
-                self._persist_checkpoint_if_enabled(
-                    job=job,
-                    context=context,
-                    loaded_checkpoint=(
-                        loaded_checkpoint
-                    ),
-                    resume_plan=resume_plan,
-                    dry_run=(
-                        effective_dry_run
-                    ),
-                )
+            persisted_checkpoint = self._persist_checkpoint_if_enabled(
+                job=job,
+                context=context,
+                loaded_checkpoint=(loaded_checkpoint),
+                resume_plan=resume_plan,
+                dry_run=(effective_dry_run),
             )
 
         except Exception as error:
-            message = (
-                self._checkpoint_exception_message(
-                    error
-                )
-            )
+            message = self._checkpoint_exception_message(error)
 
             self._append_unique(
                 job.errors,
                 message,
             )
 
-            job.status = (
-                JobStatus.FAILED
+            job.status = JobStatus.FAILED
+
+            failed_stage = self._workflow_stage_for_pipeline_stage(
+                context.pipeline_state.current_stage
             )
 
-            failed_stage = (
-                self._workflow_stage_for_pipeline_stage(
-                    context
-                    .pipeline_state
-                    .current_stage
-                )
+            job.current_stage = failed_stage
+
+            return RenderOrchestrationResult.failed(
+                job=job,
+                failed_stage=(failed_stage),
+                completed_stages=(
+                    self._completed_workflow_stages(context.pipeline_state.stages)
+                ),
+                elapsed_seconds=(elapsed_seconds),
+                error_message=(message),
+                warnings=list(job.warnings),
+                metadata=(
+                    self._build_metadata(
+                        context=context,
+                        dry_run=(effective_dry_run),
+                        loaded_checkpoint=(loaded_checkpoint),
+                        persisted_checkpoint=None,
+                        resume_plan=(resume_plan),
+                    )
+                ),
             )
 
-            job.current_stage = (
-                failed_stage
-            )
+        failed_result = self._first_failed_result(context.pipeline_state.stages)
 
-            return (
-                RenderOrchestrationResult
-                .failed(
-                    job=job,
-                    failed_stage=(
-                        failed_stage
-                    ),
-                    completed_stages=(
-                        self._completed_workflow_stages(
-                            context
-                            .pipeline_state
-                            .stages
-                        )
-                    ),
-                    elapsed_seconds=(
-                        elapsed_seconds
-                    ),
-                    error_message=(
-                        message
-                    ),
-                    warnings=list(
-                        job.warnings
-                    ),
-                    metadata=(
-                        self._build_metadata(
-                            context=context,
-                            dry_run=(
-                                effective_dry_run
-                            ),
-                            loaded_checkpoint=(
-                                loaded_checkpoint
-                            ),
-                            persisted_checkpoint=None,
-                            resume_plan=(
-                                resume_plan
-                            ),
-                        )
-                    ),
-                )
-            )
+        waiting_result = self._first_waiting_result(context.pipeline_state.stages)
 
-        failed_result = (
-            self._first_failed_result(
-                context
-                .pipeline_state
-                .stages
-            )
-        )
-
-        waiting_result = (
-            self._first_waiting_result(
-                context
-                .pipeline_state
-                .stages
-            )
-        )
-
-        completed_stages = (
-            self._completed_workflow_stages(
-                context
-                .pipeline_state
-                .stages
-            )
+        completed_stages = self._completed_workflow_stages(
+            context.pipeline_state.stages
         )
 
         if failed_result is not None:
-            failed_stage = (
-                self._workflow_stage_for_pipeline_stage(
-                    failed_result.stage
-                )
-            )
+            failed_stage = self._workflow_stage_for_pipeline_stage(failed_result.stage)
 
-            completed_stages = (
-                self._without_stage(
-                    completed_stages,
-                    failed_stage,
-                )
+            completed_stages = self._without_stage(
+                completed_stages,
+                failed_stage,
             )
 
             error_message = (
                 failed_result.errors[-1]
                 if failed_result.errors
-                else (
-                    "Pipeline stage failed without "
-                    "an error message."
-                )
+                else ("Pipeline stage failed without " "an error message.")
             )
 
             self._append_unique(
@@ -547,74 +358,42 @@ class RenderOrchestratorService:
                 error_message,
             )
 
-            job.status = (
-                JobStatus.FAILED
-            )
+            job.status = JobStatus.FAILED
 
-            job.current_stage = (
-                failed_stage
-            )
+            job.current_stage = failed_stage
 
-            return (
-                RenderOrchestrationResult
-                .failed(
-                    job=job,
-                    failed_stage=(
-                        failed_stage
-                    ),
-                    completed_stages=(
-                        completed_stages
-                    ),
-                    elapsed_seconds=(
-                        elapsed_seconds
-                    ),
-                    error_message=(
-                        error_message
-                    ),
-                    warnings=list(
-                        job.warnings
-                    ),
-                    metadata=(
-                        self._build_metadata(
-                            context=context,
-                            dry_run=(
-                                effective_dry_run
-                            ),
-                            loaded_checkpoint=(
-                                loaded_checkpoint
-                            ),
-                            persisted_checkpoint=(
-                                persisted_checkpoint
-                            ),
-                            resume_plan=(
-                                resume_plan
-                            ),
-                        )
-                    ),
-                )
+            return RenderOrchestrationResult.failed(
+                job=job,
+                failed_stage=(failed_stage),
+                completed_stages=(completed_stages),
+                elapsed_seconds=(elapsed_seconds),
+                error_message=(error_message),
+                warnings=list(job.warnings),
+                metadata=(
+                    self._build_metadata(
+                        context=context,
+                        dry_run=(effective_dry_run),
+                        loaded_checkpoint=(loaded_checkpoint),
+                        persisted_checkpoint=(persisted_checkpoint),
+                        resume_plan=(resume_plan),
+                    )
+                ),
             )
 
         if waiting_result is not None:
-            waiting_stage = (
-                self._workflow_stage_for_pipeline_stage(
-                    waiting_result.stage
-                )
+            waiting_stage = self._workflow_stage_for_pipeline_stage(
+                waiting_result.stage
             )
 
-            completed_stages = (
-                self._without_stage(
-                    completed_stages,
-                    waiting_stage,
-                )
+            completed_stages = self._without_stage(
+                completed_stages,
+                waiting_stage,
             )
 
             message = (
                 waiting_result.warnings[-1]
                 if waiting_result.warnings
-                else (
-                    "Pipeline execution is waiting "
-                    "for user input."
-                )
+                else ("Pipeline execution is waiting " "for user input.")
             )
 
             self._append_unique(
@@ -632,358 +411,183 @@ class RenderOrchestratorService:
             # therefore FAILED here does not lose the semantic
             # distinction between a terminal pipeline failure and a
             # resumable user-input wait.
-            job.status = (
-                JobStatus.FAILED
+            job.status = JobStatus.FAILED
+
+            job.current_stage = waiting_stage
+
+            return RenderOrchestrationResult.failed(
+                job=job,
+                failed_stage=(waiting_stage),
+                completed_stages=(completed_stages),
+                elapsed_seconds=(elapsed_seconds),
+                error_message=(message),
+                warnings=list(job.warnings),
+                metadata=(
+                    self._build_metadata(
+                        context=context,
+                        dry_run=(effective_dry_run),
+                        loaded_checkpoint=(loaded_checkpoint),
+                        persisted_checkpoint=(persisted_checkpoint),
+                        resume_plan=(resume_plan),
+                    )
+                ),
             )
 
-            job.current_stage = (
-                waiting_stage
-            )
-
-            return (
-                RenderOrchestrationResult
-                .failed(
-                    job=job,
-                    failed_stage=(
-                        waiting_stage
-                    ),
-                    completed_stages=(
-                        completed_stages
-                    ),
-                    elapsed_seconds=(
-                        elapsed_seconds
-                    ),
-                    error_message=(
-                        message
-                    ),
-                    warnings=list(
-                        job.warnings
-                    ),
-                    metadata=(
-                        self._build_metadata(
-                            context=context,
-                            dry_run=(
-                                effective_dry_run
-                            ),
-                            loaded_checkpoint=(
-                                loaded_checkpoint
-                            ),
-                            persisted_checkpoint=(
-                                persisted_checkpoint
-                            ),
-                            resume_plan=(
-                                resume_plan
-                            ),
-                        )
-                    ),
-                )
-            )
-
-        if (
-            not context
-            .pipeline_state
-            .stages
-        ):
+        if not context.pipeline_state.stages:
             if (
                 resume_plan is not None
                 and not resume_plan.resume_enabled
                 and not resume_plan.execution_stages
                 and loaded_checkpoint is not None
             ):
-                if (
-                    job.render_result
-                    is not None
-                    and job.render_result.success
-                ):
-                    job.status = (
-                        JobStatus.COMPLETED
+                if job.render_result is not None and job.render_result.success:
+                    job.status = JobStatus.COMPLETED
+
+                    job.current_stage = WorkflowStage.READY_FOR_UPLOAD
+
+                    return RenderOrchestrationResult.succeeded(
+                        job=job,
+                        completed_stages=(
+                            self._checkpoint_completed_workflow_stages(
+                                loaded_checkpoint
+                            )
+                        ),
+                        elapsed_seconds=(elapsed_seconds),
+                        warnings=list(job.warnings),
+                        metadata=(
+                            self._build_metadata(
+                                context=context,
+                                dry_run=(effective_dry_run),
+                                loaded_checkpoint=(loaded_checkpoint),
+                                persisted_checkpoint=(persisted_checkpoint),
+                                resume_plan=(resume_plan),
+                            )
+                        ),
                     )
 
-                    job.current_stage = (
-                        WorkflowStage
-                        .READY_FOR_UPLOAD
-                    )
-
-                    return (
-                        RenderOrchestrationResult
-                        .succeeded(
-                            job=job,
-                            completed_stages=(
-                                self._checkpoint_completed_workflow_stages(
-                                    loaded_checkpoint
-                                )
-                            ),
-                            elapsed_seconds=(
-                                elapsed_seconds
-                            ),
-                            warnings=list(
-                                job.warnings
-                            ),
-                            metadata=(
-                                self._build_metadata(
-                                    context=context,
-                                    dry_run=(
-                                        effective_dry_run
-                                    ),
-                                    loaded_checkpoint=(
-                                        loaded_checkpoint
-                                    ),
-                                    persisted_checkpoint=(
-                                        persisted_checkpoint
-                                    ),
-                                    resume_plan=(
-                                        resume_plan
-                                    ),
-                                )
-                            ),
-                        )
-                    )
-
-            message = (
-                "Render orchestration completed "
-                "without executing any stages."
-            )
+            message = "Render orchestration completed " "without executing any stages."
 
             self._append_unique(
                 job.errors,
                 message,
             )
 
-            job.status = (
-                JobStatus.FAILED
-            )
+            job.status = JobStatus.FAILED
 
-            failed_stage = (
-                job.current_stage
-            )
+            failed_stage = job.current_stage
 
-            return (
-                RenderOrchestrationResult
-                .failed(
-                    job=job,
-                    failed_stage=(
-                        failed_stage
-                    ),
-                    completed_stages=[],
-                    elapsed_seconds=(
-                        elapsed_seconds
-                    ),
-                    error_message=(
-                        message
-                    ),
-                    warnings=list(
-                        job.warnings
-                    ),
-                    metadata=(
-                        self._build_metadata(
-                            context=context,
-                            dry_run=(
-                                effective_dry_run
-                            ),
-                            loaded_checkpoint=(
-                                loaded_checkpoint
-                            ),
-                            persisted_checkpoint=(
-                                persisted_checkpoint
-                            ),
-                            resume_plan=(
-                                resume_plan
-                            ),
-                        )
-                    ),
-                )
-            )
-
-        if (
-            job.render_result
-            is None
-        ):
-            message = (
-                "Render orchestration finished "
-                "without a render result."
-            )
-
-            self._append_unique(
-                job.errors,
-                message,
-            )
-
-            failed_stage = (
-                WorkflowStage.RENDER
-            )
-
-            completed_stages = (
-                self._without_stage(
-                    completed_stages,
-                    failed_stage,
-                )
-            )
-
-            job.status = (
-                JobStatus.FAILED
-            )
-
-            job.current_stage = (
-                failed_stage
-            )
-
-            return (
-                RenderOrchestrationResult
-                .failed(
-                    job=job,
-                    failed_stage=(
-                        failed_stage
-                    ),
-                    completed_stages=(
-                        completed_stages
-                    ),
-                    elapsed_seconds=(
-                        elapsed_seconds
-                    ),
-                    error_message=(
-                        message
-                    ),
-                    warnings=list(
-                        job.warnings
-                    ),
-                    metadata=(
-                        self._build_metadata(
-                            context=context,
-                            dry_run=(
-                                effective_dry_run
-                            ),
-                            loaded_checkpoint=(
-                                loaded_checkpoint
-                            ),
-                            persisted_checkpoint=(
-                                persisted_checkpoint
-                            ),
-                            resume_plan=(
-                                resume_plan
-                            ),
-                        )
-                    ),
-                )
-            )
-
-        if (
-            not job
-            .render_result
-            .success
-        ):
-            message = (
-                job
-                .render_result
-                .error_message
-                or (
-                    "Render result reported "
-                    "failure."
-                )
-            )
-
-            self._append_unique(
-                job.errors,
-                message,
-            )
-
-            failed_stage = (
-                WorkflowStage.RENDER
-            )
-
-            completed_stages = (
-                self._without_stage(
-                    completed_stages,
-                    failed_stage,
-                )
-            )
-
-            job.status = (
-                JobStatus.FAILED
-            )
-
-            job.current_stage = (
-                failed_stage
-            )
-
-            return (
-                RenderOrchestrationResult
-                .failed(
-                    job=job,
-                    failed_stage=(
-                        failed_stage
-                    ),
-                    completed_stages=(
-                        completed_stages
-                    ),
-                    elapsed_seconds=(
-                        elapsed_seconds
-                    ),
-                    error_message=(
-                        message
-                    ),
-                    warnings=list(
-                        job.warnings
-                    ),
-                    metadata=(
-                        self._build_metadata(
-                            context=context,
-                            dry_run=(
-                                effective_dry_run
-                            ),
-                            loaded_checkpoint=(
-                                loaded_checkpoint
-                            ),
-                            persisted_checkpoint=(
-                                persisted_checkpoint
-                            ),
-                            resume_plan=(
-                                resume_plan
-                            ),
-                        )
-                    ),
-                )
-            )
-
-        job.status = (
-            JobStatus.COMPLETED
-        )
-
-        job.current_stage = (
-            WorkflowStage
-            .READY_FOR_UPLOAD
-        )
-
-        return (
-            RenderOrchestrationResult
-            .succeeded(
+            return RenderOrchestrationResult.failed(
                 job=job,
-                completed_stages=(
-                    completed_stages
-                ),
-                elapsed_seconds=(
-                    elapsed_seconds
-                ),
-                warnings=list(
-                    job.warnings
-                ),
+                failed_stage=(failed_stage),
+                completed_stages=[],
+                elapsed_seconds=(elapsed_seconds),
+                error_message=(message),
+                warnings=list(job.warnings),
                 metadata=(
                     self._build_metadata(
                         context=context,
-                        dry_run=(
-                            effective_dry_run
-                        ),
-                        loaded_checkpoint=(
-                            loaded_checkpoint
-                        ),
-                        persisted_checkpoint=(
-                            persisted_checkpoint
-                        ),
-                        resume_plan=(
-                            resume_plan
-                        ),
+                        dry_run=(effective_dry_run),
+                        loaded_checkpoint=(loaded_checkpoint),
+                        persisted_checkpoint=(persisted_checkpoint),
+                        resume_plan=(resume_plan),
                     )
                 ),
             )
+
+        if job.render_result is None:
+            message = "Render orchestration finished " "without a render result."
+
+            self._append_unique(
+                job.errors,
+                message,
+            )
+
+            failed_stage = WorkflowStage.RENDER
+
+            completed_stages = self._without_stage(
+                completed_stages,
+                failed_stage,
+            )
+
+            job.status = JobStatus.FAILED
+
+            job.current_stage = failed_stage
+
+            return RenderOrchestrationResult.failed(
+                job=job,
+                failed_stage=(failed_stage),
+                completed_stages=(completed_stages),
+                elapsed_seconds=(elapsed_seconds),
+                error_message=(message),
+                warnings=list(job.warnings),
+                metadata=(
+                    self._build_metadata(
+                        context=context,
+                        dry_run=(effective_dry_run),
+                        loaded_checkpoint=(loaded_checkpoint),
+                        persisted_checkpoint=(persisted_checkpoint),
+                        resume_plan=(resume_plan),
+                    )
+                ),
+            )
+
+        if not job.render_result.success:
+            message = job.render_result.error_message or (
+                "Render result reported " "failure."
+            )
+
+            self._append_unique(
+                job.errors,
+                message,
+            )
+
+            failed_stage = WorkflowStage.RENDER
+
+            completed_stages = self._without_stage(
+                completed_stages,
+                failed_stage,
+            )
+
+            job.status = JobStatus.FAILED
+
+            job.current_stage = failed_stage
+
+            return RenderOrchestrationResult.failed(
+                job=job,
+                failed_stage=(failed_stage),
+                completed_stages=(completed_stages),
+                elapsed_seconds=(elapsed_seconds),
+                error_message=(message),
+                warnings=list(job.warnings),
+                metadata=(
+                    self._build_metadata(
+                        context=context,
+                        dry_run=(effective_dry_run),
+                        loaded_checkpoint=(loaded_checkpoint),
+                        persisted_checkpoint=(persisted_checkpoint),
+                        resume_plan=(resume_plan),
+                    )
+                ),
+            )
+
+        job.status = JobStatus.COMPLETED
+
+        job.current_stage = WorkflowStage.READY_FOR_UPLOAD
+
+        return RenderOrchestrationResult.succeeded(
+            job=job,
+            completed_stages=(completed_stages),
+            elapsed_seconds=(elapsed_seconds),
+            warnings=list(job.warnings),
+            metadata=(
+                self._build_metadata(
+                    context=context,
+                    dry_run=(effective_dry_run),
+                    loaded_checkpoint=(loaded_checkpoint),
+                    persisted_checkpoint=(persisted_checkpoint),
+                    resume_plan=(resume_plan),
+                )
+            ),
         )
 
     def _load_resume_checkpoint(
@@ -999,18 +603,11 @@ class RenderOrchestratorService:
         both AdvancedSettings and a storage service must be configured.
         """
 
-        settings = (
-            self._advanced_settings
-        )
+        settings = self._advanced_settings
 
-        storage = (
-            self._checkpoint_storage_service
-        )
+        storage = self._checkpoint_storage_service
 
-        if (
-            settings is None
-            or storage is None
-        ):
+        if settings is None or storage is None:
             return None
 
         if not settings.resume_previous_pipeline:
@@ -1019,21 +616,13 @@ class RenderOrchestratorService:
         if checkpoint_id is not None:
             checkpoint = storage.load(
                 job_id=job.id,
-                checkpoint_id=(
-                    checkpoint_id
-                ),
+                checkpoint_id=(checkpoint_id),
             )
 
             if checkpoint is None:
-                raise ValueError(
-                    "Requested pipeline checkpoint "
-                    "does not exist."
-                )
+                raise ValueError("Requested pipeline checkpoint " "does not exist.")
             if not checkpoint.resumable:
-                raise ValueError(
-                    "Requested pipeline checkpoint "
-                    "is not resumable."
-                )
+                raise ValueError("Requested pipeline checkpoint " "is not resumable.")
 
             return checkpoint
 
@@ -1049,24 +638,16 @@ class RenderOrchestratorService:
     ) -> PipelineResumePlan:
         """Build the execution plan for one restored checkpoint."""
 
-        settings = (
-            self._advanced_settings
-        )
+        settings = self._advanced_settings
 
         if settings is None:
-            raise RuntimeError(
-                "Resume planning requires "
-                "AdvancedSettings."
-            )
+            raise RuntimeError("Resume planning requires " "AdvancedSettings.")
 
-        return (
-            self._resume_planner_service
-            .create_plan(
-                job=job,
-                checkpoint=checkpoint,
-                stages=self._runner.stages,
-                settings=settings,
-            )
+        return self._resume_planner_service.create_plan(
+            job=job,
+            checkpoint=checkpoint,
+            stages=self._runner.stages,
+            settings=settings,
         )
 
     def _persist_checkpoint_if_enabled(
@@ -1086,55 +667,29 @@ class RenderOrchestratorService:
         stages and execution results remain available in the new snapshot.
         """
 
-        settings = (
-            self._advanced_settings
-        )
+        settings = self._advanced_settings
 
-        storage = (
-            self._checkpoint_storage_service
-        )
+        storage = self._checkpoint_storage_service
 
-        if (
-            settings is None
-            or storage is None
-            or not settings.save_pipeline_state
-        ):
+        if settings is None or storage is None or not settings.save_pipeline_state:
             return None
 
-        checkpoint = (
-            self._checkpoint_service
-            .create(
-                job=job,
-                pipeline_state=(
-                    context.pipeline_state
+        checkpoint = self._checkpoint_service.create(
+            job=job,
+            pipeline_state=(context.pipeline_state),
+            metadata={
+                "dry_run": dry_run,
+                "resumed": (resume_plan is not None and resume_plan.resume_enabled),
+                "source_checkpoint_id": (
+                    str(loaded_checkpoint.checkpoint_id)
+                    if loaded_checkpoint is not None
+                    else None
                 ),
-                metadata={
-                    "dry_run": dry_run,
-                    "resumed": (
-                        resume_plan
-                        is not None
-                        and resume_plan
-                        .resume_enabled
-                    ),
-                    "source_checkpoint_id": (
-                        str(
-                            loaded_checkpoint
-                            .checkpoint_id
-                        )
-                        if loaded_checkpoint
-                        is not None
-                        else None
-                    ),
-                },
-                previous_checkpoint=(
-                    loaded_checkpoint
-                ),
-            )
+            },
+            previous_checkpoint=(loaded_checkpoint),
         )
 
-        storage.save(
-            checkpoint
-        )
+        storage.save(checkpoint)
 
         return checkpoint
 
@@ -1147,24 +702,15 @@ class RenderOrchestratorService:
         if (
             resume_plan is not None
             and resume_plan.resume_enabled
-            and resume_plan.resume_stage
-            is not None
+            and resume_plan.resume_stage is not None
         ):
-            return (
-                resume_plan.resume_stage
-            )
+            return resume_plan.resume_stage
 
-        return (
-            self._runner
-            .stages[0]
-            .stage_name
-        )
+        return self._runner.stages[0].stage_name
 
     @staticmethod
     def _validate_stage_order(
-        stages: list[
-            BasePipelineStage
-        ],
+        stages: list[BasePipelineStage],
     ) -> None:
         """
         Reject duplicate pipeline-stage identifiers.
@@ -1173,15 +719,10 @@ class RenderOrchestratorService:
         and preserved by PipelineRunner.
         """
 
-        seen: set[
-            PipelineStageName
-        ] = set()
+        seen: set[PipelineStageName] = set()
 
         for stage in stages:
-            if (
-                stage.stage_name
-                in seen
-            ):
+            if stage.stage_name in seen:
                 raise ValueError(
                     "Render orchestrator cannot "
                     "register duplicate pipeline "
@@ -1189,43 +730,28 @@ class RenderOrchestratorService:
                     f"{stage.stage_name.value}."
                 )
 
-            seen.add(
-                stage.stage_name
-            )
+            seen.add(stage.stage_name)
 
     @staticmethod
     def _first_failed_result(
-        results: list[
-            StageResult
-        ],
+        results: list[StageResult],
     ) -> StageResult | None:
         """Return the first stage that explicitly reported failure."""
 
         for result in results:
-            if (
-                result.status
-                == PipelineStageStatus.FAILED
-            ):
+            if result.status == PipelineStageStatus.FAILED:
                 return result
 
         return None
 
     @staticmethod
     def _first_waiting_result(
-        results: list[
-            StageResult
-        ],
+        results: list[StageResult],
     ) -> StageResult | None:
         """Return the first stage waiting for user input."""
 
         for result in results:
-            if (
-                result.status
-                == (
-                    PipelineStageStatus
-                    .WAITING_FOR_USER
-                )
-            ):
+            if result.status == (PipelineStageStatus.WAITING_FOR_USER):
                 return result
 
         return None
@@ -1233,42 +759,23 @@ class RenderOrchestratorService:
     @classmethod
     def _completed_workflow_stages(
         cls,
-        results: list[
-            StageResult
-        ],
-    ) -> list[
-        WorkflowStage
-    ]:
+        results: list[StageResult],
+    ) -> list[WorkflowStage]:
         """
         Translate successfully completed internal pipeline stages into
         the existing public VideoJob workflow-stage vocabulary.
         """
 
-        completed: list[
-            WorkflowStage
-        ] = []
+        completed: list[WorkflowStage] = []
 
         for result in results:
-            if (
-                result.status
-                != PipelineStageStatus.COMPLETED
-            ):
+            if result.status != PipelineStageStatus.COMPLETED:
                 continue
 
-            stage = (
-                cls
-                ._workflow_stage_for_pipeline_stage(
-                    result.stage
-                )
-            )
+            stage = cls._workflow_stage_for_pipeline_stage(result.stage)
 
-            if (
-                stage
-                not in completed
-            ):
-                completed.append(
-                    stage
-                )
+            if stage not in completed:
+                completed.append(stage)
 
         return completed
 
@@ -1279,50 +786,27 @@ class RenderOrchestratorService:
     ) -> list[WorkflowStage]:
         """Translate checkpoint-completed stages to public workflow stages."""
 
-        completed: list[
-            WorkflowStage
-        ] = []
+        completed: list[WorkflowStage] = []
 
-        for pipeline_stage in (
-            checkpoint.completed_stages
-        ):
-            workflow_stage = (
-                cls
-                ._workflow_stage_for_pipeline_stage(
-                    pipeline_stage
-                )
-            )
+        for pipeline_stage in checkpoint.completed_stages:
+            workflow_stage = cls._workflow_stage_for_pipeline_stage(pipeline_stage)
 
-            if (
-                workflow_stage
-                not in completed
-            ):
-                completed.append(
-                    workflow_stage
-                )
+            if workflow_stage not in completed:
+                completed.append(workflow_stage)
 
         return completed
 
     @staticmethod
     def _without_stage(
-        stages: list[
-            WorkflowStage
-        ],
+        stages: list[WorkflowStage],
         excluded_stage: WorkflowStage,
-    ) -> list[
-        WorkflowStage
-    ]:
+    ) -> list[WorkflowStage]:
         """
         Return completed stages excluding an orchestration-level failed
         stage.
         """
 
-        return [
-            stage
-            for stage in stages
-            if stage
-            != excluded_stage
-        ]
+        return [stage for stage in stages if stage != excluded_stage]
 
     @classmethod
     def _synchronize_diagnostics(
@@ -1333,42 +817,26 @@ class RenderOrchestratorService:
     ) -> None:
         """Copy unique pipeline diagnostics onto the central VideoJob."""
 
-        for warning in (
-            context
-            .pipeline_state
-            .warnings
-        ):
+        for warning in context.pipeline_state.warnings:
             cls._append_unique(
                 job.warnings,
                 warning,
             )
 
-        for error in (
-            context
-            .pipeline_state
-            .errors
-        ):
+        for error in context.pipeline_state.errors:
             cls._append_unique(
                 job.errors,
                 error,
             )
 
-        for result in (
-            context
-            .pipeline_state
-            .stages
-        ):
-            for warning in (
-                result.warnings
-            ):
+        for result in context.pipeline_state.stages:
+            for warning in result.warnings:
                 cls._append_unique(
                     job.warnings,
                     warning,
                 )
 
-            for error in (
-                result.errors
-            ):
+            for error in result.errors:
                 cls._append_unique(
                     job.errors,
                     error,
@@ -1390,61 +858,24 @@ class RenderOrchestratorService:
 
         return {
             "dry_run": dry_run,
-            "pipeline_progress_percent": (
-                context
-                .pipeline_state
-                .overall_progress
-            ),
-            "pipeline_stage_count": len(
-                context
-                .pipeline_state
-                .stages
-            ),
-            "pipeline_completed_stage_count": (
-                context
-                .pipeline_state
-                .completed_stages
-            ),
-            "job_retry_count": (
-                context
-                .job
-                .retry_count
-            ),
-            "resumed": (
-                resume_plan
-                is not None
-                and resume_plan
-                .resume_enabled
-            ),
+            "pipeline_progress_percent": (context.pipeline_state.overall_progress),
+            "pipeline_stage_count": len(context.pipeline_state.stages),
+            "pipeline_completed_stage_count": (context.pipeline_state.completed_stages),
+            "job_retry_count": (context.job.retry_count),
+            "resumed": (resume_plan is not None and resume_plan.resume_enabled),
             "resume_stage": (
-                resume_plan
-                .resume_stage
-                .value
-                if (
-                    resume_plan
-                    is not None
-                    and resume_plan
-                    .resume_stage
-                    is not None
-                )
+                resume_plan.resume_stage.value
+                if (resume_plan is not None and resume_plan.resume_stage is not None)
                 else None
             ),
             "loaded_checkpoint_id": (
-                str(
-                    loaded_checkpoint
-                    .checkpoint_id
-                )
-                if loaded_checkpoint
-                is not None
+                str(loaded_checkpoint.checkpoint_id)
+                if loaded_checkpoint is not None
                 else None
             ),
             "persisted_checkpoint_id": (
-                str(
-                    persisted_checkpoint
-                    .checkpoint_id
-                )
-                if persisted_checkpoint
-                is not None
+                str(persisted_checkpoint.checkpoint_id)
+                if persisted_checkpoint is not None
                 else None
             ),
         }
@@ -1460,9 +891,7 @@ class RenderOrchestratorService:
         VideoJob remains the authoritative public lifecycle object.
         """
 
-        return (
-            job.current_stage
-        )
+        return job.current_stage
 
     @staticmethod
     def _workflow_stage_for_pipeline_stage(
@@ -1474,51 +903,21 @@ class RenderOrchestratorService:
             PipelineStageName,
             WorkflowStage,
         ] = {
-            PipelineStageName.RESEARCH: (
-                WorkflowStage.RESEARCH
-            ),
-            PipelineStageName.SCRIPT: (
-                WorkflowStage.SCRIPT
-            ),
-            PipelineStageName.ORIGINALITY: (
-                WorkflowStage
-                .ORIGINALITY_REVIEW
-            ),
-            PipelineStageName.SCENE_PLANNING: (
-                WorkflowStage
-                .QUALITY_CHECK
-            ),
-            PipelineStageName.ASSET_SELECTION: (
-                WorkflowStage
-                .ASSET_GENERATION
-            ),
-            PipelineStageName.VOICE: (
-                WorkflowStage.VOICE
-            ),
-            PipelineStageName.BACKGROUND_MUSIC: (
-                WorkflowStage.EDITING
-            ),
-            PipelineStageName.SOUND_EFFECTS: (
-                WorkflowStage.EDITING
-            ),
-            PipelineStageName.VIDEO_TIMELINE: (
-                WorkflowStage.EDITING
-            ),
-            PipelineStageName.AUDIO_TIMELINE: (
-                WorkflowStage.EDITING
-            ),
-            PipelineStageName.RENDER: (
-                WorkflowStage.RENDER
-            ),
-            PipelineStageName.EXPORT: (
-                WorkflowStage
-                .READY_FOR_UPLOAD
-            ),
+            PipelineStageName.RESEARCH: (WorkflowStage.RESEARCH),
+            PipelineStageName.SCRIPT: (WorkflowStage.SCRIPT),
+            PipelineStageName.ORIGINALITY: (WorkflowStage.ORIGINALITY_REVIEW),
+            PipelineStageName.SCENE_PLANNING: (WorkflowStage.QUALITY_CHECK),
+            PipelineStageName.ASSET_SELECTION: (WorkflowStage.ASSET_GENERATION),
+            PipelineStageName.VOICE: (WorkflowStage.VOICE),
+            PipelineStageName.BACKGROUND_MUSIC: (WorkflowStage.EDITING),
+            PipelineStageName.SOUND_EFFECTS: (WorkflowStage.EDITING),
+            PipelineStageName.VIDEO_TIMELINE: (WorkflowStage.EDITING),
+            PipelineStageName.AUDIO_TIMELINE: (WorkflowStage.EDITING),
+            PipelineStageName.RENDER: (WorkflowStage.RENDER),
+            PipelineStageName.EXPORT: (WorkflowStage.READY_FOR_UPLOAD),
         }
 
-        return mapping[
-            stage
-        ]
+        return mapping[stage]
 
     @staticmethod
     def _append_unique(
@@ -1527,18 +926,10 @@ class RenderOrchestratorService:
     ) -> None:
         """Append one normalized diagnostic message exactly once."""
 
-        cleaned = (
-            value.strip()
-        )
+        cleaned = value.strip()
 
-        if (
-            cleaned
-            and cleaned
-            not in values
-        ):
-            values.append(
-                cleaned
-            )
+        if cleaned and cleaned not in values:
+            values.append(cleaned)
 
     @staticmethod
     def _exception_message(
@@ -1546,9 +937,7 @@ class RenderOrchestratorService:
     ) -> str:
         """Normalize an unexpected stage exception."""
 
-        detail = str(
-            error
-        ).strip()
+        detail = str(error).strip()
 
         if detail:
             return (
@@ -1558,11 +947,7 @@ class RenderOrchestratorService:
                 f"{detail}"
             )
 
-        return (
-            "Render orchestration stage "
-            f"raised "
-            f"{type(error).__name__}."
-        )
+        return "Render orchestration stage " f"raised " f"{type(error).__name__}."
 
     @staticmethod
     def _checkpoint_exception_message(
@@ -1570,9 +955,7 @@ class RenderOrchestratorService:
     ) -> str:
         """Normalize checkpoint/resume infrastructure failures."""
 
-        detail = str(
-            error
-        ).strip()
+        detail = str(error).strip()
 
         if detail:
             return (

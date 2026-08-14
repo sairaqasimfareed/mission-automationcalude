@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
+from src.models.audio_timeline import AudioTimeline
 from src.models.enums import (
     JobStatus,
     WorkflowStage,
@@ -42,9 +45,7 @@ from src.pipeline.stage_context import StageContext
 from src.services.render_service import RenderService
 
 
-class SuccessfulRenderService(
-    RenderService
-):
+class SuccessfulRenderService(RenderService):
     """Deterministic successful render service."""
 
     def render(
@@ -53,14 +54,10 @@ class SuccessfulRenderService(
     ) -> RenderResult:
         return RenderResult(
             success=True,
-            output_file=(
-                "outputs/test_render.mp4"
-            ),
+            output_file=("outputs/test_render.mp4"),
             render_engine="synthetic",
             render_time_seconds=0.25,
-            duration_seconds=int(
-                timeline.calculate_duration()
-            ),
+            duration_seconds=int(timeline.calculate_duration()),
             status=RenderStatus.COMPLETED,
             warnings=[
                 "Synthetic render warning.",
@@ -68,9 +65,7 @@ class SuccessfulRenderService(
         )
 
 
-class FailedRenderService(
-    RenderService
-):
+class FailedRenderService(RenderService):
     """Deterministic failed render service."""
 
     def render(
@@ -82,31 +77,23 @@ class FailedRenderService(
             output_file=None,
             render_engine="synthetic",
             render_time_seconds=0.1,
-            duration_seconds=int(
-                timeline.calculate_duration()
-            ),
+            duration_seconds=int(timeline.calculate_duration()),
             status=RenderStatus.FAILED,
             warnings=[
                 "Synthetic failure warning.",
             ],
-            error_message=(
-                "Synthetic render failure."
-            ),
+            error_message=("Synthetic render failure."),
         )
 
 
-class RaisingRenderService(
-    RenderService
-):
+class RaisingRenderService(RenderService):
     """Render service used to verify exception propagation."""
 
     def render(
         self,
         timeline: VideoTimeline,
     ) -> RenderResult:
-        raise RuntimeError(
-            "Synthetic render exception."
-        )
+        raise RuntimeError("Synthetic render exception.")
 
 
 def build_job(
@@ -130,10 +117,7 @@ def build_job(
 
     script = Script(
         title="Render stage script",
-        content=(
-            "Synthetic narration for "
-            "render-stage testing."
-        ),
+        content=("Synthetic narration for " "render-stage testing."),
         prompt_version="test-1.0",
         word_count=5,
         estimated_duration_seconds=10,
@@ -143,41 +127,22 @@ def build_job(
     scene = Scene(
         scene_number=1,
         title="Render Scene",
-        narration=(
-            "Synthetic narration for "
-            "render-stage testing."
-        ),
-        visual_prompt=(
-            "Synthetic render-stage visual."
-        ),
+        narration=("Synthetic narration for " "render-stage testing."),
+        visual_prompt=("Synthetic render-stage visual."),
         estimated_duration_seconds=10,
-        manual_file_path=(
-            "assets/videos/manual/"
-            "render_stage_test.mp4"
-        ),
-        source_status=(
-            SceneSourceStatus.READY
-        ),
+        manual_file_path=("assets/videos/manual/" "render_stage_test.mp4"),
+        source_status=(SceneSourceStatus.READY),
         status=SceneStatus.READY,
     )
 
     clip = VideoClip(
         scene_number=1,
-        source_type=(
-            SceneSourceType.MANUAL_UPLOAD
-        ),
+        source_type=(SceneSourceType.MANUAL_UPLOAD),
         duration_seconds=10,
-        prompt=(
-            "Synthetic render-stage clip."
-        ),
+        prompt=("Synthetic render-stage clip."),
         provider="Manual Upload",
-        local_file=(
-            "assets/videos/manual/"
-            "render_stage_test.mp4"
-        ),
-        source_status=(
-            SceneSourceStatus.READY
-        ),
+        local_file=("assets/videos/manual/" "render_stage_test.mp4"),
+        source_status=(SceneSourceStatus.READY),
         status=VideoClipStatus.READY,
     )
 
@@ -192,12 +157,10 @@ def build_job(
     ]
 
     if include_timeline:
-        job.video_timeline = (
-            VideoTimeline(
-                clips=[
-                    clip,
-                ],
-            )
+        job.video_timeline = VideoTimeline(
+            clips=[
+                clip,
+            ],
         )
 
         job.video_timeline.calculate_duration()
@@ -213,9 +176,7 @@ def build_context(
     return StageContext(
         job=job,
         pipeline_state=PipelineState(
-            current_stage=(
-                PipelineStageName.RENDER
-            ),
+            current_stage=(PipelineStageName.RENDER),
         ),
         dry_run=True,
     )
@@ -224,50 +185,29 @@ def build_context(
 def test_stage_name() -> None:
     stage = RenderPipelineStage()
 
-    assert (
-        stage.stage_name
-        == PipelineStageName.RENDER
-    )
+    assert stage.stage_name == PipelineStageName.RENDER
 
 
 def test_successful_render() -> None:
     job = build_job()
 
-    context = build_context(
-        job
-    )
+    context = build_context(job)
 
     stage = RenderPipelineStage(
-        render_service=(
-            SuccessfulRenderService()
-        ),
+        render_service=(SuccessfulRenderService()),
     )
 
-    result = stage.execute(
-        context
-    )
+    result = stage.execute(context)
 
-    assert (
-        result.status
-        == PipelineStageStatus.COMPLETED
-    )
+    assert result.status == PipelineStageStatus.COMPLETED
 
     assert result.successful is True
 
-    assert (
-        context.job.render_result
-        is not None
-    )
+    assert context.job.render_result is not None
 
-    assert (
-        context.job.render_result.success
-        is True
-    )
+    assert context.job.render_result.success is True
 
-    assert (
-        context.job.render_result.output_file
-        == "outputs/test_render.mp4"
-    )
+    assert context.job.render_result.output_file == "outputs/test_render.mp4"
 
     assert result.errors == []
 
@@ -275,54 +215,29 @@ def test_successful_render() -> None:
         "Synthetic render warning.",
     ]
 
-    assert (
-        result.metadata[
-            "render_engine"
-        ]
-        == "synthetic"
-    )
+    assert result.metadata["render_engine"] == "synthetic"
 
-    assert (
-        result.metadata[
-            "output_file"
-        ]
-        == "outputs/test_render.mp4"
-    )
+    assert result.metadata["output_file"] == "outputs/test_render.mp4"
 
 
 def test_failed_render() -> None:
     job = build_job()
 
-    context = build_context(
-        job
-    )
+    context = build_context(job)
 
     stage = RenderPipelineStage(
-        render_service=(
-            FailedRenderService()
-        ),
+        render_service=(FailedRenderService()),
     )
 
-    result = stage.execute(
-        context
-    )
+    result = stage.execute(context)
 
-    assert (
-        result.status
-        == PipelineStageStatus.FAILED
-    )
+    assert result.status == PipelineStageStatus.FAILED
 
     assert result.successful is False
 
-    assert (
-        context.job.render_result
-        is not None
-    )
+    assert context.job.render_result is not None
 
-    assert (
-        context.job.render_result.success
-        is False
-    )
+    assert context.job.render_result.success is False
 
     assert result.errors == [
         "Synthetic render failure.",
@@ -338,39 +253,21 @@ def test_missing_timeline_fails() -> None:
         include_timeline=False,
     )
 
-    context = build_context(
-        job
-    )
+    context = build_context(job)
 
     stage = RenderPipelineStage(
-        render_service=(
-            SuccessfulRenderService()
-        ),
+        render_service=(SuccessfulRenderService()),
     )
 
-    result = stage.execute(
-        context
-    )
+    result = stage.execute(context)
 
-    assert (
-        result.status
-        == PipelineStageStatus.FAILED
-    )
+    assert result.status == PipelineStageStatus.FAILED
 
-    assert (
-        result.errors
-        == [
-            (
-                "Render stage requires "
-                "VideoJob.video_timeline."
-            ),
-        ]
-    )
+    assert result.errors == [
+        ("Render stage requires " "VideoJob.video_timeline."),
+    ]
 
-    assert (
-        context.job.render_result
-        is None
-    )
+    assert context.job.render_result is None
 
 
 def test_empty_timeline_fails() -> None:
@@ -378,103 +275,107 @@ def test_empty_timeline_fails() -> None:
         include_timeline=False,
     )
 
-    job.video_timeline = (
-        VideoTimeline()
-    )
+    job.video_timeline = VideoTimeline()
 
-    context = build_context(
-        job
-    )
+    context = build_context(job)
 
     stage = RenderPipelineStage(
-        render_service=(
-            SuccessfulRenderService()
-        ),
+        render_service=(SuccessfulRenderService()),
     )
 
-    result = stage.execute(
-        context
-    )
+    result = stage.execute(context)
 
-    assert (
-        result.status
-        == PipelineStageStatus.FAILED
-    )
+    assert result.status == PipelineStageStatus.FAILED
 
     assert result.errors == [
-        (
-            "Render stage requires a "
-            "non-empty video timeline."
-        ),
+        ("Render stage requires a " "non-empty video timeline."),
     ]
 
 
 def test_render_exception_propagates() -> None:
     job = build_job()
 
-    context = build_context(
-        job
-    )
+    context = build_context(job)
 
     stage = RenderPipelineStage(
-        render_service=(
-            RaisingRenderService()
-        ),
+        render_service=(RaisingRenderService()),
     )
 
     try:
-        stage.execute(
-            context
-        )
+        stage.execute(context)
     except RuntimeError as error:
-        assert (
-            str(error)
-            == (
-                "Synthetic render "
-                "exception."
-            )
-        )
+        assert str(error) == ("Synthetic render " "exception.")
     else:
-        raise AssertionError(
-            "Unexpected RenderService "
-            "exceptions must propagate."
-        )
+        raise AssertionError("Unexpected RenderService " "exceptions must propagate.")
 
 
 def test_default_render_service() -> None:
     job = build_job()
 
-    context = build_context(
-        job
-    )
+    context = build_context(job)
 
     stage = RenderPipelineStage()
 
-    result = stage.execute(
-        context
+    result = stage.execute(context)
+
+    assert result.status == PipelineStageStatus.COMPLETED
+
+    assert context.job.render_result is not None
+
+    assert context.job.render_result.success is True
+
+
+def test_progress_callback_reaches_production_render_service() -> None:
+    """
+    context.services["progress_callback"] must be forwarded to
+    ProductionRenderService.render(), and must be None when no
+    callback was supplied - never silently dropped either way.
+    """
+
+    job = build_job()
+    job.voice_file = "assets/audio/test_voice.wav"
+    job.audio_timeline = AudioTimeline()
+
+    fake_production_render_service = MagicMock()
+    fake_production_render_service.render.return_value = RenderResult(
+        success=True,
+        output_file="outputs/test_render.mp4",
+        render_engine="ffmpeg",
+        render_time_seconds=0.1,
+        duration_seconds=10,
+        status=RenderStatus.COMPLETED,
     )
 
-    assert (
-        result.status
-        == PipelineStageStatus.COMPLETED
+    stage = RenderPipelineStage(
+        production_render_service=fake_production_render_service,
+        voice_blueprints=[MagicMock()],
     )
 
-    assert (
-        context.job.render_result
-        is not None
-    )
+    def fake_progress_callback(progress: object) -> None:
+        return None
 
-    assert (
-        context.job.render_result.success
-        is True
-    )
+    context = build_context(job)
+    context.services["progress_callback"] = fake_progress_callback
+
+    stage.execute(context)
+
+    fake_production_render_service.render.assert_called_once()
+    call_kwargs = fake_production_render_service.render.call_args.kwargs
+    assert call_kwargs["progress_callback"] is fake_progress_callback
+
+    # No progress_callback in services -> forwarded as None, not omitted.
+    fake_production_render_service.render.reset_mock()
+
+    no_callback_context = build_context(job)
+    stage.execute(no_callback_context)
+
+    no_callback_kwargs = fake_production_render_service.render.call_args.kwargs
+    assert no_callback_kwargs["progress_callback"] is None
 
 
 def main() -> None:
     print()
-    print(
-        "Running Render Pipeline Stage tests..."
-    )
+    print("Running Render Pipeline Stage tests...")
     print()
 
     test_stage_name()
@@ -484,11 +385,9 @@ def main() -> None:
     test_empty_timeline_fails()
     test_render_exception_propagates()
     test_default_render_service()
+    test_progress_callback_reaches_production_render_service()
 
-    print(
-        "Render Pipeline Stage tests "
-        "completed successfully."
-    )
+    print("Render Pipeline Stage tests " "completed successfully.")
 
 
 if __name__ == "__main__":

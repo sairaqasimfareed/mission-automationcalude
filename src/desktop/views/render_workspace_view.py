@@ -3,12 +3,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from uuid import UUID
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QObject, Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
     QLineEdit,
     QMessageBox,
+    QProgressBar,
     QScrollArea,
     QVBoxLayout,
     QWidget,
@@ -25,13 +26,62 @@ from src.desktop.widgets import (
     subheading,
 )
 from src.models.asset_state import SceneAssetState
+from src.models.render_orchestration_result import RenderOrchestrationResult
+from src.models.render_progress import RenderProgress
 from src.models.scene import Scene
 from src.models.video_job import VideoJob
 from src.services.policy_service import PolicyService
 from src.services.project_render_runtime_factory import ProjectRenderRuntimeFactory
+from src.services.render_orchestrator_service import RenderOrchestratorService
 from src.services.scene_asset_workflow_service import SceneAssetWorkflowService
 
 _LEFT = Qt.AlignmentFlag.AlignLeft
+
+
+class _RenderWorker(QObject):
+    """
+    Runs one render orchestration call off the Qt main thread.
+
+    progress/finished/failed are ordinary Qt signals - Qt's
+    AutoConnection resolves queued-vs-direct delivery by comparing the
+    calling thread to the receiving slot's owning thread at emit()
+    time, not the emitting QObject's own thread affinity, so cross-
+    thread delivery is safe even though FFmpegExecutionService actually
+    invokes progress_callback from its own separate daemon thread (a
+    third thread beyond this worker's thread and the Qt main thread).
+    """
+
+    progress = Signal(object)
+    finished = Signal(object)
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        *,
+        orchestrator: RenderOrchestratorService,
+        job: VideoJob,
+        user_input: dict[str, object] | None,
+    ) -> None:
+        super().__init__()
+
+        self._orchestrator = orchestrator
+        self._job = job
+        self._user_input = user_input
+
+    def run(self) -> None:
+        try:
+            result = self._orchestrator.execute(
+                self._job,
+                dry_run=True,
+                user_input=self._user_input,
+                progress_callback=self.progress.emit,
+            )
+        except Exception as error:  # noqa: BLE001 - reported to the UI thread
+            self.failed.emit(str(error))
+
+            return
+
+        self.finished.emit(result)
 
 
 class RenderWorkspaceView(QWidget):
@@ -71,6 +121,8 @@ class RenderWorkspaceView(QWidget):
         self._manual_upload_paths: dict[int, str] = {}
         self._selected_stock_candidate_index: dict[int, int] = {}
         self._policy_service = PolicyService()
+        self._render_threads: dict[UUID, tuple[QThread, _RenderWorker]] = {}
+        self._rendering_job_ids: set[UUID] = set()
 
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -93,6 +145,19 @@ class RenderWorkspaceView(QWidget):
         self._selected_stock_candidate_index = {}
 
     def refresh(self, job: VideoJob) -> None:
+        if job.id in self._rendering_job_ids:
+            # A render for this job is in flight - its progress widgets
+            # are being updated live by the signal handlers below, not
+            # through refresh(). refresh() can be triggered by an
+            # unrelated workspace's on_change (every workspace shares
+            # the same on_change callback), so rebuilding here would
+            # destroy the live widgets mid-render even though this
+            # workspace isn't the one that changed.
+            return
+
+        self._rebuild_card(job)
+
+    def _rebuild_card(self, job: VideoJob) -> None:
         while self._layout.count():
             item = self._layout.takeAt(0)
 
@@ -110,6 +175,12 @@ class RenderWorkspaceView(QWidget):
         frame, layout = card("Render", icon_name="play")
 
         assert self._job_id is not None
+
+        if job.id in self._rendering_job_ids:
+            self._build_render_progress_state(layout)
+            self._layout.addWidget(frame)
+
+            return
 
         waiting_scene_numbers = [
             state.scene_number
@@ -190,6 +261,24 @@ class RenderWorkspaceView(QWidget):
             layout.addWidget(small_muted("Requires planned scenes."))
 
         self._layout.addWidget(frame)
+
+    def _build_render_progress_state(self, layout: QVBoxLayout) -> None:
+        layout.addWidget(subheading("Rendering..."))
+
+        self._progress_bar = QProgressBar()
+        self._progress_bar.setRange(0, 100)
+        self._progress_bar.setValue(0)
+        layout.addWidget(self._progress_bar)
+
+        self._progress_time_label = small_muted("0.0s")
+        layout.addWidget(self._progress_time_label)
+
+        self._progress_speed_label = small_muted("Speed: —")
+        layout.addWidget(self._progress_speed_label)
+
+        render_button = button("Run render", variant="primary", icon_name="play")
+        render_button.setEnabled(False)
+        layout.addWidget(render_button, alignment=_LEFT)
 
     def _build_scene_asset_choice(
         self,
@@ -405,6 +494,11 @@ class RenderWorkspaceView(QWidget):
         *,
         user_input: dict[str, object] | None = None,
     ) -> None:
+        if job.id in self._rendering_job_ids:
+            # Already rendering this job - the UI already reflects this
+            # (disabled button), this is just defense in depth.
+            return
+
         try:
             render_orchestrator = self._render_runtime_factory.build(
                 job=job,
@@ -416,11 +510,79 @@ class RenderWorkspaceView(QWidget):
 
             return
 
-        result = render_orchestrator.execute(
-            job,
-            dry_run=True,
+        thread = QThread()
+        worker = _RenderWorker(
+            orchestrator=render_orchestrator,
+            job=job,
             user_input=user_input,
         )
+        worker.moveToThread(thread)
+
+        job_id = job.id
+
+        thread.started.connect(worker.run)
+        worker.progress.connect(
+            lambda progress, jid=job_id: self._handle_render_progress(jid, progress)
+        )
+        worker.finished.connect(
+            lambda result, jid=job_id: self._handle_render_finished(jid, result)
+        )
+        worker.failed.connect(
+            lambda message, jid=job_id: self._handle_render_failed(jid, message)
+        )
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+
+        # thread.finished only fires once the underlying OS thread has
+        # actually stopped (thread.quit() just requests that - it takes
+        # another event-loop turn). Dropping our reference to thread/
+        # worker any earlier than that (for example in the worker's own
+        # finished/failed handlers below) risks Python garbage-collecting
+        # a QThread wrapper while its C++ thread is still shutting down,
+        # which is a real crash, not just a leak - so thread-lifetime
+        # cleanup is intentionally kept separate from, and later than,
+        # the UI-facing "is this job still rendering" bookkeeping.
+        thread.finished.connect(lambda jid=job_id: self._render_threads.pop(jid, None))
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+
+        self._render_threads[job_id] = (thread, worker)
+        self._rendering_job_ids.add(job_id)
+
+        # Show the in-progress state immediately - nothing else will
+        # refresh this workspace until the render finishes.
+        self._rebuild_card(job)
+
+        thread.start()
+
+    def _handle_render_progress(self, job_id: UUID, progress: RenderProgress) -> None:
+        if job_id != self._job_id:
+            return
+
+        self._progress_bar.setValue(int(progress.progress_percent))
+
+        if progress.total_duration_seconds is not None:
+            self._progress_time_label.setText(
+                f"{progress.processed_duration_seconds:.1f}s / "
+                f"{progress.total_duration_seconds:.1f}s"
+            )
+        else:
+            self._progress_time_label.setText(
+                f"{progress.processed_duration_seconds:.1f}s"
+            )
+
+        self._progress_speed_label.setText(
+            f"Speed: {progress.speed:.2f}x"
+            if progress.speed is not None
+            else "Speed: —"
+        )
+
+    def _handle_render_finished(
+        self,
+        job_id: UUID,
+        result: RenderOrchestrationResult,
+    ) -> None:
+        self._rendering_job_ids.discard(job_id)
 
         if result.success:
             # Run the quality/policy check automatically as soon as
@@ -428,11 +590,24 @@ class RenderWorkspaceView(QWidget):
             # requiring a separate manual click in Quality Center - it
             # can still be re-run manually there after later changes
             # (e.g. a new SEO package or thumbnail).
-            self._policy_service.evaluate(job)
+            self._policy_service.evaluate(result.job)
 
-        assert self._job_id is not None
-        self._job_store.set_render_result(self._job_id, result)
-        self._on_change()
+        self._job_store.set_render_result(job_id, result)
+
+        if job_id == self._job_id:
+            self._on_change()
+
+    def _handle_render_failed(self, job_id: UUID, message: str) -> None:
+        self._rendering_job_ids.discard(job_id)
+
+        job = self._job_store.get(job_id)
+
+        if job is not None:
+            job.errors.append(f"Render failed: {message}")
+
+        if job_id == self._job_id:
+            QMessageBox.warning(self, "Render failed", message)
+            self._on_change()
 
     def _current_job(self) -> VideoJob | None:
         if self._job_id is None:

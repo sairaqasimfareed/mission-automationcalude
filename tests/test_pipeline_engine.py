@@ -103,6 +103,27 @@ assert context.pipeline_state.completed_stages == 2
 
 assert context.pipeline_state.overall_progress == 100
 
+
+# services is an execution-scoped bag for per-call collaborators (for
+# example a render-progress callback) - run() must thread it onto the
+# returned StageContext so a stage can read it via context.services.
+def progress_callback(progress: object) -> None:
+    return None
+
+
+services_context = engine.run(
+    job,
+    services={"progress_callback": progress_callback},
+)
+
+assert services_context.services["progress_callback"] is progress_callback
+
+# Omitting services must not raise and must leave the context's
+# services dict empty, not None.
+default_services_context = engine.run(job)
+
+assert default_services_context.services == {}
+
 print()
 
 print("Pipeline Engine tests completed successfully.")

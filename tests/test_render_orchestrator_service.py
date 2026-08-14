@@ -73,10 +73,7 @@ def prepare_render_ready_job(
 
     script = Script(
         title="Synthetic orchestration script",
-        content=(
-            "Synthetic narration for render "
-            "orchestration testing."
-        ),
+        content=("Synthetic narration for render " "orchestration testing."),
         prompt_version="test-1.0",
         word_count=6,
         estimated_duration_seconds=30,
@@ -86,34 +83,21 @@ def prepare_render_ready_job(
     scene = Scene(
         scene_number=1,
         title="Synthetic Scene",
-        narration=(
-            "Synthetic narration for render "
-            "orchestration testing."
-        ),
-        visual_prompt=(
-            "Synthetic orchestration visual."
-        ),
+        narration=("Synthetic narration for render " "orchestration testing."),
+        visual_prompt=("Synthetic orchestration visual."),
         estimated_duration_seconds=30,
-        manual_file_path=(
-            "assets/videos/manual/test_scene.mp4"
-        ),
+        manual_file_path=("assets/videos/manual/test_scene.mp4"),
         source_status=SceneSourceStatus.READY,
         status=SceneStatus.READY,
     )
 
     clip = VideoClip(
         scene_number=1,
-        source_type=(
-            SceneSourceType.MANUAL_UPLOAD
-        ),
+        source_type=(SceneSourceType.MANUAL_UPLOAD),
         duration_seconds=30,
-        prompt=(
-            "Synthetic orchestration test scene."
-        ),
+        prompt=("Synthetic orchestration test scene."),
         provider="Manual Upload",
-        local_file=(
-            "assets/videos/manual/test_scene.mp4"
-        ),
+        local_file=("assets/videos/manual/test_scene.mp4"),
         source_status=SceneSourceStatus.READY,
         status=VideoClipStatus.READY,
     )
@@ -125,9 +109,7 @@ def prepare_render_ready_job(
         scene,
     ]
 
-    job.voice_file = (
-        "assets/audio/test_voice.wav"
-    )
+    job.voice_file = "assets/audio/test_voice.wav"
 
     job.video_clips = [
         clip,
@@ -144,18 +126,14 @@ def prepare_render_ready_job(
     job.audio_timeline = AudioTimeline()
 
 
-class SyntheticStage(
-    BasePipelineStage
-):
+class SyntheticStage(BasePipelineStage):
     """Deterministic pipeline stage used by orchestrator tests."""
 
     def __init__(
         self,
         *,
         stage_name: PipelineStageName,
-        status: PipelineStageStatus = (
-            PipelineStageStatus.COMPLETED
-        ),
+        status: PipelineStageStatus = (PipelineStageStatus.COMPLETED),
         warnings: list[str] | None = None,
         errors: list[str] | None = None,
         raise_error: Exception | None = None,
@@ -163,18 +141,10 @@ class SyntheticStage(
     ) -> None:
         self._stage_name = stage_name
         self._status = status
-        self._warnings = (
-            warnings or []
-        )
-        self._errors = (
-            errors or []
-        )
-        self._raise_error = (
-            raise_error
-        )
-        self._attach_render_result = (
-            attach_render_result
-        )
+        self._warnings = warnings or []
+        self._errors = errors or []
+        self._raise_error = raise_error
+        self._attach_render_result = attach_render_result
 
     @property
     def stage_name(
@@ -186,86 +156,58 @@ class SyntheticStage(
         self,
         context: StageContext,
     ) -> StageResult:
-        if (
-            self._raise_error
-            is not None
-        ):
+        if self._raise_error is not None:
             raise self._raise_error
 
         if self._attach_render_result:
-            prepare_render_ready_job(
-                context.job
-            )
+            prepare_render_ready_job(context.job)
 
-            context.job.render_result = (
-                RenderResult(
-                    success=True,
-                    output_file=(
-                        "outputs/"
-                        "final_video.mp4"
-                    ),
-                    render_engine="ffmpeg",
-                    render_time_seconds=0.1,
-                    duration_seconds=30,
-                    status=(
-                        RenderStatus.COMPLETED
-                    ),
-                )
+            context.job.render_result = RenderResult(
+                success=True,
+                output_file=("outputs/" "final_video.mp4"),
+                render_engine="ffmpeg",
+                render_time_seconds=0.1,
+                duration_seconds=30,
+                status=(RenderStatus.COMPLETED),
             )
 
         return StageResult(
             stage=self.stage_name,
             status=self._status,
             duration_seconds=0.01,
-            warnings=list(
-                self._warnings
-            ),
-            errors=list(
-                self._errors
-            ),
+            warnings=list(self._warnings),
+            errors=list(self._errors),
         )
 
 
-class FailedRenderStage(
-    BasePipelineStage
-):
+class FailedRenderStage(BasePipelineStage):
     """Synthetic render stage returning a failed RenderResult."""
 
     @property
     def stage_name(
         self,
     ) -> PipelineStageName:
-        return (
-            PipelineStageName.RENDER
-        )
+        return PipelineStageName.RENDER
 
     def execute(
         self,
         context: StageContext,
     ) -> StageResult:
-        prepare_render_ready_job(
-            context.job
-        )
+        prepare_render_ready_job(context.job)
 
-        context.job.render_result = (
-            RenderResult(
-                success=False,
-                output_file=None,
-                render_engine="ffmpeg",
-                render_time_seconds=0.1,
-                duration_seconds=0,
-                status=RenderStatus.FAILED,
-                error_message=(
-                    "Synthetic render failure."
-                ),
-            )
+        context.job.render_result = RenderResult(
+            success=False,
+            output_file=None,
+            render_engine="ffmpeg",
+            render_time_seconds=0.1,
+            duration_seconds=0,
+            status=RenderStatus.FAILED,
+            error_message=("Synthetic render failure."),
         )
 
         return StageResult(
             stage=self.stage_name,
-            status=(
-                PipelineStageStatus.COMPLETED
-            ),
+            status=(PipelineStageStatus.COMPLETED),
         )
 
 
@@ -275,28 +217,18 @@ def test_requires_at_least_one_stage() -> None:
             stages=[],
         )
     except ValueError as error:
-        assert (
-            "at least one pipeline stage"
-            in str(error)
-        )
+        assert "at least one pipeline stage" in str(error)
     else:
-        raise AssertionError(
-            "Empty stage registration "
-            "must fail."
-        )
+        raise AssertionError("Empty stage registration " "must fail.")
 
 
 def test_duplicate_stage_rejected() -> None:
     stage_a = SyntheticStage(
-        stage_name=(
-            PipelineStageName.RENDER
-        ),
+        stage_name=(PipelineStageName.RENDER),
     )
 
     stage_b = SyntheticStage(
-        stage_name=(
-            PipelineStageName.RENDER
-        ),
+        stage_name=(PipelineStageName.RENDER),
     )
 
     try:
@@ -307,34 +239,21 @@ def test_duplicate_stage_rejected() -> None:
             ],
         )
     except ValueError as error:
-        assert (
-            "duplicate pipeline stage"
-            in str(error)
-        )
+        assert "duplicate pipeline stage" in str(error)
     else:
-        raise AssertionError(
-            "Duplicate stages must fail."
-        )
+        raise AssertionError("Duplicate stages must fail.")
 
 
 def test_registered_stage_order_is_preserved() -> None:
     stages = [
         SyntheticStage(
-            stage_name=(
-                PipelineStageName
-                .ASSET_SELECTION
-            ),
+            stage_name=(PipelineStageName.ASSET_SELECTION),
         ),
         SyntheticStage(
-            stage_name=(
-                PipelineStageName
-                .VIDEO_TIMELINE
-            ),
+            stage_name=(PipelineStageName.VIDEO_TIMELINE),
         ),
         SyntheticStage(
-            stage_name=(
-                PipelineStageName.RENDER
-            ),
+            stage_name=(PipelineStageName.RENDER),
         ),
     ]
 
@@ -342,10 +261,7 @@ def test_registered_stage_order_is_preserved() -> None:
         stages=stages,
     )
 
-    assert [
-        stage.stage_name
-        for stage in service.stages
-    ] == [
+    assert [stage.stage_name for stage in service.stages] == [
         PipelineStageName.ASSET_SELECTION,
         PipelineStageName.VIDEO_TIMELINE,
         PipelineStageName.RENDER,
@@ -358,9 +274,7 @@ def test_successful_orchestration() -> None:
     service = RenderOrchestratorService(
         stages=[
             SyntheticStage(
-                stage_name=(
-                    PipelineStageName.RENDER
-                ),
+                stage_name=(PipelineStageName.RENDER),
                 attach_render_result=True,
             ),
         ],
@@ -378,44 +292,19 @@ def test_successful_orchestration() -> None:
 
     assert result.success is True
 
-    assert (
-        result.status
-        == JobStatus.COMPLETED
-    )
+    assert result.status == JobStatus.COMPLETED
 
-    assert (
-        result.current_stage
-        == WorkflowStage.READY_FOR_UPLOAD
-    )
+    assert result.current_stage == WorkflowStage.READY_FOR_UPLOAD
 
-    assert (
-        job.status
-        == JobStatus.COMPLETED
-    )
+    assert job.status == JobStatus.COMPLETED
 
-    assert (
-        job.current_stage
-        == WorkflowStage.READY_FOR_UPLOAD
-    )
+    assert job.current_stage == WorkflowStage.READY_FOR_UPLOAD
 
-    assert (
-        WorkflowStage.RENDER
-        in result.completed_stages
-    )
+    assert WorkflowStage.RENDER in result.completed_stages
 
-    assert (
-        result.metadata[
-            "dry_run"
-        ]
-        is True
-    )
+    assert result.metadata["dry_run"] is True
 
-    assert (
-        result.metadata[
-            "pipeline_stage_count"
-        ]
-        == 1
-    )
+    assert result.metadata["pipeline_stage_count"] == 1
 
 
 def test_failed_stage_result() -> None:
@@ -424,47 +313,26 @@ def test_failed_stage_result() -> None:
     service = RenderOrchestratorService(
         stages=[
             SyntheticStage(
-                stage_name=(
-                    PipelineStageName.RENDER
-                ),
-                status=(
-                    PipelineStageStatus.FAILED
-                ),
+                stage_name=(PipelineStageName.RENDER),
+                status=(PipelineStageStatus.FAILED),
                 errors=[
-                    (
-                        "Synthetic render "
-                        "stage failure."
-                    ),
+                    ("Synthetic render " "stage failure."),
                 ],
             ),
         ],
     )
 
-    result = service.execute(
-        job
-    )
+    result = service.execute(job)
 
     assert result.success is False
 
-    assert (
-        result.status
-        == JobStatus.FAILED
-    )
+    assert result.status == JobStatus.FAILED
 
-    assert (
-        result.failed_stage
-        == WorkflowStage.RENDER
-    )
+    assert result.failed_stage == WorkflowStage.RENDER
 
-    assert (
-        "Synthetic render stage failure."
-        in result.errors
-    )
+    assert "Synthetic render stage failure." in result.errors
 
-    assert (
-        "Synthetic render stage failure."
-        in job.errors
-    )
+    assert "Synthetic render stage failure." in job.errors
 
 
 def test_stage_exception_is_normalized() -> None:
@@ -473,48 +341,25 @@ def test_stage_exception_is_normalized() -> None:
     service = RenderOrchestratorService(
         stages=[
             SyntheticStage(
-                stage_name=(
-                    PipelineStageName.RENDER
-                ),
-                raise_error=RuntimeError(
-                    "Synthetic exception."
-                ),
+                stage_name=(PipelineStageName.RENDER),
+                raise_error=RuntimeError("Synthetic exception."),
             ),
         ],
     )
 
-    result = service.execute(
-        job
-    )
+    result = service.execute(job)
 
     assert result.success is False
 
-    assert (
-        result.status
-        == JobStatus.FAILED
-    )
+    assert result.status == JobStatus.FAILED
 
-    assert (
-        result.failed_stage
-        == WorkflowStage.RENDER
-    )
+    assert result.failed_stage == WorkflowStage.RENDER
 
-    assert (
-        "RuntimeError"
-        in result.errors[-1]
-    )
+    assert "RuntimeError" in result.errors[-1]
 
-    assert (
-        "Synthetic exception."
-        in result.errors[-1]
-    )
+    assert "Synthetic exception." in result.errors[-1]
 
-    assert (
-        result.metadata[
-            "exception_type"
-        ]
-        == "RuntimeError"
-    )
+    assert result.metadata["exception_type"] == "RuntimeError"
 
 
 def test_stage_warnings_are_aggregated() -> None:
@@ -523,9 +368,7 @@ def test_stage_warnings_are_aggregated() -> None:
     service = RenderOrchestratorService(
         stages=[
             SyntheticStage(
-                stage_name=(
-                    PipelineStageName.RENDER
-                ),
+                stage_name=(PipelineStageName.RENDER),
                 warnings=[
                     "Synthetic warning.",
                     "Synthetic warning.",
@@ -535,23 +378,15 @@ def test_stage_warnings_are_aggregated() -> None:
         ],
     )
 
-    result = service.execute(
-        job
-    )
+    result = service.execute(job)
 
-    assert (
-        result.warnings
-        == [
-            "Synthetic warning.",
-        ]
-    )
+    assert result.warnings == [
+        "Synthetic warning.",
+    ]
 
-    assert (
-        job.warnings
-        == [
-            "Synthetic warning.",
-        ]
-    )
+    assert job.warnings == [
+        "Synthetic warning.",
+    ]
 
 
 def test_missing_render_result_fails() -> None:
@@ -560,28 +395,18 @@ def test_missing_render_result_fails() -> None:
     service = RenderOrchestratorService(
         stages=[
             SyntheticStage(
-                stage_name=(
-                    PipelineStageName.RENDER
-                ),
+                stage_name=(PipelineStageName.RENDER),
             ),
         ],
     )
 
-    result = service.execute(
-        job
-    )
+    result = service.execute(job)
 
     assert result.success is False
 
-    assert (
-        result.failed_stage
-        == WorkflowStage.RENDER
-    )
+    assert result.failed_stage == WorkflowStage.RENDER
 
-    assert (
-        "without a render result"
-        in result.errors[-1]
-    )
+    assert "without a render result" in result.errors[-1]
 
 
 def test_failed_render_result_fails() -> None:
@@ -593,21 +418,13 @@ def test_failed_render_result_fails() -> None:
         ],
     )
 
-    result = service.execute(
-        job
-    )
+    result = service.execute(job)
 
     assert result.success is False
 
-    assert (
-        result.failed_stage
-        == WorkflowStage.RENDER
-    )
+    assert result.failed_stage == WorkflowStage.RENDER
 
-    assert (
-        "Synthetic render failure."
-        in result.errors
-    )
+    assert "Synthetic render failure." in result.errors
 
 
 def test_metadata_is_deterministic() -> None:
@@ -616,9 +433,7 @@ def test_metadata_is_deterministic() -> None:
     service = RenderOrchestratorService(
         stages=[
             SyntheticStage(
-                stage_name=(
-                    PipelineStageName.RENDER
-                ),
+                stage_name=(PipelineStageName.RENDER),
                 attach_render_result=True,
             ),
         ],
@@ -629,26 +444,11 @@ def test_metadata_is_deterministic() -> None:
         dry_run=True,
     )
 
-    assert (
-        result.metadata[
-            "pipeline_progress_percent"
-        ]
-        == 100
-    )
+    assert result.metadata["pipeline_progress_percent"] == 100
 
-    assert (
-        result.metadata[
-            "pipeline_stage_count"
-        ]
-        == 1
-    )
+    assert result.metadata["pipeline_stage_count"] == 1
 
-    assert (
-        result.metadata[
-            "pipeline_completed_stage_count"
-        ]
-        == 1
-    )
+    assert result.metadata["pipeline_completed_stage_count"] == 1
 
 
 def test_multiple_completed_stage_mapping() -> None:
@@ -657,54 +457,31 @@ def test_multiple_completed_stage_mapping() -> None:
     service = RenderOrchestratorService(
         stages=[
             SyntheticStage(
-                stage_name=(
-                    PipelineStageName
-                    .ASSET_SELECTION
-                ),
+                stage_name=(PipelineStageName.ASSET_SELECTION),
             ),
             SyntheticStage(
-                stage_name=(
-                    PipelineStageName
-                    .VIDEO_TIMELINE
-                ),
+                stage_name=(PipelineStageName.VIDEO_TIMELINE),
             ),
             SyntheticStage(
-                stage_name=(
-                    PipelineStageName.RENDER
-                ),
+                stage_name=(PipelineStageName.RENDER),
                 attach_render_result=True,
             ),
         ],
     )
 
-    result = service.execute(
-        job
-    )
+    result = service.execute(job)
 
     assert result.success is True
 
-    assert (
-        result.completed_stages
-        == [
-            WorkflowStage.ASSET_GENERATION,
-            WorkflowStage.EDITING,
-            WorkflowStage.RENDER,
-        ]
-    )
+    assert result.completed_stages == [
+        WorkflowStage.ASSET_GENERATION,
+        WorkflowStage.EDITING,
+        WorkflowStage.RENDER,
+    ]
 
-    assert (
-        result.metadata[
-            "pipeline_stage_count"
-        ]
-        == 3
-    )
+    assert result.metadata["pipeline_stage_count"] == 3
 
-    assert (
-        result.metadata[
-            "pipeline_completed_stage_count"
-        ]
-        == 3
-    )
+    assert result.metadata["pipeline_completed_stage_count"] == 3
 
 
 def test_warning_deduplication_across_stages() -> None:
@@ -713,18 +490,13 @@ def test_warning_deduplication_across_stages() -> None:
     service = RenderOrchestratorService(
         stages=[
             SyntheticStage(
-                stage_name=(
-                    PipelineStageName
-                    .ASSET_SELECTION
-                ),
+                stage_name=(PipelineStageName.ASSET_SELECTION),
                 warnings=[
                     "Shared warning.",
                 ],
             ),
             SyntheticStage(
-                stage_name=(
-                    PipelineStageName.RENDER
-                ),
+                stage_name=(PipelineStageName.RENDER),
                 warnings=[
                     "Shared warning.",
                 ],
@@ -733,33 +505,85 @@ def test_warning_deduplication_across_stages() -> None:
         ],
     )
 
-    result = service.execute(
-        job
-    )
+    result = service.execute(job)
 
     assert result.success is True
 
-    assert (
-        result.warnings
-        == [
-            "Shared warning.",
-        ]
+    assert result.warnings == [
+        "Shared warning.",
+    ]
+
+    assert job.warnings == [
+        "Shared warning.",
+    ]
+
+
+def test_progress_callback_reaches_stage_context_services() -> None:
+    """
+    A supplied progress_callback must reach the render stage via
+    StageContext.services, and must be absent (not merely None) when
+    no callback is given.
+    """
+
+    captured_services: dict[str, object] = {}
+
+    class ServicesCapturingStage(BasePipelineStage):
+        @property
+        def stage_name(self) -> PipelineStageName:
+            return PipelineStageName.RENDER
+
+        def execute(self, context: StageContext) -> StageResult:
+            captured_services.update(context.services)
+
+            prepare_render_ready_job(context.job)
+
+            context.job.render_result = RenderResult(
+                success=True,
+                output_file="outputs/final_video.mp4",
+                render_engine="ffmpeg",
+                render_time_seconds=0.1,
+                duration_seconds=30,
+                status=RenderStatus.COMPLETED,
+            )
+
+            return StageResult(
+                stage=self.stage_name,
+                status=PipelineStageStatus.COMPLETED,
+                duration_seconds=0.01,
+            )
+
+    def fake_progress_callback(progress: object) -> None:
+        return None
+
+    job = build_job()
+
+    service = RenderOrchestratorService(
+        stages=[ServicesCapturingStage()],
     )
 
-    assert (
-        job.warnings
-        == [
-            "Shared warning.",
-        ]
+    result = service.execute(
+        job,
+        dry_run=True,
+        progress_callback=fake_progress_callback,
     )
+
+    assert result.success is True
+    assert captured_services["progress_callback"] is fake_progress_callback
+
+    # Omitting progress_callback must not leak a stale entry into a
+    # later run's StageContext.services.
+    captured_services.clear()
+
+    second_job = build_job()
+
+    service.execute(second_job, dry_run=True)
+
+    assert captured_services == {}
 
 
 def main() -> None:
     print()
-    print(
-        "Running Render Orchestrator "
-        "Service tests..."
-    )
+    print("Running Render Orchestrator " "Service tests...")
     print()
 
     test_requires_at_least_one_stage()
@@ -786,11 +610,10 @@ def main() -> None:
 
     test_warning_deduplication_across_stages()
 
+    test_progress_callback_reaches_stage_context_services()
+
     print()
-    print(
-        "Render Orchestrator Service tests "
-        "completed successfully."
-    )
+    print("Render Orchestrator Service tests " "completed successfully.")
 
 
 if __name__ == "__main__":

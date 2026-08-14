@@ -4,14 +4,30 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import time  # noqa: E402
 from collections.abc import Iterator  # noqa: E402
 from pathlib import Path  # noqa: E402
+from uuid import UUID  # noqa: E402
 
 import pytest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from src.desktop.job_store import InMemoryJobStore  # noqa: E402
 from src.desktop.main_window import MainWindow  # noqa: E402
+from src.desktop.views.project_workspace_view import (  # noqa: E402
+    ProjectWorkspaceView,
+)
+from src.models.enums import JobStatus, WorkflowStage  # noqa: E402
+from src.models.render_orchestration_result import (  # noqa: E402
+    RenderOrchestrationResult,
+)
+from src.models.render_progress import (  # noqa: E402
+    RenderProgress,
+    RenderProgressStatus,
+)
+from src.services.render_orchestrator_service import (  # noqa: E402
+    RenderOrchestratorService,
+)
 
 # QMessageBox.warning() and QFileDialog.getOpenFileName() both open a
 # real modal dialog and call exec(), which blocks forever under the
@@ -67,6 +83,38 @@ def _create_project(window: MainWindow) -> None:
     form._duration_seconds.setValue(600)
 
     form._handle_create_clicked()
+
+
+def _wait_for_render(
+    workspace: ProjectWorkspaceView,
+    job_id: UUID,
+    qapp: QApplication,
+    *,
+    timeout_seconds: float = 5.0,
+) -> None:
+    """
+    Pump the Qt event loop until job_id's render worker thread finishes.
+
+    _handle_run_render()/_handle_submit_asset_decisions() now start a
+    background QThread and return immediately - every test that reads
+    job state the pipeline mutates (render_result, scene_asset_states,
+    video_clips, ...) must wait for that thread's finished/failed
+    signal to actually be delivered on the main thread first.
+    """
+
+    deadline = time.monotonic() + timeout_seconds
+
+    while job_id in workspace.render_workspace._render_threads:
+        if time.monotonic() > deadline:
+            raise TimeoutError(
+                f"Render for job {job_id} did not complete within "
+                f"{timeout_seconds}s."
+            )
+
+        qapp.processEvents()
+        time.sleep(0.01)
+
+    qapp.processEvents()
 
 
 def test_main_window_constructs_and_navigates(
@@ -195,6 +243,7 @@ def test_render_pauses_for_manual_upload_without_local_assets(
     workspace.content_studio._handle_plan_scenes()
 
     workspace.render_workspace._handle_run_render()
+    _wait_for_render(workspace, job.id, qapp)
 
     render_result = window._job_store.get_render_result(job.id)
 
@@ -243,6 +292,7 @@ def test_manual_upload_resolves_asset_stage_and_completes_render(
     workspace.content_studio._handle_plan_scenes()
 
     workspace.render_workspace._handle_run_render()
+    _wait_for_render(workspace, job.id, qapp)
 
     waiting_scene_numbers = [
         state.scene_number
@@ -266,6 +316,7 @@ def test_manual_upload_resolves_asset_stage_and_completes_render(
         )
 
     workspace.render_workspace._handle_submit_asset_decisions()
+    _wait_for_render(workspace, job.id, qapp)
 
     render_result = window._job_store.get_render_result(job.id)
 
@@ -305,6 +356,7 @@ def test_stock_search_and_select_completes_render(
     workspace.content_studio._handle_plan_scenes()
 
     workspace.render_workspace._handle_run_render()
+    _wait_for_render(workspace, job.id, qapp)
 
     waiting_scene_numbers = [
         state.scene_number
@@ -326,6 +378,7 @@ def test_stock_search_and_select_completes_render(
         workspace.render_workspace._handle_select_stock_candidate(scene_number, 0)
 
     workspace.render_workspace._handle_submit_asset_decisions()
+    _wait_for_render(workspace, job.id, qapp)
 
     render_result = window._job_store.get_render_result(job.id)
 
@@ -365,6 +418,7 @@ def test_full_pipeline_reaches_final_export(
     workspace.content_studio._handle_plan_scenes()
 
     workspace.render_workspace._handle_run_render()
+    _wait_for_render(workspace, job.id, qapp)
 
     waiting_scene_numbers = [
         state.scene_number
@@ -379,6 +433,7 @@ def test_full_pipeline_reaches_final_export(
         workspace.render_workspace._handle_select_stock_candidate(scene_number, 0)
 
     workspace.render_workspace._handle_submit_asset_decisions()
+    _wait_for_render(workspace, job.id, qapp)
 
     render_result = window._job_store.get_render_result(job.id)
     assert render_result is not None
@@ -438,3 +493,137 @@ def test_workspace_views_refresh_without_crashing_on_a_fresh_project(
         workspace._show_workspace(target)
 
     assert workspace._stack.currentWidget() is workspace.packaging
+
+
+def test_render_progress_updates_live_and_survives_cross_workspace_refresh(
+    qapp: QApplication,
+    no_blocking_dialogs: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Proves the QThread/Signal wiring actually delivers RenderProgress
+    across threads to the live widgets (not just that it compiles), and
+    that the two correctness guards found during design review hold:
+    a render in flight must survive an unrelated workspace's on_change
+    (every workspace shares the same on_change callback, so this is
+    easy to break by accident) and must still write its result and
+    refresh the UI once it completes.
+
+    MISSION_AUTOMATION_DRY_RUN never invokes real FFmpeg (the legacy
+    render stub instant-completes with no intermediate state), so
+    RenderOrchestratorService.execute() is replaced with a fake that
+    emits real RenderProgress ticks with a short real sleep between
+    them - enough wall-clock time for the polling loop below to
+    observe the in-progress state before the fake call returns.
+    """
+
+    window = MainWindow(job_store=InMemoryJobStore())
+
+    _create_project(window)
+
+    job = window._job_store.list_all()[0]
+    window._open_project(job.id)
+    workspace = window._detail_view
+
+    workspace.content_studio._handle_run_research()
+    workspace.content_studio._handle_run_script()
+    workspace.content_studio._handle_run_originality()
+    workspace.content_studio._handle_plan_scenes()
+
+    def fake_execute(
+        self: RenderOrchestratorService,
+        job: object,
+        *,
+        dry_run: bool = False,
+        checkpoint_id: object | None = None,
+        user_input: object | None = None,
+        progress_callback: object | None = None,
+    ) -> RenderOrchestrationResult:
+        assert progress_callback is not None
+
+        progress_callback(
+            RenderProgress(
+                status=RenderProgressStatus.RUNNING,
+                progress_percent=25.0,
+                elapsed_seconds=1.0,
+                processed_duration_seconds=5.0,
+                total_duration_seconds=20.0,
+                speed=1.5,
+            )
+        )
+        time.sleep(0.2)
+        progress_callback(
+            RenderProgress(
+                status=RenderProgressStatus.RUNNING,
+                progress_percent=75.0,
+                elapsed_seconds=3.0,
+                processed_duration_seconds=15.0,
+                total_duration_seconds=20.0,
+                speed=2.0,
+            )
+        )
+        time.sleep(0.05)
+
+        # A real success requires job.render_result plus a fully
+        # rendered video/audio timeline, which this fake never
+        # produces (it only exists to prove progress-signal delivery
+        # and the two UI guards, not to exercise a real render).
+        # model_construct bypasses that unrelated validation chain
+        # rather than fabricating a fake VideoTimeline/AudioTimeline
+        # just to satisfy it.
+        return RenderOrchestrationResult.model_construct(
+            success=True,
+            status=JobStatus.COMPLETED,
+            current_stage=WorkflowStage.READY_FOR_UPLOAD,
+            completed_stages=[],
+            failed_stage=None,
+            job=job,
+            render_result=None,
+            elapsed_seconds=3.5,
+            warnings=[],
+            errors=[],
+            metadata={},
+        )
+
+    monkeypatch.setattr(RenderOrchestratorService, "execute", fake_execute)
+
+    workspace.render_workspace._handle_run_render()
+
+    assert job.id in workspace.render_workspace._rendering_job_ids
+    progress_bar_identity = workspace.render_workspace._progress_bar
+
+    observed_progress_percent: float | None = None
+    deadline = time.monotonic() + 2.0
+
+    while time.monotonic() < deadline:
+        qapp.processEvents()
+
+        if workspace.render_workspace._progress_bar.value() > 0:
+            observed_progress_percent = workspace.render_workspace._progress_bar.value()
+
+            break
+
+        time.sleep(0.005)
+
+    assert observed_progress_percent is not None
+    assert observed_progress_percent > 0
+    assert "Speed:" in workspace.render_workspace._progress_speed_label.text()
+
+    # A different workspace's on_change must not tear down this
+    # workspace's live progress widgets while the render is still
+    # running (Gap B) - PolicyService.evaluate() only needs a script,
+    # which content_studio already produced above.
+    workspace.quality_center._handle_run_check()
+
+    assert job.id in workspace.render_workspace._rendering_job_ids
+    assert workspace.render_workspace._progress_bar is progress_bar_identity
+
+    _wait_for_render(workspace, job.id, qapp)
+
+    assert job.id not in workspace.render_workspace._rendering_job_ids
+
+    render_result = window._job_store.get_render_result(job.id)
+
+    assert render_result is not None
+    assert render_result.success is True
+    assert job.policy_report is not None

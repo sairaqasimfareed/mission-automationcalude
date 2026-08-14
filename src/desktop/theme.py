@@ -145,6 +145,20 @@ def _build_stylesheet() -> str:
         border: none;
     }}
 
+    QProgressBar {{
+        background: {BG_SURFACE_ALT};
+        border: 1px solid {BORDER};
+        border-radius: {RADIUS_SM}px;
+        text-align: center;
+        color: {TEXT_SECONDARY};
+        min-height: 18px;
+    }}
+
+    QProgressBar::chunk {{
+        background: {ACCENT};
+        border-radius: {RADIUS_SM}px;
+    }}
+
     QPushButton {{
         background: {BG_ELEVATED};
         color: {TEXT_PRIMARY};

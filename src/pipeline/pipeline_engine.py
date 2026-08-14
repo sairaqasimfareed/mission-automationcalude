@@ -46,6 +46,7 @@ class PipelineEngine:
         dry_run: bool = True,
         resume_plan: PipelineResumePlan | None = None,
         user_input: dict[str, Any] | None = None,
+        services: dict[str, Any] | None = None,
     ) -> StageContext:
         """
         Execute one pipeline run.
@@ -59,6 +60,11 @@ class PipelineEngine:
 
         User input is copied into StageContext so individual pipeline
         stages can consume only the input they own.
+
+        services carries execution-scoped, per-call collaborators (for
+        example a render-progress callback) that a stage may read via
+        StageContext.services - as opposed to stage-construction-time
+        dependencies, which are wired through the stage factory instead.
         """
 
         initial_stage = (
@@ -66,26 +72,21 @@ class PipelineEngine:
             if (
                 resume_plan is not None
                 and resume_plan.resume_enabled
-                and resume_plan.resume_stage
-                is not None
+                and resume_plan.resume_stage is not None
             )
             else PipelineStageName.RESEARCH
         )
 
         state = PipelineState(
-            current_stage=(
-                initial_stage
-            ),
+            current_stage=(initial_stage),
         )
 
         context = StageContext(
             job=job,
             pipeline_state=state,
             dry_run=dry_run,
-            user_input=dict(
-                user_input
-                or {}
-            ),
+            user_input=dict(user_input or {}),
+            services=dict(services or {}),
         )
 
         self.runner.run(
