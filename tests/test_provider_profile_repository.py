@@ -3,6 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from src.models.http_adapter_config import (
+    HttpAdapterConfig,
+    HttpMethod,
+    HttpResponseMode,
+)
 from src.models.provider_profile import ProviderCategory, ProviderProfile
 from src.services.registry.provider_profile_repository import (
     InMemoryProviderProfileRepository,
@@ -25,6 +30,20 @@ voice_profile = ProviderProfile(
     category=ProviderCategory.VOICE,
 )
 
+custom_http_profile = ProviderProfile(
+    profile_id="custom-tts",
+    display_name="Custom TTS",
+    provider_name="my-custom-tts",
+    category=ProviderCategory.VOICE,
+    http_adapter_config=HttpAdapterConfig(
+        http_method=HttpMethod.POST,
+        url_template="https://example.com/tts/{voice}",
+        headers={"Authorization": "Bearer {api_key}"},
+        json_body_template={"text": "{text}"},
+        response_mode=HttpResponseMode.BINARY_FILE,
+    ),
+)
+
 
 with TemporaryDirectory() as temp_dir:
     storage_path = Path(temp_dir) / "nested" / "provider_profiles.json"
@@ -32,7 +51,7 @@ with TemporaryDirectory() as temp_dir:
 
     assert repository.load_all() == []
 
-    repository.save_all([llm_profile, voice_profile])
+    repository.save_all([llm_profile, voice_profile, custom_http_profile])
 
     assert storage_path.exists()
 
@@ -40,10 +59,29 @@ with TemporaryDirectory() as temp_dir:
 
     print("Loaded profile IDs:", [profile.profile_id for profile in loaded])
 
-    assert [profile.profile_id for profile in loaded] == ["llm-main", "voice-main"]
-    assert loaded[0].secret_reference == "secret://providers/llm-main/one"
-    assert loaded[0].enabled is True
-    assert loaded[1].enabled is False
+    assert {profile.profile_id for profile in loaded} == {
+        "llm-main",
+        "voice-main",
+        "custom-tts",
+    }
+
+    loaded_by_id = {profile.profile_id: profile for profile in loaded}
+
+    assert (
+        loaded_by_id["llm-main"].secret_reference == "secret://providers/llm-main/one"
+    )
+    assert loaded_by_id["llm-main"].enabled is True
+    assert loaded_by_id["voice-main"].enabled is False
+    assert loaded_by_id["voice-main"].http_adapter_config is None
+    assert loaded_by_id["custom-tts"].http_adapter_config is not None
+    assert (
+        loaded_by_id["custom-tts"].http_adapter_config.url_template
+        == "https://example.com/tts/{voice}"
+    )
+    assert (
+        loaded_by_id["custom-tts"].http_adapter_config.response_mode
+        == HttpResponseMode.BINARY_FILE
+    )
 
     repository.save_all([voice_profile])
 

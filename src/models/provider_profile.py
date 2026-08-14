@@ -5,6 +5,7 @@ from enum import Enum
 from pydantic import Field, field_validator, model_validator
 
 from src.models.base import MissionBaseModel
+from src.models.http_adapter_config import HttpAdapterConfig
 
 
 class ProviderCategory(str, Enum):
@@ -117,6 +118,8 @@ class ProviderProfile(MissionBaseModel):
     metadata: dict[str, str] = Field(
         default_factory=dict,
     )
+
+    http_adapter_config: HttpAdapterConfig | None = None
 
     @field_validator(
         "profile_id",

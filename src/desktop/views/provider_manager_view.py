@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from pydantic import ValidationError
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -11,6 +13,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
+    QPlainTextEdit,
     QSpinBox,
     QSplitter,
     QVBoxLayout,
@@ -18,6 +21,12 @@ from PySide6.QtWidgets import (
 )
 
 from src.desktop.widgets import badge, button, card, heading, muted, row, separator
+from src.models.http_adapter_config import (
+    HttpAdapterConfig,
+    HttpMethod,
+    HttpResponseMode,
+    StockResultFieldMapping,
+)
 from src.models.provider_profile import ProviderCategory
 from src.models.provider_profile_management import (
     ProviderProfileSummary,
@@ -28,6 +37,23 @@ from src.services.provider_profile_management_service import (
 )
 
 _LEFT = Qt.AlignmentFlag.AlignLeft
+
+_CATEGORY_PLACEHOLDERS: dict[ProviderCategory, str] = {
+    ProviderCategory.VOICE: "{api_key}, {base_url}, {text}, {voice}",
+    ProviderCategory.MUSIC: (
+        "{api_key}, {base_url}, {library_query}, {duration_seconds}"
+    ),
+    ProviderCategory.SOUND_EFFECTS: "{api_key}, {base_url}, {library_query}",
+    ProviderCategory.STOCK_VIDEO: (
+        "{api_key}, {base_url}, {query}, {page}, {per_page}, {orientation}, "
+        "{min_duration}, {max_duration}, {min_width}, {min_height}"
+    ),
+    ProviderCategory.STOCK_IMAGE: (
+        "{api_key}, {base_url}, {query}, {page}, {per_page}, {orientation}, "
+        "{min_duration}, {max_duration}, {min_width}, {min_height}"
+    ),
+}
+_DEFAULT_PLACEHOLDERS = "{api_key}, {base_url}"
 
 
 class ProviderManagerView(QWidget):
@@ -114,6 +140,7 @@ class ProviderManagerView(QWidget):
         self._category = QComboBox()
         for category in ProviderCategory:
             self._category.addItem(category.value, category)
+        self._category.currentIndexChanged.connect(self._update_placeholder_hint)
         form.addRow("Category", self._category)
 
         self._default_model = QLineEdit()
@@ -153,6 +180,111 @@ class ProviderManagerView(QWidget):
         self._enabled = QCheckBox("Enabled")
         form.addRow("", self._enabled)
 
+        form.addRow(separator())
+
+        form.addRow(heading("Advanced: custom HTTP provider (optional)"))
+        form.addRow(
+            muted(
+                "Add any provider with no new code: fill these in to call "
+                "its API directly. Leave URL template blank to skip."
+            )
+        )
+
+        self._placeholder_hint = muted(_DEFAULT_PLACEHOLDERS)
+        form.addRow("Available placeholders", self._placeholder_hint)
+
+        self._http_method = QComboBox()
+        for method in HttpMethod:
+            self._http_method.addItem(method.value, method)
+        form.addRow("HTTP method", self._http_method)
+
+        self._url_template = QLineEdit()
+        self._url_template.setPlaceholderText(
+            "https://api.example.com/generate/{voice}"
+        )
+        form.addRow("URL template", self._url_template)
+
+        self._headers_editor = QPlainTextEdit()
+        self._headers_editor.setPlaceholderText(
+            "One per line, e.g.\nAuthorization: Bearer {api_key}"
+        )
+        self._headers_editor.setFixedHeight(60)
+        form.addRow("Headers", self._headers_editor)
+
+        self._query_params_editor = QPlainTextEdit()
+        self._query_params_editor.setPlaceholderText(
+            "One per line, e.g.\nquery: {query}"
+        )
+        self._query_params_editor.setFixedHeight(60)
+        form.addRow("Query params", self._query_params_editor)
+
+        self._json_body_editor = QPlainTextEdit()
+        self._json_body_editor.setPlaceholderText('{"text": "{text}"}')
+        self._json_body_editor.setFixedHeight(60)
+        form.addRow("JSON body template", self._json_body_editor)
+
+        self._response_mode = QComboBox()
+        for mode in HttpResponseMode:
+            self._response_mode.addItem(mode.value, mode)
+        self._response_mode.currentIndexChanged.connect(
+            self._update_response_mode_visibility
+        )
+        form.addRow("Response mode", self._response_mode)
+
+        self._response_file_url_path = QLineEdit()
+        self._response_file_url_path.setPlaceholderText("e.g. data.audio_url")
+        form.addRow("Response file URL path", self._response_file_url_path)
+
+        self._response_list_path = QLineEdit()
+        self._response_list_path.setPlaceholderText("e.g. videos")
+        form.addRow("Response list path", self._response_list_path)
+
+        self._mapping_file_url_path = QLineEdit()
+        self._mapping_file_url_path.setPlaceholderText("e.g. video_files.0.link")
+        form.addRow("Result: file URL path", self._mapping_file_url_path)
+
+        self._mapping_title_path = QLineEdit()
+        self._mapping_title_path.setPlaceholderText("Optional")
+        form.addRow("Result: title path", self._mapping_title_path)
+
+        self._mapping_page_url_path = QLineEdit()
+        self._mapping_page_url_path.setPlaceholderText("Optional")
+        form.addRow("Result: page URL path", self._mapping_page_url_path)
+
+        self._mapping_thumbnail_url_path = QLineEdit()
+        self._mapping_thumbnail_url_path.setPlaceholderText("Optional")
+        form.addRow("Result: thumbnail URL path", self._mapping_thumbnail_url_path)
+
+        self._mapping_duration_path = QLineEdit()
+        self._mapping_duration_path.setPlaceholderText("Optional")
+        form.addRow("Result: duration path", self._mapping_duration_path)
+
+        self._mapping_width_path = QLineEdit()
+        self._mapping_width_path.setPlaceholderText("Optional")
+        form.addRow("Result: width path", self._mapping_width_path)
+
+        self._mapping_height_path = QLineEdit()
+        self._mapping_height_path.setPlaceholderText("Optional")
+        form.addRow("Result: height path", self._mapping_height_path)
+
+        self._mapping_file_type = QLineEdit()
+        self._mapping_file_type.setPlaceholderText("video/mp4")
+        form.addRow("Result: file type", self._mapping_file_type)
+
+        self._mapping_field_widgets = [
+            self._mapping_file_url_path,
+            self._mapping_title_path,
+            self._mapping_page_url_path,
+            self._mapping_thumbnail_url_path,
+            self._mapping_duration_path,
+            self._mapping_width_path,
+            self._mapping_height_path,
+            self._mapping_file_type,
+        ]
+
+        self._advanced_form = form
+        self._update_response_mode_visibility()
+
         card_layout.addLayout(form)
         card_layout.addWidget(separator())
 
@@ -171,6 +303,27 @@ class ProviderManagerView(QWidget):
         card_layout.addLayout(row(save_button, test_button, delete_button))
 
         return frame
+
+    def _update_placeholder_hint(self) -> None:
+        category = self._category.currentData()
+        self._placeholder_hint.setText(
+            _CATEGORY_PLACEHOLDERS.get(category, _DEFAULT_PLACEHOLDERS)
+        )
+
+    def _update_response_mode_visibility(self) -> None:
+        mode = self._response_mode.currentData()
+
+        self._advanced_form.setRowVisible(
+            self._response_file_url_path,
+            mode == HttpResponseMode.JSON_FILE_URL,
+        )
+
+        is_result_list = mode == HttpResponseMode.JSON_RESULT_LIST
+
+        self._advanced_form.setRowVisible(self._response_list_path, is_result_list)
+
+        for widget in self._mapping_field_widgets:
+            self._advanced_form.setRowVisible(widget, is_result_list)
 
     def refresh(self) -> None:
         """Reload provider profiles from the management service."""
@@ -265,6 +418,9 @@ class ProviderManagerView(QWidget):
             else "Secret: not configured"
         )
 
+        self._load_http_adapter_config(profile.http_adapter_config)
+        self._update_placeholder_hint()
+
     def _reset_form(self, *, editing_existing: bool) -> None:
         self._profile_id.clear()
         self._profile_id.setReadOnly(editing_existing)
@@ -282,6 +438,128 @@ class ProviderManagerView(QWidget):
         self._health_badge.setText("")
         self._secret_status.setText("")
 
+        self._load_http_adapter_config(None)
+        self._update_placeholder_hint()
+
+    def _load_http_adapter_config(self, config: HttpAdapterConfig | None) -> None:
+        method_index = self._http_method.findData(
+            config.http_method if config else HttpMethod.POST
+        )
+        self._http_method.setCurrentIndex(max(method_index, 0))
+
+        self._url_template.setText(config.url_template if config else "")
+
+        self._headers_editor.setPlainText(
+            self._format_key_value_lines(config.headers) if config else ""
+        )
+        self._query_params_editor.setPlainText(
+            self._format_key_value_lines(config.query_params) if config else ""
+        )
+        self._json_body_editor.setPlainText(
+            json.dumps(config.json_body_template, indent=2)
+            if config and config.json_body_template is not None
+            else ""
+        )
+
+        response_mode_index = self._response_mode.findData(
+            config.response_mode if config else HttpResponseMode.BINARY_FILE
+        )
+        self._response_mode.setCurrentIndex(max(response_mode_index, 0))
+
+        self._response_file_url_path.setText(
+            (config.response_file_url_path or "") if config else ""
+        )
+        self._response_list_path.setText(
+            (config.response_list_path or "") if config else ""
+        )
+
+        mapping = config.response_field_mapping if config else None
+        self._mapping_file_url_path.setText(mapping.file_url_path if mapping else "")
+        self._mapping_title_path.setText((mapping.title_path or "") if mapping else "")
+        self._mapping_page_url_path.setText(
+            (mapping.page_url_path or "") if mapping else ""
+        )
+        self._mapping_thumbnail_url_path.setText(
+            (mapping.thumbnail_url_path or "") if mapping else ""
+        )
+        self._mapping_duration_path.setText(
+            (mapping.duration_seconds_path or "") if mapping else ""
+        )
+        self._mapping_width_path.setText((mapping.width_path or "") if mapping else "")
+        self._mapping_height_path.setText(
+            (mapping.height_path or "") if mapping else ""
+        )
+        self._mapping_file_type.setText(mapping.file_type if mapping else "")
+
+        self._update_response_mode_visibility()
+
+    @staticmethod
+    def _format_key_value_lines(values: dict[str, str]) -> str:
+        return "\n".join(f"{key}: {value}" for key, value in values.items())
+
+    @staticmethod
+    def _parse_key_value_lines(text: str) -> dict[str, str]:
+        result: dict[str, str] = {}
+
+        for line in text.splitlines():
+            if ":" not in line:
+                continue
+
+            key, _, value = line.partition(":")
+            key = key.strip()
+
+            if key:
+                result[key] = value.strip()
+
+        return result
+
+    def _build_http_adapter_config(self) -> HttpAdapterConfig | None:
+        url_template = self._url_template.text().strip()
+
+        if not url_template:
+            return None
+
+        body_text = self._json_body_editor.toPlainText().strip()
+        json_body_template = json.loads(body_text) if body_text else None
+
+        response_mode = self._response_mode.currentData()
+
+        mapping = None
+
+        if response_mode == HttpResponseMode.JSON_RESULT_LIST:
+            mapping = StockResultFieldMapping(
+                file_url_path=self._mapping_file_url_path.text().strip(),
+                title_path=self._optional_text(self._mapping_title_path),
+                page_url_path=self._optional_text(self._mapping_page_url_path),
+                thumbnail_url_path=self._optional_text(
+                    self._mapping_thumbnail_url_path
+                ),
+                duration_seconds_path=self._optional_text(self._mapping_duration_path),
+                width_path=self._optional_text(self._mapping_width_path),
+                height_path=self._optional_text(self._mapping_height_path),
+                file_type=self._mapping_file_type.text().strip() or "video/mp4",
+            )
+
+        return HttpAdapterConfig(
+            http_method=self._http_method.currentData(),
+            url_template=url_template,
+            headers=self._parse_key_value_lines(self._headers_editor.toPlainText()),
+            query_params=self._parse_key_value_lines(
+                self._query_params_editor.toPlainText()
+            ),
+            json_body_template=json_body_template,
+            response_mode=response_mode,
+            response_file_url_path=self._optional_text(self._response_file_url_path),
+            response_list_path=self._optional_text(self._response_list_path),
+            response_field_mapping=mapping,
+        )
+
+    @staticmethod
+    def _optional_text(field: QLineEdit) -> str | None:
+        text = field.text().strip()
+
+        return text or None
+
     def _handle_save_clicked(self) -> None:
         capabilities = [
             value.strip()
@@ -290,6 +568,8 @@ class ProviderManagerView(QWidget):
         ]
 
         try:
+            http_adapter_config = self._build_http_adapter_config()
+
             command = ProviderProfileUpsertCommand(
                 profile_id=self._profile_id.text(),
                 display_name=self._display_name.text(),
@@ -303,6 +583,7 @@ class ProviderManagerView(QWidget):
                 monthly_budget_usd=self._monthly_budget.value(),
                 capabilities=capabilities,
                 secret_value=self._secret_value.text(),
+                http_adapter_config=http_adapter_config,
             )
 
             summary = self._service.upsert_profile(command)

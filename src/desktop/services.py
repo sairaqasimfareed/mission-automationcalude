@@ -12,6 +12,7 @@ from src.services.application_infrastructure_factory import (
     ApplicationInfrastructure,
 )
 from src.services.content_pipeline import ContentPipeline
+from src.services.factory.provider_adapter_factory import ProviderAdapterFactory
 from src.services.final_export.final_export_service import FinalExportService
 from src.services.pipeline_checkpoint_storage_service import (
     PipelineCheckpointStorageService,
@@ -35,10 +36,14 @@ from src.services.runtime_configuration_loader import (
 from src.services.runtime_configuration_validator import (
     RuntimeConfigurationValidator,
 )
+from src.services.scene_asset_and_timeline_infrastructure_factory import (
+    SceneAssetAndTimelineInfrastructureFactory,
+)
 from src.services.scene_asset_workflow_service import (
     SceneAssetWorkflowService,
 )
 from src.services.secrets.keyring_secret_store import KeyringSecretStore
+from src.services.secrets.provider_secret_manager import ProviderSecretManager
 from src.services.seo.seo_description_generation_service import (
     SEODescriptionGenerationService,
 )
@@ -52,6 +57,7 @@ from src.services.thumbnail.thumbnail_concept_generation_service import (
 from src.services.thumbnail.thumbnail_package_service import (
     ThumbnailPackageService,
 )
+from src.shared.logger import logger
 
 CHECKPOINT_STORAGE_ROOT = Path("data/checkpoints")
 THUMBNAIL_STORAGE_ROOT = Path("data/thumbnails")
@@ -98,6 +104,17 @@ def get_production_runtime() -> ProductionApplicationRuntime:
     profiles are available" - a real bug found by exercising this path
     end to end, not just a test artifact.
 
+    Desktop-persisted provider profiles are loaded and dispatched into
+    real voice/music/sound-effect adapters (ProviderAdapterFactory)
+    BEFORE build_production_runtime() runs, and passed in as
+    overrides - RuntimeConfigurationLoader has no visibility into
+    desktop-configured profiles on its own, so without this ordering
+    a real ElevenLabs/generic-HTTP provider added through Provider
+    Manager would have no effect on what actually generates content.
+    When no usable profile exists for a category (today's common
+    case), every override evaluates to None and this reproduces the
+    prior dry-run/unset behavior exactly.
+
     checkpoint_storage_root is passed explicitly so render results can
     be resumed: a scene render that pauses waiting for a manual-upload
     decision needs a persisted checkpoint, or the next execute() call
@@ -115,12 +132,33 @@ def get_production_runtime() -> ProductionApplicationRuntime:
     open the Provider Manager screen.
     """
 
+    desktop_profiles = _get_provider_profile_repository().load_all()
+
+    secret_store = KeyringSecretStore()
+
+    report = ProviderAdapterFactory(
+        secret_manager=ProviderSecretManager(secret_store=secret_store),
+    ).build(desktop_profiles)
+
+    for warning in report.warnings:
+        logger.warning(warning)
+
     runtime = build_production_runtime(
         checkpoint_storage_root=CHECKPOINT_STORAGE_ROOT,
-        secret_store=KeyringSecretStore(),
+        secret_store=secret_store,
+        voice_providers=report.voice_providers or None,
+        music_providers=report.music_providers or None,
+        sound_effect_providers=report.sound_effect_providers or None,
+        asset_workflow_service=(
+            SceneAssetAndTimelineInfrastructureFactory(
+                stock_search_providers=report.stock_video_providers or None,
+            ).build_scene_asset_workflow_service()
+            if report.stock_video_providers
+            else None
+        ),
     )
 
-    for profile in _get_provider_profile_repository().load_all():
+    for profile in desktop_profiles:
         runtime.infrastructure.provider_registry.register(profile, replace=True)
 
     return runtime

@@ -20,6 +20,7 @@ from src.models.upload_settings import UploadSettings
 from src.models.video_settings import VideoSettings
 from src.models.visual_settings import VisualSettings
 from src.models.voice_settings import VoiceSettings
+from src.providers.dry_run_voice_provider import DryRunVoiceProvider
 from src.services.genre_timeline_pipeline_service import (
     GenreTimelinePipelineService,
 )
@@ -65,6 +66,51 @@ def test_build_production_runtime_returns_complete_runtime() -> None:
 
     assert isinstance(runtime, ProductionApplicationRuntime)
     assert isinstance(runtime.application, MissionApplicationService)
+
+
+def test_build_production_runtime_no_override_behavior_unchanged() -> None:
+    """
+    Regression guard for the ProviderAdapterFactory wiring restructure.
+
+    With no voice_providers/music_providers/sound_effect_providers
+    override (today's common case - no real provider profiles
+    configured), build_production_runtime() must fall back to exactly
+    the same providers RuntimeConfigurationLoader would have produced
+    on its own: a single DryRunVoiceProvider in dry-run mode, and no
+    music/sound-effect providers at all (those stages are skipped,
+    matching the existing non-fatal design for optional stages).
+    """
+
+    runtime = build_production_runtime(
+        asset_workflow_service=_fake_asset_workflow_service(),
+        genre_timeline_service=_fake_genre_timeline_service(),
+        settings=_settings(),
+    )
+
+    assert len(runtime.voice_generation_service.providers) == 1
+    assert isinstance(
+        runtime.voice_generation_service.providers[0], DryRunVoiceProvider
+    )
+
+
+def test_build_production_runtime_voice_providers_override_is_used() -> None:
+    """A given voice_providers override must reach VoiceGenerationService."""
+
+    class _FakeVoiceProvider(DryRunVoiceProvider):
+        @property
+        def provider_name(self) -> str:
+            return "fake_override_voice"
+
+    fake_provider = _FakeVoiceProvider()
+
+    runtime = build_production_runtime(
+        asset_workflow_service=_fake_asset_workflow_service(),
+        genre_timeline_service=_fake_genre_timeline_service(),
+        settings=_settings(),
+        voice_providers=[fake_provider],
+    )
+
+    assert runtime.voice_generation_service.providers == [fake_provider]
 
 
 def test_build_production_runtime_propagates_loader_errors() -> None:

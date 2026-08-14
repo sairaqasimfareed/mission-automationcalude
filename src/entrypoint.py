@@ -4,6 +4,9 @@ import sys
 from pathlib import Path
 
 from src.config.settings import Settings
+from src.providers.music_provider import MusicProvider
+from src.providers.sound_effect_provider import SoundEffectProvider
+from src.providers.voice_provider import VoiceProvider
 from src.services.genre_timeline_pipeline_service import (
     GenreTimelinePipelineService,
 )
@@ -34,6 +37,9 @@ def build_production_runtime(
     *,
     asset_workflow_service: SceneAssetWorkflowService | None = None,
     genre_timeline_service: GenreTimelinePipelineService | None = None,
+    voice_providers: list[VoiceProvider] | None = None,
+    music_providers: list[MusicProvider] | None = None,
+    sound_effect_providers: list[SoundEffectProvider] | None = None,
     local_asset_directories: list[str | Path] | None = None,
     checkpoint_storage_root: str | Path | None = None,
     settings: Settings | None = None,
@@ -54,6 +60,14 @@ def build_production_runtime(
     SceneAssetAndTimelineInfrastructureFactory when omitted. Pass them
     explicitly to use different local asset directories or custom
     asset/stock providers.
+
+    voice_providers overrides RuntimeConfigurationLoader's own
+    dry-run-or-raise voice provider construction (it has no visibility
+    into desktop-configured provider profiles); music_providers and
+    sound_effect_providers are passed straight through to
+    ProductionApplicationFactory, which already falls back to dry-run
+    (or an empty, stage-skipping list outside dry-run) when omitted.
+    Omitting all three reproduces today's behavior exactly.
 
     checkpoint_storage_root overrides RuntimeConfiguration's own value,
     which RuntimeConfigurationLoader always loads as None today (no
@@ -103,7 +117,13 @@ def build_production_runtime(
         secret_store=configuration.secret_store,
         provider_profiles=configuration.provider_profiles,
         voice_profiles=configuration.voice_profiles,
-        voice_providers=configuration.voice_providers,
+        voice_providers=(
+            voice_providers
+            if voice_providers is not None
+            else configuration.voice_providers
+        ),
+        music_providers=music_providers,
+        sound_effect_providers=sound_effect_providers,
         genre_registry=configuration.genre_registry,
         asset_workflow_service=asset_workflow_service,
         genre_timeline_service=genre_timeline_service,

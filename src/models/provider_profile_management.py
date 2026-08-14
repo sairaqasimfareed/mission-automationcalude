@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from src.models.http_adapter_config import HttpAdapterConfig
 from src.models.provider_profile import ProviderCategory, ProviderHealthStatus
 
 
@@ -33,6 +34,8 @@ class ProviderProfileSummary(BaseModel):
 
     capabilities: list[str] = Field(default_factory=list)
     metadata: dict[str, str] = Field(default_factory=dict)
+
+    http_adapter_config: HttpAdapterConfig | None = None
 
 
 class ProviderProfileUpsertCommand(BaseModel):
@@ -67,6 +70,8 @@ class ProviderProfileUpsertCommand(BaseModel):
 
     capabilities: list[str] = Field(default_factory=list)
     metadata: dict[str, str] = Field(default_factory=dict)
+
+    http_adapter_config: HttpAdapterConfig | None = None
 
     secret_value: str | None = None
 

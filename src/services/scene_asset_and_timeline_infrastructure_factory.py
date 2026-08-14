@@ -31,6 +31,7 @@ from src.services.scene_asset_workflow_service import SceneAssetWorkflowService
 from src.services.stock_acquisition_service import StockAcquisitionService
 from src.services.stock_asset_storage_service import StockAssetStorageService
 from src.services.stock_download_service import StockDownloadService
+from src.services.stock_search_service import StockProviderAdapter, StockSearchService
 from src.services.visual_asset_router import VisualAssetRouter
 
 DEFAULT_MANUAL_UPLOAD_STORAGE_ROOT = Path("data/manual_uploads")
@@ -61,6 +62,7 @@ class SceneAssetAndTimelineInfrastructureFactory:
         self,
         *,
         local_asset_directories: list[str | Path] | None = None,
+        stock_search_providers: list[StockProviderAdapter] | None = None,
         manual_upload_storage_root: str | Path = (DEFAULT_MANUAL_UPLOAD_STORAGE_ROOT),
         stock_storage_root: str | Path = DEFAULT_STOCK_STORAGE_ROOT,
         stock_download_temporary_directory: str | Path = (
@@ -68,6 +70,7 @@ class SceneAssetAndTimelineInfrastructureFactory:
         ),
     ) -> None:
         self._local_asset_directories: list[str | Path] = local_asset_directories or []
+        self._stock_search_providers = stock_search_providers
         self._manual_upload_storage_root = manual_upload_storage_root
         self._stock_storage_root = stock_storage_root
         self._stock_download_temporary_directory = stock_download_temporary_directory
@@ -84,7 +87,13 @@ class SceneAssetAndTimelineInfrastructureFactory:
             ),
         )
 
-        asset_search_service = AssetSearchService()
+        asset_search_service = AssetSearchService(
+            stock_search_service=(
+                StockSearchService(providers=self._stock_search_providers)
+                if self._stock_search_providers
+                else None
+            ),
+        )
 
         visual_asset_router = VisualAssetRouter(
             providers=[
@@ -95,7 +104,11 @@ class SceneAssetAndTimelineInfrastructureFactory:
                             temporary_directory=(
                                 self._stock_download_temporary_directory
                             ),
-                            opener=dry_run_stock_download_opener,
+                            opener=(
+                                None
+                                if self._stock_search_providers
+                                else dry_run_stock_download_opener
+                            ),
                         ),
                         storage_service=StockAssetStorageService(
                             storage_root=self._stock_storage_root,

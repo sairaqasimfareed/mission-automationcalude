@@ -153,6 +153,7 @@ class ProviderProfileManagementService:
             ),
             capabilities=command.capabilities,
             metadata=command.metadata,
+            http_adapter_config=command.http_adapter_config,
         )
 
         self._registry.register(profile, replace=True)
@@ -236,4 +237,5 @@ class ProviderProfileManagementService:
             maximum_retries=profile.maximum_retries,
             capabilities=profile.capabilities,
             metadata=profile.metadata,
+            http_adapter_config=profile.http_adapter_config,
         )
