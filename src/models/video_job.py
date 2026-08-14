@@ -5,6 +5,7 @@ from pydantic import Field, field_validator, model_validator
 from src.models.asset_state import SceneAssetState
 from src.models.audio_timeline import AudioTimeline
 from src.models.base import MissionBaseModel
+from src.models.content_decision_record import ContentDecisionRecord
 from src.models.editing_directives import SceneEditingDirectives
 from src.models.enums import (
     JobStatus,
@@ -58,6 +59,8 @@ class VideoJob(MissionBaseModel):
     research: ResearchResult | None = None
     script: Script | None = None
     originality_review: OriginalityResult | None = None
+
+    content_decisions: list[ContentDecisionRecord] = Field(default_factory=list)
 
     scenes: list[Scene] = Field(default_factory=list)
     scene_asset_states: list[SceneAssetState] = Field(default_factory=list)
