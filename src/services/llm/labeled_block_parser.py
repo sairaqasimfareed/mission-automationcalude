@@ -2,6 +2,23 @@ from __future__ import annotations
 
 import re
 
+_BLOCK_SEPARATOR_PATTERN = re.compile(r"\n\s*-{3,}\s*\n")
+
+
+def split_blocks(text: str) -> list[str]:
+    """
+    Split an LLM response into blocks separated by a line of three or
+    more dashes.
+
+    Shared by services that ask an LLM to return multiple labeled
+    blocks (e.g. several candidate concepts or angles) in one call
+    rather than one call per candidate - see
+    ThumbnailConceptGenerationService, the original source of this
+    pattern.
+    """
+
+    return _BLOCK_SEPARATOR_PATTERN.split(text.strip())
+
 
 def extract_labeled_field(text: str, label: str) -> str | None:
     """

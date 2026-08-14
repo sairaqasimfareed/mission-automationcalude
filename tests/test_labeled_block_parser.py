@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from src.services.llm.labeled_block_parser import extract_labeled_field
+from src.services.llm.labeled_block_parser import extract_labeled_field, split_blocks
 
 
 def test_extracts_a_simple_labeled_field() -> None:
@@ -47,3 +47,26 @@ def test_does_not_match_a_label_that_is_a_substring_of_another() -> None:
     content = "SUBTITLE: not the title\nTITLE: the real title"
 
     assert extract_labeled_field(content, "TITLE") == "the real title"
+
+
+def test_split_blocks_separates_on_dash_lines() -> None:
+    content = "TITLE: One\n---\nTITLE: Two\n----\nTITLE: Three"
+
+    blocks = split_blocks(content)
+
+    assert len(blocks) == 3
+    assert extract_labeled_field(blocks[0], "TITLE") == "One"
+    assert extract_labeled_field(blocks[1], "TITLE") == "Two"
+    assert extract_labeled_field(blocks[2], "TITLE") == "Three"
+
+
+def test_split_blocks_returns_one_block_when_no_separator_present() -> None:
+    blocks = split_blocks("TITLE: Only one block")
+
+    assert len(blocks) == 1
+
+
+def test_split_blocks_strips_surrounding_whitespace() -> None:
+    blocks = split_blocks("\n\n  TITLE: Only one block  \n\n")
+
+    assert blocks == ["TITLE: Only one block"]
