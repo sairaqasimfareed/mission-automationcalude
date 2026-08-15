@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 from src.models.genre_profile import (
+    CTAPolicy,
+    GenreContentIntelligenceProfile,
     GenreEditingProfile,
     GenreProfile,
     GenreProfileStatus,
+    HookArchetype,
+    ResearchDepth,
+    UncertainInformationPolicy,
 )
 from src.services.genre_profile_registry_service import (
     GenreProfileRegistryService,
@@ -181,6 +186,90 @@ active_profiles = registry.list_all(
 )
 
 assert all(profile.usable for profile in active_profiles)
+
+
+# --- GenreProfile v2: content_intelligence differentiation ---
+
+horror_ci = registry.get("genre.horror").content_intelligence
+documentary_ci = registry.get("genre.documentary").content_intelligence
+mystery_ci = registry.get("genre.mystery").content_intelligence
+medical_ci = registry.get("genre.medical").content_intelligence
+top10_ci = registry.get("genre.top10").content_intelligence
+
+# Different genres must produce meaningfully different behavior, not
+# just different wording - assert on the actual structured fields.
+assert horror_ci.preferred_hook_archetypes == [
+    HookArchetype.DISTURBING_EVENT,
+    HookArchetype.MYSTERY,
+    HookArchetype.UNANSWERED_QUESTION,
+]
+assert HookArchetype.RANKED_LIST_PROMISE in horror_ci.forbidden_hook_archetypes
+assert horror_ci.research_policy.depth == ResearchDepth.LOW
+assert (
+    horror_ci.research_policy.uncertain_information_policy
+    == UncertainInformationPolicy.USE_FREELY
+)
+assert horror_ci.character_policy is not None
+assert horror_ci.character_policy.requires_protagonist is True
+assert "climax" in horror_ci.forbidden_cta_positions
+
+assert documentary_ci.research_policy.depth == ResearchDepth.HIGH
+assert documentary_ci.research_policy.requires_primary_sources is True
+assert documentary_ci.character_policy is None
+assert documentary_ci.quality_thresholds["factual_confidence"] == 65
+
+assert medical_ci.research_policy.depth == ResearchDepth.VERY_HIGH
+assert (
+    medical_ci.research_policy.uncertain_information_policy
+    == UncertainInformationPolicy.EXCLUDE
+)
+assert medical_ci.quality_thresholds["factual_confidence"] == 75
+assert medical_ci.quality_thresholds["factual_confidence"] > (
+    horror_ci.quality_thresholds.get("factual_confidence", 0)
+)
+
+assert (
+    mystery_ci.narrative_architecture_hint != documentary_ci.narrative_architecture_hint
+)
+assert mystery_ci.preferred_angle_styles == [
+    "mystery",
+    "investigation",
+    "revelation_driven",
+    "question_driven",
+]
+
+assert top10_ci.cta_policy == CTAPolicy.DIRECT
+assert horror_ci.cta_policy == CTAPolicy.SOFT
+assert top10_ci.scene_density_per_minute > documentary_ci.scene_density_per_minute
+assert top10_ci.reveal_density_per_minute > documentary_ci.reveal_density_per_minute
+
+# Pacing curves must genuinely differ in shape (back-loaded horror
+# peaks late, front-loaded travel peaks early), not just be distinct
+# objects with the same values.
+travel_curve = registry.get("genre.travel").content_intelligence.pacing_curve
+assert (
+    horror_ci.pacing_curve[0].tension_level < horror_ci.pacing_curve[-2].tension_level
+)
+assert travel_curve[0].emotional_intensity > travel_curve[-1].emotional_intensity
+
+
+try:
+    GenreContentIntelligenceProfile(
+        preferred_hook_archetypes=[HookArchetype.MYSTERY],
+        forbidden_hook_archetypes=[HookArchetype.MYSTERY],
+    )
+except ValueError:
+    print("Overlapping hook archetype policy successfully blocked.")
+else:
+    raise AssertionError("A hook archetype cannot be both preferred and forbidden.")
+
+
+try:
+    GenreContentIntelligenceProfile(preferred_angle_styles=["not_a_real_style"])
+except ValueError:
+    print("Invalid preferred angle style successfully blocked.")
+else:
+    raise AssertionError("An unsupported story angle style must be rejected.")
 
 
 print("Genre Profile Registry Service tests " "completed successfully.")

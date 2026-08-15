@@ -4,6 +4,10 @@ from src.models.editing_directives import (
     DirectiveIntensity,
 )
 from src.models.genre_profile import (
+    CharacterPolicy,
+    ConflictingSourcePolicy,
+    CTAPolicy,
+    GenreContentIntelligenceProfile,
     GenreEditingProfile,
     GenrePacingStyle,
     GenreProfile,
@@ -14,7 +18,233 @@ from src.models.genre_profile import (
     GenreThumbnailProfile,
     GenreTone,
     GenreVoiceProfile,
+    HookArchetype,
+    PacingSegment,
+    RecapPolicy,
+    ResearchDepth,
+    ResearchPolicy,
+    UncertainInformationPolicy,
 )
+
+
+def _even_pacing_curve() -> list[PacingSegment]:
+    """Steady pacing with no dominant peak - documentary/history/medical."""
+
+    return [
+        PacingSegment(
+            progress_start=0.0,
+            progress_end=0.10,
+            information_density=40,
+            emotional_intensity=35,
+            reveal_probability=20,
+            tension_level=35,
+        ),
+        PacingSegment(
+            progress_start=0.10,
+            progress_end=0.25,
+            information_density=50,
+            emotional_intensity=40,
+            reveal_probability=25,
+            tension_level=40,
+        ),
+        PacingSegment(
+            progress_start=0.25,
+            progress_end=0.50,
+            information_density=55,
+            emotional_intensity=45,
+            reveal_probability=35,
+            tension_level=45,
+        ),
+        PacingSegment(
+            progress_start=0.50,
+            progress_end=0.75,
+            information_density=55,
+            emotional_intensity=50,
+            reveal_probability=40,
+            tension_level=50,
+        ),
+        PacingSegment(
+            progress_start=0.75,
+            progress_end=0.90,
+            information_density=50,
+            emotional_intensity=55,
+            reveal_probability=50,
+            tension_level=55,
+        ),
+        PacingSegment(
+            progress_start=0.90,
+            progress_end=1.0,
+            information_density=35,
+            emotional_intensity=45,
+            reveal_probability=30,
+            tension_level=40,
+        ),
+    ]
+
+
+def _front_loaded_pacing_curve() -> list[PacingSegment]:
+    """Hooks hard immediately, tapers - travel."""
+
+    return [
+        PacingSegment(
+            progress_start=0.0,
+            progress_end=0.10,
+            information_density=60,
+            emotional_intensity=70,
+            reveal_probability=50,
+            tension_level=60,
+        ),
+        PacingSegment(
+            progress_start=0.10,
+            progress_end=0.25,
+            information_density=55,
+            emotional_intensity=60,
+            reveal_probability=45,
+            tension_level=55,
+        ),
+        PacingSegment(
+            progress_start=0.25,
+            progress_end=0.50,
+            information_density=50,
+            emotional_intensity=50,
+            reveal_probability=35,
+            tension_level=45,
+        ),
+        PacingSegment(
+            progress_start=0.50,
+            progress_end=0.75,
+            information_density=45,
+            emotional_intensity=45,
+            reveal_probability=30,
+            tension_level=40,
+        ),
+        PacingSegment(
+            progress_start=0.75,
+            progress_end=0.90,
+            information_density=40,
+            emotional_intensity=40,
+            reveal_probability=25,
+            tension_level=35,
+        ),
+        PacingSegment(
+            progress_start=0.90,
+            progress_end=1.0,
+            information_density=35,
+            emotional_intensity=50,
+            reveal_probability=30,
+            tension_level=35,
+        ),
+    ]
+
+
+def _back_loaded_pacing_curve() -> list[PacingSegment]:
+    """Builds steadily to a late climax - horror/mystery/storytelling/survival."""
+
+    return [
+        PacingSegment(
+            progress_start=0.0,
+            progress_end=0.10,
+            information_density=35,
+            emotional_intensity=30,
+            reveal_probability=15,
+            tension_level=25,
+        ),
+        PacingSegment(
+            progress_start=0.10,
+            progress_end=0.25,
+            information_density=40,
+            emotional_intensity=35,
+            reveal_probability=20,
+            tension_level=30,
+        ),
+        PacingSegment(
+            progress_start=0.25,
+            progress_end=0.50,
+            information_density=45,
+            emotional_intensity=45,
+            reveal_probability=30,
+            tension_level=45,
+        ),
+        PacingSegment(
+            progress_start=0.50,
+            progress_end=0.75,
+            information_density=50,
+            emotional_intensity=60,
+            reveal_probability=40,
+            tension_level=60,
+        ),
+        PacingSegment(
+            progress_start=0.75,
+            progress_end=0.90,
+            information_density=55,
+            emotional_intensity=80,
+            reveal_probability=65,
+            tension_level=85,
+        ),
+        PacingSegment(
+            progress_start=0.90,
+            progress_end=1.0,
+            information_density=40,
+            emotional_intensity=60,
+            reveal_probability=50,
+            tension_level=55,
+        ),
+    ]
+
+
+def _oscillating_pacing_curve() -> list[PacingSegment]:
+    """Repeated peaks and valleys - top10/reaction."""
+
+    return [
+        PacingSegment(
+            progress_start=0.0,
+            progress_end=0.10,
+            information_density=55,
+            emotional_intensity=60,
+            reveal_probability=45,
+            tension_level=55,
+        ),
+        PacingSegment(
+            progress_start=0.10,
+            progress_end=0.25,
+            information_density=45,
+            emotional_intensity=40,
+            reveal_probability=30,
+            tension_level=35,
+        ),
+        PacingSegment(
+            progress_start=0.25,
+            progress_end=0.50,
+            information_density=55,
+            emotional_intensity=60,
+            reveal_probability=50,
+            tension_level=55,
+        ),
+        PacingSegment(
+            progress_start=0.50,
+            progress_end=0.75,
+            information_density=45,
+            emotional_intensity=40,
+            reveal_probability=30,
+            tension_level=35,
+        ),
+        PacingSegment(
+            progress_start=0.75,
+            progress_end=0.90,
+            information_density=60,
+            emotional_intensity=70,
+            reveal_probability=60,
+            tension_level=65,
+        ),
+        PacingSegment(
+            progress_start=0.90,
+            progress_end=1.0,
+            information_density=50,
+            emotional_intensity=65,
+            reveal_probability=55,
+            tension_level=50,
+        ),
+    ]
 
 
 class GenreProfileRegistryService:
@@ -249,6 +479,17 @@ class GenreProfileRegistryService:
                 editing=GenreEditingProfile(),
                 thumbnail=GenreThumbnailProfile(),
                 seo=GenreSEOProfile(),
+                content_intelligence=GenreContentIntelligenceProfile(
+                    narrative_architecture_hint=(
+                        "Hook -> context -> development -> "
+                        "climax/insight -> resolution."
+                    ),
+                    pacing_curve=_even_pacing_curve(),
+                    quality_thresholds={
+                        "factual_confidence": 40,
+                        "hook_strength": 35,
+                    },
+                ),
                 tags=[
                     "safe",
                     "default",
@@ -319,6 +560,52 @@ class GenreProfileRegistryService:
                     hashtag_style="dark_storytelling",
                     call_to_action_style=("suspense_question"),
                 ),
+                content_intelligence=GenreContentIntelligenceProfile(
+                    preferred_angle_styles=[
+                        "horror",
+                        "mystery",
+                        "revelation_driven",
+                    ],
+                    narrative_architecture_hint=(
+                        "Disturbance -> curiosity -> unease -> escalation -> "
+                        "temporary relief -> stronger threat -> revelation -> "
+                        "climax -> aftermath."
+                    ),
+                    pacing_curve=_back_loaded_pacing_curve(),
+                    preferred_hook_archetypes=[
+                        HookArchetype.DISTURBING_EVENT,
+                        HookArchetype.MYSTERY,
+                        HookArchetype.UNANSWERED_QUESTION,
+                    ],
+                    forbidden_hook_archetypes=[
+                        HookArchetype.RANKED_LIST_PROMISE,
+                    ],
+                    hook_intensity=DirectiveIntensity.HIGH,
+                    reveal_density_per_minute=3.0,
+                    pattern_interrupt_frequency=DirectiveIntensity.MEDIUM,
+                    research_policy=ResearchPolicy(
+                        depth=ResearchDepth.LOW,
+                        minimum_source_count=0,
+                        uncertain_information_policy=(
+                            UncertainInformationPolicy.USE_FREELY
+                        ),
+                    ),
+                    cta_policy=CTAPolicy.SOFT,
+                    forbidden_cta_positions=["climax"],
+                    quality_thresholds={
+                        "retention_architecture": 55,
+                        "hook_strength": 60,
+                        "emotional_progression": 55,
+                    },
+                    character_policy=CharacterPolicy(
+                        requires_protagonist=True,
+                        requires_antagonist_or_conflict=True,
+                        allow_dialogue=True,
+                        maximum_character_count=4,
+                    ),
+                    scene_density_per_minute=8.0,
+                    average_visual_duration_seconds=5.0,
+                ),
                 tags=[
                     "horror",
                     "suspense",
@@ -373,6 +660,46 @@ class GenreProfileRegistryService:
                     description_style=("factual_overview"),
                     keyword_style=("topic_authority"),
                     hashtag_style="informative",
+                ),
+                content_intelligence=GenreContentIntelligenceProfile(
+                    preferred_angle_styles=[
+                        "documentary",
+                        "chronological",
+                        "investigation",
+                    ],
+                    narrative_architecture_hint=(
+                        "Hook/contradiction -> central question -> context -> "
+                        "evidence -> development -> complication -> discovery "
+                        "-> consequence -> conclusion."
+                    ),
+                    pacing_curve=_even_pacing_curve(),
+                    preferred_hook_archetypes=[
+                        HookArchetype.CONTRADICTION,
+                        HookArchetype.SHOCKING_FACT,
+                        HookArchetype.UNANSWERED_QUESTION,
+                    ],
+                    forbidden_hook_archetypes=[
+                        HookArchetype.RANKED_LIST_PROMISE,
+                        HookArchetype.TRANSFORMATION,
+                    ],
+                    hook_intensity=DirectiveIntensity.MEDIUM,
+                    reveal_density_per_minute=1.5,
+                    pattern_interrupt_frequency=DirectiveIntensity.LOW,
+                    recap_policy=RecapPolicy.BRIEF,
+                    research_policy=ResearchPolicy(
+                        depth=ResearchDepth.HIGH,
+                        minimum_source_count=5,
+                        requires_primary_sources=True,
+                    ),
+                    cta_policy=CTAPolicy.SOFT,
+                    quality_thresholds={
+                        "factual_confidence": 65,
+                        "research_grounding": 65,
+                        "narrative_coherence": 50,
+                    },
+                    scene_density_per_minute=5.0,
+                    average_visual_duration_seconds=8.0,
+                    establishing_shot_policy="frequent",
                 ),
                 tags=[
                     "documentary",
@@ -429,6 +756,46 @@ class GenreProfileRegistryService:
                     keyword_style=("historical_entities"),
                     hashtag_style="history_topics",
                 ),
+                content_intelligence=GenreContentIntelligenceProfile(
+                    preferred_angle_styles=[
+                        "documentary",
+                        "chronological",
+                        "revelation_driven",
+                        "reverse_chronology",
+                    ],
+                    narrative_architecture_hint=(
+                        "Hook/contradiction -> historical context -> "
+                        "chronological development -> turning point -> "
+                        "consequence -> legacy/conclusion."
+                    ),
+                    pacing_curve=_even_pacing_curve(),
+                    preferred_hook_archetypes=[
+                        HookArchetype.SHOCKING_FACT,
+                        HookArchetype.MYSTERY,
+                        HookArchetype.DRAMATIC_MOMENT,
+                    ],
+                    hook_intensity=DirectiveIntensity.MEDIUM,
+                    reveal_density_per_minute=1.8,
+                    recap_policy=RecapPolicy.BRIEF,
+                    research_policy=ResearchPolicy(
+                        depth=ResearchDepth.HIGH,
+                        minimum_source_count=4,
+                        requires_primary_sources=True,
+                    ),
+                    cta_policy=CTAPolicy.SOFT,
+                    quality_thresholds={
+                        "factual_confidence": 60,
+                        "research_grounding": 60,
+                        "narrative_coherence": 50,
+                    },
+                    character_policy=CharacterPolicy(
+                        allow_dialogue=False,
+                        maximum_character_count=3,
+                    ),
+                    scene_density_per_minute=5.5,
+                    average_visual_duration_seconds=7.0,
+                    establishing_shot_policy="frequent",
+                ),
                 tags=[
                     "history",
                     "educational",
@@ -482,6 +849,38 @@ class GenreProfileRegistryService:
                     keyword_style=("location_and_activity"),
                     hashtag_style="travel_discovery",
                     call_to_action_style=("plan_your_trip"),
+                ),
+                content_intelligence=GenreContentIntelligenceProfile(
+                    preferred_angle_styles=[
+                        "character_pov",
+                        "chronological",
+                        "emotional",
+                    ],
+                    narrative_architecture_hint=(
+                        "Destination promise -> visual hook -> experience -> "
+                        "why it matters -> practical insight -> next "
+                        "destination."
+                    ),
+                    pacing_curve=_front_loaded_pacing_curve(),
+                    preferred_hook_archetypes=[
+                        HookArchetype.DRAMATIC_MOMENT,
+                        HookArchetype.FUTURE_PAYOFF,
+                    ],
+                    hook_intensity=DirectiveIntensity.MEDIUM,
+                    reveal_density_per_minute=1.5,
+                    research_policy=ResearchPolicy(
+                        depth=ResearchDepth.MODERATE,
+                        minimum_source_count=3,
+                    ),
+                    cta_policy=CTAPolicy.DIRECT,
+                    quality_thresholds={
+                        "audience_fit": 50,
+                        "visual_opportunity_density": 60,
+                    },
+                    scene_density_per_minute=8.0,
+                    average_visual_duration_seconds=5.0,
+                    b_roll_density=DirectiveIntensity.HIGH,
+                    establishing_shot_policy="frequent",
                 ),
                 tags=[
                     "travel",
@@ -540,6 +939,38 @@ class GenreProfileRegistryService:
                     keyword_style="ranked_keywords",
                     hashtag_style="list_discovery",
                     call_to_action_style=("ask_favorite_item"),
+                ),
+                content_intelligence=GenreContentIntelligenceProfile(
+                    preferred_angle_styles=[
+                        "question_driven",
+                        "chronological",
+                    ],
+                    narrative_architecture_hint=(
+                        "Strong promise -> ranking setup -> #10 -> "
+                        "escalating entries -> pattern interrupts -> "
+                        "increasingly strong entries -> #1 payoff -> "
+                        "conclusion."
+                    ),
+                    pacing_curve=_oscillating_pacing_curve(),
+                    preferred_hook_archetypes=[
+                        HookArchetype.RANKED_LIST_PROMISE,
+                        HookArchetype.FUTURE_PAYOFF,
+                    ],
+                    hook_intensity=DirectiveIntensity.HIGH,
+                    reveal_density_per_minute=4.0,
+                    pattern_interrupt_frequency=DirectiveIntensity.HIGH,
+                    research_policy=ResearchPolicy(
+                        depth=ResearchDepth.MODERATE,
+                        minimum_source_count=3,
+                    ),
+                    cta_policy=CTAPolicy.DIRECT,
+                    quality_thresholds={
+                        "retention_architecture": 55,
+                        "hook_strength": 55,
+                    },
+                    scene_density_per_minute=10.0,
+                    average_visual_duration_seconds=5.0,
+                    b_roll_density=DirectiveIntensity.HIGH,
                 ),
                 tags=[
                     "top10",
@@ -603,6 +1034,47 @@ class GenreProfileRegistryService:
                     hashtag_style="storytelling",
                     call_to_action_style=("emotional_question"),
                 ),
+                content_intelligence=GenreContentIntelligenceProfile(
+                    preferred_angle_styles=[
+                        "character_pov",
+                        "emotional",
+                        "revelation_driven",
+                    ],
+                    narrative_architecture_hint=(
+                        "Emotional conflict -> relationship context -> small "
+                        "conflict -> escalation -> betrayal/humiliation -> "
+                        "backstory -> confrontation -> revelation -> "
+                        "emotional payoff -> resolution."
+                    ),
+                    pacing_curve=_back_loaded_pacing_curve(),
+                    preferred_hook_archetypes=[
+                        HookArchetype.EMOTIONAL_CONFLICT,
+                        HookArchetype.DISTURBING_EVENT,
+                        HookArchetype.UNANSWERED_QUESTION,
+                    ],
+                    hook_intensity=DirectiveIntensity.HIGH,
+                    reveal_density_per_minute=2.5,
+                    research_policy=ResearchPolicy(
+                        depth=ResearchDepth.LOW,
+                        minimum_source_count=0,
+                        uncertain_information_policy=(
+                            UncertainInformationPolicy.USE_FREELY
+                        ),
+                    ),
+                    cta_policy=CTAPolicy.SOFT,
+                    quality_thresholds={
+                        "emotional_progression": 60,
+                        "character_depth": 55,
+                        "payoff_strength": 55,
+                    },
+                    character_policy=CharacterPolicy(
+                        requires_protagonist=True,
+                        requires_antagonist_or_conflict=True,
+                        allow_dialogue=True,
+                        maximum_character_count=5,
+                    ),
+                    scene_density_per_minute=6.5,
+                ),
                 tags=[
                     "storytelling",
                     "emotional",
@@ -658,6 +1130,47 @@ class GenreProfileRegistryService:
                     description_style="factual_overview",
                     keyword_style="topic_authority",
                     hashtag_style="informative",
+                ),
+                content_intelligence=GenreContentIntelligenceProfile(
+                    preferred_angle_styles=[
+                        "documentary",
+                        "question_driven",
+                    ],
+                    narrative_architecture_hint=(
+                        "Central question -> context -> evidence -> "
+                        "development -> caveats/uncertainty -> practical "
+                        "takeaway -> conclusion."
+                    ),
+                    pacing_curve=_even_pacing_curve(),
+                    preferred_hook_archetypes=[
+                        HookArchetype.SHOCKING_FACT,
+                        HookArchetype.CONTRADICTION,
+                    ],
+                    forbidden_hook_archetypes=[
+                        HookArchetype.RANKED_LIST_PROMISE,
+                        HookArchetype.TRANSFORMATION,
+                    ],
+                    hook_intensity=DirectiveIntensity.LOW,
+                    reveal_density_per_minute=1.2,
+                    recap_policy=RecapPolicy.BRIEF,
+                    research_policy=ResearchPolicy(
+                        depth=ResearchDepth.VERY_HIGH,
+                        minimum_source_count=6,
+                        requires_primary_sources=True,
+                        uncertain_information_policy=(
+                            UncertainInformationPolicy.EXCLUDE
+                        ),
+                        conflicting_source_policy=(
+                            ConflictingSourcePolicy.FLAG_CONTROVERSY
+                        ),
+                    ),
+                    cta_policy=CTAPolicy.SOFT,
+                    quality_thresholds={
+                        "factual_confidence": 75,
+                        "research_grounding": 70,
+                    },
+                    scene_density_per_minute=4.0,
+                    average_visual_duration_seconds=9.0,
                 ),
                 tags=[
                     "medical",
@@ -725,6 +1238,50 @@ class GenreProfileRegistryService:
                     keyword_style="curiosity_driven",
                     hashtag_style="mystery",
                 ),
+                content_intelligence=GenreContentIntelligenceProfile(
+                    preferred_angle_styles=[
+                        "mystery",
+                        "investigation",
+                        "revelation_driven",
+                        "question_driven",
+                    ],
+                    narrative_architecture_hint=(
+                        "Mystery -> known facts -> contradiction -> evidence "
+                        "-> new question -> hidden connection -> major "
+                        "reveal -> counterargument -> evidence evaluation -> "
+                        "conclusion."
+                    ),
+                    pacing_curve=_back_loaded_pacing_curve(),
+                    preferred_hook_archetypes=[
+                        HookArchetype.MYSTERY,
+                        HookArchetype.CONTRADICTION,
+                        HookArchetype.UNANSWERED_QUESTION,
+                    ],
+                    forbidden_hook_archetypes=[
+                        HookArchetype.RANKED_LIST_PROMISE,
+                    ],
+                    hook_intensity=DirectiveIntensity.HIGH,
+                    reveal_density_per_minute=3.0,
+                    pattern_interrupt_frequency=DirectiveIntensity.MEDIUM,
+                    recap_policy=RecapPolicy.BRIEF,
+                    research_policy=ResearchPolicy(
+                        depth=ResearchDepth.HIGH,
+                        minimum_source_count=4,
+                        requires_primary_sources=True,
+                    ),
+                    cta_policy=CTAPolicy.SOFT,
+                    forbidden_cta_positions=["climax"],
+                    quality_thresholds={
+                        "factual_confidence": 55,
+                        "retention_architecture": 60,
+                        "hook_strength": 55,
+                    },
+                    character_policy=CharacterPolicy(
+                        allow_dialogue=False,
+                        maximum_character_count=3,
+                    ),
+                    scene_density_per_minute=6.5,
+                ),
                 tags=[
                     "mystery",
                     "suspense",
@@ -783,6 +1340,39 @@ class GenreProfileRegistryService:
                     description_style="conversational",
                     keyword_style="trending",
                     hashtag_style="trending",
+                ),
+                content_intelligence=GenreContentIntelligenceProfile(
+                    preferred_angle_styles=[
+                        "character_pov",
+                        "question_driven",
+                    ],
+                    narrative_architecture_hint=(
+                        "Cold open reaction -> commentary context -> "
+                        "escalating reactions -> pattern interrupts -> "
+                        "capstone reaction -> wrap-up."
+                    ),
+                    pacing_curve=_oscillating_pacing_curve(),
+                    preferred_hook_archetypes=[
+                        HookArchetype.DRAMATIC_MOMENT,
+                        HookArchetype.COLD_OPEN,
+                    ],
+                    hook_intensity=DirectiveIntensity.HIGH,
+                    reveal_density_per_minute=3.5,
+                    pattern_interrupt_frequency=DirectiveIntensity.HIGH,
+                    research_policy=ResearchPolicy(
+                        depth=ResearchDepth.LOW,
+                        minimum_source_count=0,
+                        uncertain_information_policy=(
+                            UncertainInformationPolicy.USE_FREELY
+                        ),
+                    ),
+                    cta_policy=CTAPolicy.DIRECT,
+                    quality_thresholds={
+                        "audience_fit": 45,
+                        "hook_strength": 45,
+                    },
+                    scene_density_per_minute=9.0,
+                    average_visual_duration_seconds=4.5,
                 ),
                 tags=[
                     "reaction",
@@ -848,6 +1438,42 @@ class GenreProfileRegistryService:
                     description_style="urgent_practical",
                     keyword_style="practical_howto",
                     hashtag_style="survival",
+                ),
+                content_intelligence=GenreContentIntelligenceProfile(
+                    preferred_angle_styles=[
+                        "character_pov",
+                        "chronological",
+                        "revelation_driven",
+                    ],
+                    narrative_architecture_hint=(
+                        "Disturbance/threat -> stakes established -> "
+                        "practical response -> escalation -> setback -> "
+                        "adaptation -> resolution -> lesson/aftermath."
+                    ),
+                    pacing_curve=_back_loaded_pacing_curve(),
+                    preferred_hook_archetypes=[
+                        HookArchetype.DISTURBING_EVENT,
+                        HookArchetype.DRAMATIC_MOMENT,
+                        HookArchetype.FUTURE_PAYOFF,
+                    ],
+                    hook_intensity=DirectiveIntensity.HIGH,
+                    reveal_density_per_minute=2.0,
+                    research_policy=ResearchPolicy(
+                        depth=ResearchDepth.MODERATE,
+                        minimum_source_count=3,
+                    ),
+                    cta_policy=CTAPolicy.SOFT,
+                    quality_thresholds={
+                        "retention_architecture": 50,
+                        "emotional_progression": 50,
+                    },
+                    character_policy=CharacterPolicy(
+                        requires_protagonist=True,
+                        requires_antagonist_or_conflict=True,
+                        allow_dialogue=False,
+                        maximum_character_count=3,
+                    ),
+                    scene_density_per_minute=6.5,
                 ),
                 tags=[
                     "survival",
