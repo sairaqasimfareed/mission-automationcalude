@@ -31,6 +31,7 @@ from src.services.retention_audit_service import RetentionAuditService
 from src.services.script_generation_service import ScriptGenerationService
 from src.services.script_quality_gate_service import ScriptQualityGateService
 from src.services.script_revision_service import ScriptRevisionService
+from src.services.script_version_service import ScriptVersionService
 from src.services.story_angle_evaluation_service import (
     StoryAngleEvaluationService,
     select_winning_evaluation,
@@ -149,6 +150,7 @@ class ContentIntelligencePipeline:
             estimated_cost_usd=estimated_cost_usd,
         )
         self.scene_planner = ScenePlannerAgent()
+        self.script_version_service = ScriptVersionService()
 
     def resolve_editorial_profile(self, job: VideoJob) -> EditorialProfile:
         """
@@ -398,6 +400,10 @@ class ContentIntelligencePipeline:
         )
 
         job.generated_script = self.narrative_compression_service.compress(script)
+        job.script_version_history = self.script_version_service.start_history(
+            topic=job.topic,
+            script=job.generated_script,
+        )
 
         return job
 
@@ -457,10 +463,20 @@ class ContentIntelligencePipeline:
                 "editorial critique."
             )
 
+        critique = job.editorial_critique
+
         job.generated_script = self.script_revision_service.revise(
             script=job.generated_script,
-            critique=job.editorial_critique,
+            critique=critique,
         )
+
+        if job.script_version_history is not None:
+            job.script_version_history = self.script_version_service.add_revision(
+                history=job.script_version_history,
+                revised_script=job.generated_script,
+                critique=critique,
+            )
+
         job.editorial_critique = None
         job.script_quality_report = None
 
@@ -546,6 +562,18 @@ class ContentIntelligencePipeline:
             job = self.run_revision(job)
             job = self.run_editorial_critique(job)
             job = self.run_quality_gate(job)
+
+        approved = (
+            job.script_quality_report is not None
+            and job.script_quality_report.status
+            == ScriptQualityStatus.APPROVED_FOR_PRODUCTION
+        )
+
+        if approved and job.script_version_history is not None:
+            job.script_version_history = self.script_version_service.lock_version(
+                history=job.script_version_history,
+                version_number=job.script_version_history.current_version.version_number,
+            )
 
         job = self.run_packaging_hypothesis(job)
         job = self.run_scene_planning(job)

@@ -162,6 +162,35 @@ def test_running_stages_in_order_reaches_a_generated_script(
     assert job.packaging_hypothesis is not None
     assert len(job.scenes) > 0
     assert not job.errors
+    assert job.script_version_history is not None
+    assert job.script_version_history.current_version.version_number == 1
+
+
+def test_toggling_the_script_version_lock_flips_its_state(qapp: QApplication) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view._handle_run_ci_stage("audience_promise")
+    view._handle_run_ci_stage("research_plan")
+    view._handle_run_ci_stage("research")
+    view._handle_run_ci_stage("story_angles")
+    view._handle_run_ci_stage("narrative_architecture")
+    view._handle_run_ci_stage("hooks")
+    view._handle_run_ci_stage("script")
+
+    assert job.script_version_history is not None
+    assert job.script_version_history.is_locked is False
+
+    view._handle_toggle_script_version_lock()
+    assert job.script_version_history.is_locked is True
+
+    view._handle_toggle_script_version_lock()
+    assert job.script_version_history.is_locked is False
 
 
 def test_running_a_stage_out_of_order_records_an_error_not_a_crash(

@@ -573,6 +573,8 @@ class ContentStudioView(QWidget):
         return True
 
     def _render_revision_panel(self, layout: QVBoxLayout, job: VideoJob) -> bool:
+        self._render_script_version_history(layout, job)
+
         critique = job.editorial_critique
 
         if critique is None or not critique.findings:
@@ -580,6 +582,18 @@ class ContentStudioView(QWidget):
                 small_muted(
                     "Nothing to revise - run the editorial critique first and "
                     "confirm it raised at least one finding."
+                )
+            )
+
+            return False
+
+        history = job.script_version_history
+
+        if history is not None and history.is_locked:
+            layout.addWidget(
+                small_muted(
+                    f"Version {history.current_version.version_number} is "
+                    "locked - unlock it above before revising."
                 )
             )
 
@@ -594,6 +608,35 @@ class ContentStudioView(QWidget):
         )
 
         return True
+
+    def _render_script_version_history(
+        self, layout: QVBoxLayout, job: VideoJob
+    ) -> None:
+        history = job.script_version_history
+
+        if history is None:
+            return
+
+        layout.addWidget(badge(f"{len(history.versions)} version(s)"))
+
+        for version in sorted(history.versions, key=lambda v: v.version_number):
+            change = version.change_class.value if version.change_class else "initial"
+            lock_tag = " [locked]" if version.locked else ""
+            layout.addWidget(
+                small_muted(
+                    f"v{version.version_number} [{change}]{lock_tag}: "
+                    f"{version.change_summary}"
+                )
+            )
+
+        current = history.current_version
+        lock_button = button(
+            "Unlock current version" if current.locked else "Lock current version",
+            variant="ghost",
+        )
+        lock_button.clicked.connect(self._handle_toggle_script_version_lock)
+        layout.addWidget(lock_button, alignment=_LEFT)
+        layout.addWidget(separator())
 
     def _render_packaging_hypothesis_panel(
         self, layout: QVBoxLayout, job: VideoJob
@@ -698,6 +741,32 @@ class ContentStudioView(QWidget):
             runners[stage_key](job)
         except (RuntimeError, ValueError) as error:
             self._record_error(job, f"Content Intelligence stage failed: {error}")
+
+            return
+
+        self._on_change()
+
+    def _handle_toggle_script_version_lock(self) -> None:
+        job = self._current_job()
+
+        if job is None or job.script_version_history is None:
+            return
+
+        history = job.script_version_history
+        current = history.current_version
+        service = self._content_intelligence_pipeline.script_version_service
+
+        try:
+            if current.locked:
+                job.script_version_history = service.unlock_version(
+                    history=history, version_number=current.version_number
+                )
+            else:
+                job.script_version_history = service.lock_version(
+                    history=history, version_number=current.version_number
+                )
+        except ValueError as error:
+            self._record_error(job, f"Could not update script version lock: {error}")
 
             return
 

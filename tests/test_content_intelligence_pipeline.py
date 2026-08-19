@@ -321,6 +321,15 @@ def test_run_revision_clears_the_stale_critique_and_quality_report() -> None:
     assert job.script_quality_report is None
     assert job.generated_script is not None
 
+    # The blocking finding above scored narrative_coherence - a
+    # narrative-dimension finding - so the new version should be
+    # classified NARRATIVE, appended as version 2 with version 1 as
+    # its parent.
+    assert job.script_version_history is not None
+    assert job.script_version_history.current_version.version_number == 2
+    assert job.script_version_history.current_version.parent_version_number == 1
+    assert job.script_version_history.current_version.change_class.value == "narrative"
+
 
 def test_run_packaging_hypothesis_requires_script_and_hook() -> None:
     pipeline, _ = _pipeline()
@@ -343,6 +352,32 @@ def test_run_packaging_hypothesis_produces_title_territories() -> None:
     assert job.packaging_hypothesis is not None
     assert len(job.packaging_hypothesis.title_territories) > 0
     assert job.packaging_hypothesis.genre_id == "genre.mystery"
+
+
+def test_run_script_starts_a_version_history() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_audience_promise(_job())
+    job = pipeline.run_research(job)
+    job = pipeline.run_story_angles(job)
+    job = pipeline.run_narrative_architecture(job)
+    job = pipeline.run_hooks(job)
+    job = pipeline.run_script(job)
+
+    assert job.script_version_history is not None
+    assert job.script_version_history.current_version.version_number == 1
+    assert job.script_version_history.current_version.change_class is None
+
+
+def test_run_all_locks_the_approved_version() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_all(_job())
+
+    assert job.script_version_history is not None
+    assert job.script_quality_report is not None
+    assert job.script_quality_report.status.value == "approved_for_production"
+    assert job.script_version_history.is_locked is True
 
 
 def test_run_scene_planning_requires_a_generated_script() -> None:

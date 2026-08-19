@@ -37,6 +37,7 @@ from src.models.retention_audit import RetentionAuditReport
 from src.models.scene import Scene
 from src.models.script import Script, ScriptStatus
 from src.models.script_quality_report import ScriptQualityReport
+from src.models.script_version import ScriptVersionHistory
 from src.models.story_angle import StoryAngle, StoryAngleEvaluation
 from src.models.story_blueprint import StoryBlueprint
 from src.models.video_clip import VideoClip
@@ -113,6 +114,7 @@ class VideoJob(MissionBaseModel):
     editorial_critique: EditorialCritique | None = None
     script_quality_report: ScriptQualityReport | None = None
     packaging_hypothesis: PackagingHypothesis | None = None
+    script_version_history: ScriptVersionHistory | None = None
 
     content_decisions: list[ContentDecisionRecord] = Field(default_factory=list)
 
