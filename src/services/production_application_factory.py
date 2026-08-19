@@ -108,6 +108,12 @@ class ProductionApplicationRuntime:
 
     genre_timeline_service: GenreTimelinePipelineService
 
+    voice_directive_generation_service: GenreVoiceDirectiveGenerationService
+
+    music_generation_service: MusicGenerationService | None
+
+    sound_effect_generation_service: SoundEffectGenerationService | None
+
     render_stage_factory: RenderWorkflowStageFactory
 
     render_runtime_factory: ProjectRenderRuntimeFactory
@@ -442,6 +448,9 @@ class ProductionApplicationFactory:
             voice_timeline_service=(voice_timeline_service),
             asset_workflow_service=(self._asset_workflow_service),
             genre_timeline_service=(self._genre_timeline_service),
+            voice_directive_generation_service=(voice_directive_generation_service),
+            music_generation_service=music_generation_service,
+            sound_effect_generation_service=(sound_effect_generation_service),
             render_stage_factory=(render_stage_factory),
             render_runtime_factory=(render_runtime_factory),
             content_intelligence_pipeline=(content_intelligence_pipeline),

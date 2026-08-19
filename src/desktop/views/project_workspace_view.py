@@ -19,6 +19,7 @@ from src.models.video_job import VideoJob
 from src.services.content_intelligence_pipeline import ContentIntelligencePipeline
 from src.services.content_pipeline import ContentPipeline
 from src.services.final_export.final_export_service import FinalExportService
+from src.services.media_generation_pipeline import MediaGenerationPipeline
 from src.services.project_render_runtime_factory import ProjectRenderRuntimeFactory
 from src.services.scene_asset_workflow_service import SceneAssetWorkflowService
 from src.services.seo.seo_package_service import SEOPackageService
@@ -60,6 +61,7 @@ class ProjectWorkspaceView(QWidget):
         content_intelligence_pipeline: ContentIntelligencePipeline,
         render_runtime_factory: ProjectRenderRuntimeFactory,
         asset_workflow_service: SceneAssetWorkflowService,
+        media_generation_pipeline: MediaGenerationPipeline,
         final_export_service: FinalExportService,
         seo_package_service: SEOPackageService,
         thumbnail_package_service: ThumbnailPackageService,
@@ -105,6 +107,7 @@ class ProjectWorkspaceView(QWidget):
         )
         self.production_audio = ProductionAudioView(
             job_store=job_store,
+            media_generation_pipeline=media_generation_pipeline,
             on_change=self.refresh,
         )
         self.editing_timeline = EditingTimelineView(

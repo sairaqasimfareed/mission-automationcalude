@@ -3,36 +3,40 @@ from __future__ import annotations
 from collections.abc import Callable
 from uuid import UUID
 
-from PySide6.QtWidgets import QFrame, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QFrame, QMessageBox, QScrollArea, QVBoxLayout, QWidget
 
 from src.desktop.job_store import JobStore
-from src.desktop.widgets import badge, card, muted, small_muted, subheading
+from src.desktop.widgets import badge, button, card, muted, small_muted, subheading
 from src.models.audio_track import AudioTrack, AudioTrackType
 from src.models.video_job import VideoJob
+from src.services.media_generation_pipeline import MediaGenerationPipeline
+
+_LEFT = Qt.AlignmentFlag.AlignLeft
 
 
 class ProductionAudioView(QWidget):
     """
-    Production Audio: voiceover status and the resolved audio timeline
-    (voiceover, background music, sound effects).
+    Production Audio: standalone voice/timeline/music/sound-effect
+    generation, plus a review of the resulting audio timeline.
 
-    Voice generation currently runs as one of RenderOrchestratorService's
-    registered pipeline stages inside a single render call - there is
-    no standalone "generate voice only" trigger in the backend yet, so
-    this workspace reviews what the render produced rather than
-    offering its own generation button (the Render Workspace triggers
-    the render that produces this).
+    Each stage below calls MediaGenerationPipeline directly - the same
+    underlying services RenderOrchestratorService's Voice/Music/
+    SoundEffect pipeline stages call internally during a full render,
+    just callable one at a time without running an entire render.
     """
 
     def __init__(
         self,
         *,
         job_store: JobStore,
+        media_generation_pipeline: MediaGenerationPipeline,
         on_change: Callable[[], None],
     ) -> None:
         super().__init__()
 
         self._job_store = job_store
+        self._media_generation_pipeline = media_generation_pipeline
         self._on_change = on_change
         self._job_id: UUID | None = None
 
@@ -66,8 +70,50 @@ class ProductionAudioView(QWidget):
             if widget is not None:
                 widget.deleteLater()
 
+        self._build_generation_card(job)
         self._build_voice_card(job)
         self._build_timeline_card(job)
+
+    def _build_generation_card(self, job: VideoJob) -> None:
+        frame, layout = card("Media generation", icon_name="audio")
+
+        layout.addWidget(
+            small_muted(
+                "Generate narration, build the editing timeline, then add "
+                "background music and sound effects - each step runs on its "
+                "own, without a full render."
+            )
+        )
+
+        voice_button = button(
+            "Generate voiceover", variant="primary", icon_name="audio"
+        )
+        voice_button.setEnabled(bool(job.scenes))
+        voice_button.clicked.connect(self._handle_run_voice)
+        layout.addWidget(voice_button, alignment=_LEFT)
+
+        timeline_button = button(
+            "Build editing timeline", variant="primary", icon_name="clapper"
+        )
+        timeline_button.setEnabled(bool(job.scenes) and bool(job.video_clips))
+        timeline_button.clicked.connect(self._handle_run_timeline)
+        layout.addWidget(timeline_button, alignment=_LEFT)
+
+        music_button = button(
+            "Generate background music", variant="primary", icon_name="audio"
+        )
+        music_button.setEnabled(job.video_timeline is not None)
+        music_button.clicked.connect(self._handle_run_music)
+        layout.addWidget(music_button, alignment=_LEFT)
+
+        sound_effect_button = button(
+            "Generate sound effects", variant="primary", icon_name="audio"
+        )
+        sound_effect_button.setEnabled(job.video_timeline is not None)
+        sound_effect_button.clicked.connect(self._handle_run_sound_effects)
+        layout.addWidget(sound_effect_button, alignment=_LEFT)
+
+        self._layout.addWidget(frame)
 
     def _build_voice_card(self, job: VideoJob) -> None:
         frame, layout = card("Voiceover", icon_name="audio")
@@ -84,8 +130,8 @@ class ProductionAudioView(QWidget):
         else:
             layout.addWidget(
                 small_muted(
-                    "No voiceover file yet - run render in the Render "
-                    "Workspace to generate it."
+                    "No voiceover file yet - use Generate voiceover above, or "
+                    "run render in the Render Workspace."
                 )
             )
 
@@ -175,3 +221,46 @@ class ProductionAudioView(QWidget):
             ]
 
         return " · ".join(parts) if parts else None
+
+    def _handle_run_voice(self) -> None:
+        self._run_stage(self._media_generation_pipeline.run_voice, "Voice generation")
+
+    def _handle_run_timeline(self) -> None:
+        self._run_stage(
+            self._media_generation_pipeline.run_timeline, "Timeline generation"
+        )
+
+    def _handle_run_music(self) -> None:
+        self._run_stage(self._media_generation_pipeline.run_music, "Music generation")
+
+    def _handle_run_sound_effects(self) -> None:
+        self._run_stage(
+            self._media_generation_pipeline.run_sound_effects,
+            "Sound effect generation",
+        )
+
+    def _run_stage(self, stage: Callable[[VideoJob], VideoJob], label: str) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        try:
+            stage(job)
+        except (RuntimeError, ValueError) as error:
+            self._record_error(job, f"{label} failed: {error}")
+
+            return
+
+        self._on_change()
+
+    def _current_job(self) -> VideoJob | None:
+        if self._job_id is None:
+            return None
+
+        return self._job_store.get(self._job_id)
+
+    def _record_error(self, job: VideoJob, message: str) -> None:
+        job.errors.append(message)
+        QMessageBox.warning(self, "Step failed", message)
+        self._on_change()

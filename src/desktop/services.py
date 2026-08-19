@@ -15,6 +15,7 @@ from src.services.content_intelligence_pipeline import ContentIntelligencePipeli
 from src.services.content_pipeline import ContentPipeline
 from src.services.factory.provider_adapter_factory import ProviderAdapterFactory
 from src.services.final_export.final_export_service import FinalExportService
+from src.services.media_generation_pipeline import MediaGenerationPipeline
 from src.services.pipeline_checkpoint_storage_service import (
     PipelineCheckpointStorageService,
 )
@@ -214,6 +215,28 @@ def get_asset_workflow_service() -> SceneAssetWorkflowService:
     """
 
     return get_production_runtime().asset_workflow_service
+
+
+@lru_cache
+def get_media_generation_pipeline() -> MediaGenerationPipeline:
+    """
+    Return the shared standalone voice/timeline/music/sound-effect
+    generation pipeline - the same underlying services the render
+    pipeline's Voice/Music/SoundEffect stages call, callable one stage
+    at a time outside a full render.
+    """
+
+    runtime = get_production_runtime()
+
+    return MediaGenerationPipeline(
+        voice_directive_generation_service=runtime.voice_directive_generation_service,
+        voice_resolution_runtime=runtime.voice_resolution_runtime,
+        voice_generation_service=runtime.voice_generation_service,
+        voice_timeline_service=runtime.voice_timeline_service,
+        genre_timeline_service=runtime.genre_timeline_service,
+        music_generation_service=runtime.music_generation_service,
+        sound_effect_generation_service=runtime.sound_effect_generation_service,
+    )
 
 
 @lru_cache
