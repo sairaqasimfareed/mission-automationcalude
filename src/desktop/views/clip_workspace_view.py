@@ -6,6 +6,7 @@ from uuid import UUID
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QFileDialog,
     QFrame,
     QMessageBox,
@@ -22,12 +23,13 @@ from src.desktop.widgets import (
     muted,
     small_muted,
     status_label,
-    subheading,
 )
 from src.models.bulk_clip_ingestion import BulkClipIngestionEntryStatus
+from src.models.bulk_stock_assignment import BulkStockAssignmentEntryStatus
 from src.models.video_clip import VideoClip
 from src.models.video_job import VideoJob
 from src.services.bulk_clip_ingestion_service import BulkClipIngestionService
+from src.services.bulk_stock_assignment_service import BulkStockAssignmentService
 from src.services.scene_asset_workflow_service import SceneAssetWorkflowService
 from src.services.scene_prompt_export_service import ScenePromptExportService
 
@@ -68,9 +70,13 @@ class ClipWorkspaceView(QWidget):
         self._job_store = job_store
         self._on_change = on_change
         self._job_id: UUID | None = None
+        self._selected_scene_numbers: set[int] = set()
 
         self._prompt_export_service = ScenePromptExportService()
         self._bulk_ingestion_service = BulkClipIngestionService(
+            asset_workflow_service=asset_workflow_service
+        )
+        self._bulk_stock_assignment_service = BulkStockAssignmentService(
             asset_workflow_service=asset_workflow_service
         )
 
@@ -147,6 +153,27 @@ class ClipWorkspaceView(QWidget):
 
             return
 
+        valid_scene_numbers = {scene.scene_number for scene in job.scenes}
+        self._selected_scene_numbers &= valid_scene_numbers
+
+        layout.addWidget(
+            small_muted(
+                "Check scenes below, then bulk-assign stock footage to all of "
+                "them at once - the top-ranked search result is auto-selected "
+                "per scene, the same as picking the first result manually."
+            )
+        )
+
+        bulk_assign_button = button(
+            f"Assign stock footage to {len(self._selected_scene_numbers)} "
+            "selected scene(s)",
+            variant="primary",
+            icon_name="clapper",
+        )
+        bulk_assign_button.setEnabled(bool(self._selected_scene_numbers))
+        bulk_assign_button.clicked.connect(self._handle_bulk_assign_stock)
+        layout.addWidget(bulk_assign_button, alignment=_LEFT)
+
         clips_by_scene = {clip.scene_number: clip for clip in job.video_clips}
 
         for scene in job.scenes:
@@ -157,12 +184,19 @@ class ClipWorkspaceView(QWidget):
             row_layout.setContentsMargins(12, 8, 12, 8)
             row_layout.setSpacing(4)
 
-            row_layout.addWidget(
-                subheading(
-                    f"#{scene.scene_number} {scene.title} "
-                    f"({scene.estimated_duration_seconds}s planned)"
+            select_checkbox = QCheckBox(
+                f"#{scene.scene_number} {scene.title} "
+                f"({scene.estimated_duration_seconds}s planned)"
+            )
+            select_checkbox.setChecked(
+                scene.scene_number in self._selected_scene_numbers
+            )
+            select_checkbox.toggled.connect(
+                lambda checked, number=scene.scene_number: (
+                    self._handle_toggle_scene_selection(number, checked)
                 )
             )
+            row_layout.addWidget(select_checkbox)
             row_layout.addWidget(small_muted(scene.narration))
 
             clip = clips_by_scene.get(scene.scene_number)
@@ -303,6 +337,57 @@ class ClipWorkspaceView(QWidget):
         QMessageBox.information(
             self, "Bulk ingestion complete", "\n".join(summary_lines)
         )
+        self._on_change()
+
+    def _handle_toggle_scene_selection(self, scene_number: int, checked: bool) -> None:
+        if checked:
+            self._selected_scene_numbers.add(scene_number)
+        else:
+            self._selected_scene_numbers.discard(scene_number)
+
+        job = self._current_job()
+
+        if job is not None:
+            self.refresh(job)
+
+    def _handle_bulk_assign_stock(self) -> None:
+        job = self._current_job()
+
+        if job is None or not self._selected_scene_numbers:
+            return
+
+        scene_numbers = sorted(self._selected_scene_numbers)
+
+        try:
+            result = self._bulk_stock_assignment_service.assign(
+                job=job, scene_numbers=scene_numbers
+            )
+        except ValueError as error:
+            self._record_error(job, f"Bulk stock assignment failed: {error}")
+
+            return
+
+        summary_lines = [
+            f"Assigned: {result.assigned_count}",
+            f"Not assigned: {result.failed_count}",
+        ]
+
+        problem_entries = [
+            f"- Scene {entry.scene_number}: {entry.detail}"
+            for entry in result.entries
+            if entry.status != BulkStockAssignmentEntryStatus.ASSIGNED
+        ]
+
+        if problem_entries:
+            summary_lines.append("")
+            summary_lines.append("Issues:")
+            summary_lines.extend(problem_entries)
+
+        QMessageBox.information(
+            self, "Bulk stock assignment complete", "\n".join(summary_lines)
+        )
+
+        self._selected_scene_numbers.clear()
         self._on_change()
 
     def _current_job(self) -> VideoJob | None:
