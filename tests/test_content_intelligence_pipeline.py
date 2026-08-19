@@ -322,6 +322,29 @@ def test_run_revision_clears_the_stale_critique_and_quality_report() -> None:
     assert job.generated_script is not None
 
 
+def test_run_packaging_hypothesis_requires_script_and_hook() -> None:
+    pipeline, _ = _pipeline()
+
+    with pytest.raises(RuntimeError, match="requires a generated script"):
+        pipeline.run_packaging_hypothesis(_job())
+
+
+def test_run_packaging_hypothesis_produces_title_territories() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_audience_promise(_job())
+    job = pipeline.run_research(job)
+    job = pipeline.run_story_angles(job)
+    job = pipeline.run_narrative_architecture(job)
+    job = pipeline.run_hooks(job)
+    job = pipeline.run_script(job)
+    job = pipeline.run_packaging_hypothesis(job)
+
+    assert job.packaging_hypothesis is not None
+    assert len(job.packaging_hypothesis.title_territories) > 0
+    assert job.packaging_hypothesis.genre_id == "genre.mystery"
+
+
 def test_run_all_produces_a_complete_and_quality_gated_script() -> None:
     pipeline, stub = _pipeline()
 
@@ -338,6 +361,7 @@ def test_run_all_produces_a_complete_and_quality_gated_script() -> None:
     assert job.generated_script.genre_id == "genre.mystery"
     assert job.editorial_critique is not None
     assert job.script_quality_report is not None
+    assert job.packaging_hypothesis is not None
 
     # Every stage's genre-specific prompt content actually reached the
     # LLM - confirms the pipeline threads editorial_profile through,

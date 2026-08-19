@@ -26,6 +26,7 @@ from src.models.media_strategy import (
     VoiceStrategy,
 )
 from src.models.originality import OriginalityResult
+from src.models.packaging_hypothesis import PackagingHypothesis
 from src.models.policy import PolicyComplianceReport
 from src.models.re_hook import ReHookPlan
 from src.models.render_result import RenderResult
@@ -99,6 +100,7 @@ class VideoJob(MissionBaseModel):
     generated_script: GeneratedScript | None = None
     editorial_critique: EditorialCritique | None = None
     script_quality_report: ScriptQualityReport | None = None
+    packaging_hypothesis: PackagingHypothesis | None = None
 
     content_decisions: list[ContentDecisionRecord] = Field(default_factory=list)
 

@@ -57,6 +57,7 @@ _CI_STAGES: list[tuple[str, str]] = [
     ("editorial_critique", "Editorial critique"),
     ("quality_gate", "Quality gate"),
     ("revision", "Revision"),
+    ("packaging_hypothesis", "Packaging hypothesis"),
 ]
 
 
@@ -223,6 +224,7 @@ class ContentStudioView(QWidget):
             "editorial_critique": self._render_editorial_critique_panel,
             "quality_gate": self._render_quality_gate_panel,
             "revision": self._render_revision_panel,
+            "packaging_hypothesis": self._render_packaging_hypothesis_panel,
         }
 
         can_run = builders[stage_key](layout, job)
@@ -547,6 +549,46 @@ class ContentStudioView(QWidget):
 
         return True
 
+    def _render_packaging_hypothesis_panel(
+        self, layout: QVBoxLayout, job: VideoJob
+    ) -> bool:
+        hypothesis = job.packaging_hypothesis
+
+        if hypothesis is None:
+            can_run = job.generated_script is not None and job.selected_hook is not None
+            layout.addWidget(
+                small_muted(
+                    "Not started."
+                    if can_run
+                    else "Requires a generated script and a selected hook first."
+                )
+            )
+
+            return can_run
+
+        layout.addWidget(muted(f"Viewer promise: {hypothesis.viewer_promise}"))
+        layout.addWidget(
+            small_muted(
+                "Title territories: " + " | ".join(hypothesis.title_territories)
+            )
+        )
+        layout.addWidget(
+            small_muted(
+                "Thumbnail concepts: " + " | ".join(hypothesis.thumbnail_concepts)
+            )
+        )
+        layout.addWidget(
+            small_muted(f"Curiosity mechanism: {hypothesis.curiosity_mechanism}")
+        )
+        layout.addWidget(
+            small_muted(f"Expected emotion: {hypothesis.expected_emotion}")
+        )
+        layout.addWidget(
+            small_muted(f"Differentiation angle: {hypothesis.differentiation_angle}")
+        )
+
+        return True
+
     def _handle_select_ci_stage(self, index: int) -> None:
         self._selected_ci_stage_index = index
         job = self._current_job()
@@ -576,6 +618,9 @@ class ContentStudioView(QWidget):
             ),
             "quality_gate": self._content_intelligence_pipeline.run_quality_gate,
             "revision": self._content_intelligence_pipeline.run_revision,
+            "packaging_hypothesis": (
+                self._content_intelligence_pipeline.run_packaging_hypothesis
+            ),
         }
 
         try:

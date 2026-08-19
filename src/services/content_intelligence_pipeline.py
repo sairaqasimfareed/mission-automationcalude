@@ -23,6 +23,7 @@ from src.services.information_reveal_planning_service import (
 )
 from src.services.llm.llm_service import LLMService
 from src.services.narrative_compression_service import NarrativeCompressionService
+from src.services.packaging_hypothesis_service import PackagingHypothesisService
 from src.services.re_hook_planning_service import ReHookPlanningService
 from src.services.research_planning_service import ResearchPlanningService
 from src.services.retention_audit_service import RetentionAuditService
@@ -141,6 +142,11 @@ class ContentIntelligencePipeline:
             estimated_cost_usd=estimated_cost_usd,
         )
         self.script_quality_gate_service = ScriptQualityGateService()
+        self.packaging_hypothesis_service = PackagingHypothesisService(
+            llm_service=llm_service,
+            profile_ids=profile_ids,
+            estimated_cost_usd=estimated_cost_usd,
+        )
 
     def resolve_editorial_profile(self, job: VideoJob) -> EditorialProfile:
         """
@@ -458,6 +464,32 @@ class ContentIntelligencePipeline:
 
         return job
 
+    def run_packaging_hypothesis(self, job: VideoJob) -> VideoJob:
+        """
+        Stage 11: propose a packaging direction for the finished
+        script - thin and late, deliberately not real titles or
+        thumbnails (see PackagingHypothesisService).
+        """
+
+        if job.generated_script is None or job.selected_hook is None:
+            raise RuntimeError(
+                "Packaging hypothesis requires a generated script and a "
+                "selected hook."
+            )
+
+        editorial_profile = job.editorial_profile_snapshot or (
+            self.resolve_editorial_profile(job)
+        )
+
+        job.packaging_hypothesis = self.packaging_hypothesis_service.generate(
+            topic=job.topic,
+            script=job.generated_script,
+            selected_hook=job.selected_hook,
+            editorial_profile=editorial_profile,
+        )
+
+        return job
+
     def run_all(self, job: VideoJob) -> VideoJob:
         """
         Run every stage in sequence (Fully Automatic mode), including
@@ -489,5 +521,7 @@ class ContentIntelligencePipeline:
             job = self.run_revision(job)
             job = self.run_editorial_critique(job)
             job = self.run_quality_gate(job)
+
+        job = self.run_packaging_hypothesis(job)
 
         return job
