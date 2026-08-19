@@ -175,7 +175,154 @@ def test_run_script_requires_upstream_stages() -> None:
         pipeline.run_script(_job())
 
 
-def test_run_all_produces_a_complete_compressed_script() -> None:
+def test_run_retention_audit_requires_blueprint() -> None:
+    pipeline, _ = _pipeline()
+
+    with pytest.raises(RuntimeError, match="requires a story blueprint"):
+        pipeline.run_retention_audit(_job())
+
+
+def test_run_retention_audit_produces_a_report() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_audience_promise(_job())
+    job = pipeline.run_research(job)
+    job = pipeline.run_story_angles(job)
+    job = pipeline.run_narrative_architecture(job)
+    job = pipeline.run_retention_audit(job)
+
+    assert job.retention_audit is not None
+    assert job.retention_audit.genre_id == "genre.mystery"
+
+
+def test_run_editorial_critique_requires_script_and_research() -> None:
+    pipeline, _ = _pipeline()
+
+    with pytest.raises(RuntimeError, match="requires a generated script"):
+        pipeline.run_editorial_critique(_job())
+
+
+def test_run_editorial_critique_scores_dimensions() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_audience_promise(_job())
+    job = pipeline.run_research(job)
+    job = pipeline.run_story_angles(job)
+    job = pipeline.run_narrative_architecture(job)
+    job = pipeline.run_hooks(job)
+    job = pipeline.run_script(job)
+    job = pipeline.run_editorial_critique(job)
+
+    assert job.editorial_critique is not None
+    assert len(job.editorial_critique.dimension_scores) > 0
+
+
+def test_run_quality_gate_requires_critique() -> None:
+    pipeline, _ = _pipeline()
+
+    with pytest.raises(RuntimeError, match="requires an editorial critique"):
+        pipeline.run_quality_gate(_job())
+
+
+def test_run_quality_gate_produces_a_status() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_audience_promise(_job())
+    job = pipeline.run_research(job)
+    job = pipeline.run_story_angles(job)
+    job = pipeline.run_narrative_architecture(job)
+    job = pipeline.run_hooks(job)
+    job = pipeline.run_script(job)
+    job = pipeline.run_editorial_critique(job)
+    job = pipeline.run_quality_gate(job)
+
+    assert job.script_quality_report is not None
+    assert job.script_quality_report.genre_id == "genre.mystery"
+
+
+def test_run_revision_requires_script_and_critique() -> None:
+    pipeline, _ = _pipeline()
+
+    with pytest.raises(RuntimeError, match="requires a generated script"):
+        pipeline.run_revision(_job())
+
+
+def test_run_revision_clears_the_stale_critique_and_quality_report() -> None:
+    class _FindingStubLLMService:
+        def __init__(self) -> None:
+            self.echo = _EchoStubLLMService()
+
+        def generate(
+            self,
+            request: LLMRequest,
+            *,
+            estimated_cost_usd: float = 0.0,
+            profile_ids: list[str] | None = None,
+        ) -> LLMServiceResult:
+            if request.metadata.get("agent") == "EditorialCritiqueService":
+                content = (
+                    "FACTUAL_CONFIDENCE: 80\n"
+                    "HOOK_STRENGTH: 80\n"
+                    "RETENTION_ARCHITECTURE: 80\n"
+                    "EMOTIONAL_PROGRESSION: 80\n"
+                    "RESEARCH_GROUNDING: 80\n"
+                    "NARRATIVE_COHERENCE: 80\n"
+                    "AUDIENCE_FIT: 80\n"
+                    "VISUAL_OPPORTUNITY_DENSITY: 80\n"
+                    "CHARACTER_DEPTH: 80\n"
+                    "PAYOFF_STRENGTH: 80\n"
+                    "CONTINUITY: 80\n"
+                    "---\n"
+                    "DIMENSION: narrative_coherence\n"
+                    "SEVERITY: blocking\n"
+                    "SEGMENT_NUMBER: none\n"
+                    "PROBLEM: Unsupported claim about the crew's fate.\n"
+                    "REASON: No source in research backs this claim.\n"
+                    "RECOMMENDED_CORRECTION: Remove or attribute the claim."
+                )
+
+                result = LLMCallResult(
+                    status=LLMCallStatus.SUCCESS,
+                    provider=LLMProvider.OPENAI,
+                    model="test-model",
+                    content=content,
+                )
+
+                return LLMServiceResult(
+                    result=result,
+                    selected_profile_id="test-profile",
+                    all_providers_failed=False,
+                )
+
+            return self.echo.generate(
+                request,
+                estimated_cost_usd=estimated_cost_usd,
+                profile_ids=profile_ids,
+            )
+
+    stub = _FindingStubLLMService()
+    pipeline = ContentIntelligencePipeline(llm_service=stub)  # type: ignore[arg-type]
+
+    job = pipeline.run_audience_promise(_job())
+    job = pipeline.run_research(job)
+    job = pipeline.run_story_angles(job)
+    job = pipeline.run_narrative_architecture(job)
+    job = pipeline.run_hooks(job)
+    job = pipeline.run_script(job)
+    job = pipeline.run_editorial_critique(job)
+    job = pipeline.run_quality_gate(job)
+
+    assert job.script_quality_report is not None
+    assert job.script_quality_report.status.value == "needs_revision"
+
+    job = pipeline.run_revision(job)
+
+    assert job.editorial_critique is None
+    assert job.script_quality_report is None
+    assert job.generated_script is not None
+
+
+def test_run_all_produces_a_complete_and_quality_gated_script() -> None:
     pipeline, stub = _pipeline()
 
     job = pipeline.run_all(_job())
@@ -184,10 +331,13 @@ def test_run_all_produces_a_complete_compressed_script() -> None:
     assert job.research is not None
     assert job.selected_story_angle is not None
     assert job.story_blueprint is not None
+    assert job.retention_audit is not None
     assert job.selected_hook is not None
     assert job.generated_script is not None
     assert len(job.generated_script.segments) == len(job.story_blueprint.beats)
     assert job.generated_script.genre_id == "genre.mystery"
+    assert job.editorial_critique is not None
+    assert job.script_quality_report is not None
 
     # Every stage's genre-specific prompt content actually reached the
     # LLM - confirms the pipeline threads editorial_profile through,

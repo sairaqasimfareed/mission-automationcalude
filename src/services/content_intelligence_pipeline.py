@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from src.agents.research_agent.agent import ResearchAgent
 from src.models.editorial_profile import EditorialProfile
+from src.models.script_quality_report import ScriptQualityStatus
 from src.models.story_blueprint import StoryBeatType
 from src.models.video_job import VideoJob
 from src.services.audience_promise_service import AudiencePromiseService
+from src.services.editorial_critique_service import EditorialCritiqueService
 from src.services.editorial_profile_composition_service import (
     EditorialProfileCompositionService,
 )
@@ -23,7 +25,10 @@ from src.services.llm.llm_service import LLMService
 from src.services.narrative_compression_service import NarrativeCompressionService
 from src.services.re_hook_planning_service import ReHookPlanningService
 from src.services.research_planning_service import ResearchPlanningService
+from src.services.retention_audit_service import RetentionAuditService
 from src.services.script_generation_service import ScriptGenerationService
+from src.services.script_quality_gate_service import ScriptQualityGateService
+from src.services.script_revision_service import ScriptRevisionService
 from src.services.story_angle_evaluation_service import (
     StoryAngleEvaluationService,
     select_winning_evaluation,
@@ -124,6 +129,18 @@ class ContentIntelligencePipeline:
             profile_ids=profile_ids,
             estimated_cost_usd=estimated_cost_usd,
         )
+        self.retention_audit_service = RetentionAuditService()
+        self.editorial_critique_service = EditorialCritiqueService(
+            llm_service=llm_service,
+            profile_ids=profile_ids,
+            estimated_cost_usd=estimated_cost_usd,
+        )
+        self.script_revision_service = ScriptRevisionService(
+            llm_service=llm_service,
+            profile_ids=profile_ids,
+            estimated_cost_usd=estimated_cost_usd,
+        )
+        self.script_quality_gate_service = ScriptQualityGateService()
 
     def resolve_editorial_profile(self, job: VideoJob) -> EditorialProfile:
         """
@@ -263,6 +280,31 @@ class ContentIntelligencePipeline:
 
         return job
 
+    def run_retention_audit(self, job: VideoJob) -> VideoJob:
+        """
+        Stage 5b: rule-based audit of the blueprint's reveal spacing
+        and tension variation, before any prose is written on top of
+        it. Advisory, not blocking - a thin blueprint is still usable
+        (the editorial critics get a real chance to judge the finished
+        prose later), but its findings should be visible before
+        writing begins.
+        """
+
+        if job.story_blueprint is None:
+            raise RuntimeError("Retention audit requires a story blueprint.")
+
+        editorial_profile = job.editorial_profile_snapshot or (
+            self.resolve_editorial_profile(job)
+        )
+
+        job.retention_audit = self.retention_audit_service.audit(
+            topic=job.topic,
+            blueprint=job.story_blueprint,
+            editorial_profile=editorial_profile,
+        )
+
+        return job
+
     def run_hooks(self, job: VideoJob) -> VideoJob:
         """Stage 6: generate/score hooks and plan any scheduled re-hooks."""
 
@@ -351,15 +393,101 @@ class ContentIntelligencePipeline:
 
         return job
 
+    def run_editorial_critique(self, job: VideoJob) -> VideoJob:
+        """
+        Stage 8: independent editorial critique of the finished
+        script - a separate pass from writing, per the same
+        discipline sprint 6/7's hook and angle evaluators follow.
+        """
+
+        if job.generated_script is None or job.research is None:
+            raise RuntimeError(
+                "Editorial critique requires a generated script and research."
+            )
+
+        editorial_profile = job.editorial_profile_snapshot or (
+            self.resolve_editorial_profile(job)
+        )
+
+        job.editorial_critique = self.editorial_critique_service.critique(
+            script=job.generated_script,
+            research=job.research,
+            editorial_profile=editorial_profile,
+        )
+
+        return job
+
+    def run_quality_gate(self, job: VideoJob) -> VideoJob:
+        """Stage 9: aggregate the critique against genre thresholds."""
+
+        if job.editorial_critique is None:
+            raise RuntimeError("The quality gate requires an editorial critique.")
+
+        editorial_profile = job.editorial_profile_snapshot or (
+            self.resolve_editorial_profile(job)
+        )
+
+        job.script_quality_report = self.script_quality_gate_service.evaluate(
+            critique=job.editorial_critique,
+            editorial_profile=editorial_profile,
+        )
+
+        return job
+
+    def run_revision(self, job: VideoJob) -> VideoJob:
+        """
+        Stage 10: revise the script to address the current critique's
+        findings. The critique and quality report describe the
+        pre-revision script, so both are cleared afterward - a fresh
+        run_editorial_critique/run_quality_gate pass on the revised
+        script is required before it can be approved.
+        """
+
+        if job.generated_script is None or job.editorial_critique is None:
+            raise RuntimeError(
+                "Script revision requires a generated script and an "
+                "editorial critique."
+            )
+
+        job.generated_script = self.script_revision_service.revise(
+            script=job.generated_script,
+            critique=job.editorial_critique,
+        )
+        job.editorial_critique = None
+        job.script_quality_report = None
+
+        return job
+
     def run_all(self, job: VideoJob) -> VideoJob:
-        """Run every stage in sequence (Fully Automatic mode)."""
+        """
+        Run every stage in sequence (Fully Automatic mode), including
+        one bounded revision pass if the first quality gate result
+        needs revision - not an unbounded improve-until-perfect loop,
+        just enough to let a genuinely fixable script self-correct
+        once before surfacing to a human.
+        """
 
         job = self.run_audience_promise(job)
         job = self.run_research_plan(job)
         job = self.run_research(job)
         job = self.run_story_angles(job)
         job = self.run_narrative_architecture(job)
+        job = self.run_retention_audit(job)
         job = self.run_hooks(job)
         job = self.run_script(job)
+        job = self.run_editorial_critique(job)
+        job = self.run_quality_gate(job)
+
+        needs_revision = (
+            job.script_quality_report is not None
+            and job.script_quality_report.status == ScriptQualityStatus.NEEDS_REVISION
+            and job.editorial_critique is not None
+            and bool(job.editorial_critique.findings)
+        )
+
+        if needs_revision:
+            job = self.run_revision(job)
+            job = self.run_editorial_critique(job)
+            job = self.run_quality_gate(job)
 
         return job

@@ -8,6 +8,7 @@ from src.models.audio_timeline import AudioTimeline
 from src.models.base import MissionBaseModel
 from src.models.content_decision_record import ContentDecisionRecord
 from src.models.editing_directives import SceneEditingDirectives
+from src.models.editorial_critique import EditorialCritique
 from src.models.editorial_profile import EditorialProfile
 from src.models.enums import (
     JobStatus,
@@ -30,8 +31,10 @@ from src.models.re_hook import ReHookPlan
 from src.models.render_result import RenderResult
 from src.models.research import ResearchResult, ResearchStatus
 from src.models.research_plan import ResearchPlan
+from src.models.retention_audit import RetentionAuditReport
 from src.models.scene import Scene
 from src.models.script import Script, ScriptStatus
+from src.models.script_quality_report import ScriptQualityReport
 from src.models.story_angle import StoryAngle, StoryAngleEvaluation
 from src.models.story_blueprint import StoryBlueprint
 from src.models.video_clip import VideoClip
@@ -88,11 +91,14 @@ class VideoJob(MissionBaseModel):
     selected_story_angle: StoryAngle | None = None
     reveal_map: InformationRevealMap | None = None
     story_blueprint: StoryBlueprint | None = None
+    retention_audit: RetentionAuditReport | None = None
     hook_candidates: list[HookCandidate] = Field(default_factory=list)
     hook_evaluations: list[HookEvaluation] = Field(default_factory=list)
     selected_hook: HookEvaluation | None = None
     re_hook_plan: ReHookPlan | None = None
     generated_script: GeneratedScript | None = None
+    editorial_critique: EditorialCritique | None = None
+    script_quality_report: ScriptQualityReport | None = None
 
     content_decisions: list[ContentDecisionRecord] = Field(default_factory=list)
 

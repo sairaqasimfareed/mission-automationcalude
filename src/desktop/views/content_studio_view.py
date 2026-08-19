@@ -51,8 +51,12 @@ _CI_STAGES: list[tuple[str, str]] = [
     ("research", "Research"),
     ("story_angles", "Story angles"),
     ("narrative_architecture", "Narrative architecture"),
+    ("retention_audit", "Retention audit"),
     ("hooks", "Hooks"),
     ("script", "Script"),
+    ("editorial_critique", "Editorial critique"),
+    ("quality_gate", "Quality gate"),
+    ("revision", "Revision"),
 ]
 
 
@@ -213,8 +217,12 @@ class ContentStudioView(QWidget):
             "research": self._render_ci_research_panel,
             "story_angles": self._render_story_angles_panel,
             "narrative_architecture": self._render_narrative_architecture_panel,
+            "retention_audit": self._render_retention_audit_panel,
             "hooks": self._render_hooks_panel,
             "script": self._render_ci_script_panel,
+            "editorial_critique": self._render_editorial_critique_panel,
+            "quality_gate": self._render_quality_gate_panel,
+            "revision": self._render_revision_panel,
         }
 
         can_run = builders[stage_key](layout, job)
@@ -352,6 +360,34 @@ class ContentStudioView(QWidget):
 
         return True
 
+    def _render_retention_audit_panel(self, layout: QVBoxLayout, job: VideoJob) -> bool:
+        report = job.retention_audit
+
+        if report is None:
+            can_run = job.story_blueprint is not None
+            layout.addWidget(
+                small_muted(
+                    "Not started." if can_run else "Requires a story blueprint first."
+                )
+            )
+
+            return can_run
+
+        layout.addWidget(badge("passed" if report.passed else "findings"))
+        layout.addWidget(
+            small_muted(
+                f"{report.reveal_count} reveal-type beat(s) "
+                f"(genre expects at least {report.expected_minimum_reveal_count})."
+            )
+        )
+
+        for finding in report.findings:
+            layout.addWidget(
+                small_muted(f"[{finding.issue_type.value}] {finding.description}")
+            )
+
+        return True
+
     def _render_hooks_panel(self, layout: QVBoxLayout, job: VideoJob) -> bool:
         if not job.hook_candidates:
             can_run = job.story_blueprint is not None
@@ -418,6 +454,99 @@ class ContentStudioView(QWidget):
 
         return True
 
+    def _render_editorial_critique_panel(
+        self, layout: QVBoxLayout, job: VideoJob
+    ) -> bool:
+        critique = job.editorial_critique
+
+        if critique is None:
+            can_run = job.generated_script is not None
+            layout.addWidget(
+                small_muted(
+                    "Not started." if can_run else "Requires a generated script first."
+                )
+            )
+
+            return can_run
+
+        for dimension, score in sorted(critique.dimension_scores.items()):
+            layout.addWidget(small_muted(f"{dimension}: {score}"))
+
+        if not critique.findings:
+            layout.addWidget(status_label("No problems found.", role="success"))
+        else:
+            for finding in critique.findings:
+                location = (
+                    f"segment {finding.segment_number}"
+                    if finding.segment_number is not None
+                    else "whole script"
+                )
+                layout.addWidget(badge(f"{finding.severity.value} · {location}"))
+                layout.addWidget(
+                    small_muted(
+                        f"{finding.problem} -> {finding.recommended_correction}"
+                    )
+                )
+
+        return True
+
+    def _render_quality_gate_panel(self, layout: QVBoxLayout, job: VideoJob) -> bool:
+        report = job.script_quality_report
+
+        if report is None:
+            can_run = job.editorial_critique is not None
+            layout.addWidget(
+                small_muted(
+                    "Not started."
+                    if can_run
+                    else "Requires an editorial critique first."
+                )
+            )
+
+            return can_run
+
+        layout.addWidget(badge(report.status.value))
+
+        for dimension, threshold in sorted(report.dimension_thresholds.items()):
+            score = report.dimension_scores.get(dimension, 0)
+            passed = dimension not in report.failed_dimensions
+            layout.addWidget(
+                small_muted(
+                    f"{'[pass]' if passed else '[fail]'} {dimension}: "
+                    f"{score} (needs {threshold})"
+                )
+            )
+
+        if report.blocking_findings:
+            layout.addWidget(
+                small_muted(f"{len(report.blocking_findings)} blocking finding(s).")
+            )
+
+        return True
+
+    def _render_revision_panel(self, layout: QVBoxLayout, job: VideoJob) -> bool:
+        critique = job.editorial_critique
+
+        if critique is None or not critique.findings:
+            layout.addWidget(
+                small_muted(
+                    "Nothing to revise - run the editorial critique first and "
+                    "confirm it raised at least one finding."
+                )
+            )
+
+            return False
+
+        layout.addWidget(
+            small_muted(
+                f"Revising will address {len(critique.findings)} finding(s) and "
+                "clear the current critique and quality report, since both "
+                "describe the script before revision."
+            )
+        )
+
+        return True
+
     def _handle_select_ci_stage(self, index: int) -> None:
         self._selected_ci_stage_index = index
         job = self._current_job()
@@ -439,8 +568,14 @@ class ContentStudioView(QWidget):
             "narrative_architecture": (
                 self._content_intelligence_pipeline.run_narrative_architecture
             ),
+            "retention_audit": self._content_intelligence_pipeline.run_retention_audit,
             "hooks": self._content_intelligence_pipeline.run_hooks,
             "script": self._content_intelligence_pipeline.run_script,
+            "editorial_critique": (
+                self._content_intelligence_pipeline.run_editorial_critique
+            ),
+            "quality_gate": self._content_intelligence_pipeline.run_quality_gate,
+            "revision": self._content_intelligence_pipeline.run_revision,
         }
 
         try:

@@ -146,10 +146,19 @@ def test_running_stages_in_order_reaches_a_generated_script(
     view.refresh(job)
 
     for stage_key, _label in _CI_STAGES:
+        if stage_key == "revision":
+            # Revision only has work to do when the critique raised a
+            # finding - the echo stub's dry-run critique never does,
+            # so running it here would be running it out of order on
+            # purpose, not exercising the normal sequence.
+            continue
+
         view._handle_run_ci_stage(stage_key)
         view.refresh(job)
 
     assert job.generated_script is not None
+    assert job.editorial_critique is not None
+    assert job.script_quality_report is not None
     assert not job.errors
 
 
