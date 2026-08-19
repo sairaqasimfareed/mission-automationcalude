@@ -30,6 +30,15 @@ class Scene(MissionBaseModel):
     camera_direction: str = ""
     sound_design: str = ""
 
+    # Set only for scenes planned from a GeneratedScript (see
+    # ScenePlannerAgent.plan_from_generated_script) - the StoryBeatType
+    # value of the script segment this scene was subdivided from,
+    # giving GenreDirectiveGenerationService a semantic signal to vary
+    # directives by (a hook scene reads differently than an aftershock
+    # scene, even within the same genre). None for scenes planned from
+    # the legacy sentence-split Script path, which has no such signal.
+    narrative_function: str | None = None
+
     source_type: SceneSourceType = SceneSourceType.MANUAL_UPLOAD
     source_status: SceneSourceStatus = SceneSourceStatus.WAITING_FOR_UPLOAD
     source_locked: bool = False

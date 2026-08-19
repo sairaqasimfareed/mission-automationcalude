@@ -58,6 +58,7 @@ _CI_STAGES: list[tuple[str, str]] = [
     ("quality_gate", "Quality gate"),
     ("revision", "Revision"),
     ("packaging_hypothesis", "Packaging hypothesis"),
+    ("scene_planning", "Scene planning"),
 ]
 
 
@@ -225,6 +226,7 @@ class ContentStudioView(QWidget):
             "quality_gate": self._render_quality_gate_panel,
             "revision": self._render_revision_panel,
             "packaging_hypothesis": self._render_packaging_hypothesis_panel,
+            "scene_planning": self._render_scene_planning_panel,
         }
 
         can_run = builders[stage_key](layout, job)
@@ -589,6 +591,30 @@ class ContentStudioView(QWidget):
 
         return True
 
+    def _render_scene_planning_panel(self, layout: QVBoxLayout, job: VideoJob) -> bool:
+        if not job.scenes:
+            can_run = job.generated_script is not None
+            layout.addWidget(
+                small_muted(
+                    "Not started." if can_run else "Requires a generated script first."
+                )
+            )
+
+            return can_run
+
+        layout.addWidget(badge(f"{len(job.scenes)} scene(s)"))
+
+        for scene in job.scenes:
+            tag = scene.narrative_function or "legacy"
+            layout.addWidget(
+                small_muted(
+                    f"[{tag}] {scene.title} · {scene.estimated_duration_seconds}s · "
+                    f"{scene.camera_direction}"
+                )
+            )
+
+        return True
+
     def _handle_select_ci_stage(self, index: int) -> None:
         self._selected_ci_stage_index = index
         job = self._current_job()
@@ -621,6 +647,7 @@ class ContentStudioView(QWidget):
             "packaging_hypothesis": (
                 self._content_intelligence_pipeline.run_packaging_hypothesis
             ),
+            "scene_planning": self._content_intelligence_pipeline.run_scene_planning,
         }
 
         try:

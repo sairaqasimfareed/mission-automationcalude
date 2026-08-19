@@ -160,6 +160,7 @@ def test_running_stages_in_order_reaches_a_generated_script(
     assert job.editorial_critique is not None
     assert job.script_quality_report is not None
     assert job.packaging_hypothesis is not None
+    assert len(job.scenes) > 0
     assert not job.errors
 
 

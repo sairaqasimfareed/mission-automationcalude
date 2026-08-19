@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from src.agents.research_agent.agent import ResearchAgent
+from src.agents.scene_planner.agent import ScenePlannerAgent
 from src.models.editorial_profile import EditorialProfile
 from src.models.script_quality_report import ScriptQualityStatus
 from src.models.story_blueprint import StoryBeatType
@@ -147,6 +148,7 @@ class ContentIntelligencePipeline:
             profile_ids=profile_ids,
             estimated_cost_usd=estimated_cost_usd,
         )
+        self.scene_planner = ScenePlannerAgent()
 
     def resolve_editorial_profile(self, job: VideoJob) -> EditorialProfile:
         """
@@ -490,6 +492,29 @@ class ContentIntelligencePipeline:
 
         return job
 
+    def run_scene_planning(self, job: VideoJob) -> VideoJob:
+        """
+        Stage 12: break the finished script into genre-aware scenes
+        (see ScenePlannerAgent.plan_from_generated_script). Writes to
+        the same job.scenes field the legacy ContentPipeline's
+        sentence-split planner writes to - the two are mutually
+        exclusive paths for one project, not two separate artifacts.
+        """
+
+        if job.generated_script is None:
+            raise RuntimeError("Scene planning requires a generated script.")
+
+        editorial_profile = job.editorial_profile_snapshot or (
+            self.resolve_editorial_profile(job)
+        )
+
+        job.scenes = self.scene_planner.plan_from_generated_script(
+            job.generated_script,
+            editorial_profile,
+        )
+
+        return job
+
     def run_all(self, job: VideoJob) -> VideoJob:
         """
         Run every stage in sequence (Fully Automatic mode), including
@@ -523,5 +548,6 @@ class ContentIntelligencePipeline:
             job = self.run_quality_gate(job)
 
         job = self.run_packaging_hypothesis(job)
+        job = self.run_scene_planning(job)
 
         return job
