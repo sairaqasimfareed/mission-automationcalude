@@ -4,9 +4,20 @@ import pytest
 
 from src.models.audience_promise import PromiseStrength
 from src.services.audience_promise_service import AudiencePromiseService
+from src.services.editorial_profile_composition_service import (
+    EditorialProfileCompositionService,
+)
+from src.services.genre_profile_registry_service import (
+    GenreProfileRegistryService,
+)
 from src.services.llm.llm_service import LLMServiceResult
 from src.shared.llm.models import LLMCallResult, LLMCallStatus, LLMProvider
 from src.shared.llm.request import LLMRequest
+
+_GENRE_REGISTRY = GenreProfileRegistryService.with_default_profiles()
+_EDITORIAL_PROFILE = EditorialProfileCompositionService().compose(
+    genre=_GENRE_REGISTRY.get("genre.mystery")
+)
 
 
 class _StubLLMService:
@@ -57,7 +68,7 @@ _DEFAULT_KWARGS = dict(
     topic="The Mary Celeste",
     target_audience="Mystery enthusiasts",
     platform="youtube",
-    genre_id="genre.mystery",
+    editorial_profile=_EDITORIAL_PROFILE,
     target_duration_seconds=180,
 )
 
@@ -112,6 +123,38 @@ def test_determine_includes_context_in_prompt() -> None:
     assert "The Mary Celeste" in stub.last_request.prompt
     assert "genre.mystery" in stub.last_request.prompt
     assert "180 seconds" in stub.last_request.prompt
+    assert _EDITORIAL_PROFILE.script.tone.value in stub.last_request.prompt
+    assert (
+        _EDITORIAL_PROFILE.content_intelligence.cta_policy.value
+        in stub.last_request.prompt
+    )
+
+
+def test_determine_prompt_differs_by_genre_tone() -> None:
+    horror_profile = EditorialProfileCompositionService().compose(
+        genre=_GENRE_REGISTRY.get("genre.horror")
+    )
+    documentary_profile = EditorialProfileCompositionService().compose(
+        genre=_GENRE_REGISTRY.get("genre.documentary")
+    )
+
+    horror_stub = _StubLLMService(content=_STRONG_PROMISE)
+    documentary_stub = _StubLLMService(content=_STRONG_PROMISE)
+
+    horror_service = AudiencePromiseService(llm_service=horror_stub)  # type: ignore[arg-type]
+    documentary_service = AudiencePromiseService(llm_service=documentary_stub)  # type: ignore[arg-type]
+
+    kwargs = dict(_DEFAULT_KWARGS)
+    del kwargs["editorial_profile"]
+
+    horror_service.determine(editorial_profile=horror_profile, **kwargs)
+    documentary_service.determine(editorial_profile=documentary_profile, **kwargs)
+
+    assert horror_stub.last_request is not None
+    assert documentary_stub.last_request is not None
+    assert horror_stub.last_request.prompt != documentary_stub.last_request.prompt
+    assert horror_profile.script.tone.value in horror_stub.last_request.prompt
+    assert documentary_profile.script.tone.value in documentary_stub.last_request.prompt
 
 
 def test_determine_raises_on_missing_required_field() -> None:

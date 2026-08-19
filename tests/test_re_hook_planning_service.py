@@ -2,12 +2,27 @@ from __future__ import annotations
 
 import pytest
 
+from src.models.editorial_profile import EditorialProfile
 from src.models.story_angle import StoryAngle, StoryAngleStyle
 from src.models.story_blueprint import StoryBeat, StoryBeatType, StoryBlueprint
+from src.services.editorial_profile_composition_service import (
+    EditorialProfileCompositionService,
+)
+from src.services.genre_profile_registry_service import (
+    GenreProfileRegistryService,
+)
 from src.services.llm.llm_service import LLMServiceResult
 from src.services.re_hook_planning_service import ReHookPlanningService
 from src.shared.llm.models import LLMCallResult, LLMCallStatus, LLMProvider
 from src.shared.llm.request import LLMRequest
+
+_GENRE_REGISTRY = GenreProfileRegistryService.with_default_profiles()
+
+
+def _editorial_profile() -> EditorialProfile:
+    return EditorialProfileCompositionService().compose(
+        genre=_GENRE_REGISTRY.get("genre.mystery")
+    )
 
 
 class _StubLLMService:
@@ -119,6 +134,7 @@ def test_plan_parses_re_hooks_matching_blueprint_positions() -> None:
         topic="The Mary Celeste",
         blueprint=_blueprint_with_re_hooks(),
         story_angle=_angle(),
+        editorial_profile=_editorial_profile(),
     )
 
     assert len(plan.re_hooks) == 2
@@ -136,6 +152,7 @@ def test_plan_raises_when_blueprint_has_no_re_hook_beats() -> None:
             topic="The Mary Celeste",
             blueprint=_blueprint_without_re_hooks(),
             story_angle=_angle(),
+            editorial_profile=_editorial_profile(),
         )
 
 
@@ -148,6 +165,7 @@ def test_plan_includes_re_hook_positions_in_prompt() -> None:
         topic="The Mary Celeste",
         blueprint=_blueprint_with_re_hooks(),
         story_angle=_angle(),
+        editorial_profile=_editorial_profile(),
     )
 
     assert stub.last_request is not None
@@ -171,10 +189,31 @@ def test_plan_skips_a_block_with_an_unrecognized_type() -> None:
         topic="The Mary Celeste",
         blueprint=_blueprint_with_re_hooks(),
         story_angle=_angle(),
+        editorial_profile=_editorial_profile(),
     )
 
     assert len(plan.re_hooks) == 1
     assert plan.re_hooks[0].text == "A real re-hook."
+
+
+def test_plan_system_prompt_reflects_genre_style() -> None:
+    stub = _StubLLMService(content=_TWO_RE_HOOK_BLOCKS)
+
+    service = ReHookPlanningService(llm_service=stub)  # type: ignore[arg-type]
+
+    profile = _editorial_profile()
+
+    service.plan(
+        topic="The Mary Celeste",
+        blueprint=_blueprint_with_re_hooks(),
+        story_angle=_angle(),
+        editorial_profile=profile,
+    )
+
+    assert stub.last_request is not None
+    assert stub.last_request.system_prompt is not None
+    assert profile.genre_id in stub.last_request.system_prompt
+    assert "cliffhanger-style re-hooks" in stub.last_request.system_prompt
 
 
 def test_plan_raises_when_provider_fails() -> None:
@@ -187,6 +226,7 @@ def test_plan_raises_when_provider_fails() -> None:
             topic="The Mary Celeste",
             blueprint=_blueprint_with_re_hooks(),
             story_angle=_angle(),
+            editorial_profile=_editorial_profile(),
         )
 
 
@@ -200,6 +240,7 @@ def test_plan_raises_when_no_re_hooks_parsed() -> None:
             topic="The Mary Celeste",
             blueprint=_blueprint_with_re_hooks(),
             story_angle=_angle(),
+            editorial_profile=_editorial_profile(),
         )
 
 
@@ -213,6 +254,7 @@ def test_plan_raises_on_empty_topic() -> None:
             topic="   ",
             blueprint=_blueprint_with_re_hooks(),
             story_angle=_angle(),
+            editorial_profile=_editorial_profile(),
         )
 
 
@@ -235,6 +277,7 @@ def test_dry_run_response_is_itself_parseable() -> None:
         topic="The Mary Celeste",
         blueprint=_blueprint_with_re_hooks(),
         story_angle=_angle(),
+        editorial_profile=_editorial_profile(),
     )
 
     assert probe.last_request is not None
@@ -247,6 +290,7 @@ def test_dry_run_response_is_itself_parseable() -> None:
         topic="The Mary Celeste",
         blueprint=_blueprint_with_re_hooks(),
         story_angle=_angle(),
+        editorial_profile=_editorial_profile(),
     )
 
     assert len(plan.re_hooks) == 2

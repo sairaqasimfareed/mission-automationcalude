@@ -3,12 +3,27 @@ from __future__ import annotations
 import pytest
 
 from src.models.audience_promise import AudiencePromise, PromiseStrength
+from src.models.editorial_profile import EditorialProfile
 from src.models.research import ResearchResult, ResearchSource, ResearchStatus
 from src.models.story_angle import StoryAngleStyle
+from src.services.editorial_profile_composition_service import (
+    EditorialProfileCompositionService,
+)
+from src.services.genre_profile_registry_service import (
+    GenreProfileRegistryService,
+)
 from src.services.llm.llm_service import LLMServiceResult
 from src.services.story_angle_generation_service import StoryAngleGenerationService
 from src.shared.llm.models import LLMCallResult, LLMCallStatus, LLMProvider
 from src.shared.llm.request import LLMRequest
+
+_GENRE_REGISTRY = GenreProfileRegistryService.with_default_profiles()
+
+
+def _editorial_profile() -> EditorialProfile:
+    return EditorialProfileCompositionService().compose(
+        genre=_GENRE_REGISTRY.get("genre.mystery")
+    )
 
 
 class _StubLLMService:
@@ -97,6 +112,7 @@ def test_generate_parses_multiple_angle_blocks() -> None:
         topic="The Mary Celeste",
         research=_research(),
         audience_promise=_promise(),
+        editorial_profile=_editorial_profile(),
         angle_count=2,
     )
 
@@ -115,6 +131,7 @@ def test_generate_truncates_to_angle_count() -> None:
         topic="The Mary Celeste",
         research=_research(),
         audience_promise=_promise(),
+        editorial_profile=_editorial_profile(),
         angle_count=1,
     )
 
@@ -140,6 +157,7 @@ def test_generate_skips_blocks_with_an_unrecognized_style() -> None:
         topic="The Mary Celeste",
         research=_research(),
         audience_promise=_promise(),
+        editorial_profile=_editorial_profile(),
         angle_count=5,
     )
 
@@ -156,11 +174,32 @@ def test_generate_includes_research_and_promise_context_in_prompt() -> None:
         topic="The Mary Celeste",
         research=_research(),
         audience_promise=_promise(),
+        editorial_profile=_editorial_profile(),
     )
 
     assert stub.last_request is not None
     assert "Why did the crew vanish?" in stub.last_request.prompt
     assert "crew was never found" in stub.last_request.prompt.lower()
+
+
+def test_generate_prompt_restricts_styles_to_genre_preference() -> None:
+    stub = _StubLLMService(content=_TWO_ANGLE_BLOCK)
+
+    service = StoryAngleGenerationService(llm_service=stub)  # type: ignore[arg-type]
+
+    mystery_profile = _editorial_profile()
+
+    service.generate(
+        topic="The Mary Celeste",
+        research=_research(),
+        audience_promise=_promise(),
+        editorial_profile=mystery_profile,
+    )
+
+    assert stub.last_request is not None
+    for style in mystery_profile.content_intelligence.preferred_angle_styles:
+        assert style in stub.last_request.prompt
+    assert "chronological" not in stub.last_request.prompt
 
 
 def test_generate_raises_when_provider_fails() -> None:
@@ -173,6 +212,7 @@ def test_generate_raises_when_provider_fails() -> None:
             topic="The Mary Celeste",
             research=_research(),
             audience_promise=_promise(),
+            editorial_profile=_editorial_profile(),
         )
 
 
@@ -186,6 +226,7 @@ def test_generate_raises_when_no_valid_angles_parsed() -> None:
             topic="The Mary Celeste",
             research=_research(),
             audience_promise=_promise(),
+            editorial_profile=_editorial_profile(),
         )
 
 
@@ -199,6 +240,7 @@ def test_generate_rejects_angle_count_below_one() -> None:
             topic="The Mary Celeste",
             research=_research(),
             audience_promise=_promise(),
+            editorial_profile=_editorial_profile(),
             angle_count=0,
         )
 
@@ -222,6 +264,7 @@ def test_dry_run_response_is_itself_parseable() -> None:
         topic="The Mary Celeste",
         research=_research(),
         audience_promise=_promise(),
+        editorial_profile=_editorial_profile(),
         angle_count=3,
     )
 
@@ -235,6 +278,7 @@ def test_dry_run_response_is_itself_parseable() -> None:
         topic="The Mary Celeste",
         research=_research(),
         audience_promise=_promise(),
+        editorial_profile=_editorial_profile(),
         angle_count=3,
     )
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
+from src.models.editorial_profile import EditorialProfile
 from src.models.research import ResearchResult
 from src.models.story_angle import StoryAngle, StoryAngleEvaluation
 from src.services.llm.labeled_block_parser import extract_labeled_field, split_blocks
@@ -88,6 +89,7 @@ class StoryAngleEvaluationService:
         topic: str,
         angles: list[StoryAngle],
         research: ResearchResult,
+        editorial_profile: EditorialProfile,
     ) -> list[StoryAngleEvaluation]:
         """Score every candidate angle in one LLM call."""
 
@@ -99,6 +101,16 @@ class StoryAngleEvaluationService:
         if not normalized_topic:
             raise ValueError("Story angle evaluation topic cannot be empty.")
 
+        quality_thresholds = editorial_profile.content_intelligence.quality_thresholds
+        calibration = (
+            ", ".join(
+                f"{dimension}>={threshold}"
+                for dimension, threshold in sorted(quality_thresholds.items())
+            )
+            if quality_thresholds
+            else "no genre-specific minimums for this stage"
+        )
+
         request = LLMRequest(
             provider=LLMProvider.OPENAI,
             model="provider-default-model",
@@ -108,12 +120,16 @@ class StoryAngleEvaluationService:
                 research=research,
             ),
             system_prompt=(
-                "You are an expert story editor for long-form video. "
-                "Score every candidate angle honestly across all "
-                "dimensions. Factual integrity always overrides "
-                "engagement: never give high scores to an angle whose "
-                "framing is not supported by the research, even if it "
-                "would make a stronger hook."
+                "You are an expert story editor for long-form video in "
+                f"the {editorial_profile.genre_id} genre "
+                f"({editorial_profile.script.tone.value} tone). Score "
+                "every candidate angle honestly across all dimensions. "
+                "Factual integrity always overrides engagement: never "
+                "give high scores to an angle whose framing is not "
+                "supported by the research, even if it would make a "
+                "stronger hook. This genre's minimum quality bar: "
+                f"{calibration} - do not inflate scores for a weak "
+                "batch just because one candidate is the best of it."
             ),
             prompt_version="story_angle_evaluation_prompt_v1.0.0",
             dry_run_response="\n---\n".join(

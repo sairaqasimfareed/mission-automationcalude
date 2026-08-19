@@ -2,8 +2,15 @@ from __future__ import annotations
 
 import pytest
 
+from src.models.editorial_profile import EditorialProfile
 from src.models.research import ResearchResult, ResearchSource, ResearchStatus
 from src.models.story_angle import StoryAngle, StoryAngleStyle
+from src.services.editorial_profile_composition_service import (
+    EditorialProfileCompositionService,
+)
+from src.services.genre_profile_registry_service import (
+    GenreProfileRegistryService,
+)
 from src.services.llm.llm_service import LLMServiceResult
 from src.services.story_angle_evaluation_service import (
     StoryAngleEvaluationService,
@@ -11,6 +18,14 @@ from src.services.story_angle_evaluation_service import (
 )
 from src.shared.llm.models import LLMCallResult, LLMCallStatus, LLMProvider
 from src.shared.llm.request import LLMRequest
+
+_GENRE_REGISTRY = GenreProfileRegistryService.with_default_profiles()
+
+
+def _editorial_profile() -> EditorialProfile:
+    return EditorialProfileCompositionService().compose(
+        genre=_GENRE_REGISTRY.get("genre.mystery")
+    )
 
 
 class _StubLLMService:
@@ -114,6 +129,7 @@ def test_evaluate_parses_and_matches_both_angles_by_title() -> None:
         topic="The Mary Celeste",
         angles=_angles(),
         research=_research(),
+        editorial_profile=_editorial_profile(),
     )
 
     assert len(evaluations) == 2
@@ -132,6 +148,7 @@ def test_evaluate_is_case_and_whitespace_insensitive_when_matching_titles() -> N
         topic="The Mary Celeste",
         angles=_angles(),
         research=_research(),
+        editorial_profile=_editorial_profile(),
     )
 
     assert len(evaluations) == 1
@@ -151,6 +168,7 @@ def test_evaluate_skips_a_block_whose_title_does_not_match_any_angle() -> None:
         topic="The Mary Celeste",
         angles=_angles(),
         research=_research(),
+        editorial_profile=_editorial_profile(),
     )
 
     assert len(evaluations) == 1
@@ -171,6 +189,7 @@ def test_evaluate_skips_a_block_with_an_out_of_range_score() -> None:
             topic="The Mary Celeste",
             angles=_angles(),
             research=_research(),
+            editorial_profile=_editorial_profile(),
         )
 
 
@@ -181,11 +200,38 @@ def test_evaluate_only_makes_one_llm_call_for_all_angles() -> None:
 
     service = StoryAngleEvaluationService(llm_service=stub)  # type: ignore[arg-type]
 
-    service.evaluate(topic="The Mary Celeste", angles=_angles(), research=_research())
+    service.evaluate(
+        topic="The Mary Celeste",
+        angles=_angles(),
+        research=_research(),
+        editorial_profile=_editorial_profile(),
+    )
 
     assert stub.last_request is not None
     assert "The Missing Logbook" in stub.last_request.prompt
     assert "Tracing the Investigators" in stub.last_request.prompt
+
+
+def test_evaluate_system_prompt_reflects_genre_quality_bar() -> None:
+    medical_profile = EditorialProfileCompositionService().compose(
+        genre=_GENRE_REGISTRY.get("genre.medical")
+    )
+
+    stub = _StubLLMService(content=_TWO_EVALUATION_BLOCKS)
+
+    service = StoryAngleEvaluationService(llm_service=stub)  # type: ignore[arg-type]
+
+    service.evaluate(
+        topic="The Mary Celeste",
+        angles=_angles(),
+        research=_research(),
+        editorial_profile=medical_profile,
+    )
+
+    assert stub.last_request is not None
+    assert stub.last_request.system_prompt is not None
+    assert "genre.medical" in stub.last_request.system_prompt
+    assert "factual_confidence>=75" in stub.last_request.system_prompt
 
 
 def test_evaluate_raises_on_empty_angle_list() -> None:
@@ -194,7 +240,12 @@ def test_evaluate_raises_on_empty_angle_list() -> None:
     service = StoryAngleEvaluationService(llm_service=stub)  # type: ignore[arg-type]
 
     with pytest.raises(ValueError, match="At least one story angle"):
-        service.evaluate(topic="The Mary Celeste", angles=[], research=_research())
+        service.evaluate(
+            topic="The Mary Celeste",
+            angles=[],
+            research=_research(),
+            editorial_profile=_editorial_profile(),
+        )
 
 
 def test_evaluate_raises_when_provider_fails() -> None:
@@ -204,7 +255,10 @@ def test_evaluate_raises_when_provider_fails() -> None:
 
     with pytest.raises(RuntimeError, match="Story angle evaluation failed"):
         service.evaluate(
-            topic="The Mary Celeste", angles=_angles(), research=_research()
+            topic="The Mary Celeste",
+            angles=_angles(),
+            research=_research(),
+            editorial_profile=_editorial_profile(),
         )
 
 
@@ -223,7 +277,12 @@ def test_dry_run_response_is_itself_parseable() -> None:
 
     service = StoryAngleEvaluationService(llm_service=probe)  # type: ignore[arg-type]
 
-    service.evaluate(topic="The Mary Celeste", angles=_angles(), research=_research())
+    service.evaluate(
+        topic="The Mary Celeste",
+        angles=_angles(),
+        research=_research(),
+        editorial_profile=_editorial_profile(),
+    )
 
     assert probe.last_request is not None
     assert probe.last_request.dry_run_response is not None
@@ -232,7 +291,10 @@ def test_dry_run_response_is_itself_parseable() -> None:
     replay_service = StoryAngleEvaluationService(llm_service=replay)  # type: ignore[arg-type]
 
     evaluations = replay_service.evaluate(
-        topic="The Mary Celeste", angles=_angles(), research=_research()
+        topic="The Mary Celeste",
+        angles=_angles(),
+        research=_research(),
+        editorial_profile=_editorial_profile(),
     )
 
     assert len(evaluations) == 2
@@ -244,7 +306,10 @@ def test_select_winning_evaluation_picks_the_highest_overall_score() -> None:
     service = StoryAngleEvaluationService(llm_service=stub)  # type: ignore[arg-type]
 
     evaluations = service.evaluate(
-        topic="The Mary Celeste", angles=_angles(), research=_research()
+        topic="The Mary Celeste",
+        angles=_angles(),
+        research=_research(),
+        editorial_profile=_editorial_profile(),
     )
 
     winner = select_winning_evaluation(evaluations)

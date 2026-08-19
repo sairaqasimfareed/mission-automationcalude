@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from src.models.audience_promise import AudiencePromise
+from src.models.editorial_profile import EditorialProfile
 from src.models.research import ResearchResult
 from src.models.story_angle import StoryAngle, StoryAngleStyle
 from src.services.llm.labeled_block_parser import extract_labeled_field, split_blocks
@@ -50,6 +51,7 @@ class StoryAngleGenerationService:
         topic: str,
         research: ResearchResult,
         audience_promise: AudiencePromise,
+        editorial_profile: EditorialProfile,
         angle_count: int = 5,
     ) -> list[StoryAngle]:
         """Generate up to angle_count distinct candidate story angles."""
@@ -69,6 +71,7 @@ class StoryAngleGenerationService:
                 topic=normalized_topic,
                 research=research,
                 audience_promise=audience_promise,
+                editorial_profile=editorial_profile,
                 angle_count=angle_count,
             ),
             system_prompt=(
@@ -120,12 +123,20 @@ class StoryAngleGenerationService:
         topic: str,
         research: ResearchResult,
         audience_promise: AudiencePromise,
+        editorial_profile: EditorialProfile,
         angle_count: int,
     ) -> str:
-        available_styles = ", ".join(style.value for style in StoryAngleStyle)
+        preferred_styles = editorial_profile.content_intelligence.preferred_angle_styles
+        available_styles = ", ".join(
+            preferred_styles
+            if preferred_styles
+            else (style.value for style in StoryAngleStyle)
+        )
 
         return (
             f"Topic: {topic}\n"
+            f"Genre: {editorial_profile.genre_id}\n"
+            f"Genre tone: {editorial_profile.script.tone.value}\n"
             f"Central curiosity: {audience_promise.central_curiosity}\n"
             f"Primary question: {audience_promise.primary_question}\n"
             f"Research summary: {research.research_summary}\n"

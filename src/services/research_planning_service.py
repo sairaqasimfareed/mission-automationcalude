@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 from src.models.audience_promise import AudiencePromise
+from src.models.editorial_profile import EditorialProfile
 from src.models.research_plan import ResearchPlan
 from src.services.llm.llm_service import LLMService
 from src.shared.llm.models import LLMProvider
@@ -44,6 +45,7 @@ class ResearchPlanningService:
         self,
         topic: str,
         audience_promise: AudiencePromise,
+        editorial_profile: EditorialProfile,
     ) -> ResearchPlan:
         """Plan the research questions for one topic."""
 
@@ -58,6 +60,7 @@ class ResearchPlanningService:
             prompt=self._build_prompt(
                 topic=normalized_topic,
                 audience_promise=audience_promise,
+                editorial_profile=editorial_profile,
             ),
             system_prompt=(
                 "You are an expert research planner for long-form "
@@ -113,15 +116,24 @@ class ResearchPlanningService:
         *,
         topic: str,
         audience_promise: AudiencePromise,
+        editorial_profile: EditorialProfile,
     ) -> str:
+        research_policy = editorial_profile.content_intelligence.research_policy
+
         return (
             f"Topic: {topic}\n"
             f"Central curiosity: {audience_promise.central_curiosity}\n"
             f"Primary question: {audience_promise.primary_question}\n"
-            f"Expected payoff: {audience_promise.expected_payoff}\n\n"
+            f"Expected payoff: {audience_promise.expected_payoff}\n"
+            f"Required research depth: {research_policy.depth.value}\n"
+            f"Primary sources required: "
+            f"{'yes' if research_policy.requires_primary_sources else 'no'}\n"
+            f"Uncertain-information policy: "
+            f"{research_policy.uncertain_information_policy.value}\n\n"
             "List the research questions that must be answered to "
-            "deliver on this promise. Consider: what happened, who "
-            "was involved, when, where, what is verified, what "
+            "deliver on this promise, at a thoroughness matching the "
+            "required research depth above. Consider: what happened, "
+            "who was involved, when, where, what is verified, what "
             "remains unknown, what explanations exist, what "
             "contradictions exist, what details are commonly "
             "misreported, and which claims require stronger "

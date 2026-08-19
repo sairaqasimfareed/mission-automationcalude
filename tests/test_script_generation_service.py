@@ -3,16 +3,31 @@ from __future__ import annotations
 import pytest
 
 from src.models.audience_promise import AudiencePromise, PromiseStrength
+from src.models.editorial_profile import EditorialProfile
 from src.models.hook import HookEvaluation
 from src.models.information_reveal_map import CuriosityLoop, InformationRevealMap
 from src.models.re_hook import ReHook, ReHookPlan, ReHookType
 from src.models.research import ResearchResult, ResearchSource, ResearchStatus
 from src.models.story_angle import StoryAngle, StoryAngleStyle
 from src.models.story_blueprint import StoryBeat, StoryBeatType, StoryBlueprint
+from src.services.editorial_profile_composition_service import (
+    EditorialProfileCompositionService,
+)
+from src.services.genre_profile_registry_service import (
+    GenreProfileRegistryService,
+)
 from src.services.llm.llm_service import LLMServiceResult
 from src.services.script_generation_service import ScriptGenerationService
 from src.shared.llm.models import LLMCallResult, LLMCallStatus, LLMProvider
 from src.shared.llm.request import LLMRequest
+
+_GENRE_REGISTRY = GenreProfileRegistryService.with_default_profiles()
+
+
+def _editorial_profile() -> EditorialProfile:
+    return EditorialProfileCompositionService().compose(
+        genre=_GENRE_REGISTRY.get("genre.mystery")
+    )
 
 
 class _StubLLMService:
@@ -180,7 +195,7 @@ def test_generate_produces_one_segment_per_blueprint_beat() -> None:
 
     script = _generate(stub).generate(
         topic="The Mary Celeste",
-        genre_id="genre.mystery",
+        editorial_profile=_editorial_profile(),
         research=_research(),
         audience_promise=_promise(),
         story_angle=_angle(),
@@ -204,7 +219,7 @@ def test_generate_inherits_timing_and_structural_role_from_blueprint() -> None:
 
     script = _generate(stub).generate(
         topic="The Mary Celeste",
-        genre_id="genre.mystery",
+        editorial_profile=_editorial_profile(),
         research=_research(),
         audience_promise=_promise(),
         story_angle=_angle(),
@@ -226,7 +241,7 @@ def test_generate_parses_related_question_and_claims() -> None:
 
     script = _generate(stub).generate(
         topic="The Mary Celeste",
-        genre_id="genre.mystery",
+        editorial_profile=_editorial_profile(),
         research=_research(),
         audience_promise=_promise(),
         story_angle=_angle(),
@@ -246,7 +261,7 @@ def test_generate_includes_hook_and_re_hook_text_in_prompt() -> None:
 
     _generate(stub).generate(
         topic="The Mary Celeste",
-        genre_id="genre.mystery",
+        editorial_profile=_editorial_profile(),
         research=_research(),
         audience_promise=_promise(),
         story_angle=_angle(),
@@ -261,12 +276,39 @@ def test_generate_includes_hook_and_re_hook_text_in_prompt() -> None:
     assert "But the logbook raised a bigger question." in stub.last_request.prompt
 
 
+def test_generate_prompt_reflects_genre_style() -> None:
+    stub = _StubLLMService(content=_THREE_SEGMENT_RESPONSE)
+
+    profile = _editorial_profile()
+
+    _generate(stub).generate(
+        topic="The Mary Celeste",
+        editorial_profile=profile,
+        research=_research(),
+        audience_promise=_promise(),
+        story_angle=_angle(),
+        blueprint=_blueprint(),
+        reveal_map=_reveal_map(),
+        winning_hook=_winning_hook(),
+        re_hook_plan=_re_hook_plan(),
+    )
+
+    assert stub.last_request is not None
+    assert stub.last_request.system_prompt is not None
+    assert profile.genre_id in stub.last_request.system_prompt
+    assert profile.script.tone.value in stub.last_request.system_prompt
+    assert profile.script.slang_intensity.value in stub.last_request.system_prompt
+    assert (
+        "slang-transformed" in stub.last_request.system_prompt
+    )  # never-slang-evidence rule always present
+
+
 def test_generate_works_without_a_re_hook_plan() -> None:
     stub = _StubLLMService(content=_THREE_SEGMENT_RESPONSE)
 
     script = _generate(stub).generate(
         topic="The Mary Celeste",
-        genre_id="genre.mystery",
+        editorial_profile=_editorial_profile(),
         research=_research(),
         audience_promise=_promise(),
         story_angle=_angle(),
@@ -291,7 +333,7 @@ def test_generate_skips_a_segment_number_outside_the_beat_range() -> None:
 
     script = _generate(stub).generate(
         topic="The Mary Celeste",
-        genre_id="genre.mystery",
+        editorial_profile=_editorial_profile(),
         research=_research(),
         audience_promise=_promise(),
         story_angle=_angle(),
@@ -309,7 +351,7 @@ def test_generate_raises_when_provider_fails() -> None:
     with pytest.raises(RuntimeError, match="Script generation failed"):
         _generate(stub).generate(
             topic="The Mary Celeste",
-            genre_id="genre.mystery",
+            editorial_profile=_editorial_profile(),
             research=_research(),
             audience_promise=_promise(),
             story_angle=_angle(),
@@ -325,7 +367,7 @@ def test_generate_raises_when_no_segments_parsed() -> None:
     with pytest.raises(RuntimeError, match="no usable segments"):
         _generate(stub).generate(
             topic="The Mary Celeste",
-            genre_id="genre.mystery",
+            editorial_profile=_editorial_profile(),
             research=_research(),
             audience_promise=_promise(),
             story_angle=_angle(),
@@ -341,7 +383,7 @@ def test_generate_raises_on_empty_topic() -> None:
     with pytest.raises(ValueError, match="cannot be empty"):
         _generate(stub).generate(
             topic="   ",
-            genre_id="genre.mystery",
+            editorial_profile=_editorial_profile(),
             research=_research(),
             audience_promise=_promise(),
             story_angle=_angle(),
@@ -366,7 +408,7 @@ def test_dry_run_response_is_itself_parseable() -> None:
 
     _generate(probe).generate(
         topic="The Mary Celeste",
-        genre_id="genre.mystery",
+        editorial_profile=_editorial_profile(),
         research=_research(),
         audience_promise=_promise(),
         story_angle=_angle(),
@@ -383,7 +425,7 @@ def test_dry_run_response_is_itself_parseable() -> None:
 
     script = _generate(replay).generate(
         topic="The Mary Celeste",
-        genre_id="genre.mystery",
+        editorial_profile=_editorial_profile(),
         research=_research(),
         audience_promise=_promise(),
         story_angle=_angle(),

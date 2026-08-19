@@ -79,6 +79,8 @@ class GenreScriptProfile(MissionBaseModel):
 
     sensory_description_density: DirectiveIntensity = DirectiveIntensity.MEDIUM
 
+    slang_intensity: DirectiveIntensity = DirectiveIntensity.LOW
+
     metadata: dict[str, Any] = Field(
         default_factory=dict,
     )

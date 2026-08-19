@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from src.models.audience_promise import AudiencePromise
+from src.models.editorial_profile import EditorialProfile
 from src.models.hook import HookCandidate
 from src.models.research import ResearchResult
 from src.models.story_angle import StoryAngle
@@ -48,6 +49,7 @@ class HookGenerationService:
         story_angle: StoryAngle,
         audience_promise: AudiencePromise,
         research: ResearchResult,
+        editorial_profile: EditorialProfile,
         hook_count: int = 10,
     ) -> list[HookCandidate]:
         """Generate up to hook_count distinct candidate hooks."""
@@ -68,6 +70,7 @@ class HookGenerationService:
                 story_angle=story_angle,
                 audience_promise=audience_promise,
                 research=research,
+                editorial_profile=editorial_profile,
                 hook_count=hook_count,
             ),
             system_prompt=(
@@ -120,17 +123,40 @@ class HookGenerationService:
         story_angle: StoryAngle,
         audience_promise: AudiencePromise,
         research: ResearchResult,
+        editorial_profile: EditorialProfile,
         hook_count: int,
     ) -> str:
+        content_intelligence = editorial_profile.content_intelligence
+
+        archetype_guidance = ""
+
+        if content_intelligence.preferred_hook_archetypes:
+            preferred = ", ".join(
+                archetype.value
+                for archetype in content_intelligence.preferred_hook_archetypes
+            )
+            archetype_guidance += f"Preferred hook archetypes: {preferred}\n"
+
+        if content_intelligence.forbidden_hook_archetypes:
+            forbidden = ", ".join(
+                archetype.value
+                for archetype in content_intelligence.forbidden_hook_archetypes
+            )
+            archetype_guidance += f"Forbidden hook archetypes: {forbidden}\n"
+
         return (
             f"Topic: {topic}\n"
+            f"Genre hook style: {editorial_profile.script.hook_style}\n"
+            f"Hook intensity: {content_intelligence.hook_intensity.value}\n"
+            f"{archetype_guidance}"
             f"Selected angle [{story_angle.style.value}]: {story_angle.title} - "
             f"{story_angle.description}\n"
             f"Central curiosity: {audience_promise.central_curiosity}\n"
             f"Research summary: {research.research_summary}\n\n"
             f"Write {hook_count} distinct candidate opening hooks for "
-            "this video. Each hook must create immediate curiosity, "
-            "be specific rather than generic, and never fully reveal "
+            "this video, matching the genre hook style and intensity "
+            "above. Each hook must create immediate curiosity, be "
+            "specific rather than generic, and never fully reveal "
             "the payoff.\n\n"
             "Return each hook as a block with exactly this labeled "
             "line, separated by a line of three or more dashes:\n"

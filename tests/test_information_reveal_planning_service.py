@@ -2,14 +2,29 @@ from __future__ import annotations
 
 import pytest
 
+from src.models.editorial_profile import EditorialProfile
 from src.models.research import ResearchResult, ResearchSource, ResearchStatus
 from src.models.story_angle import StoryAngle, StoryAngleStyle
+from src.services.editorial_profile_composition_service import (
+    EditorialProfileCompositionService,
+)
+from src.services.genre_profile_registry_service import (
+    GenreProfileRegistryService,
+)
 from src.services.information_reveal_planning_service import (
     InformationRevealPlanningService,
 )
 from src.services.llm.llm_service import LLMServiceResult
 from src.shared.llm.models import LLMCallResult, LLMCallStatus, LLMProvider
 from src.shared.llm.request import LLMRequest
+
+_GENRE_REGISTRY = GenreProfileRegistryService.with_default_profiles()
+
+
+def _editorial_profile() -> EditorialProfile:
+    return EditorialProfileCompositionService().compose(
+        genre=_GENRE_REGISTRY.get("genre.mystery")
+    )
 
 
 class _StubLLMService:
@@ -95,7 +110,11 @@ def test_plan_parses_loops_and_reveals() -> None:
     service = InformationRevealPlanningService(llm_service=stub)  # type: ignore[arg-type]
 
     reveal_map = service.plan(
-        topic="The Mary Celeste", story_angle=_angle(), research=_research()
+        topic="The Mary Celeste",
+        story_angle=_angle(),
+        research=_research(),
+        editorial_profile=_editorial_profile(),
+        target_duration_seconds=180,
     )
 
     assert len(reveal_map.curiosity_loops) == 2
@@ -126,7 +145,11 @@ def test_plan_treats_none_related_question_as_none() -> None:
     service = InformationRevealPlanningService(llm_service=stub)  # type: ignore[arg-type]
 
     reveal_map = service.plan(
-        topic="The Mary Celeste", story_angle=_angle(), research=_research()
+        topic="The Mary Celeste",
+        story_angle=_angle(),
+        research=_research(),
+        editorial_profile=_editorial_profile(),
+        target_duration_seconds=180,
     )
 
     assert reveal_map.reveals[0].related_question is None
@@ -150,7 +173,11 @@ def test_plan_skips_a_block_with_an_out_of_range_position() -> None:
     service = InformationRevealPlanningService(llm_service=stub)  # type: ignore[arg-type]
 
     reveal_map = service.plan(
-        topic="The Mary Celeste", story_angle=_angle(), research=_research()
+        topic="The Mary Celeste",
+        story_angle=_angle(),
+        research=_research(),
+        editorial_profile=_editorial_profile(),
+        target_duration_seconds=180,
     )
 
     assert len(reveal_map.curiosity_loops) == 1
@@ -173,10 +200,52 @@ def test_plan_ignores_unrecognized_block_types() -> None:
     service = InformationRevealPlanningService(llm_service=stub)  # type: ignore[arg-type]
 
     reveal_map = service.plan(
-        topic="The Mary Celeste", story_angle=_angle(), research=_research()
+        topic="The Mary Celeste",
+        story_angle=_angle(),
+        research=_research(),
+        editorial_profile=_editorial_profile(),
+        target_duration_seconds=180,
     )
 
     assert len(reveal_map.curiosity_loops) == 1
+
+
+def test_plan_prompt_reflects_genre_reveal_density() -> None:
+    top10_profile = EditorialProfileCompositionService().compose(
+        genre=_GENRE_REGISTRY.get("genre.top10")
+    )
+
+    stub = _StubLLMService(content=_FULL_RESPONSE)
+
+    service = InformationRevealPlanningService(llm_service=stub)  # type: ignore[arg-type]
+
+    service.plan(
+        topic="The Mary Celeste",
+        story_angle=_angle(),
+        research=_research(),
+        editorial_profile=top10_profile,
+        target_duration_seconds=180,
+    )
+
+    assert stub.last_request is not None
+    # top10's reveal_density_per_minute is 4.0, so a 180s (3 minute)
+    # video targets ~12 combined loops/reveals.
+    assert "approximately 12" in stub.last_request.prompt
+
+
+def test_plan_raises_on_non_positive_duration() -> None:
+    stub = _StubLLMService(content=_FULL_RESPONSE)
+
+    service = InformationRevealPlanningService(llm_service=stub)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="must be positive"):
+        service.plan(
+            topic="The Mary Celeste",
+            story_angle=_angle(),
+            research=_research(),
+            editorial_profile=_editorial_profile(),
+            target_duration_seconds=0,
+        )
 
 
 def test_plan_raises_when_provider_fails() -> None:
@@ -186,7 +255,11 @@ def test_plan_raises_when_provider_fails() -> None:
 
     with pytest.raises(RuntimeError, match="Information reveal planning failed"):
         service.plan(
-            topic="The Mary Celeste", story_angle=_angle(), research=_research()
+            topic="The Mary Celeste",
+            story_angle=_angle(),
+            research=_research(),
+            editorial_profile=_editorial_profile(),
+            target_duration_seconds=180,
         )
 
 
@@ -197,7 +270,11 @@ def test_plan_raises_when_no_loops_parsed() -> None:
 
     with pytest.raises(RuntimeError, match="no usable curiosity loops"):
         service.plan(
-            topic="The Mary Celeste", story_angle=_angle(), research=_research()
+            topic="The Mary Celeste",
+            story_angle=_angle(),
+            research=_research(),
+            editorial_profile=_editorial_profile(),
+            target_duration_seconds=180,
         )
 
 
@@ -207,7 +284,13 @@ def test_plan_raises_on_empty_topic() -> None:
     service = InformationRevealPlanningService(llm_service=stub)  # type: ignore[arg-type]
 
     with pytest.raises(ValueError, match="cannot be empty"):
-        service.plan(topic="   ", story_angle=_angle(), research=_research())
+        service.plan(
+            topic="   ",
+            story_angle=_angle(),
+            research=_research(),
+            editorial_profile=_editorial_profile(),
+            target_duration_seconds=180,
+        )
 
 
 def test_constructor_rejects_negative_estimated_cost() -> None:
@@ -225,7 +308,13 @@ def test_dry_run_response_is_itself_parseable() -> None:
 
     service = InformationRevealPlanningService(llm_service=probe)  # type: ignore[arg-type]
 
-    service.plan(topic="The Mary Celeste", story_angle=_angle(), research=_research())
+    service.plan(
+        topic="The Mary Celeste",
+        story_angle=_angle(),
+        research=_research(),
+        editorial_profile=_editorial_profile(),
+        target_duration_seconds=180,
+    )
 
     assert probe.last_request is not None
     assert probe.last_request.dry_run_response is not None
@@ -234,7 +323,11 @@ def test_dry_run_response_is_itself_parseable() -> None:
     replay_service = InformationRevealPlanningService(llm_service=replay)  # type: ignore[arg-type]
 
     reveal_map = replay_service.plan(
-        topic="The Mary Celeste", story_angle=_angle(), research=_research()
+        topic="The Mary Celeste",
+        story_angle=_angle(),
+        research=_research(),
+        editorial_profile=_editorial_profile(),
+        target_duration_seconds=180,
     )
 
     assert len(reveal_map.curiosity_loops) == 1

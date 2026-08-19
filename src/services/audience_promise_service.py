@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from src.models.audience_promise import AudiencePromise, PromiseStrength
+from src.models.editorial_profile import EditorialProfile
 from src.services.llm.labeled_block_parser import extract_labeled_field
 from src.services.llm.llm_service import LLMService
 from src.shared.llm.models import LLMProvider
@@ -59,7 +60,7 @@ class AudiencePromiseService:
         topic: str,
         target_audience: str,
         platform: str,
-        genre_id: str,
+        editorial_profile: EditorialProfile,
         target_duration_seconds: int,
     ) -> AudiencePromise:
         """Determine the central viewer promise for one topic."""
@@ -76,7 +77,7 @@ class AudiencePromiseService:
                 topic=normalized_topic,
                 target_audience=target_audience,
                 platform=platform,
-                genre_id=genre_id,
+                editorial_profile=editorial_profile,
                 target_duration_seconds=target_duration_seconds,
             ),
             system_prompt=(
@@ -119,7 +120,7 @@ class AudiencePromiseService:
             topic=normalized_topic,
             target_audience=target_audience,
             platform=platform,
-            genre_id=genre_id,
+            genre_id=editorial_profile.genre_id,
             target_duration_seconds=target_duration_seconds,
             prompt_version=request.prompt_version,
         )
@@ -130,17 +131,22 @@ class AudiencePromiseService:
         topic: str,
         target_audience: str,
         platform: str,
-        genre_id: str,
+        editorial_profile: EditorialProfile,
         target_duration_seconds: int,
     ) -> str:
+        content_intelligence = editorial_profile.content_intelligence
+
         return (
             f"Topic: {topic}\n"
             f"Target audience: {target_audience}\n"
             f"Platform: {platform}\n"
-            f"Genre: {genre_id}\n"
+            f"Genre: {editorial_profile.genre_id}\n"
+            f"Genre tone: {editorial_profile.script.tone.value}\n"
+            f"Call-to-action policy: {content_intelligence.cta_policy.value}\n"
             f"Target duration: {target_duration_seconds} seconds\n\n"
             "Determine the central promise this video makes to its "
-            "viewer. Return exactly these seven labeled lines:\n"
+            "viewer, consistent with the genre tone above. Return "
+            "exactly these seven labeled lines:\n"
             "INTENDED_EMOTION: <the dominant emotion the video "
             "should evoke>\n"
             "CENTRAL_CURIOSITY: <the central question that keeps a "

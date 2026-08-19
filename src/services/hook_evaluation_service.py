@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
+from src.models.editorial_profile import EditorialProfile
 from src.models.hook import HookCandidate, HookEvaluation, HookRejectionReason
 from src.models.research import ResearchResult
 from src.services.llm.labeled_block_parser import extract_labeled_field, split_blocks
@@ -88,6 +89,7 @@ class HookEvaluationService:
         topic: str,
         hooks: list[HookCandidate],
         research: ResearchResult,
+        editorial_profile: EditorialProfile,
     ) -> list[HookEvaluation]:
         """Score every candidate hook in one LLM call."""
 
@@ -99,6 +101,16 @@ class HookEvaluationService:
         if not normalized_topic:
             raise ValueError("Hook evaluation topic cannot be empty.")
 
+        quality_thresholds = editorial_profile.content_intelligence.quality_thresholds
+        calibration = (
+            ", ".join(
+                f"{dimension}>={threshold}"
+                for dimension, threshold in sorted(quality_thresholds.items())
+            )
+            if quality_thresholds
+            else "no genre-specific minimums for this stage"
+        )
+
         request = LLMRequest(
             provider=LLMProvider.OPENAI,
             model="provider-default-model",
@@ -106,13 +118,16 @@ class HookEvaluationService:
                 topic=normalized_topic, hooks=hooks, research=research
             ),
             system_prompt=(
-                "You are an expert video hook editor. Score every "
-                "candidate hook honestly. Reject any hook that is "
-                "misleading clickbait, makes an unsupported claim, "
+                "You are an expert video hook editor for the "
+                f"{editorial_profile.genre_id} genre "
+                f"({editorial_profile.script.tone.value} tone). Score "
+                "every candidate hook honestly. Reject any hook that "
+                "is misleading clickbait, makes an unsupported claim, "
                 "reads as a generic introduction or greeting, sets up "
                 "too slowly, or fully spoils the payoff - rejection "
                 "is mandatory for these cases regardless of how "
-                "strong the hook otherwise reads."
+                "strong the hook otherwise reads. This genre's "
+                f"minimum quality bar: {calibration}."
             ),
             prompt_version="hook_evaluation_prompt_v1.0.0",
             dry_run_response="\n---\n".join(

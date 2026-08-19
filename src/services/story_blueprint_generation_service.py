@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from src.models.audience_promise import AudiencePromise
+from src.models.editorial_profile import EditorialProfile
 from src.models.story_angle import StoryAngle
 from src.models.story_blueprint import StoryBeat, StoryBeatType, StoryBlueprint
 from src.services.llm.labeled_block_parser import extract_labeled_field, split_blocks
@@ -77,7 +78,7 @@ class StoryBlueprintGenerationService:
         self,
         *,
         topic: str,
-        genre_id: str,
+        editorial_profile: EditorialProfile,
         target_duration_seconds: int,
         story_angle: StoryAngle,
         audience_promise: AudiencePromise,
@@ -94,7 +95,7 @@ class StoryBlueprintGenerationService:
             model="provider-default-model",
             prompt=self._build_prompt(
                 topic=normalized_topic,
-                genre_id=genre_id,
+                editorial_profile=editorial_profile,
                 target_duration_seconds=target_duration_seconds,
                 story_angle=story_angle,
                 audience_promise=audience_promise,
@@ -142,7 +143,7 @@ class StoryBlueprintGenerationService:
 
         return StoryBlueprint(
             topic=normalized_topic,
-            genre_id=genre_id,
+            genre_id=editorial_profile.genre_id,
             target_duration_seconds=target_duration_seconds,
             beats=beats,
             prompt_version=request.prompt_version,
@@ -152,20 +153,42 @@ class StoryBlueprintGenerationService:
     def _build_prompt(
         *,
         topic: str,
-        genre_id: str,
+        editorial_profile: EditorialProfile,
         target_duration_seconds: int,
         story_angle: StoryAngle,
         audience_promise: AudiencePromise,
     ) -> str:
         available_types = ", ".join(beat_type.value for beat_type in StoryBeatType)
+        content_intelligence = editorial_profile.content_intelligence
+
+        architecture_hint = (
+            f"Narrative architecture guidance for this genre: "
+            f"{content_intelligence.narrative_architecture_hint}\n"
+            if content_intelligence.narrative_architecture_hint
+            else ""
+        )
+
+        pacing_curve_lines = "\n".join(
+            f"  {segment.progress_start:.0%}-{segment.progress_end:.0%}: "
+            f"tension {segment.tension_level}, "
+            f"reveal probability {segment.reveal_probability}"
+            for segment in content_intelligence.pacing_curve
+        )
+        pacing_hint = (
+            f"Target tension/reveal curve across runtime:\n{pacing_curve_lines}\n"
+            if pacing_curve_lines
+            else ""
+        )
 
         return (
             f"Topic: {topic}\n"
-            f"Genre: {genre_id}\n"
+            f"Genre: {editorial_profile.genre_id}\n"
             f"Target duration: {target_duration_seconds} seconds\n"
             f"Selected angle [{story_angle.style.value}]: {story_angle.title} - "
             f"{story_angle.description}\n"
-            f"Expected payoff: {audience_promise.expected_payoff}\n\n"
+            f"Expected payoff: {audience_promise.expected_payoff}\n"
+            f"{architecture_hint}"
+            f"{pacing_hint}\n"
             f"Design a beat-by-beat structure covering the full "
             f"{target_duration_seconds} seconds. Available beat "
             f"types: {available_types}. Use only the beats that fit "

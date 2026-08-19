@@ -2,8 +2,15 @@ from __future__ import annotations
 
 import pytest
 
+from src.models.editorial_profile import EditorialProfile
 from src.models.hook import HookCandidate
 from src.models.research import ResearchResult, ResearchSource, ResearchStatus
+from src.services.editorial_profile_composition_service import (
+    EditorialProfileCompositionService,
+)
+from src.services.genre_profile_registry_service import (
+    GenreProfileRegistryService,
+)
 from src.services.hook_evaluation_service import (
     HookEvaluationService,
     select_winning_hook,
@@ -11,6 +18,14 @@ from src.services.hook_evaluation_service import (
 from src.services.llm.llm_service import LLMServiceResult
 from src.shared.llm.models import LLMCallResult, LLMCallStatus, LLMProvider
 from src.shared.llm.request import LLMRequest
+
+_GENRE_REGISTRY = GenreProfileRegistryService.with_default_profiles()
+
+
+def _editorial_profile() -> EditorialProfile:
+    return EditorialProfileCompositionService().compose(
+        genre=_GENRE_REGISTRY.get("genre.mystery")
+    )
 
 
 class _StubLLMService:
@@ -113,7 +128,10 @@ def test_evaluate_parses_and_matches_both_hooks_by_text() -> None:
     service = HookEvaluationService(llm_service=stub)  # type: ignore[arg-type]
 
     evaluations = service.evaluate(
-        topic="The Mary Celeste", hooks=_hooks(), research=_research()
+        topic="The Mary Celeste",
+        hooks=_hooks(),
+        research=_research(),
+        editorial_profile=_editorial_profile(),
     )
 
     assert len(evaluations) == 2
@@ -130,7 +148,10 @@ def test_evaluate_parses_rejection_reasons() -> None:
     service = HookEvaluationService(llm_service=stub)  # type: ignore[arg-type]
 
     evaluations = service.evaluate(
-        topic="The Mary Celeste", hooks=_hooks(), research=_research()
+        topic="The Mary Celeste",
+        hooks=_hooks(),
+        research=_research(),
+        editorial_profile=_editorial_profile(),
     )
 
     rejected = next(e for e in evaluations if e.rejected)
@@ -156,6 +177,7 @@ def test_evaluate_parses_multiple_rejection_reasons() -> None:
         topic="The Mary Celeste",
         hooks=[HookCandidate(text="The crew vanished without a trace.")],
         research=_research(),
+        editorial_profile=_editorial_profile(),
     )
 
     reason_values = {reason.value for reason in evaluations[0].rejection_reasons}
@@ -175,11 +197,36 @@ def test_evaluate_skips_a_block_whose_text_does_not_match_any_hook() -> None:
     service = HookEvaluationService(llm_service=stub)  # type: ignore[arg-type]
 
     evaluations = service.evaluate(
-        topic="The Mary Celeste", hooks=_hooks(), research=_research()
+        topic="The Mary Celeste",
+        hooks=_hooks(),
+        research=_research(),
+        editorial_profile=_editorial_profile(),
     )
 
     assert len(evaluations) == 1
     assert evaluations[0].hook_text == "The crew vanished without a trace."
+
+
+def test_evaluate_system_prompt_reflects_genre_quality_bar() -> None:
+    medical_profile = EditorialProfileCompositionService().compose(
+        genre=_GENRE_REGISTRY.get("genre.medical")
+    )
+
+    stub = _StubLLMService(content=_TWO_EVALUATION_BLOCKS)
+
+    service = HookEvaluationService(llm_service=stub)  # type: ignore[arg-type]
+
+    service.evaluate(
+        topic="The Mary Celeste",
+        hooks=_hooks(),
+        research=_research(),
+        editorial_profile=medical_profile,
+    )
+
+    assert stub.last_request is not None
+    assert stub.last_request.system_prompt is not None
+    assert "genre.medical" in stub.last_request.system_prompt
+    assert "factual_confidence>=75" in stub.last_request.system_prompt
 
 
 def test_evaluate_only_makes_one_llm_call_for_all_hooks() -> None:
@@ -187,7 +234,12 @@ def test_evaluate_only_makes_one_llm_call_for_all_hooks() -> None:
 
     service = HookEvaluationService(llm_service=stub)  # type: ignore[arg-type]
 
-    service.evaluate(topic="The Mary Celeste", hooks=_hooks(), research=_research())
+    service.evaluate(
+        topic="The Mary Celeste",
+        hooks=_hooks(),
+        research=_research(),
+        editorial_profile=_editorial_profile(),
+    )
 
     assert stub.last_request is not None
     assert "The crew vanished without a trace." in stub.last_request.prompt
@@ -200,7 +252,12 @@ def test_evaluate_raises_on_empty_hook_list() -> None:
     service = HookEvaluationService(llm_service=stub)  # type: ignore[arg-type]
 
     with pytest.raises(ValueError, match="At least one hook candidate"):
-        service.evaluate(topic="The Mary Celeste", hooks=[], research=_research())
+        service.evaluate(
+            topic="The Mary Celeste",
+            hooks=[],
+            research=_research(),
+            editorial_profile=_editorial_profile(),
+        )
 
 
 def test_evaluate_raises_when_provider_fails() -> None:
@@ -209,7 +266,12 @@ def test_evaluate_raises_when_provider_fails() -> None:
     service = HookEvaluationService(llm_service=stub)  # type: ignore[arg-type]
 
     with pytest.raises(RuntimeError, match="Hook evaluation failed"):
-        service.evaluate(topic="The Mary Celeste", hooks=_hooks(), research=_research())
+        service.evaluate(
+            topic="The Mary Celeste",
+            hooks=_hooks(),
+            research=_research(),
+            editorial_profile=_editorial_profile(),
+        )
 
 
 def test_constructor_rejects_negative_estimated_cost() -> None:
@@ -227,7 +289,12 @@ def test_dry_run_response_is_itself_parseable() -> None:
 
     service = HookEvaluationService(llm_service=probe)  # type: ignore[arg-type]
 
-    service.evaluate(topic="The Mary Celeste", hooks=_hooks(), research=_research())
+    service.evaluate(
+        topic="The Mary Celeste",
+        hooks=_hooks(),
+        research=_research(),
+        editorial_profile=_editorial_profile(),
+    )
 
     assert probe.last_request is not None
     assert probe.last_request.dry_run_response is not None
@@ -236,7 +303,10 @@ def test_dry_run_response_is_itself_parseable() -> None:
     replay_service = HookEvaluationService(llm_service=replay)  # type: ignore[arg-type]
 
     evaluations = replay_service.evaluate(
-        topic="The Mary Celeste", hooks=_hooks(), research=_research()
+        topic="The Mary Celeste",
+        hooks=_hooks(),
+        research=_research(),
+        editorial_profile=_editorial_profile(),
     )
 
     assert len(evaluations) == 2
@@ -248,7 +318,10 @@ def test_select_winning_hook_excludes_rejected_candidates() -> None:
     service = HookEvaluationService(llm_service=stub)  # type: ignore[arg-type]
 
     evaluations = service.evaluate(
-        topic="The Mary Celeste", hooks=_hooks(), research=_research()
+        topic="The Mary Celeste",
+        hooks=_hooks(),
+        research=_research(),
+        editorial_profile=_editorial_profile(),
     )
 
     winner = select_winning_hook(evaluations)
@@ -276,6 +349,7 @@ def test_select_winning_hook_raises_when_all_rejected() -> None:
         topic="The Mary Celeste",
         hooks=[HookCandidate(text="The crew vanished without a trace.")],
         research=_research(),
+        editorial_profile=_editorial_profile(),
     )
 
     with pytest.raises(ValueError, match="every candidate was rejected"):

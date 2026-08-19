@@ -470,6 +470,7 @@ class GenreProfileRegistryService:
                     hook_style="standard",
                     narrative_style="informative",
                     sentence_length="medium",
+                    slang_intensity=DirectiveIntensity.LOW,
                 ),
                 voice=GenreVoiceProfile(
                     voice_profile_id=("voice.neutral_narrator"),
@@ -510,6 +511,7 @@ class GenreProfileRegistryService:
                     use_cliffhangers=True,
                     use_open_loops=True,
                     emotional_intensity=(DirectiveIntensity.HIGH),
+                    slang_intensity=DirectiveIntensity.MEDIUM,
                 ),
                 voice=GenreVoiceProfile(
                     voice_profile_id=("voice.horror_whisper"),
@@ -625,6 +627,7 @@ class GenreProfileRegistryService:
                     narrative_style=("evidence_based"),
                     sentence_length="medium",
                     use_open_loops=True,
+                    slang_intensity=DirectiveIntensity.VERY_LOW,
                 ),
                 voice=GenreVoiceProfile(
                     voice_profile_id=("voice.documentary_authoritative"),
@@ -720,6 +723,7 @@ class GenreProfileRegistryService:
                     narrative_style=("chronological_storytelling"),
                     sentence_length="medium",
                     use_open_loops=True,
+                    slang_intensity=DirectiveIntensity.VERY_LOW,
                 ),
                 voice=GenreVoiceProfile(
                     voice_profile_id=("voice.history_narrator"),
@@ -814,6 +818,7 @@ class GenreProfileRegistryService:
                     hook_style="destination_wonder",
                     narrative_style=("descriptive_guide"),
                     sentence_length="short",
+                    slang_intensity=DirectiveIntensity.HIGH,
                 ),
                 voice=GenreVoiceProfile(
                     voice_profile_id=("voice.travel_energetic"),
@@ -901,6 +906,7 @@ class GenreProfileRegistryService:
                     narrative_style="ranked_list",
                     sentence_length="short",
                     use_open_loops=True,
+                    slang_intensity=DirectiveIntensity.HIGH,
                 ),
                 voice=GenreVoiceProfile(
                     voice_profile_id=("voice.top10_energetic"),
@@ -993,6 +999,7 @@ class GenreProfileRegistryService:
                     use_cliffhangers=True,
                     use_open_loops=True,
                     emotional_intensity=(DirectiveIntensity.HIGH),
+                    slang_intensity=DirectiveIntensity.MEDIUM,
                 ),
                 voice=GenreVoiceProfile(
                     voice_profile_id=("voice.warm_storyteller"),
@@ -1095,6 +1102,7 @@ class GenreProfileRegistryService:
                     narrative_style="explanatory",
                     sentence_length="medium",
                     emotional_intensity=DirectiveIntensity.LOW,
+                    slang_intensity=DirectiveIntensity.VERY_LOW,
                 ),
                 voice=GenreVoiceProfile(
                     voice_profile_id="voice.neutral_narrator",
@@ -1194,6 +1202,7 @@ class GenreProfileRegistryService:
                     use_cliffhangers=True,
                     use_open_loops=True,
                     emotional_intensity=DirectiveIntensity.MEDIUM,
+                    slang_intensity=DirectiveIntensity.MEDIUM,
                 ),
                 voice=GenreVoiceProfile(
                     voice_profile_id="voice.neutral_narrator",
@@ -1301,6 +1310,7 @@ class GenreProfileRegistryService:
                     narrative_style="commentary",
                     sentence_length="short",
                     emotional_intensity=DirectiveIntensity.HIGH,
+                    slang_intensity=DirectiveIntensity.HIGH,
                 ),
                 voice=GenreVoiceProfile(
                     voice_profile_id="voice.neutral_narrator",
@@ -1395,6 +1405,7 @@ class GenreProfileRegistryService:
                     sentence_length="medium",
                     use_cliffhangers=True,
                     emotional_intensity=DirectiveIntensity.HIGH,
+                    slang_intensity=DirectiveIntensity.MEDIUM,
                 ),
                 voice=GenreVoiceProfile(
                     voice_profile_id="voice.neutral_narrator",

@@ -3,13 +3,28 @@ from __future__ import annotations
 import pytest
 
 from src.models.audience_promise import AudiencePromise, PromiseStrength
+from src.models.editorial_profile import EditorialProfile
 from src.models.story_angle import StoryAngle, StoryAngleStyle
+from src.services.editorial_profile_composition_service import (
+    EditorialProfileCompositionService,
+)
+from src.services.genre_profile_registry_service import (
+    GenreProfileRegistryService,
+)
 from src.services.llm.llm_service import LLMServiceResult
 from src.services.story_blueprint_generation_service import (
     StoryBlueprintGenerationService,
 )
 from src.shared.llm.models import LLMCallResult, LLMCallStatus, LLMProvider
 from src.shared.llm.request import LLMRequest
+
+_GENRE_REGISTRY = GenreProfileRegistryService.with_default_profiles()
+
+
+def _editorial_profile() -> EditorialProfile:
+    return EditorialProfileCompositionService().compose(
+        genre=_GENRE_REGISTRY.get("genre.mystery")
+    )
 
 
 class _StubLLMService:
@@ -88,7 +103,7 @@ def test_generate_parses_multiple_beats_in_order() -> None:
 
     blueprint = service.generate(
         topic="The Mary Celeste",
-        genre_id="genre.mystery",
+        editorial_profile=_editorial_profile(),
         target_duration_seconds=30,
         story_angle=_angle(),
         audience_promise=_promise(),
@@ -113,7 +128,7 @@ def test_generate_skips_a_block_with_an_unrecognized_beat_type() -> None:
 
     blueprint = service.generate(
         topic="The Mary Celeste",
-        genre_id="genre.mystery",
+        editorial_profile=_editorial_profile(),
         target_duration_seconds=7,
         story_angle=_angle(),
         audience_promise=_promise(),
@@ -130,7 +145,7 @@ def test_generate_includes_genre_and_duration_in_prompt() -> None:
 
     service.generate(
         topic="The Mary Celeste",
-        genre_id="genre.mystery",
+        editorial_profile=_editorial_profile(),
         target_duration_seconds=30,
         story_angle=_angle(),
         audience_promise=_promise(),
@@ -142,6 +157,29 @@ def test_generate_includes_genre_and_duration_in_prompt() -> None:
     assert "The Missing Logbook" in stub.last_request.prompt
 
 
+def test_generate_prompt_includes_narrative_architecture_and_pacing() -> None:
+    stub = _StubLLMService(content=_FOUR_BEAT_RESPONSE)
+
+    service = StoryBlueprintGenerationService(llm_service=stub)  # type: ignore[arg-type]
+
+    profile = _editorial_profile()
+
+    service.generate(
+        topic="The Mary Celeste",
+        target_duration_seconds=30,
+        story_angle=_angle(),
+        audience_promise=_promise(),
+        editorial_profile=profile,
+    )
+
+    assert stub.last_request is not None
+    assert (
+        profile.content_intelligence.narrative_architecture_hint
+        in stub.last_request.prompt
+    )
+    assert "tension" in stub.last_request.prompt
+
+
 def test_generate_raises_when_provider_fails() -> None:
     stub = _StubLLMService(content="", success=False)
 
@@ -150,7 +188,7 @@ def test_generate_raises_when_provider_fails() -> None:
     with pytest.raises(RuntimeError, match="Story blueprint generation failed"):
         service.generate(
             topic="The Mary Celeste",
-            genre_id="genre.mystery",
+            editorial_profile=_editorial_profile(),
             target_duration_seconds=30,
             story_angle=_angle(),
             audience_promise=_promise(),
@@ -165,7 +203,7 @@ def test_generate_raises_when_no_beats_parsed() -> None:
     with pytest.raises(RuntimeError, match="no usable beats"):
         service.generate(
             topic="The Mary Celeste",
-            genre_id="genre.mystery",
+            editorial_profile=_editorial_profile(),
             target_duration_seconds=30,
             story_angle=_angle(),
             audience_promise=_promise(),
@@ -194,7 +232,7 @@ def test_generate_raises_when_beats_would_fail_model_validation() -> None:
     with pytest.raises(Exception, match="cannot overlap"):
         service.generate(
             topic="The Mary Celeste",
-            genre_id="genre.mystery",
+            editorial_profile=_editorial_profile(),
             target_duration_seconds=30,
             story_angle=_angle(),
             audience_promise=_promise(),
@@ -209,7 +247,7 @@ def test_generate_raises_on_empty_topic() -> None:
     with pytest.raises(ValueError, match="cannot be empty"):
         service.generate(
             topic="   ",
-            genre_id="genre.mystery",
+            editorial_profile=_editorial_profile(),
             target_duration_seconds=30,
             story_angle=_angle(),
             audience_promise=_promise(),
@@ -233,7 +271,7 @@ def test_dry_run_response_is_itself_parseable() -> None:
 
     service.generate(
         topic="The Mary Celeste",
-        genre_id="genre.mystery",
+        editorial_profile=_editorial_profile(),
         target_duration_seconds=30,
         story_angle=_angle(),
         audience_promise=_promise(),
@@ -247,7 +285,7 @@ def test_dry_run_response_is_itself_parseable() -> None:
 
     blueprint = replay_service.generate(
         topic="The Mary Celeste",
-        genre_id="genre.mystery",
+        editorial_profile=_editorial_profile(),
         target_duration_seconds=30,
         story_angle=_angle(),
         audience_promise=_promise(),

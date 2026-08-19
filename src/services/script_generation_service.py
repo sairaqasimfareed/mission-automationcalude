@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from src.models.audience_promise import AudiencePromise
+from src.models.editorial_profile import EditorialProfile
 from src.models.generated_script import GeneratedScript, ScriptSegment
 from src.models.hook import HookEvaluation
 from src.models.information_reveal_map import InformationRevealMap
@@ -56,7 +57,7 @@ class ScriptGenerationService:
         self,
         *,
         topic: str,
-        genre_id: str,
+        editorial_profile: EditorialProfile,
         research: ResearchResult,
         audience_promise: AudiencePromise,
         story_angle: StoryAngle,
@@ -88,12 +89,16 @@ class ScriptGenerationService:
                 re_hook_plan=re_hook_plan,
             ),
             system_prompt=(
-                "You are an expert scriptwriter for long-form video. "
-                "Write narration only - no camera directions, no "
-                "visual descriptions, no editing notes. Never state a "
-                "claim the research does not support. Follow the "
-                "supplied structure exactly: do not add, remove, "
-                "reorder, or retime segments."
+                "You are an expert scriptwriter for long-form video, "
+                f"writing for the {editorial_profile.genre_id} genre. "
+                f"{self._style_directions(editorial_profile)} Write "
+                "narration only - no camera directions, no visual "
+                "descriptions, no editing notes. Never state a claim "
+                "the research does not support. Follow the supplied "
+                "structure exactly: do not add, remove, reorder, or "
+                "retime segments. Evidence, quotations, proper nouns, "
+                "and factual claims are never slang-transformed, "
+                "regardless of the genre's slang intensity."
             ),
             prompt_version="script_generation_prompt_v1.0.0",
             dry_run_response="\n---\n".join(
@@ -134,10 +139,31 @@ class ScriptGenerationService:
 
         return GeneratedScript(
             topic=normalized_topic,
-            genre_id=genre_id,
+            genre_id=editorial_profile.genre_id,
             target_duration_seconds=blueprint.target_duration_seconds,
             segments=segments,
             prompt_version=request.prompt_version,
+        )
+
+    @staticmethod
+    def _style_directions(editorial_profile: EditorialProfile) -> str:
+        script = editorial_profile.script
+        cta_policy = editorial_profile.content_intelligence.cta_policy
+
+        person = (
+            "first person"
+            if script.narration_person.value == "first"
+            else ("third person")
+        )
+
+        return (
+            f"Write in a {script.tone.value} tone, {person}, with "
+            f"{script.sentence_length} sentences and "
+            f"{script.narrative_style} narrative style. Emotional "
+            f"intensity: {script.emotional_intensity.value}. Slang "
+            f"intensity: {script.slang_intensity.value}. "
+            f"Call-to-action policy: {cta_policy.value} - "
+            f"{'do not include a call to action.' if cta_policy.value == 'none' else 'include one only where it fits naturally.'}"
         )
 
     @staticmethod

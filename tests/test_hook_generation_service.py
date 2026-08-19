@@ -3,12 +3,27 @@ from __future__ import annotations
 import pytest
 
 from src.models.audience_promise import AudiencePromise, PromiseStrength
+from src.models.editorial_profile import EditorialProfile
 from src.models.research import ResearchResult, ResearchSource, ResearchStatus
 from src.models.story_angle import StoryAngle, StoryAngleStyle
+from src.services.editorial_profile_composition_service import (
+    EditorialProfileCompositionService,
+)
+from src.services.genre_profile_registry_service import (
+    GenreProfileRegistryService,
+)
 from src.services.hook_generation_service import HookGenerationService
 from src.services.llm.llm_service import LLMServiceResult
 from src.shared.llm.models import LLMCallResult, LLMCallStatus, LLMProvider
 from src.shared.llm.request import LLMRequest
+
+_GENRE_REGISTRY = GenreProfileRegistryService.with_default_profiles()
+
+
+def _editorial_profile() -> EditorialProfile:
+    return EditorialProfileCompositionService().compose(
+        genre=_GENRE_REGISTRY.get("genre.mystery")
+    )
 
 
 class _StubLLMService:
@@ -104,6 +119,7 @@ def test_generate_parses_multiple_hook_blocks() -> None:
         story_angle=_angle(),
         audience_promise=_promise(),
         research=_research(),
+        editorial_profile=_editorial_profile(),
         hook_count=3,
     )
 
@@ -121,6 +137,7 @@ def test_generate_truncates_to_hook_count() -> None:
         story_angle=_angle(),
         audience_promise=_promise(),
         research=_research(),
+        editorial_profile=_editorial_profile(),
         hook_count=1,
     )
 
@@ -137,11 +154,35 @@ def test_generate_includes_context_in_prompt() -> None:
         story_angle=_angle(),
         audience_promise=_promise(),
         research=_research(),
+        editorial_profile=_editorial_profile(),
     )
 
     assert stub.last_request is not None
     assert "Why did the crew vanish?" in stub.last_request.prompt
     assert "The Missing Logbook" in stub.last_request.prompt
+
+
+def test_generate_prompt_includes_genre_hook_archetypes() -> None:
+    stub = _StubLLMService(content=_THREE_HOOK_BLOCK)
+
+    service = HookGenerationService(llm_service=stub)  # type: ignore[arg-type]
+
+    profile = _editorial_profile()
+
+    service.generate(
+        topic="The Mary Celeste",
+        story_angle=_angle(),
+        audience_promise=_promise(),
+        research=_research(),
+        editorial_profile=profile,
+    )
+
+    assert stub.last_request is not None
+    for archetype in profile.content_intelligence.preferred_hook_archetypes:
+        assert archetype.value in stub.last_request.prompt
+    for archetype in profile.content_intelligence.forbidden_hook_archetypes:
+        assert archetype.value in stub.last_request.prompt
+    assert profile.script.hook_style in stub.last_request.prompt
 
 
 def test_generate_raises_when_provider_fails() -> None:
@@ -155,6 +196,7 @@ def test_generate_raises_when_provider_fails() -> None:
             story_angle=_angle(),
             audience_promise=_promise(),
             research=_research(),
+            editorial_profile=_editorial_profile(),
         )
 
 
@@ -169,6 +211,7 @@ def test_generate_raises_when_no_hooks_parsed() -> None:
             story_angle=_angle(),
             audience_promise=_promise(),
             research=_research(),
+            editorial_profile=_editorial_profile(),
         )
 
 
@@ -183,6 +226,7 @@ def test_generate_rejects_hook_count_below_one() -> None:
             story_angle=_angle(),
             audience_promise=_promise(),
             research=_research(),
+            editorial_profile=_editorial_profile(),
             hook_count=0,
         )
 
@@ -207,6 +251,7 @@ def test_dry_run_response_is_itself_parseable() -> None:
         story_angle=_angle(),
         audience_promise=_promise(),
         research=_research(),
+        editorial_profile=_editorial_profile(),
         hook_count=5,
     )
 
@@ -221,6 +266,7 @@ def test_dry_run_response_is_itself_parseable() -> None:
         story_angle=_angle(),
         audience_promise=_promise(),
         research=_research(),
+        editorial_profile=_editorial_profile(),
         hook_count=5,
     )
 

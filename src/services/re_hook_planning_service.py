@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from src.models.editorial_profile import EditorialProfile
 from src.models.re_hook import ReHook, ReHookPlan, ReHookType
 from src.models.story_angle import StoryAngle
 from src.models.story_blueprint import StoryBeatType, StoryBlueprint
@@ -59,6 +60,7 @@ class ReHookPlanningService:
         topic: str,
         blueprint: StoryBlueprint,
         story_angle: StoryAngle,
+        editorial_profile: EditorialProfile,
     ) -> ReHookPlan:
         """Write content for every RE_HOOK beat in the blueprint."""
 
@@ -74,6 +76,21 @@ class ReHookPlanningService:
         if not re_hook_beats:
             raise ValueError("This blueprint has no RE_HOOK beats to plan content for.")
 
+        script = editorial_profile.script
+        style_notes = []
+
+        if script.use_cliffhangers:
+            style_notes.append("this genre favors cliffhanger-style re-hooks")
+
+        if script.use_open_loops:
+            style_notes.append("this genre favors leaving new questions open")
+
+        style_guidance = (
+            "; ".join(style_notes)
+            if style_notes
+            else "this genre prefers direct, understated re-hooks"
+        )
+
         request = LLMRequest(
             provider=LLMProvider.OPENAI,
             model="provider-default-model",
@@ -83,13 +100,16 @@ class ReHookPlanningService:
                 re_hook_positions=[beat.start_seconds for beat in re_hook_beats],
             ),
             system_prompt=(
-                "You are an expert video pacing editor. Write one "
-                "re-hook for each requested position that genuinely "
-                "re-establishes curiosity - a new question, a "
-                "contradiction, an unexpected detail, increased "
-                "stakes, a partial revelation, a perspective change, "
-                "or a new threat. Never reuse the same phrasing twice, "
-                "and avoid generic templated escalation lines."
+                "You are an expert video pacing editor for the "
+                f"{editorial_profile.genre_id} genre "
+                f"({script.tone.value} tone). Write one re-hook for "
+                "each requested position that genuinely re-establishes "
+                "curiosity - a new question, a contradiction, an "
+                "unexpected detail, increased stakes, a partial "
+                "revelation, a perspective change, or a new threat. "
+                f"Style guidance for this genre: {style_guidance}. "
+                "Never reuse the same phrasing twice, and avoid "
+                "generic templated escalation lines."
             ),
             prompt_version="re_hook_planning_prompt_v1.0.0",
             dry_run_response=_DRY_RUN_RESPONSE,

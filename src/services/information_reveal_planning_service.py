@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from src.models.editorial_profile import EditorialProfile
 from src.models.information_reveal_map import (
     CuriosityLoop,
     InformationReveal,
@@ -64,6 +65,8 @@ class InformationRevealPlanningService:
         topic: str,
         story_angle: StoryAngle,
         research: ResearchResult,
+        editorial_profile: EditorialProfile,
+        target_duration_seconds: int,
     ) -> InformationRevealMap:
         """Plan the curiosity loops and information reveals for one angle."""
 
@@ -72,6 +75,9 @@ class InformationRevealPlanningService:
         if not normalized_topic:
             raise ValueError("Information reveal map topic cannot be empty.")
 
+        if target_duration_seconds <= 0:
+            raise ValueError("Target duration must be positive.")
+
         request = LLMRequest(
             provider=LLMProvider.OPENAI,
             model="provider-default-model",
@@ -79,6 +85,8 @@ class InformationRevealPlanningService:
                 topic=normalized_topic,
                 story_angle=story_angle,
                 research=research,
+                editorial_profile=editorial_profile,
+                target_duration_seconds=target_duration_seconds,
             ),
             system_prompt=(
                 "You are an expert story structure editor for "
@@ -140,12 +148,22 @@ class InformationRevealPlanningService:
         topic: str,
         story_angle: StoryAngle,
         research: ResearchResult,
+        editorial_profile: EditorialProfile,
+        target_duration_seconds: int,
     ) -> str:
+        reveal_density = (
+            editorial_profile.content_intelligence.reveal_density_per_minute
+        )
+        target_item_count = max(1, round(reveal_density * target_duration_seconds / 60))
+
         return (
             f"Topic: {topic}\n"
             f"Selected angle [{story_angle.style.value}]: {story_angle.title} - "
             f"{story_angle.description}\n"
-            f"Research summary: {research.research_summary}\n\n"
+            f"Research summary: {research.research_summary}\n"
+            f"Target duration: {target_duration_seconds} seconds\n"
+            f"Target combined loop/reveal count: approximately "
+            f"{target_item_count} (~{reveal_density}/minute for this genre)\n\n"
             "Plan the story's curiosity loops and information reveals. "
             "Return one block per item, separated by a line of three "
             "or more dashes. Positions are normalized 0.0 (start) to "
