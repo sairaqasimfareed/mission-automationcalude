@@ -100,6 +100,7 @@ class ProjectWorkspaceView(QWidget):
         )
         self.clip_workspace = ClipWorkspaceView(
             job_store=job_store,
+            asset_workflow_service=asset_workflow_service,
             on_change=self.refresh,
         )
         self.production_audio = ProductionAudioView(
