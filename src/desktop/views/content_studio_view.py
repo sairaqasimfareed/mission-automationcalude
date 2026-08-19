@@ -92,6 +92,7 @@ _CI_STAGES: list[tuple[str, str]] = [
     ("retention_audit", "Retention audit"),
     ("hooks", "Hooks"),
     ("script", "Script"),
+    ("continuity_bible", "Continuity bible"),
     ("editorial_critique", "Editorial critique"),
     ("quality_gate", "Quality gate"),
     ("revision", "Revision"),
@@ -266,6 +267,7 @@ class ContentStudioView(QWidget):
             "retention_audit": self._render_retention_audit_panel,
             "hooks": self._render_hooks_panel,
             "script": self._render_ci_script_panel,
+            "continuity_bible": self._render_continuity_bible_panel,
             "editorial_critique": self._render_editorial_critique_panel,
             "quality_gate": self._render_quality_gate_panel,
             "revision": self._render_revision_panel,
@@ -502,6 +504,56 @@ class ContentStudioView(QWidget):
 
         return True
 
+    def _render_continuity_bible_panel(
+        self, layout: QVBoxLayout, job: VideoJob
+    ) -> bool:
+        bible = job.continuity_bible
+
+        if bible is None:
+            can_run = job.generated_script is not None
+            layout.addWidget(
+                small_muted(
+                    "Not started." if can_run else "Requires a generated script first."
+                )
+            )
+
+            return can_run
+
+        validation = job.continuity_validation
+        layout.addWidget(
+            badge(
+                f"{len(bible.entries)} entries · "
+                + (
+                    "consistent"
+                    if validation and validation.is_consistent
+                    else "flagged"
+                )
+            )
+        )
+
+        for entry in bible.entries:
+            layout.addWidget(
+                small_muted(
+                    f"[{entry.entry_type.value}] {entry.name} "
+                    f"(seg {entry.first_mentioned_segment}): {entry.description}"
+                )
+            )
+
+        if validation is not None:
+            for inconsistency in validation.inconsistencies:
+                layout.addWidget(
+                    status_label(
+                        f"'{inconsistency.name}' differs between segment "
+                        f"{inconsistency.first_segment} "
+                        f"('{inconsistency.first_description}') and segment "
+                        f"{inconsistency.later_segment} "
+                        f"('{inconsistency.later_description}') - worth reviewing.",
+                        role="warning",
+                    )
+                )
+
+        return True
+
     def _render_editorial_critique_panel(
         self, layout: QVBoxLayout, job: VideoJob
     ) -> bool:
@@ -726,6 +778,7 @@ class ContentStudioView(QWidget):
             "retention_audit": self._content_intelligence_pipeline.run_retention_audit,
             "hooks": self._content_intelligence_pipeline.run_hooks,
             "script": self._content_intelligence_pipeline.run_script,
+            "continuity_bible": self._content_intelligence_pipeline.run_continuity_bible,
             "editorial_critique": (
                 self._content_intelligence_pipeline.run_editorial_critique
             ),

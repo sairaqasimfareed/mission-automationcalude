@@ -380,6 +380,28 @@ def test_run_all_locks_the_approved_version() -> None:
     assert job.script_version_history.is_locked is True
 
 
+def test_run_continuity_bible_requires_a_generated_script() -> None:
+    pipeline, _ = _pipeline()
+
+    with pytest.raises(RuntimeError, match="requires a generated script"):
+        pipeline.run_continuity_bible(_job())
+
+
+def test_run_continuity_bible_extracts_and_validates() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_audience_promise(_job())
+    job = pipeline.run_research(job)
+    job = pipeline.run_story_angles(job)
+    job = pipeline.run_narrative_architecture(job)
+    job = pipeline.run_hooks(job)
+    job = pipeline.run_script(job)
+    job = pipeline.run_continuity_bible(job)
+
+    assert job.continuity_bible is not None
+    assert job.continuity_validation is not None
+
+
 def test_run_scene_planning_requires_a_generated_script() -> None:
     pipeline, _ = _pipeline()
 
@@ -416,6 +438,8 @@ def test_run_all_produces_a_complete_and_quality_gated_script() -> None:
     assert job.generated_script is not None
     assert len(job.generated_script.segments) == len(job.story_blueprint.beats)
     assert job.generated_script.genre_id == "genre.mystery"
+    assert job.continuity_bible is not None
+    assert job.continuity_validation is not None
     assert job.editorial_critique is not None
     assert job.script_quality_report is not None
     assert job.packaging_hypothesis is not None

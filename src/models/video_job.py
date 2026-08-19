@@ -8,6 +8,7 @@ from src.models.audience_promise import AudiencePromise
 from src.models.audio_timeline import AudioTimeline
 from src.models.base import MissionBaseModel
 from src.models.content_decision_record import ContentDecisionRecord
+from src.models.continuity_bible import ContinuityBible, ContinuityValidationResult
 from src.models.editing_directives import SceneEditingDirectives
 from src.models.editorial_critique import EditorialCritique
 from src.models.editorial_profile import EditorialProfile
@@ -115,6 +116,8 @@ class VideoJob(MissionBaseModel):
     script_quality_report: ScriptQualityReport | None = None
     packaging_hypothesis: PackagingHypothesis | None = None
     script_version_history: ScriptVersionHistory | None = None
+    continuity_bible: ContinuityBible | None = None
+    continuity_validation: ContinuityValidationResult | None = None
 
     content_decisions: list[ContentDecisionRecord] = Field(default_factory=list)
 

@@ -7,6 +7,10 @@ from src.models.script_quality_report import ScriptQualityStatus
 from src.models.story_blueprint import StoryBeatType
 from src.models.video_job import VideoJob
 from src.services.audience_promise_service import AudiencePromiseService
+from src.services.continuity_bible_extraction_service import (
+    ContinuityBibleExtractionService,
+)
+from src.services.continuity_validation_service import ContinuityValidationService
 from src.services.editorial_critique_service import EditorialCritiqueService
 from src.services.editorial_profile_composition_service import (
     EditorialProfileCompositionService,
@@ -151,6 +155,12 @@ class ContentIntelligencePipeline:
         )
         self.scene_planner = ScenePlannerAgent()
         self.script_version_service = ScriptVersionService()
+        self.continuity_bible_extraction_service = ContinuityBibleExtractionService(
+            llm_service=llm_service,
+            profile_ids=profile_ids,
+            estimated_cost_usd=estimated_cost_usd,
+        )
+        self.continuity_validation_service = ContinuityValidationService()
 
     def resolve_editorial_profile(self, job: VideoJob) -> EditorialProfile:
         """
@@ -407,6 +417,28 @@ class ContentIntelligencePipeline:
 
         return job
 
+    def run_continuity_bible(self, job: VideoJob) -> VideoJob:
+        """
+        Stage 7b: extract every character, location, timeline point,
+        and standalone fact the script establishes, then flag any
+        same-named entries whose descriptions disagree - advisory,
+        like the retention audit, not a blocker on later stages.
+        """
+
+        if job.generated_script is None:
+            raise RuntimeError(
+                "Continuity bible extraction requires a generated script."
+            )
+
+        job.continuity_bible = self.continuity_bible_extraction_service.extract(
+            job.generated_script
+        )
+        job.continuity_validation = self.continuity_validation_service.validate(
+            job.continuity_bible
+        )
+
+        return job
+
     def run_editorial_critique(self, job: VideoJob) -> VideoJob:
         """
         Stage 8: independent editorial critique of the finished
@@ -548,6 +580,7 @@ class ContentIntelligencePipeline:
         job = self.run_retention_audit(job)
         job = self.run_hooks(job)
         job = self.run_script(job)
+        job = self.run_continuity_bible(job)
         job = self.run_editorial_critique(job)
         job = self.run_quality_gate(job)
 
