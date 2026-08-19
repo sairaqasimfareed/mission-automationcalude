@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pydantic import Field, field_validator, model_validator
 
+from src.models.approval import ApprovalPolicyConfig
 from src.models.asset_state import SceneAssetState
 from src.models.audience_promise import AudiencePromise
 from src.models.audio_timeline import AudioTimeline
@@ -54,6 +55,17 @@ class VideoJob(MissionBaseModel):
     language: str = "English"
     target_country: str = "United States"
     production_mode: ProductionMode = ProductionMode.PREMIUM
+
+    # Distinct from production_mode above (render quality/cost
+    # tradeoff) - this controls how much human review each content
+    # decision point requires. Defaults to the conservative
+    # "Custom Approval" preset (see ApprovalPolicyConfig.
+    # review_critical_stages) rather than a bare ApprovalPolicyConfig()
+    # construction, so the default is nameable the same way a user
+    # picks it from the settings panel.
+    approval_policy: ApprovalPolicyConfig = Field(
+        default_factory=ApprovalPolicyConfig.review_critical_stages
+    )
 
     genre_id: str = "genre.default"
 

@@ -104,8 +104,10 @@ class ApprovalPolicyConfig(MissionBaseModel):
     """
 
     topic: ApprovalPolicy = ApprovalPolicy.AUTO
+    content_strategy: ApprovalPolicy = ApprovalPolicy.AUTO
     research: ApprovalPolicy = ApprovalPolicy.AUTO
     story_angle: ApprovalPolicy = ApprovalPolicy.REVIEW
+    narrative_architecture: ApprovalPolicy = ApprovalPolicy.REVIEW
     hook: ApprovalPolicy = ApprovalPolicy.AUTO
     final_script: ApprovalPolicy = ApprovalPolicy.REVIEW
     production_plan: ApprovalPolicy = ApprovalPolicy.AUTO
@@ -124,8 +126,10 @@ class ApprovalPolicyConfig(MissionBaseModel):
 
         mapping: dict[str, ApprovalPolicy] = {
             "topic": self.topic,
+            "content_strategy": self.content_strategy,
             "research": self.research,
             "story_angle": self.story_angle,
+            "narrative_architecture": self.narrative_architecture,
             "hook": self.hook,
             "final_script": self.final_script,
             "production_plan": self.production_plan,
@@ -135,3 +139,59 @@ class ApprovalPolicyConfig(MissionBaseModel):
         }
 
         return mapping.get(decision_point, ApprovalPolicy.REVIEW)
+
+    @classmethod
+    def full_auto(cls) -> ApprovalPolicyConfig:
+        """
+        "Fully Automatic" mode: every decision point auto-continues.
+        Confidence-based escalation (ApprovalService) still pauses on
+        a genuinely low-confidence or warning-flagged result - this
+        preset controls the policy, not a guarantee nothing is ever
+        reviewed.
+        """
+
+        return cls(
+            topic=ApprovalPolicy.AUTO,
+            content_strategy=ApprovalPolicy.AUTO,
+            research=ApprovalPolicy.AUTO,
+            story_angle=ApprovalPolicy.AUTO,
+            narrative_architecture=ApprovalPolicy.AUTO,
+            hook=ApprovalPolicy.AUTO,
+            final_script=ApprovalPolicy.AUTO,
+            production_plan=ApprovalPolicy.AUTO,
+            budget=ApprovalPolicy.AUTO,
+            final_preview=ApprovalPolicy.AUTO,
+            publishing=ApprovalPolicy.AUTO,
+        )
+
+    @classmethod
+    def review_critical_stages(cls) -> ApprovalPolicyConfig:
+        """
+        "Custom Approval" mode: cheap/reversible steps auto-continue,
+        creative and public-facing steps stop for review. This is
+        this model's own conservative default field set, named here
+        so it can be selected the same way as the other two presets.
+        """
+
+        return cls()
+
+    @classmethod
+    def manual_editorial(cls) -> ApprovalPolicyConfig:
+        """
+        "Approve Every Step" mode: every decision point requires an
+        explicit human action before the pipeline continues.
+        """
+
+        return cls(
+            topic=ApprovalPolicy.MANUAL,
+            content_strategy=ApprovalPolicy.MANUAL,
+            research=ApprovalPolicy.MANUAL,
+            story_angle=ApprovalPolicy.MANUAL,
+            narrative_architecture=ApprovalPolicy.MANUAL,
+            hook=ApprovalPolicy.MANUAL,
+            final_script=ApprovalPolicy.MANUAL,
+            production_plan=ApprovalPolicy.MANUAL,
+            budget=ApprovalPolicy.MANUAL,
+            final_preview=ApprovalPolicy.MANUAL,
+            publishing=ApprovalPolicy.MANUAL,
+        )

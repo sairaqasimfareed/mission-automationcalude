@@ -26,6 +26,7 @@ from src.desktop.widgets import (
     small_muted,
     status_label,
 )
+from src.models.approval import ApprovalPolicyConfig
 from src.models.enums import Platform, ProductionMode, WorkflowStage
 from src.models.video_job import VideoJob
 from src.services.content_intelligence_pipeline import ContentIntelligencePipeline
@@ -40,6 +41,43 @@ _GENRE_IDS = [
     profile.genre_id
     for profile in GenreProfileRegistryService.with_default_profiles().list_all()
 ]
+
+# Named presets a user picks from, rather than editing 11 individual
+# AUTO/REVIEW/MANUAL fields by hand - per-decision-point overrides
+# remain possible via ApprovalPolicyConfig directly, just not through
+# this settings panel yet.
+_APPROVAL_MODE_PRESETS: dict[str, Callable[[], ApprovalPolicyConfig]] = {
+    "Fully Automatic": ApprovalPolicyConfig.full_auto,
+    "Custom Approval": ApprovalPolicyConfig.review_critical_stages,
+    "Approve Every Step": ApprovalPolicyConfig.manual_editorial,
+}
+
+
+_APPROVAL_FIELDS_TO_COMPARE = {"id", "created_at", "updated_at"}
+
+
+def _approval_mode_label(policy: ApprovalPolicyConfig) -> str:
+    """
+    Return the preset label matching one policy, or "Custom Approval"
+    as a safe fallback for a hand-edited policy that does not match
+    any of the three named presets exactly.
+
+    Compares only the AUTO/REVIEW/MANUAL fields - every
+    ApprovalPolicyConfig also carries its own id/created_at/
+    updated_at (MissionBaseModel), which would make two otherwise-
+    identical policies compare unequal by plain `==`.
+    """
+
+    policy_fields = policy.model_dump(exclude=_APPROVAL_FIELDS_TO_COMPARE)
+
+    for label, factory in _APPROVAL_MODE_PRESETS.items():
+        preset_fields = factory().model_dump(exclude=_APPROVAL_FIELDS_TO_COMPARE)
+
+        if policy_fields == preset_fields:
+            return label
+
+    return "Custom Approval"
+
 
 # (stage key, display label) in pipeline order. Each stage gets its
 # own dedicated panel - selecting one shows only that stage's content
@@ -154,6 +192,11 @@ class ContentStudioView(QWidget):
         production_mode_select.setCurrentText(job.production_mode.value)
         form.addRow("Production mode", production_mode_select)
 
+        approval_mode_select = QComboBox()
+        approval_mode_select.addItems(list(_APPROVAL_MODE_PRESETS))
+        approval_mode_select.setCurrentText(_approval_mode_label(job.approval_policy))
+        form.addRow("Approval mode", approval_mode_select)
+
         language_input = QLineEdit(job.language)
         form.addRow("Language", language_input)
 
@@ -168,6 +211,7 @@ class ContentStudioView(QWidget):
                 genre_select=genre_select,
                 platform_select=platform_select,
                 production_mode_select=production_mode_select,
+                approval_mode_select=approval_mode_select,
                 language_input=language_input,
                 target_country_input=target_country_input,
             )
@@ -852,6 +896,7 @@ class ContentStudioView(QWidget):
         genre_select: QComboBox,
         platform_select: QComboBox,
         production_mode_select: QComboBox,
+        approval_mode_select: QComboBox,
         language_input: QLineEdit,
         target_country_input: QLineEdit,
     ) -> None:
@@ -864,6 +909,9 @@ class ContentStudioView(QWidget):
             job.genre_id = genre_select.currentText()
             job.platform = Platform(platform_select.currentText())
             job.production_mode = ProductionMode(production_mode_select.currentText())
+            job.approval_policy = _APPROVAL_MODE_PRESETS[
+                approval_mode_select.currentText()
+            ]()
             job.language = language_input.text()
             job.target_country = target_country_input.text()
         except ValueError as error:
