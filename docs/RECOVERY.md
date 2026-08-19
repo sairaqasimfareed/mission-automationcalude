@@ -27,9 +27,20 @@ again, it re-calls the LLM even if `job.generated_script` is already
 set from before the crash (which it wouldn't be, since the crash
 happened before that stage completed - but the same is true if you
 simply click a completed stage's button again by mistake after
-restart). See `docs/REMAINING_GAPS.md` Phase 1/2 for the approval-state
-and readiness-service work that will make "should this re-run" an
-explicit, checkable question instead of implicit trust in the operator.
+restart). See `docs/REMAINING_GAPS.md` Phase 2 for the readiness-service
+work that will make "should this re-run" an explicit, checkable
+question instead of implicit trust in the operator.
+
+**Approval gating is real and restart-safe as of Phase 1**:
+`ApprovalGateService` records every gate decision (pending or resolved)
+as a `ContentDecisionRecord` on `VideoJob.content_decisions`, so a
+project reopened mid-review shows exactly what's still pending - no
+special recovery logic needed, it's the same persisted-field guarantee
+as everything else. What's still missing is `run_all()` resuming from
+where it stopped: calling it again after a restart re-runs every stage
+from the beginning rather than skipping ones already complete, so a
+human should re-approve one stage at a time via the individual stage
+buttons after a restart, not re-click "Run all."
 
 **Practical effect of a crash mid-stage:** the field that stage was
 about to write stays `None`; every prior stage's output is intact and

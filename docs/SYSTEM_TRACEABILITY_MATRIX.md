@@ -45,11 +45,11 @@ functionality - see `docs/REMAINING_GAPS.md` for what to do about it.
 
 ## Approval
 
-| Capability | Model | Service | Persistence | GUI | Tests | Gap |
-|---|---|---|---|---|---|---|
-| Approval policy selection | `ApprovalPolicyConfig` | (none - pure config) | `VideoJob.approval_policy` | Content Studio settings, "Approval mode" | `test_approval_policy_presets.py`, `test_video_job_approval_policy.py` | Runtime gating unwired - see `docs/REMAINING_GAPS.md` Phase 1 |
-| Approval decision resolution | `ApprovalDecision` | `ApprovalService` | - | - | `test_approval_service.py` | Zero production call sites |
-| Decision history | `ContentDecisionRecord` | - | `VideoJob.content_decisions` | - | - | Never appended to; no GUI surface |
+| Capability | Model | Service | Persistence | GUI | Tests |
+|---|---|---|---|---|---|
+| Approval policy selection | `ApprovalPolicyConfig` | (none - pure config) | `VideoJob.approval_policy` | Content Studio settings, "Approval mode" | `test_approval_policy_presets.py`, `test_video_job_approval_policy.py` |
+| Approval runtime gating | `ApprovalDecision` | `ApprovalGateService` (wraps `ApprovalService`), called from `ContentIntelligencePipeline`'s 6 gated stages + `run_all()` | `VideoJob.content_decisions` (pending state survives restart) | Content Studio, "Approval history" card - Approve/Reject buttons | `test_approval_gate_service.py`, `test_approval_service.py`, `test_content_intelligence_pipeline.py` (gating tests), `test_content_studio_content_intelligence_gui.py` |
+| Decision history | `ContentDecisionRecord` | `ApprovalGateService` (append-only: a resolution adds a new record) | `VideoJob.content_decisions` | Content Studio, "Approval history" card, newest first | `test_approval_gate_service.py` |
 
 ## Render pipeline (restart-safe)
 

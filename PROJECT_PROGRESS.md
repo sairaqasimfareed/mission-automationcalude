@@ -5,6 +5,39 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-08-20 - Phase 1: Approval runtime gating & decision history
+
+`ApprovalPolicyConfig` and `ApprovalService` existed but had never been
+wired together, and `VideoJob.content_decisions` had zero append call
+sites anywhere - both pre-existing gaps this phase closes. Added
+`ApprovalGateService` (`src/services/approval_gate_service.py`),
+resolving one stage's completion against the job's configured policy
+via `ApprovalService.open_decision()` and recording the outcome as an
+append-only `ContentDecisionRecord`. Wired it into
+`ContentIntelligencePipeline` for the 6 stages that map onto an
+existing named decision point (`content_strategy`, `research`,
+`story_angle`, `narrative_architecture`, `hook`, `final_script`), each
+gate fed a real confidence signal where one exists
+(`AudiencePromise.confidence_score`, `ResearchResult.fact_confidence_score`,
+`StoryAngleEvaluation.confidence_score`, `HookEvaluation.confidence_score`)
+so `ApprovalService`'s existing confidence-based escalation (spec
+section 56: an AUTO policy still pends on a low-confidence result) is
+real, not decorative. `run_all()` now checks `is_blocked()` after each
+gated stage and stops early, with the pending state persisted on
+`VideoJob.content_decisions` so it survives a restart; a human resolves
+it via the new "Approval history" card in Content Studio
+(`src/desktop/views/content_studio_view.py`, Approve/Reject buttons) or
+`ContentIntelligencePipeline.resolve_approval()` directly. Individual
+stage buttons remain always-runnable regardless of gate state - only
+`run_all()`'s auto-chaining respects it.
+
+Deliberately deferred: `run_all()` always restarts from stage one
+rather than resuming mid-pipeline after a gate clears (no
+skip-already-completed-stage idempotency yet); `MediaGenerationPipeline`
+is not gated (no matching named decision points exist for it today).
+Both are separate, explicitly out-of-scope-for-this-phase concerns
+tracked in `docs/REMAINING_GAPS.md`.
+
 ## 2026-08-20 - Phase 0: Documentation & control layer
 
 Added the documentation set the production-hardening master prompt

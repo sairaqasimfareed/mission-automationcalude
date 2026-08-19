@@ -8,16 +8,29 @@ Done and it has tests.
 
 ## Phase 1 - Approval runtime & decision history
 
-- [ ] **Approval runtime gating.** `ApprovalPolicyConfig` and
-      `ApprovalService` both exist and are unused together. Wire
-      `ContentIntelligencePipeline` (and, where relevant,
-      `MediaGenerationPipeline`) so a stage completion resolves the
-      configured policy into CONTINUE or WAITING_FOR_APPROVAL, and
-      persist that waiting state on `VideoJob` so it survives a restart.
-- [ ] **Decision history.** Make every stage that resolves an approval
-      decision append a `ContentDecisionRecord` to
-      `VideoJob.content_decisions`. Add an Approval History GUI surface
-      (read-only list, newest first, never mutated in place).
+- [x] **Approval runtime gating.** Done via `ApprovalGateService`
+      (`src/services/approval_gate_service.py`), wired into
+      `ContentIntelligencePipeline` for its 6 stages with a matching
+      named decision point. `run_all()` stops at the first pending gate
+      and the pending state persists on `VideoJob.content_decisions`,
+      surviving a restart. `MediaGenerationPipeline` gating is **not**
+      included - it has no matching named decision points in
+      `ApprovalPolicyConfig` today and was out of scope for this pass.
+      Idempotent skip-on-re-run for `run_all()` is a separate, deferred
+      concern (see note below).
+- [x] **Decision history.** Every gated stage appends a
+      `ContentDecisionRecord`; resolving one appends a new record
+      rather than mutating the pending one. Approval History GUI card
+      added to `ContentStudioView` (newest first, Approve/Reject wired
+      to `ContentIntelligencePipeline.resolve_approval()`).
+
+**Deferred out of this phase, deliberately:** skip-already-completed-stage
+idempotency for `run_all()` re-entry after a restart. Today, calling
+`run_all()` again always restarts from stage one rather than resuming
+where it left off - correct artifacts already on `VideoJob` are simply
+regenerated. This is a real gap (see Phase 2/10's restart-test items)
+but is a separate, larger concern from "does an approval gate actually
+stop the pipeline," which is what this phase delivers.
 
 ## Phase 2 - Readiness & typed blockers
 

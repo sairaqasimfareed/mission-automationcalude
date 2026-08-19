@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from src.agents.research_agent.agent import ResearchAgent
 from src.agents.scene_planner.agent import ScenePlannerAgent
+from src.models.approval import ApprovalDecision, HumanApprovalAction
 from src.models.editorial_profile import EditorialProfile
 from src.models.script_quality_report import ScriptQualityStatus
 from src.models.story_blueprint import StoryBeatType
 from src.models.video_job import VideoJob
+from src.services.approval_gate_service import ApprovalGateService
 from src.services.audience_promise_service import AudiencePromiseService
 from src.services.continuity_bible_extraction_service import (
     ContinuityBibleExtractionService,
@@ -161,6 +163,7 @@ class ContentIntelligencePipeline:
             estimated_cost_usd=estimated_cost_usd,
         )
         self.continuity_validation_service = ContinuityValidationService()
+        self.approval_gate_service = ApprovalGateService()
 
     def resolve_editorial_profile(self, job: VideoJob) -> EditorialProfile:
         """
@@ -194,6 +197,14 @@ class ContentIntelligencePipeline:
             target_duration_seconds=job.target_duration_seconds,
         )
 
+        self.approval_gate_service.gate(
+            job=job,
+            decision_point="content_strategy",
+            stage="audience_promise",
+            summary=f"Audience promise determined for '{job.topic}'.",
+            confidence=job.audience_promise.confidence_score,
+        )
+
         return job
 
     def run_research_plan(self, job: VideoJob) -> VideoJob:
@@ -225,6 +236,14 @@ class ContentIntelligencePipeline:
         """
 
         job.research = self.research_agent.research(job.topic)
+
+        self.approval_gate_service.gate(
+            job=job,
+            decision_point="research",
+            stage="research",
+            summary=f"Research completed for '{job.topic}'.",
+            confidence=job.research.fact_confidence_score / 100.0,
+        )
 
         return job
 
@@ -263,6 +282,14 @@ class ContentIntelligencePipeline:
         )
         job.selected_story_angle = matched_angle
 
+        self.approval_gate_service.gate(
+            job=job,
+            decision_point="story_angle",
+            stage="story_angles",
+            summary=f"Selected story angle: '{matched_angle.title}'.",
+            confidence=winner.confidence_score,
+        )
+
         return job
 
     def run_narrative_architecture(self, job: VideoJob) -> VideoJob:
@@ -296,6 +323,13 @@ class ContentIntelligencePipeline:
             target_duration_seconds=job.target_duration_seconds,
             story_angle=job.selected_story_angle,
             audience_promise=job.audience_promise,
+        )
+
+        self.approval_gate_service.gate(
+            job=job,
+            decision_point="narrative_architecture",
+            stage="narrative_architecture",
+            summary=f"Story blueprint generated with {len(job.story_blueprint.beats)} beats.",
         )
 
         return job
@@ -374,6 +408,14 @@ class ContentIntelligencePipeline:
                 editorial_profile=editorial_profile,
             )
 
+        self.approval_gate_service.gate(
+            job=job,
+            decision_point="hook",
+            stage="hooks",
+            summary=f"Selected hook: '{job.selected_hook.hook_text}'.",
+            confidence=job.selected_hook.confidence_score,
+        )
+
         return job
 
     def run_script(self, job: VideoJob) -> VideoJob:
@@ -413,6 +455,13 @@ class ContentIntelligencePipeline:
         job.script_version_history = self.script_version_service.start_history(
             topic=job.topic,
             script=job.generated_script,
+        )
+
+        self.approval_gate_service.gate(
+            job=job,
+            decision_point="final_script",
+            stage="script",
+            summary=f"Script generated for '{job.topic}'.",
         )
 
         return job
@@ -573,13 +622,31 @@ class ContentIntelligencePipeline:
         """
 
         job = self.run_audience_promise(job)
+        if self.approval_gate_service.is_blocked(job, "content_strategy"):
+            return job
+
         job = self.run_research_plan(job)
         job = self.run_research(job)
+        if self.approval_gate_service.is_blocked(job, "research"):
+            return job
+
         job = self.run_story_angles(job)
+        if self.approval_gate_service.is_blocked(job, "story_angle"):
+            return job
+
         job = self.run_narrative_architecture(job)
+        if self.approval_gate_service.is_blocked(job, "narrative_architecture"):
+            return job
+
         job = self.run_retention_audit(job)
         job = self.run_hooks(job)
+        if self.approval_gate_service.is_blocked(job, "hook"):
+            return job
+
         job = self.run_script(job)
+        if self.approval_gate_service.is_blocked(job, "final_script"):
+            return job
+
         job = self.run_continuity_bible(job)
         job = self.run_editorial_critique(job)
         job = self.run_quality_gate(job)
@@ -612,3 +679,16 @@ class ContentIntelligencePipeline:
         job = self.run_scene_planning(job)
 
         return job
+
+    def resolve_approval(
+        self,
+        job: VideoJob,
+        decision_point: str,
+        action: HumanApprovalAction,
+        notes: str | None = None,
+    ) -> ApprovalDecision:
+        """Apply a human decision to the latest pending gate for one point."""
+
+        return self.approval_gate_service.resolve(
+            job=job, decision_point=decision_point, action=action, notes=notes
+        )

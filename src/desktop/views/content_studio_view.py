@@ -26,9 +26,10 @@ from src.desktop.widgets import (
     small_muted,
     status_label,
 )
-from src.models.approval import ApprovalPolicyConfig
+from src.models.approval import ApprovalPolicyConfig, HumanApprovalAction
 from src.models.enums import Platform, ProductionMode, WorkflowStage
 from src.models.video_job import VideoJob
+from src.services.approval_gate_service import ApprovalGateService
 from src.services.content_intelligence_pipeline import ContentIntelligencePipeline
 from src.services.content_pipeline import ContentPipeline
 from src.services.genre_profile_registry_service import (
@@ -163,6 +164,7 @@ class ContentStudioView(QWidget):
 
         self._build_settings_card(job)
         self._build_content_intelligence_card(job)
+        self._build_approval_history_card(job)
         self._build_workflow_card(job)
         self._build_research_card(job)
         self._build_script_card(job)
@@ -283,6 +285,79 @@ class ContentStudioView(QWidget):
         run_button.setEnabled(can_run)
         run_button.clicked.connect(lambda: self._handle_run_ci_stage(stage_key))
         layout.addWidget(run_button, alignment=_LEFT)
+
+    def _build_approval_history_card(self, job: VideoJob) -> None:
+        frame, layout = card("Approval history", icon_name="shield")
+
+        if not job.content_decisions:
+            layout.addWidget(small_muted("No approval decisions recorded yet."))
+            self._layout.addWidget(frame)
+
+            return
+
+        pending = ApprovalGateService.latest_pending(job)
+
+        for record in reversed(job.content_decisions):
+            approval = record.approval
+            state_text = approval.state.value if approval is not None else "unknown"
+            layout.addWidget(badge(f"{record.stage} · {state_text}"))
+            layout.addWidget(small_muted(record.summary))
+
+            if approval is not None and approval.confidence is not None:
+                layout.addWidget(small_muted(f"Confidence: {approval.confidence:.2f}"))
+
+        if pending is not None:
+            layout.addWidget(separator())
+            layout.addWidget(
+                small_muted(
+                    f"'{pending.stage}' is waiting on a human decision "
+                    f"('{pending.approval.decision_point}')."
+                    if pending.approval is not None
+                    else f"'{pending.stage}' is waiting on a human decision."
+                )
+            )
+
+            button_row = QHBoxLayout()
+            button_row.setSpacing(6)
+
+            approve_button = button("Approve", variant="primary", icon_name="check")
+            approve_button.clicked.connect(
+                lambda: self._handle_resolve_approval(HumanApprovalAction.APPROVE)
+            )
+            button_row.addWidget(approve_button)
+
+            reject_button = button("Reject", variant="ghost")
+            reject_button.clicked.connect(
+                lambda: self._handle_resolve_approval(HumanApprovalAction.REJECT)
+            )
+            button_row.addWidget(reject_button)
+
+            button_row.addStretch()
+            layout.addLayout(button_row)
+
+        self._layout.addWidget(frame)
+
+    def _handle_resolve_approval(self, action: HumanApprovalAction) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        pending = ApprovalGateService.latest_pending(job)
+
+        if pending is None or pending.approval is None:
+            return
+
+        try:
+            self._content_intelligence_pipeline.resolve_approval(
+                job, pending.approval.decision_point, action
+            )
+        except ValueError as error:
+            self._record_error(job, f"Could not resolve approval decision: {error}")
+
+            return
+
+        self._on_change()
 
     def _render_audience_promise_panel(
         self, layout: QVBoxLayout, job: VideoJob

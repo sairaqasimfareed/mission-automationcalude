@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from src.models.approval import ApprovalPolicyConfig
 from src.models.video_job import VideoJob
 from src.services.content_intelligence_pipeline import ContentIntelligencePipeline
 from src.services.llm.llm_service import LLMServiceResult
@@ -42,6 +43,27 @@ class _EchoStubLLMService:
 
         if request.dry_run_response is not None:
             content = request.dry_run_response
+            if request.metadata.get("agent") == "AudiencePromiseService":
+                # The service's own dry-run response deliberately
+                # models a MODERATE promise (confidence 0.6), which is
+                # correct for exercising that stage in isolation - but
+                # it sits below ApprovalService's 0.7 auto-continue
+                # threshold, so a run_all() test under full_auto would
+                # otherwise (correctly) stop at the very first gate.
+                # Swap in STRONG here so full_auto run_all() tests can
+                # exercise the whole pipeline end to end.
+                content = content.replace(
+                    "PROMISE_STRENGTH: moderate", "PROMISE_STRENGTH: strong"
+                )
+            elif request.metadata.get("agent") == "HookEvaluationService":
+                # Same reasoning: the service's own placeholder dry-run
+                # scores every dimension (including SPOILER_RISK) at
+                # 70, which zeroes out overall_score/confidence_score
+                # by construction (raw_average - spoiler_risk = 0).
+                # That's fine for testing HookEvaluationService in
+                # isolation, but a run_all() test needs a hook that
+                # would plausibly auto-continue.
+                content = content.replace("SPOILER_RISK: 70", "SPOILER_RISK: 0")
         elif request.metadata.get("agent") == "ResearchAgent":
             content = _CANNED_RESEARCH_SUMMARY
         else:
@@ -70,6 +92,7 @@ def _job(**overrides: object) -> VideoJob:
         genre_id="genre.mystery",
         target_duration_seconds=180,
         target_audience="mystery enthusiasts",
+        approval_policy=ApprovalPolicyConfig.full_auto(),
     )
     base.update(overrides)
     return VideoJob(**base)
@@ -461,3 +484,49 @@ def test_resolve_editorial_profile_raises_for_unknown_genre_without_fallback() -
 
     with pytest.raises(RuntimeError, match="Could not resolve"):
         pipeline.resolve_editorial_profile(_job())
+
+
+def test_run_all_stops_at_the_first_review_gated_stage() -> None:
+    pipeline, _ = _pipeline()
+    job = _job(approval_policy=ApprovalPolicyConfig.review_critical_stages())
+
+    job = pipeline.run_all(job)
+
+    # review_critical_stages() gates story_angle/narrative_architecture/
+    # final_script, not content_strategy/research - so run_all should
+    # complete research and stop right after story angle selection.
+    assert job.audience_promise is not None
+    assert job.research is not None
+    assert job.selected_story_angle is not None
+    assert job.story_blueprint is None
+    assert job.generated_script is None
+
+    from src.services.approval_gate_service import ApprovalGateService
+
+    pending = ApprovalGateService.latest_pending(job)
+    assert pending is not None
+    assert pending.approval is not None
+    assert pending.approval.decision_point == "story_angle"
+
+
+def test_resolving_a_pending_decision_unblocks_the_next_manual_stage() -> None:
+    from src.models.approval import HumanApprovalAction
+    from src.services.approval_gate_service import ApprovalGateService
+
+    pipeline, _ = _pipeline()
+    job = _job(approval_policy=ApprovalPolicyConfig.review_critical_stages())
+
+    job = pipeline.run_all(job)
+    assert ApprovalGateService.is_blocked(job, "story_angle") is True
+
+    pipeline.resolve_approval(job, "story_angle", HumanApprovalAction.APPROVE)
+    assert ApprovalGateService.is_blocked(job, "story_angle") is False
+
+    # run_all() always restarts from stage one rather than resuming
+    # mid-pipeline (idempotent re-run skipping is deferred, see
+    # docs/REMAINING_GAPS.md Phase 1) - so proving the gate cleared
+    # means calling the next stage directly, the way a GUI "Continue"
+    # action would after a human approves.
+    job = pipeline.run_narrative_architecture(job)
+
+    assert job.story_blueprint is not None

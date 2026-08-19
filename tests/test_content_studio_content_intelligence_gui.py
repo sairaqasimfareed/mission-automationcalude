@@ -45,6 +45,16 @@ class _EchoStubLLMService:
             "The Mary Celeste was found adrift, seaworthy, with no crew aboard."
         )
 
+        if request.metadata.get("agent") == "AudiencePromiseService":
+            # AudiencePromiseService's own dry-run response models a
+            # MODERATE promise (confidence 0.6), below
+            # ApprovalService's 0.7 auto-continue threshold - swap in
+            # STRONG so approval-gating tests exercise story_angle's
+            # own REVIEW gate specifically, not an earlier AUTO one.
+            content = content.replace(
+                "PROMISE_STRENGTH: moderate", "PROMISE_STRENGTH: strong"
+            )
+
         result = LLMCallResult(
             status=LLMCallStatus.SUCCESS,
             provider=LLMProvider.OPENAI,
@@ -230,3 +240,92 @@ def test_unknown_job_id_does_not_crash_stage_handlers(qapp: QApplication) -> Non
     view.set_job(uuid4())
 
     view._handle_run_ci_stage("audience_promise")  # must not raise
+
+
+def test_approval_history_card_builds_without_error_when_empty(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)  # must not raise, even with no content_decisions yet
+
+    assert job.content_decisions == []
+
+
+def test_running_a_review_gated_stage_records_a_pending_decision(
+    qapp: QApplication,
+) -> None:
+    from src.services.approval_gate_service import ApprovalGateService
+
+    job_store = InMemoryJobStore()
+    job = _job()  # default policy REVIEWs story_angle
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view._handle_run_ci_stage("audience_promise")
+    view._handle_run_ci_stage("research_plan")
+    view._handle_run_ci_stage("research")
+    view._handle_run_ci_stage("story_angles")
+    view.refresh(job)
+
+    pending = ApprovalGateService.latest_pending(job)
+    assert pending is not None
+    assert pending.approval is not None
+    assert pending.approval.decision_point == "story_angle"
+
+
+def test_approve_button_handler_resolves_the_pending_decision(
+    qapp: QApplication,
+) -> None:
+    from src.models.approval import ApprovalState
+    from src.services.approval_gate_service import ApprovalGateService
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view._handle_run_ci_stage("audience_promise")
+    view._handle_run_ci_stage("research_plan")
+    view._handle_run_ci_stage("research")
+    view._handle_run_ci_stage("story_angles")
+
+    assert ApprovalGateService.is_blocked(job, "story_angle") is True
+
+    from src.models.approval import HumanApprovalAction
+
+    view._handle_resolve_approval(HumanApprovalAction.APPROVE)
+
+    assert ApprovalGateService.is_blocked(job, "story_angle") is False
+    latest = job.content_decisions[-1]
+    assert latest.approval is not None
+    assert latest.approval.state == ApprovalState.APPROVED
+    view.refresh(job)  # must not raise now that the decision is resolved
+
+
+def test_resolve_approval_with_no_pending_decision_is_a_noop(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    from src.models.approval import HumanApprovalAction
+
+    view._handle_resolve_approval(HumanApprovalAction.APPROVE)  # must not raise
+
+    assert job.content_decisions == []
