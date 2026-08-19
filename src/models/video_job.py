@@ -3,16 +3,21 @@ from __future__ import annotations
 from pydantic import Field, field_validator, model_validator
 
 from src.models.asset_state import SceneAssetState
+from src.models.audience_promise import AudiencePromise
 from src.models.audio_timeline import AudioTimeline
 from src.models.base import MissionBaseModel
 from src.models.content_decision_record import ContentDecisionRecord
 from src.models.editing_directives import SceneEditingDirectives
+from src.models.editorial_profile import EditorialProfile
 from src.models.enums import (
     JobStatus,
     Platform,
     ProductionMode,
     WorkflowStage,
 )
+from src.models.generated_script import GeneratedScript
+from src.models.hook import HookCandidate, HookEvaluation
+from src.models.information_reveal_map import InformationRevealMap
 from src.models.media_strategy import (
     SceneSourceType,
     VisualStrategy,
@@ -21,10 +26,14 @@ from src.models.media_strategy import (
 )
 from src.models.originality import OriginalityResult
 from src.models.policy import PolicyComplianceReport
+from src.models.re_hook import ReHookPlan
 from src.models.render_result import RenderResult
 from src.models.research import ResearchResult, ResearchStatus
+from src.models.research_plan import ResearchPlan
 from src.models.scene import Scene
 from src.models.script import Script, ScriptStatus
+from src.models.story_angle import StoryAngle, StoryAngleEvaluation
+from src.models.story_blueprint import StoryBlueprint
 from src.models.video_clip import VideoClip
 from src.models.video_timeline import VideoTimeline
 
@@ -44,6 +53,13 @@ class VideoJob(MissionBaseModel):
 
     genre_id: str = "genre.default"
 
+    # Neither field previously existed on VideoJob - ProjectSpecification
+    # captures a preferred duration at creation time but VideoJob never
+    # persisted it, and there was no target-audience concept at all.
+    # Every content-intelligence service downstream needs both.
+    target_duration_seconds: int = Field(default=600, gt=0)
+    target_audience: str = "general audience"
+
     status: JobStatus = JobStatus.PENDING
     current_stage: WorkflowStage = WorkflowStage.RESEARCH
 
@@ -59,6 +75,24 @@ class VideoJob(MissionBaseModel):
     research: ResearchResult | None = None
     script: Script | None = None
     originality_review: OriginalityResult | None = None
+
+    # Content Intelligence engine artifacts (sprints 2-7 + A1-A3). Kept
+    # alongside the fields above rather than replacing them - the
+    # older research/script pipeline stays available until the new
+    # engine is proven end-to-end (see ContentIntelligencePipeline).
+    editorial_profile_snapshot: EditorialProfile | None = None
+    audience_promise: AudiencePromise | None = None
+    research_plan: ResearchPlan | None = None
+    story_angles: list[StoryAngle] = Field(default_factory=list)
+    story_angle_evaluations: list[StoryAngleEvaluation] = Field(default_factory=list)
+    selected_story_angle: StoryAngle | None = None
+    reveal_map: InformationRevealMap | None = None
+    story_blueprint: StoryBlueprint | None = None
+    hook_candidates: list[HookCandidate] = Field(default_factory=list)
+    hook_evaluations: list[HookEvaluation] = Field(default_factory=list)
+    selected_hook: HookEvaluation | None = None
+    re_hook_plan: ReHookPlan | None = None
+    generated_script: GeneratedScript | None = None
 
     content_decisions: list[ContentDecisionRecord] = Field(default_factory=list)
 

@@ -17,7 +17,11 @@ from src.models.project_specification import (
 )
 from src.models.specification_enums import (
     QualityMode,
+)
+from src.models.specification_enums import (
     VisualStrategy as SpecificationVisualStrategy,
+)
+from src.models.specification_enums import (
     VoiceStrategy as SpecificationVoiceStrategy,
 )
 from src.models.upload_settings import (
@@ -53,61 +57,28 @@ class ProjectSpecificationJobMapper:
             )
 
         return VideoJob(
-            project_name=(
-                specification.general.project_name
-            ),
-            channel_name=(
-                specification.general.channel_name
-            ),
+            project_name=(specification.general.project_name),
+            channel_name=(specification.general.channel_name),
             niche=normalized_niche,
             topic=specification.general.topic,
-            platform=self._map_platform(
-                specification.upload.platform
-            ),
+            target_duration_seconds=(specification.estimated_duration_seconds()),
+            platform=self._map_platform(specification.upload.platform),
             language=specification.audience.language,
-            target_country=(
-                specification.audience.target_country
-            ),
+            target_country=(specification.audience.target_country),
             production_mode=(
-                self._map_production_mode(
-                    specification.video.quality_mode
-                )
+                self._map_production_mode(specification.video.quality_mode)
             ),
             status=JobStatus.PENDING,
             current_stage=WorkflowStage.RESEARCH,
-            visual_strategy=(
-                self._map_visual_strategy(
-                    specification.visual.strategy
-                )
-            ),
+            visual_strategy=(self._map_visual_strategy(specification.visual.strategy)),
             default_visual_source=(
-                self._map_default_visual_source(
-                    specification.visual.strategy
-                )
+                self._map_default_visual_source(specification.visual.strategy)
             ),
-            maximum_visual_budget=(
-                specification
-                .budget
-                .maximum_scene_cost_usd
-            ),
-            voice_strategy=(
-                self._map_voice_strategy(
-                    specification.voice.strategy
-                )
-            ),
-            voice_status=(
-                self._initial_voice_status(
-                    specification
-                )
-            ),
-            voice_file=(
-                specification.voice.manual_voice_file
-            ),
-            voice_provider=(
-                specification
-                .voice
-                .preferred_provider_profile_id
-            ),
+            maximum_visual_budget=(specification.budget.maximum_scene_cost_usd),
+            voice_strategy=(self._map_voice_strategy(specification.voice.strategy)),
+            voice_status=(self._initial_voice_status(specification)),
+            voice_file=(specification.voice.manual_voice_file),
+            voice_provider=(specification.voice.preferred_provider_profile_id),
         )
 
     @staticmethod
@@ -115,15 +86,9 @@ class ProjectSpecificationJobMapper:
         platform: UploadPlatform,
     ) -> Platform:
         mapping = {
-            UploadPlatform.YOUTUBE: (
-                Platform.YOUTUBE
-            ),
-            UploadPlatform.FACEBOOK: (
-                Platform.FACEBOOK
-            ),
-            UploadPlatform.TIKTOK: (
-                Platform.TIKTOK
-            ),
+            UploadPlatform.YOUTUBE: (Platform.YOUTUBE),
+            UploadPlatform.FACEBOOK: (Platform.FACEBOOK),
+            UploadPlatform.TIKTOK: (Platform.TIKTOK),
         }
 
         mapped = mapping.get(platform)
@@ -154,8 +119,7 @@ class ProjectSpecificationJobMapper:
             return ProductionMode.PREMIUM
 
         raise ConfigurationError(
-            "Unsupported quality mode: "
-            f"'{quality_mode.value}'."
+            "Unsupported quality mode: " f"'{quality_mode.value}'."
         )
 
     @staticmethod
@@ -163,21 +127,13 @@ class ProjectSpecificationJobMapper:
         strategy: SpecificationVisualStrategy,
     ) -> VisualStrategy:
         mapping = {
-            SpecificationVisualStrategy.LOCAL_LIBRARY: (
-                VisualStrategy.ALL_LOCAL
-            ),
-            SpecificationVisualStrategy.MANUAL_UPLOAD: (
-                VisualStrategy.ALL_MANUAL
-            ),
-            SpecificationVisualStrategy.STOCK_FOOTAGE: (
-                VisualStrategy.ALL_STOCK
-            ),
+            SpecificationVisualStrategy.LOCAL_LIBRARY: (VisualStrategy.ALL_LOCAL),
+            SpecificationVisualStrategy.MANUAL_UPLOAD: (VisualStrategy.ALL_MANUAL),
+            SpecificationVisualStrategy.STOCK_FOOTAGE: (VisualStrategy.ALL_STOCK),
             SpecificationVisualStrategy.IMAGE_TO_VIDEO: (
                 VisualStrategy.ALL_IMAGE_TO_VIDEO
             ),
-            SpecificationVisualStrategy.HYBRID: (
-                VisualStrategy.HYBRID
-            ),
+            SpecificationVisualStrategy.HYBRID: (VisualStrategy.HYBRID),
         }
 
         mapped = mapping.get(strategy)
@@ -196,21 +152,13 @@ class ProjectSpecificationJobMapper:
         strategy: SpecificationVisualStrategy,
     ) -> SceneSourceType:
         mapping = {
-            SpecificationVisualStrategy.LOCAL_LIBRARY: (
-                SceneSourceType.LOCAL_LIBRARY
-            ),
-            SpecificationVisualStrategy.MANUAL_UPLOAD: (
-                SceneSourceType.MANUAL_UPLOAD
-            ),
-            SpecificationVisualStrategy.STOCK_FOOTAGE: (
-                SceneSourceType.STOCK_FOOTAGE
-            ),
+            SpecificationVisualStrategy.LOCAL_LIBRARY: (SceneSourceType.LOCAL_LIBRARY),
+            SpecificationVisualStrategy.MANUAL_UPLOAD: (SceneSourceType.MANUAL_UPLOAD),
+            SpecificationVisualStrategy.STOCK_FOOTAGE: (SceneSourceType.STOCK_FOOTAGE),
             SpecificationVisualStrategy.IMAGE_TO_VIDEO: (
                 SceneSourceType.IMAGE_TO_VIDEO
             ),
-            SpecificationVisualStrategy.HYBRID: (
-                SceneSourceType.MANUAL_UPLOAD
-            ),
+            SpecificationVisualStrategy.HYBRID: (SceneSourceType.MANUAL_UPLOAD),
         }
 
         mapped = mapping.get(strategy)
@@ -228,31 +176,19 @@ class ProjectSpecificationJobMapper:
     def _map_voice_strategy(
         strategy: SpecificationVoiceStrategy,
     ) -> VoiceStrategy:
-        if (
-            strategy
-            == SpecificationVoiceStrategy.AUTO_GENERATE
-        ):
+        if strategy == SpecificationVoiceStrategy.AUTO_GENERATE:
             return VoiceStrategy.AUTO_GENERATE
 
-        if (
-            strategy
-            == SpecificationVoiceStrategy.MANUAL_UPLOAD
-        ):
+        if strategy == SpecificationVoiceStrategy.MANUAL_UPLOAD:
             return VoiceStrategy.MANUAL_UPLOAD
 
-        raise ConfigurationError(
-            "Unsupported voice strategy: "
-            f"'{strategy.value}'."
-        )
+        raise ConfigurationError("Unsupported voice strategy: " f"'{strategy.value}'.")
 
     @staticmethod
     def _initial_voice_status(
         specification: ProjectSpecification,
     ) -> VoiceStatus:
-        if (
-            specification.voice.strategy
-            == SpecificationVoiceStrategy.AUTO_GENERATE
-        ):
+        if specification.voice.strategy == SpecificationVoiceStrategy.AUTO_GENERATE:
             return VoiceStatus.PENDING
 
         if specification.voice.manual_voice_file:

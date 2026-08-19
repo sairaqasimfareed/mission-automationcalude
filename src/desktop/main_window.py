@@ -58,6 +58,9 @@ class MainWindow(QMainWindow):
         self._detail_view = ProjectWorkspaceView(
             job_store=self._job_store,
             content_pipeline=services.get_content_pipeline(),
+            content_intelligence_pipeline=(
+                services.get_content_intelligence_pipeline()
+            ),
             render_runtime_factory=services.get_render_runtime_factory(),
             asset_workflow_service=services.get_asset_workflow_service(),
             final_export_service=services.get_final_export_service(),

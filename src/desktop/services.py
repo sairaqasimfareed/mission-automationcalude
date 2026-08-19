@@ -11,6 +11,7 @@ from src.providers.dry_run_thumbnail_image_provider import (
 from src.services.application_infrastructure_factory import (
     ApplicationInfrastructure,
 )
+from src.services.content_intelligence_pipeline import ContentIntelligencePipeline
 from src.services.content_pipeline import ContentPipeline
 from src.services.factory.provider_adapter_factory import ProviderAdapterFactory
 from src.services.final_export.final_export_service import FinalExportService
@@ -181,6 +182,16 @@ def get_content_pipeline() -> ContentPipeline:
     """Return the shared content pipeline (research/script/scenes)."""
 
     return get_production_runtime().application.content_pipeline
+
+
+@lru_cache
+def get_content_intelligence_pipeline() -> ContentIntelligencePipeline:
+    """
+    Return the shared genre-aware Content Intelligence pipeline
+    (audience promise through script generation).
+    """
+
+    return get_production_runtime().content_intelligence_pipeline
 
 
 @lru_cache

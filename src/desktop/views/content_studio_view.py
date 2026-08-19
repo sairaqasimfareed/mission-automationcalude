@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFormLayout,
     QFrame,
+    QHBoxLayout,
     QLineEdit,
     QMessageBox,
     QScrollArea,
@@ -16,9 +17,18 @@ from PySide6.QtWidgets import (
 )
 
 from src.desktop.job_store import JobStore
-from src.desktop.widgets import badge, button, card, muted, small_muted, status_label
+from src.desktop.widgets import (
+    badge,
+    button,
+    card,
+    muted,
+    separator,
+    small_muted,
+    status_label,
+)
 from src.models.enums import Platform, ProductionMode, WorkflowStage
 from src.models.video_job import VideoJob
+from src.services.content_intelligence_pipeline import ContentIntelligencePipeline
 from src.services.content_pipeline import ContentPipeline
 from src.services.genre_profile_registry_service import (
     GenreProfileRegistryService,
@@ -29,6 +39,20 @@ _LEFT = Qt.AlignmentFlag.AlignLeft
 _GENRE_IDS = [
     profile.genre_id
     for profile in GenreProfileRegistryService.with_default_profiles().list_all()
+]
+
+# (stage key, display label) in pipeline order. Each stage gets its
+# own dedicated panel - selecting one shows only that stage's content
+# at full width instead of every artifact competing for space in one
+# long scroll.
+_CI_STAGES: list[tuple[str, str]] = [
+    ("audience_promise", "Audience promise"),
+    ("research_plan", "Research plan"),
+    ("research", "Research"),
+    ("story_angles", "Story angles"),
+    ("narrative_architecture", "Narrative architecture"),
+    ("hooks", "Hooks"),
+    ("script", "Script"),
 ]
 
 
@@ -50,14 +74,17 @@ class ContentStudioView(QWidget):
         *,
         job_store: JobStore,
         content_pipeline: ContentPipeline,
+        content_intelligence_pipeline: ContentIntelligencePipeline,
         on_change: Callable[[], None],
     ) -> None:
         super().__init__()
 
         self._job_store = job_store
         self._content_pipeline = content_pipeline
+        self._content_intelligence_pipeline = content_intelligence_pipeline
         self._on_change = on_change
         self._job_id: UUID | None = None
+        self._selected_ci_stage_index = 0
 
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -90,6 +117,7 @@ class ContentStudioView(QWidget):
                 widget.deleteLater()
 
         self._build_settings_card(job)
+        self._build_content_intelligence_card(job)
         self._build_workflow_card(job)
         self._build_research_card(job)
         self._build_script_card(job)
@@ -141,6 +169,288 @@ class ContentStudioView(QWidget):
         layout.addWidget(save_button, alignment=_LEFT)
 
         self._layout.addWidget(frame)
+
+    def _build_content_intelligence_card(self, job: VideoJob) -> None:
+        frame, layout = card("Content Intelligence Engine", icon_name="dashboard")
+
+        layout.addWidget(
+            small_muted(
+                "Genre-aware research, story, and script planning - runs "
+                "alongside the workflow below, not in place of it."
+            )
+        )
+
+        stage_row = QHBoxLayout()
+        stage_row.setSpacing(6)
+
+        for index, (_key, label) in enumerate(_CI_STAGES):
+            is_selected = index == self._selected_ci_stage_index
+            stage_button = button(label, variant="primary" if is_selected else "ghost")
+            stage_button.clicked.connect(
+                lambda _checked=False, i=index: self._handle_select_ci_stage(i)
+            )
+            stage_row.addWidget(stage_button)
+
+        stage_row.addStretch()
+        layout.addLayout(stage_row)
+        layout.addWidget(separator())
+
+        stage_key, stage_label = _CI_STAGES[self._selected_ci_stage_index]
+        self._build_ci_stage_panel(layout, job, stage_key, stage_label)
+
+        self._layout.addWidget(frame)
+
+    def _build_ci_stage_panel(
+        self,
+        layout: QVBoxLayout,
+        job: VideoJob,
+        stage_key: str,
+        stage_label: str,
+    ) -> None:
+        builders: dict[str, Callable[[QVBoxLayout, VideoJob], bool]] = {
+            "audience_promise": self._render_audience_promise_panel,
+            "research_plan": self._render_research_plan_panel,
+            "research": self._render_ci_research_panel,
+            "story_angles": self._render_story_angles_panel,
+            "narrative_architecture": self._render_narrative_architecture_panel,
+            "hooks": self._render_hooks_panel,
+            "script": self._render_ci_script_panel,
+        }
+
+        can_run = builders[stage_key](layout, job)
+
+        run_button = button(
+            f"Run {stage_label.lower()}", variant="primary", icon_name="research"
+        )
+        run_button.setEnabled(can_run)
+        run_button.clicked.connect(lambda: self._handle_run_ci_stage(stage_key))
+        layout.addWidget(run_button, alignment=_LEFT)
+
+    def _render_audience_promise_panel(
+        self, layout: QVBoxLayout, job: VideoJob
+    ) -> bool:
+        promise = job.audience_promise
+
+        if promise is None:
+            layout.addWidget(small_muted("Not started."))
+
+            return True
+
+        layout.addWidget(badge(promise.promise_strength.value))
+        layout.addWidget(muted(f"Central curiosity: {promise.central_curiosity}"))
+        layout.addWidget(muted(f"Primary question: {promise.primary_question}"))
+        layout.addWidget(muted(f"Expected payoff: {promise.expected_payoff}"))
+
+        if promise.weakness_reasons:
+            layout.addWidget(
+                small_muted("Weaknesses: " + ", ".join(promise.weakness_reasons))
+            )
+
+        return True
+
+    def _render_research_plan_panel(self, layout: QVBoxLayout, job: VideoJob) -> bool:
+        plan = job.research_plan
+
+        if plan is None:
+            layout.addWidget(
+                small_muted(
+                    "Not started."
+                    if job.audience_promise is not None
+                    else "Requires an audience promise first."
+                )
+            )
+
+            return job.audience_promise is not None
+
+        for question in plan.research_questions:
+            layout.addWidget(small_muted(f"- {question}"))
+
+        return True
+
+    def _render_ci_research_panel(self, layout: QVBoxLayout, job: VideoJob) -> bool:
+        research = job.research
+
+        if research is None:
+            layout.addWidget(small_muted("Not started."))
+
+            return True
+
+        layout.addWidget(badge(research.status.value))
+        layout.addWidget(muted(research.research_summary))
+
+        return True
+
+    def _render_story_angles_panel(self, layout: QVBoxLayout, job: VideoJob) -> bool:
+        if not job.story_angles:
+            can_run = job.research is not None and job.audience_promise is not None
+            layout.addWidget(
+                small_muted(
+                    "Not started."
+                    if can_run
+                    else "Requires research and an audience promise first."
+                )
+            )
+
+            return can_run
+
+        evaluations_by_title = {
+            evaluation.angle_title: evaluation
+            for evaluation in job.story_angle_evaluations
+        }
+        selected_title = (
+            job.selected_story_angle.title if job.selected_story_angle else None
+        )
+
+        for angle in job.story_angles:
+            is_selected = angle.title == selected_title
+            evaluation = evaluations_by_title.get(angle.title)
+            score_text = (
+                f" · score {evaluation.overall_score:.0f}"
+                if evaluation is not None
+                else ""
+            )
+
+            layout.addWidget(
+                badge(f"{angle.style.value}{' · selected' if is_selected else ''}")
+            )
+            layout.addWidget(muted(f"{angle.title}{score_text}"))
+            layout.addWidget(small_muted(angle.description))
+
+        return True
+
+    def _render_narrative_architecture_panel(
+        self, layout: QVBoxLayout, job: VideoJob
+    ) -> bool:
+        if job.story_blueprint is None:
+            can_run = job.selected_story_angle is not None
+            layout.addWidget(
+                small_muted(
+                    "Not started."
+                    if can_run
+                    else "Requires a selected story angle first."
+                )
+            )
+
+            return can_run
+
+        for beat in sorted(job.story_blueprint.beats, key=lambda b: b.start_seconds):
+            layout.addWidget(
+                small_muted(
+                    f"[{beat.beat_type.value}] {beat.start_seconds:.0f}s-"
+                    f"{beat.end_seconds:.0f}s · tension {beat.tension_level} · "
+                    f"{beat.purpose}"
+                )
+            )
+
+        if job.reveal_map is not None:
+            layout.addWidget(
+                small_muted(
+                    f"{len(job.reveal_map.curiosity_loops)} curiosity loop(s), "
+                    f"{len(job.reveal_map.reveals)} reveal(s) planned."
+                )
+            )
+
+        return True
+
+    def _render_hooks_panel(self, layout: QVBoxLayout, job: VideoJob) -> bool:
+        if not job.hook_candidates:
+            can_run = job.story_blueprint is not None
+            layout.addWidget(
+                small_muted(
+                    "Not started." if can_run else "Requires a story blueprint first."
+                )
+            )
+
+            return can_run
+
+        evaluations_by_text = {
+            evaluation.hook_text: evaluation for evaluation in job.hook_evaluations
+        }
+        selected_text = job.selected_hook.hook_text if job.selected_hook else None
+
+        for hook in job.hook_candidates:
+            evaluation = evaluations_by_text.get(hook.text)
+            is_selected = hook.text == selected_text
+            tag = (
+                "selected"
+                if is_selected
+                else ("rejected" if evaluation and evaluation.rejected else None)
+            )
+            score_text = (
+                f" · score {evaluation.overall_score:.0f}"
+                if evaluation is not None
+                else ""
+            )
+
+            if tag is not None:
+                layout.addWidget(badge(tag))
+
+            layout.addWidget(small_muted(f"{hook.text}{score_text}"))
+
+        if job.re_hook_plan is not None:
+            for re_hook in job.re_hook_plan.re_hooks:
+                layout.addWidget(
+                    small_muted(
+                        f"Re-hook @ {re_hook.position_seconds:.0f}s "
+                        f"[{re_hook.re_hook_type.value}]: {re_hook.text}"
+                    )
+                )
+
+        return True
+
+    def _render_ci_script_panel(self, layout: QVBoxLayout, job: VideoJob) -> bool:
+        script = job.generated_script
+
+        if script is None:
+            can_run = job.selected_hook is not None
+            layout.addWidget(
+                small_muted(
+                    "Not started." if can_run else "Requires a selected hook first."
+                )
+            )
+
+            return can_run
+
+        layout.addWidget(
+            badge(f"{len(script.segments)} segments · {script.word_count} words")
+        )
+        layout.addWidget(muted(script.full_narration))
+
+        return True
+
+    def _handle_select_ci_stage(self, index: int) -> None:
+        self._selected_ci_stage_index = index
+        job = self._current_job()
+
+        if job is not None:
+            self.refresh(job)
+
+    def _handle_run_ci_stage(self, stage_key: str) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        runners: dict[str, Callable[[VideoJob], VideoJob]] = {
+            "audience_promise": self._content_intelligence_pipeline.run_audience_promise,
+            "research_plan": self._content_intelligence_pipeline.run_research_plan,
+            "research": self._content_intelligence_pipeline.run_research,
+            "story_angles": self._content_intelligence_pipeline.run_story_angles,
+            "narrative_architecture": (
+                self._content_intelligence_pipeline.run_narrative_architecture
+            ),
+            "hooks": self._content_intelligence_pipeline.run_hooks,
+            "script": self._content_intelligence_pipeline.run_script,
+        }
+
+        try:
+            runners[stage_key](job)
+        except (RuntimeError, ValueError) as error:
+            self._record_error(job, f"Content Intelligence stage failed: {error}")
+
+            return
+
+        self._on_change()
 
     def _build_workflow_card(self, job: VideoJob) -> None:
         frame, layout = card("Content workflow", icon_name="dashboard")

@@ -17,6 +17,7 @@ from src.services.application_infrastructure_factory import (
     ApplicationInfrastructure,
     ApplicationInfrastructureFactory,
 )
+from src.services.content_intelligence_pipeline import ContentIntelligencePipeline
 from src.services.content_pipeline import ContentPipeline
 from src.services.genre_profile_registry_service import (
     GenreProfileRegistryService,
@@ -110,6 +111,8 @@ class ProductionApplicationRuntime:
     render_stage_factory: RenderWorkflowStageFactory
 
     render_runtime_factory: ProjectRenderRuntimeFactory
+
+    content_intelligence_pipeline: ContentIntelligencePipeline
 
     production_render_service: ProductionRenderService | None
 
@@ -348,6 +351,11 @@ class ProductionApplicationFactory:
             llm_service=(infrastructure.llm_service),
         )
 
+        content_intelligence_pipeline = ContentIntelligencePipeline(
+            llm_service=(infrastructure.llm_service),
+            genre_registry=(self._genre_registry),
+        )
+
         voice_resolution_runtime = VoiceResolutionRuntimeFactory().build(
             profiles=list(self._voice_profiles),
         )
@@ -436,6 +444,7 @@ class ProductionApplicationFactory:
             genre_timeline_service=(self._genre_timeline_service),
             render_stage_factory=(render_stage_factory),
             render_runtime_factory=(render_runtime_factory),
+            content_intelligence_pipeline=(content_intelligence_pipeline),
             production_render_service=(self._production_render_service),
             checkpoint_storage_service=(checkpoint_storage_service),
             checkpoint_service=(checkpoint_service),

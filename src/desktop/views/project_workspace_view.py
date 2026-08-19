@@ -16,6 +16,7 @@ from src.desktop.views.quality_center_view import QualityCenterView
 from src.desktop.views.render_workspace_view import RenderWorkspaceView
 from src.desktop.widgets import button, heading, muted
 from src.models.video_job import VideoJob
+from src.services.content_intelligence_pipeline import ContentIntelligencePipeline
 from src.services.content_pipeline import ContentPipeline
 from src.services.final_export.final_export_service import FinalExportService
 from src.services.project_render_runtime_factory import ProjectRenderRuntimeFactory
@@ -56,6 +57,7 @@ class ProjectWorkspaceView(QWidget):
         *,
         job_store: JobStore,
         content_pipeline: ContentPipeline,
+        content_intelligence_pipeline: ContentIntelligencePipeline,
         render_runtime_factory: ProjectRenderRuntimeFactory,
         asset_workflow_service: SceneAssetWorkflowService,
         final_export_service: FinalExportService,
@@ -87,6 +89,7 @@ class ProjectWorkspaceView(QWidget):
         self.content_studio = ContentStudioView(
             job_store=job_store,
             content_pipeline=content_pipeline,
+            content_intelligence_pipeline=content_intelligence_pipeline,
             on_change=self.refresh,
         )
         self.render_workspace = RenderWorkspaceView(
