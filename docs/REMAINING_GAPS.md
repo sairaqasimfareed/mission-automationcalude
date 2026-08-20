@@ -287,11 +287,37 @@ that file's audio-regeneration row.
 
 ## Phase 8 - Dry-run as an explicit execution mode
 
-- [ ] Introduce a `DRY_RUN`/`LIVE`/`MIXED` enum replacing (or wrapping,
-      for backward compatibility) `AdvancedSettings.dry_run: bool`.
-- [ ] `MIXED` should allow a per-provider live/dry-run mix - decide the
-      resolution rule (explicit per-provider override beats the global
-      mode) before implementing.
+- [x] Introduce a `DRY_RUN`/`LIVE`/`MIXED` enum (`ExecutionMode`,
+      `src/models/advanced_settings.py`), wrapping (not replacing)
+      `AdvancedSettings.dry_run: bool` for backward compatibility. A
+      `model_validator` reconciles whichever field a caller explicitly
+      set (via `model_fields_set`) and derives the other; setting both
+      to contradictory values (outside `MIXED`, which has no boolean
+      equivalent) is rejected. Old serialized project files with only
+      `dry_run` load correctly and derive `execution_mode`.
+- [x] `MIXED` allows a per-provider live/dry-run mix.
+      `provider_execution_overrides: dict[ProviderCategory, ExecutionMode]`
+      + `resolve_execution_mode(category)`: explicit per-category
+      override beats the global mode; an unlisted category under
+      global `MIXED` resolves to `DRY_RUN` (safe by default - this was
+      a real bug caught by its own test during development, where the
+      first implementation returned the literal `MIXED` value instead).
+      Wired into `ProductionApplicationFactory`'s music/sound-effect
+      dry-run-provider fallback - the one place in the codebase that
+      actually constructs real-vs-dry-run provider instances - with
+      tests proving MIXED mode resolves the two categories
+      independently (`test_mixed_mode_resolves_music_and_sound_effects_independently`).
+- [ ] **Not wired beyond the provider factory.** `render_orchestrator_service.py`,
+      `runtime_configuration_loader.py`, `startup_diagnostics.py`, and
+      `settings_view.py` all still read the plain `dry_run` boolean
+      directly rather than `execution_mode`/`resolve_execution_mode()`.
+      This is safe (the field stays correctly synced) but means MIXED
+      mode's per-category granularity is only visible to
+      `ProductionApplicationFactory` - the render engine selection,
+      LLM-provider bootstrapping, and GUI settings display all still
+      only see the collapsed boolean. Deliberately scoped out: none of
+      those are genuinely "one provider among several categories" the
+      way music/SFX are, so the leverage of wiring them was lower.
 
 ## Phase 9 - GUI: project header & recovery UX
 

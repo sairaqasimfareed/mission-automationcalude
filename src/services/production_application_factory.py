@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.models.advanced_settings import AdvancedSettings
-from src.models.provider_profile import ProviderProfile
+from src.models.advanced_settings import AdvancedSettings, ExecutionMode
+from src.models.provider_profile import ProviderCategory, ProviderProfile
 from src.models.voice_profile import VoiceProfile
 from src.providers.dry_run_music_provider import DryRunMusicProvider
 from src.providers.dry_run_sound_effect_provider import (
@@ -227,8 +227,10 @@ class ProductionApplicationFactory:
         # Unlike voice, music and sound effects are optional
         # enhancements with no required production adapter yet: if the
         # caller supplied real providers, use them; otherwise fall
-        # back to the dry-run adapters only in dry-run mode, matching
-        # every other dry-run-gated behavior in this application.
+        # back to the dry-run adapters only when that category's
+        # resolved execution mode is dry-run (MIXED mode lets music
+        # and sound effects resolve independently via per-category
+        # overrides - see AdvancedSettings.resolve_execution_mode).
         # Outside dry-run with nothing configured, build() below
         # leaves the music/sound-effect stages unregistered entirely
         # rather than failing the whole application - a video without
@@ -236,14 +238,26 @@ class ProductionApplicationFactory:
         self._music_providers: list[MusicProvider] = (
             list(music_providers)
             if music_providers
-            else ([DryRunMusicProvider()] if self._advanced_settings.dry_run else [])
+            else (
+                [DryRunMusicProvider()]
+                if self._advanced_settings.resolve_execution_mode(
+                    ProviderCategory.MUSIC
+                )
+                == ExecutionMode.DRY_RUN
+                else []
+            )
         )
 
         self._sound_effect_providers: list[SoundEffectProvider] = (
             list(sound_effect_providers)
             if sound_effect_providers
             else (
-                [DryRunSoundEffectProvider()] if self._advanced_settings.dry_run else []
+                [DryRunSoundEffectProvider()]
+                if self._advanced_settings.resolve_execution_mode(
+                    ProviderCategory.SOUND_EFFECTS
+                )
+                == ExecutionMode.DRY_RUN
+                else []
             )
         )
 

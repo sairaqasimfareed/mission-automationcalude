@@ -5,8 +5,9 @@ from typing import cast
 
 import pytest
 
-from src.models.advanced_settings import AdvancedSettings
+from src.models.advanced_settings import AdvancedSettings, ExecutionMode
 from src.models.provider_profile import (
+    ProviderCategory,
     ProviderProfile,
 )
 from src.models.voice_profile import (
@@ -62,7 +63,6 @@ def _voice_profile() -> VoiceProfile:
         display_name="Neutral Narrator",
         fallback_profile_id=None,
     )
-
 
 
 def _secret_store() -> SecretStore:
@@ -121,9 +121,7 @@ def _genre_timeline_service() -> GenreTimelinePipelineService:
 def _factory(
     *,
     checkpoint_storage_root: str | Path | None = None,
-    production_render_service: (
-        ProductionRenderService | None
-    ) = None,
+    production_render_service: ProductionRenderService | None = None,
     advanced_settings: AdvancedSettings | None = None,
 ) -> ProductionApplicationFactory:
     """Build one production application factory for composition tests."""
@@ -139,22 +137,11 @@ def _factory(
         voice_providers=[
             _voice_provider(),
         ],
-        genre_registry=(
-            GenreProfileRegistryService
-            .with_default_profiles()
-        ),
-        asset_workflow_service=(
-            _asset_workflow_service()
-        ),
-        genre_timeline_service=(
-            _genre_timeline_service()
-        ),
-        checkpoint_storage_root=(
-            checkpoint_storage_root
-        ),
-        production_render_service=(
-            production_render_service
-        ),
+        genre_registry=(GenreProfileRegistryService.with_default_profiles()),
+        asset_workflow_service=(_asset_workflow_service()),
+        genre_timeline_service=(_genre_timeline_service()),
+        checkpoint_storage_root=(checkpoint_storage_root),
+        production_render_service=(production_render_service),
         advanced_settings=advanced_settings,
     )
 
@@ -172,21 +159,12 @@ def test_build_returns_complete_runtime() -> None:
         MissionApplicationService,
     )
 
-    assert (
-        runtime.render_stage_factory
-        .production_render_enabled
-        is True
-    )
+    assert runtime.render_stage_factory.production_render_enabled is True
+
+    assert runtime.render_stage_factory.render_service is None
 
     assert (
-        runtime.render_stage_factory
-        .render_service
-        is None
-    )
-
-    assert (
-        runtime.render_stage_factory
-        .production_render_service
+        runtime.render_stage_factory.production_render_service
         is runtime.production_render_service
     )
 
@@ -195,24 +173,17 @@ def test_runtime_uses_shared_voice_registry() -> None:
     runtime = _factory().build()
 
     directive_service = (
-        runtime.render_runtime_factory
-        .voice_directive_generation_service
+        runtime.render_runtime_factory.voice_directive_generation_service
     )
 
     assert (
-        directive_service
-        .voice_profile_registry
-        is runtime
-        .voice_resolution_runtime
-        .voice_profile_registry
+        directive_service.voice_profile_registry
+        is runtime.voice_resolution_runtime.voice_profile_registry
     )
 
 
 def test_build_application_returns_entrypoint() -> None:
-    application = (
-        _factory()
-        .build_application()
-    )
+    application = _factory().build_application()
 
     assert isinstance(
         application,
@@ -223,78 +194,45 @@ def test_build_application_returns_entrypoint() -> None:
 def test_build_without_checkpoint_root_disables_persistence() -> None:
     runtime = _factory().build()
 
-    assert (
-        runtime.checkpoint_storage_service
-        is None
-    )
+    assert runtime.checkpoint_storage_service is None
 
-    assert (
-        runtime.checkpoint_service
-        is None
-    )
+    assert runtime.checkpoint_service is None
 
-    assert (
-        runtime.resume_planner_service
-        is None
-    )
+    assert runtime.resume_planner_service is None
 
 
 def test_build_with_checkpoint_root_enables_complete_checkpoint_graph(
     tmp_path: Path,
 ) -> None:
     runtime = _factory(
-        checkpoint_storage_root=(
-            tmp_path / "checkpoints"
-        ),
+        checkpoint_storage_root=(tmp_path / "checkpoints"),
     ).build()
 
+    assert runtime.checkpoint_storage_service is not None
+
+    assert runtime.checkpoint_service is not None
+
+    assert runtime.resume_planner_service is not None
+
     assert (
-        runtime.checkpoint_storage_service
-        is not None
+        runtime.render_runtime_factory.checkpoint_storage_service
+        is runtime.checkpoint_storage_service
     )
 
     assert (
-        runtime.checkpoint_service
-        is not None
+        runtime.render_runtime_factory.checkpoint_service is runtime.checkpoint_service
     )
 
     assert (
-        runtime.resume_planner_service
-        is not None
-    )
-
-    assert (
-        runtime
-        .render_runtime_factory
-        .checkpoint_storage_service
-        is runtime
-        .checkpoint_storage_service
-    )
-
-    assert (
-        runtime
-        .render_runtime_factory
-        .checkpoint_service
-        is runtime
-        .checkpoint_service
-    )
-
-    assert (
-        runtime
-        .render_runtime_factory
-        .resume_planner_service
-        is runtime
-        .resume_planner_service
+        runtime.render_runtime_factory.resume_planner_service
+        is runtime.resume_planner_service
     )
 
 
 def test_factory_uses_production_settings_by_default() -> None:
     factory = _factory()
 
-    assert (
-        factory.advanced_settings.dry_run
-        is False
-    )
+    assert factory.advanced_settings.dry_run is False
 
 
 def test_factory_preserves_explicit_production_renderer() -> None:
@@ -304,16 +242,9 @@ def test_factory_preserves_explicit_production_renderer() -> None:
         production_render_service=renderer,
     ).build()
 
-    assert (
-        runtime.production_render_service
-        is renderer
-    )
+    assert runtime.production_render_service is renderer
 
-    assert (
-        runtime.render_stage_factory
-        .production_render_service
-        is renderer
-    )
+    assert runtime.render_stage_factory.production_render_service is renderer
 
 
 def test_dry_run_uses_legacy_render_service_not_real_ffmpeg() -> None:
@@ -332,9 +263,7 @@ def test_dry_run_uses_legacy_render_service_not_real_ffmpeg() -> None:
 
     assert runtime.production_render_service is None
 
-    assert (
-        runtime.render_stage_factory.production_render_enabled is False
-    )
+    assert runtime.render_stage_factory.production_render_enabled is False
 
     assert runtime.render_stage_factory.render_service is not None
 
@@ -349,6 +278,44 @@ def test_dry_run_still_honors_an_explicit_production_renderer() -> None:
 
     assert runtime.production_render_service is renderer
     assert runtime.render_stage_factory.production_render_enabled is True
+
+
+def test_dry_run_auto_injects_dry_run_music_and_sound_effect_providers() -> None:
+    runtime = _factory(advanced_settings=AdvancedSettings(dry_run=True)).build()
+
+    assert runtime.music_generation_service is not None
+    assert runtime.sound_effect_generation_service is not None
+
+
+def test_live_mode_leaves_music_and_sound_effects_unconfigured() -> None:
+    runtime = _factory(
+        advanced_settings=AdvancedSettings(
+            execution_mode=ExecutionMode.LIVE,
+            skip_upload=False,
+            require_upload_confirmation=True,
+        )
+    ).build()
+
+    assert runtime.music_generation_service is None
+    assert runtime.sound_effect_generation_service is None
+
+
+def test_mixed_mode_resolves_music_and_sound_effects_independently() -> None:
+    # MUSIC explicitly overridden to LIVE - no dry-run fallback should
+    # be injected for it. SOUND_EFFECTS has no override, so under a
+    # global MIXED mode it resolves to DRY_RUN and gets the fallback.
+    runtime = _factory(
+        advanced_settings=AdvancedSettings(
+            execution_mode=ExecutionMode.MIXED,
+            dry_run=False,
+            skip_upload=False,
+            require_upload_confirmation=True,
+            provider_execution_overrides={ProviderCategory.MUSIC: ExecutionMode.LIVE},
+        )
+    ).build()
+
+    assert runtime.music_generation_service is None
+    assert runtime.sound_effect_generation_service is not None
 
 
 @pytest.mark.parametrize(
@@ -367,10 +334,7 @@ def test_dry_run_still_honors_an_explicit_production_renderer() -> None:
             [
                 _voice_provider(),
             ],
-            (
-                "Production application requires "
-                "at least one provider profile."
-            ),
+            ("Production application requires " "at least one provider profile."),
         ),
         (
             [
@@ -380,10 +344,7 @@ def test_dry_run_still_honors_an_explicit_production_renderer() -> None:
             [
                 _voice_provider(),
             ],
-            (
-                "Production application requires "
-                "at least one voice profile."
-            ),
+            ("Production application requires " "at least one voice profile."),
         ),
         (
             [
@@ -393,23 +354,14 @@ def test_dry_run_still_honors_an_explicit_production_renderer() -> None:
                 _voice_profile(),
             ],
             [],
-            (
-                "Production application requires "
-                "at least one voice provider."
-            ),
+            ("Production application requires " "at least one voice provider."),
         ),
     ],
 )
 def test_factory_rejects_missing_required_runtime_configuration(
-    provider_profiles: list[
-        ProviderProfile
-    ],
-    voice_profiles: list[
-        VoiceProfile
-    ],
-    voice_providers: list[
-        VoiceProvider
-    ],
+    provider_profiles: list[ProviderProfile],
+    voice_profiles: list[VoiceProfile],
+    voice_providers: list[VoiceProvider],
     message: str,
 ) -> None:
     with pytest.raises(
@@ -417,28 +369,13 @@ def test_factory_rejects_missing_required_runtime_configuration(
         match=message,
     ):
         ProductionApplicationFactory(
-            secret_store=(
-                _secret_store()
-            ),
-            provider_profiles=(
-                provider_profiles
-            ),
-            voice_profiles=(
-                voice_profiles
-            ),
-            voice_providers=(
-                voice_providers
-            ),
-            genre_registry=(
-                GenreProfileRegistryService
-                .with_default_profiles()
-            ),
-            asset_workflow_service=(
-                _asset_workflow_service()
-            ),
-            genre_timeline_service=(
-                _genre_timeline_service()
-            ),
+            secret_store=(_secret_store()),
+            provider_profiles=(provider_profiles),
+            voice_profiles=(voice_profiles),
+            voice_providers=(voice_providers),
+            genre_registry=(GenreProfileRegistryService.with_default_profiles()),
+            asset_workflow_service=(_asset_workflow_service()),
+            genre_timeline_service=(_genre_timeline_service()),
         )
 
 
@@ -448,37 +385,16 @@ def test_each_build_creates_fresh_application_graph() -> None:
     first = factory.build()
     second = factory.build()
 
-    assert (
-        first
-        is not second
-    )
+    assert first is not second
 
-    assert (
-        first.application
-        is not second.application
-    )
+    assert first.application is not second.application
 
-    assert (
-        first.infrastructure
-        is not second.infrastructure
-    )
+    assert first.infrastructure is not second.infrastructure
 
-    assert (
-        first.voice_resolution_runtime
-        is not second.voice_resolution_runtime
-    )
+    assert first.voice_resolution_runtime is not second.voice_resolution_runtime
 
-    assert (
-        first.voice_generation_service
-        is not second.voice_generation_service
-    )
+    assert first.voice_generation_service is not second.voice_generation_service
 
-    assert (
-        first.render_stage_factory
-        is not second.render_stage_factory
-    )
+    assert first.render_stage_factory is not second.render_stage_factory
 
-    assert (
-        first.render_runtime_factory
-        is not second.render_runtime_factory
-    )
+    assert first.render_runtime_factory is not second.render_runtime_factory

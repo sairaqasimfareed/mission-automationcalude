@@ -78,6 +78,12 @@ functionality - see `docs/REMAINING_GAPS.md` for what to do about it.
 | LLM call budget gating | `ProviderBudgetCheckResult` | `ProviderBudgetService` (called from `LLMService`) | `ProviderProfile.daily_spent_usd/.monthly_spent_usd` | Provider Manager | (covered indirectly via LLM service tests) | - |
 | Voice/music/SFX/stock budget gating | `ProviderBudgetCheckResult` | `ProviderBudgetService`, called (opt-in) from `MediaGenerationPipeline.run_voice/.run_music/.run_sound_effects` and `StockAcquisitionService.acquire()` | `ProviderProfile.daily_spent_usd/.monthly_spent_usd` (same as LLM) | - (no dedicated GUI surface for gating status yet) | `test_media_generation_pipeline.py`, `test_stock_acquisition_service.py` | No cost-estimation source exists yet to feed a real `estimated_cost_usd`; no `ProviderRegistry` resolution from a job's configured provider to its `profile_id` |
 
+## Execution mode
+
+| Capability | Model | Service | Persistence | GUI | Tests | Gap |
+|---|---|---|---|---|---|---|
+| DRY_RUN/LIVE/MIXED execution mode | `ExecutionMode` (`src/models/advanced_settings.py`) | `AdvancedSettings.resolve_execution_mode()` (pure method, no separate service) | `VideoJob`'s advanced settings / `AdvancedSettings.execution_mode`+`.provider_execution_overrides` | Settings view still only displays the legacy `dry_run` boolean | `test_advanced_settings.py`, `test_production_application_factory.py` (MIXED-mode provider-selection cases) | Only wired into `ProductionApplicationFactory`'s music/SFX provider selection; `render_orchestrator_service.py`/`runtime_configuration_loader.py`/`startup_diagnostics.py`/`settings_view.py` still read the plain `dry_run` boolean |
+
 ---
 
 Maintenance: add a row here in the same change that adds a new

@@ -5,6 +5,48 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-08-20 - Phase 8: Dry-run as an explicit execution mode
+
+Added `ExecutionMode` (`DRY_RUN`/`LIVE`/`MIXED`,
+`src/models/advanced_settings.py`), wrapping rather than replacing
+`AdvancedSettings.dry_run: bool` for backward compatibility. A
+`model_validator` uses `model_fields_set` to detect which of the two
+fields a caller explicitly set and derives the other; contradictory
+explicit values are rejected (except under `MIXED`, which has no
+boolean equivalent so no match is enforced). Old serialized project
+files that only ever wrote `dry_run` load correctly and derive
+`execution_mode` from it - proven by a dedicated backward-compatibility
+test using a hand-written old-shape JSON string.
+
+`MIXED` mode supports a genuine per-provider live/dry-run mix via
+`provider_execution_overrides: dict[ProviderCategory, ExecutionMode]`
+and `resolve_execution_mode(category)`: an explicit per-category
+override always beats the global mode; an unlisted category under a
+global `MIXED` mode resolves to `DRY_RUN`, not the literal `MIXED`
+value - this was a real bug in the first implementation, caught by its
+own test (`resolve_execution_mode`'s dict `.get()` fallback returned
+`self.execution_mode` directly, which could literally be `MIXED`,
+before being fixed to explicitly check for and substitute `DRY_RUN`).
+
+Wired into `ProductionApplicationFactory` - the one place in the
+codebase that actually constructs real-vs-dry-run provider instances -
+for its music/sound-effect dry-run-provider fallback, with a test
+proving MIXED mode resolves the two categories independently (one
+overridden to LIVE, the other falling through to the DRY_RUN default).
+Deliberately not wired further: `render_orchestrator_service.py`,
+`runtime_configuration_loader.py`, `startup_diagnostics.py`, and
+`settings_view.py` all still read the plain `dry_run` boolean, which
+stays correctly synced - none of those are genuinely "one provider
+among several categories" the way music/SFX are, so wiring them
+carried less leverage for this pass.
+
+Also found while touching this area: `tests/test_advanced_settings.py`
+was another module-level print-script with zero real pytest test
+functions (the third one found this session, after
+`test_provider_budget_service.py` and the stock-acquisition suite) -
+rewritten into 17 real, isolated tests since it directly covers the
+model being modified.
+
 ## 2026-08-20 - Phase 7: Budget gating beyond LLM calls
 
 Extended `ProviderBudgetService` gating - previously LLM-only - to
