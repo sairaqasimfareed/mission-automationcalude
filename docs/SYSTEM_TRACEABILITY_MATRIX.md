@@ -91,6 +91,16 @@ functionality - see `docs/REMAINING_GAPS.md` for what to do about it.
 | Persistent cross-tab project header | `ProjectHeaderSummary` (`src/services/project_header_service.py`, plain data holder - not a `MissionBaseModel`, never persisted) | `ProjectHeaderService.summarize()` (pure, recomputes fresh each call from `VideoJob` + `ProductionReadinessService` + `ApprovalGateService`) | - (derived fresh, nothing new persisted) | `ProjectWorkspaceView`'s header row, rebuilt on every `refresh()` | `test_project_header_service.py`, `test_desktop_app_integration.py::test_project_header_row_reflects_summary_and_rebuilds_on_refresh` | `current_stage` only reflects the legacy `ContentPipeline`'s stage tracking, not `ContentIntelligencePipeline`'s 12 stages; `budget_state` reports unfulfilled `ManualAudioRequirement` count as a proxy, since Phase 7's budget gating tracks spend per `ProviderProfile`, not per job |
 | Step-failure recovery dialog | - (no new model; wraps a raw exception message) | `show_recoverable_error()` (`src/desktop/recovery_dialog.py`) | - | All 6 workspace views' `_record_error()` (Content Studio, Clip Workspace, Production Audio, Render Workspace, Quality Center, Packaging) | `test_recovery_dialog.py`, plus each view's own GUI test file (`no_blocking_dialogs` fixture) | Only offers "Retry the same operation" - no per-classified-reason recovery options like `AssetModuleFailure` offers, since these callers only have a raw exception message, not a typed failure reason |
 
+## Engineering practice
+
+| Capability | Model | Service | Persistence | GUI | Tests |
+|---|---|---|---|---|---|
+| CI pipeline | - | `.github/workflows/ci.yml` (ruff → black --check → mypy → pytest, Python 3.13, ffmpeg + headless Qt libs installed) | - | - | Self-verifying (the workflow itself running green is the test) |
+| Pre-commit hooks | - | `.pre-commit-config.yaml` (ruff --fix, black, hygiene hooks) | - | - | Not independently tested - pre-commit's own hook implementations are trusted upstream code |
+| Content-intelligence restart safety | - | proven against `ContentIntelligencePipeline` + `JsonJobStore` (no new service) | `VideoJob` fields (no checkpoint model - state lives on the job itself) | - | `test_content_intelligence_pipeline_restart.py` |
+| Invalidation-matrix wiring | - | proven against `ContentIntelligencePipeline.run_revision`, `BulkStockAssignmentService`, `BulkClipIngestionService`, `MediaGenerationPipeline.run_voice/.run_music/.run_sound_effects` (no new service) | `VideoJob.stale_artifacts` | - | `test_invalidation_matrix_wiring.py` |
+| Golden-path end-to-end | - | drives `ContentPipeline` + `RenderOrchestratorService` + `FinalExportService` + `FinalPreviewService` through the real GUI handlers (no new service) | `VideoJob` + every downstream artifact store | `ProjectWorkspaceView` (all 7 tabs) | `test_desktop_app_integration.py::test_full_pipeline_reaches_final_export` |
+
 ---
 
 Maintenance: add a row here in the same change that adds a new

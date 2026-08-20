@@ -18,6 +18,7 @@ from src.desktop.views.project_workspace_view import (  # noqa: E402
     ProjectWorkspaceView,
 )
 from src.models.enums import JobStatus, WorkflowStage  # noqa: E402
+from src.models.final_preview import FinalPreviewAction  # noqa: E402
 from src.models.render_orchestration_result import (  # noqa: E402
     RenderOrchestrationResult,
 )
@@ -413,11 +414,25 @@ def test_full_pipeline_reaches_final_export(
     user would click through it: create -> research -> script ->
     originality review -> scene planning -> render (paused for asset
     decisions) -> resolve via stock search -> SEO -> thumbnail ->
-    final export. Every stage before this test was already proven
-    individually; this proves they chain together into one successful
-    run all the way to a built FinalExportPackage, with no errors
-    recorded on the job and the render itself succeeding - not just
-    "gets further than before".
+    final export -> final preview approval. Every stage before this
+    test was already proven individually; this proves they chain
+    together into one successful run all the way to a built
+    FinalExportPackage plus an APPROVED FinalPreview bound to the
+    exact render that produced it, with no errors recorded on the job
+    and the render itself succeeding - not just "gets further than
+    before".
+
+    Content-intelligence approval gating (the "approve" step in the
+    production-hardening spec's golden-path wording) is deliberately
+    not chained into this test: it belongs to the newer
+    ContentIntelligencePipeline stack, a separate, already
+    individually-tested path from the legacy ContentPipeline this test
+    drives (see test_content_intelligence_pipeline.py's own approval-
+    gate tests, test_approval_gate_service.py, and
+    test_content_studio_content_intelligence_gui.py) - stitching both
+    pipelines into a single golden-path run would test an integration
+    that doesn't exist in the real app (a project uses one pipeline or
+    the other, never both for the same run).
     """
 
     window = MainWindow(job_store=InMemoryJobStore())
@@ -475,6 +490,20 @@ def test_full_pipeline_reaches_final_export(
     # split) - confirm it evaluates the completed job without error.
     workspace.quality_center._handle_run_check()
     assert job.policy_report is not None
+
+    # Final preview: bind a preview to this exact render, then approve
+    # it - the last named step in the golden path ("final preview")
+    # that nothing else in this run exercises end-to-end through the
+    # GUI.
+    workspace.quality_center._handle_create_final_preview()
+    assert job.final_previews
+    latest_preview = job.final_previews[-1]
+    assert latest_preview.render_identity
+
+    workspace.quality_center._handle_resolve_final_preview(
+        FinalPreviewAction.APPROVE_FINAL
+    )
+    assert job.final_previews[-1].status.value == "approved"
 
     # Clip Workspace, Production Audio, and Editing Timeline are review
     # panels over the same job/render data - confirm switching to each

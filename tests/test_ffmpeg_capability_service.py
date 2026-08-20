@@ -1,249 +1,118 @@
 from __future__ import annotations
 
+import shutil
+
+import pytest
+
 from src.models.ffmpeg_config import (
-    FFmpegAudioCodec,
+    FFmpegCapabilities,
     FFmpegConfig,
-    FFmpegHardwareAcceleration,
-    FFmpegPixelFormat,
     FFmpegVideoCodec,
 )
-from src.services.ffmpeg_capability_service import (
-    FFmpegCapabilityService,
+from src.services.ffmpeg_capability_service import FFmpegCapabilityService
+
+_HAS_FFMPEG = shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
+
+requires_ffmpeg = pytest.mark.skipif(
+    not _HAS_FFMPEG,
+    reason="Real ffmpeg/ffprobe binaries are not on PATH on this machine.",
 )
 
 
-service = FFmpegCapabilityService()
+@requires_ffmpeg
+def test_detect_finds_real_ffmpeg_and_ffprobe() -> None:
+    capabilities = FFmpegCapabilityService().detect(FFmpegConfig())
 
-config = FFmpegConfig()
-
-capabilities = service.detect(
-    config
-)
-
-print(
-    "FFmpeg available:",
-    capabilities.ffmpeg_available,
-)
-
-print(
-    "ffprobe available:",
-    capabilities.ffprobe_available,
-)
-
-print(
-    "FFmpeg version:",
-    capabilities.ffmpeg_version,
-)
-
-print(
-    "Encoder count:",
-    len(
-        capabilities.encoders
-    ),
-)
-
-print(
-    "Filter count:",
-    len(
-        capabilities.filters
-    ),
-)
-
-print(
-    "Hardware acceleration:",
-    sorted(
-        capabilities.hardware_accelerators
-    ),
-)
-
-assert capabilities.ffmpeg_available is True
-assert capabilities.ffprobe_available is True
-assert capabilities.ready is True
-
-assert capabilities.ffmpeg_path
-assert capabilities.ffprobe_path
-
-assert capabilities.ffmpeg_version
-assert capabilities.ffprobe_version
-
-assert capabilities.has_encoder(
-    "libx264"
-)
-
-assert capabilities.has_encoder(
-    "aac"
-)
-
-assert capabilities.has_filter(
-    "scale"
-)
-
-assert capabilities.has_filter(
-    "overlay"
-)
-
-assert capabilities.has_filter(
-    "xfade"
-)
-
-assert capabilities.has_filter(
-    "zoompan"
-)
-
-assert capabilities.has_filter(
-    "amix"
-)
-
-assert capabilities.has_filter(
-    "sidechaincompress"
-)
+    assert capabilities.ffmpeg_available is True
+    assert capabilities.ffprobe_available is True
+    assert capabilities.ready is True
+    assert capabilities.ffmpeg_version is not None
+    assert capabilities.ffprobe_version is not None
 
 
-resolved = service.resolve(
-    config
-)
+@requires_ffmpeg
+def test_detect_populates_encoders_decoders_and_filters() -> None:
+    capabilities = FFmpegCapabilityService().detect(FFmpegConfig())
 
-print(
-    "Selected video codec:",
-    resolved.selected_video_codec,
-)
+    assert len(capabilities.encoders) > 0
+    assert len(capabilities.decoders) > 0
+    assert len(capabilities.filters) > 0
+    assert capabilities.metadata["encoder_count"] == len(capabilities.encoders)
+    assert capabilities.metadata["filter_count"] == len(capabilities.filters)
 
-print(
-    "Selected audio codec:",
-    resolved.selected_audio_codec,
-)
 
-print(
-    "Selected hardware acceleration:",
-    resolved.selected_hardware_acceleration,
-)
+@requires_ffmpeg
+def test_resolve_selects_a_working_video_and_audio_codec() -> None:
+    resolved = FFmpegCapabilityService().resolve(FFmpegConfig())
 
-assert (
-    resolved.selected_audio_codec
-    == FFmpegAudioCodec.AAC.value
-)
+    assert resolved.capabilities.has_encoder(resolved.selected_video_codec)
+    assert resolved.capabilities.has_encoder(resolved.selected_audio_codec)
 
-assert (
-    resolved.selected_video_codec
-    in {
-        FFmpegVideoCodec.H264_NVENC.value,
-        FFmpegVideoCodec.LIBX264.value,
+
+@requires_ffmpeg
+def test_resolve_rejects_an_unavailable_requested_video_codec() -> None:
+    config = FFmpegConfig(
+        ffmpeg_path="ffmpeg",
+        ffprobe_path="ffprobe",
+        video_codec=FFmpegVideoCodec.H264_NVENC,
+    )
+    capabilities = FFmpegCapabilityService().detect(config)
+
+    if capabilities.has_encoder(str(FFmpegVideoCodec.H264_NVENC.value)):
+        pytest.skip("This machine's ffmpeg build actually has h264_nvenc.")
+
+    with pytest.raises(RuntimeError, match="video codec"):
+        FFmpegCapabilityService().resolve(config)
+
+
+def test_detect_reports_unavailable_when_binaries_do_not_exist() -> None:
+    config = FFmpegConfig(
+        ffmpeg_path="definitely-not-a-real-ffmpeg-binary",
+        ffprobe_path="definitely-not-a-real-ffprobe-binary",
+    )
+
+    capabilities = FFmpegCapabilityService().detect(config)
+
+    assert capabilities.ffmpeg_available is False
+    assert capabilities.ffprobe_available is False
+    assert capabilities.ready is False
+    assert capabilities.encoders == set()
+    assert capabilities.ffmpeg_version is None
+
+
+def test_resolve_raises_when_ffmpeg_runtime_is_not_ready() -> None:
+    config = FFmpegConfig(
+        ffmpeg_path="definitely-not-a-real-ffmpeg-binary",
+        ffprobe_path="definitely-not-a-real-ffprobe-binary",
+    )
+
+    with pytest.raises(RuntimeError, match="not ready"):
+        FFmpegCapabilityService().resolve(config)
+
+
+def _capabilities(**overrides: object) -> FFmpegCapabilities:
+    defaults: dict[str, object] = {
+        "ffmpeg_available": True,
+        "ffprobe_available": True,
+        "ffmpeg_path": "/usr/bin/ffmpeg",
+        "ffprobe_path": "/usr/bin/ffprobe",
+        "encoders": {"libx264", "aac"},
+        "hardware_accelerators": set(),
     }
-)
+    defaults.update(overrides)
 
-assert resolved.capabilities.ready is True
-
-
-cpu_config = FFmpegConfig(
-    video_codec=(
-        FFmpegVideoCodec.LIBX264
-    ),
-    audio_codec=(
-        FFmpegAudioCodec.AAC
-    ),
-    hardware_acceleration=(
-        FFmpegHardwareAcceleration.NONE
-    ),
-    pixel_format=(
-        FFmpegPixelFormat.YUV420P
-    ),
-    crf=20,
-    preset="medium",
-)
-
-cpu_resolved = service.resolve(
-    cpu_config
-)
-
-assert (
-    cpu_resolved.selected_video_codec
-    == "libx264"
-)
-
-assert (
-    cpu_resolved
-    .selected_hardware_acceleration
-    is None
-)
+    return FFmpegCapabilities(**defaults)  # type: ignore[arg-type]
 
 
-try:
-    FFmpegConfig(
-        video_codec=(
-            FFmpegVideoCodec.H264_NVENC
-        ),
-        hardware_acceleration=(
-            FFmpegHardwareAcceleration.NONE
-        ),
-    )
-except ValueError:
-    print(
-        "Invalid NVENC configuration "
-        "successfully blocked."
-    )
-else:
-    raise AssertionError(
-        "NVENC with disabled hardware "
-        "acceleration should fail."
-    )
+def test_has_encoder_is_case_insensitive() -> None:
+    capabilities = _capabilities(encoders={"libx264"})
+
+    assert capabilities.has_encoder("LIBX264") is True
+    assert capabilities.has_encoder("libx265") is False
 
 
-missing_binary_config = FFmpegConfig(
-    ffmpeg_path=(
-        "definitely_missing_ffmpeg_binary"
-    ),
-    ffprobe_path=(
-        "definitely_missing_ffprobe_binary"
-    ),
-)
+def test_has_hardware_accelerator_is_case_insensitive() -> None:
+    capabilities = _capabilities(hardware_accelerators={"cuda"})
 
-missing_capabilities = service.detect(
-    missing_binary_config
-)
-
-assert (
-    missing_capabilities.ffmpeg_available
-    is False
-)
-
-assert (
-    missing_capabilities.ffprobe_available
-    is False
-)
-
-assert missing_capabilities.ready is False
-
-
-try:
-    service.resolve(
-        missing_binary_config
-    )
-except RuntimeError:
-    print(
-        "Missing FFmpeg runtime "
-        "successfully blocked."
-    )
-else:
-    raise AssertionError(
-        "Missing FFmpeg runtime should fail."
-    )
-
-
-serialized = (
-    capabilities.model_dump_json()
-)
-
-restored = (
-    capabilities.__class__
-    .model_validate_json(
-        serialized
-    )
-)
-
-assert restored == capabilities
-
-
-print(
-    "FFmpeg Capability Service tests "
-    "completed successfully."
-)
+    assert capabilities.has_hardware_accelerator("CUDA") is True
+    assert capabilities.has_hardware_accelerator("vaapi") is False

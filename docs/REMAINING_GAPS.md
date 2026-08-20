@@ -339,17 +339,50 @@ that file's audio-regeneration row.
       `ContentIntelligencePipeline` to classify its own failures into a
       typed reason first, which none of them do today.
 
-## Phase 10 - CI, pre-commit, and testing gaps
+## Phase 10 - CI, pre-commit, and testing gaps (Done)
 
-- [ ] `.github/workflows/` running ruff → black --check → mypy → pytest
-      on every push/PR.
-- [ ] `.pre-commit-config.yaml` (ruff, black, basic whitespace checks).
-- [ ] Restart tests for content-intelligence stages (once Phase 1's
-      waiting-state persistence exists to test against).
-- [ ] Formal invalidation-matrix regression tests (Phase 3).
-- [ ] One true golden-path end-to-end test: create project → research →
-      content plan → script → approve → assets → audio → timeline →
-      render → final preview → export.
+- [x] `.github/workflows/ci.yml`: ruff → black --check → mypy → pytest on
+      every push/PR to `main`, Python 3.13, with ffmpeg + headless Qt
+      system libs installed so no test needs to be excluded. Fixing this
+      surfaced and fixed two real gaps: `requirements.txt` was missing
+      `anthropic`/`openai`/`google-genai`/`google-auth` (the real LLM
+      provider SDKs actually imported at runtime); `ruff check .` failed
+      repo-wide on 153 pre-existing `UP042` findings for this codebase's
+      deliberate `class X(str, Enum)` convention, now formalized as an
+      ignored rule in `pyproject.toml` instead of silently red CI.
+- [x] `.pre-commit-config.yaml` (ruff --fix, black, trailing-whitespace/
+      end-of-file-fixer/check-merge-conflict/large-file-guard hooks).
+- [x] Restart tests for content-intelligence stages
+      (`tests/test_content_intelligence_pipeline_restart.py`): a real
+      `JsonJobStore` round-trip through a *fresh store instance*
+      (simulating a process restart, not a same-instance cache hit)
+      preserves every artifact, lets a fresh pipeline instance resume the
+      next stage, and preserves a pending approval decision.
+- [x] Formal invalidation-matrix regression tests
+      (`tests/test_invalidation_matrix_wiring.py`): drives the 4 real
+      call sites (`ContentIntelligencePipeline.run_revision`,
+      `BulkStockAssignmentService`, `BulkClipIngestionService`,
+      `MediaGenerationPipeline.run_voice/.run_music/.run_sound_effects`)
+      end to end and asserts on `job.stale_artifacts` - proving the
+      wiring itself, not just `InvalidationService`'s own matrix logic
+      (already covered by `test_invalidation_service.py`).
+- [x] One true golden-path end-to-end test: `test_full_pipeline_reaches_final_export`
+      (already existed, covering create→research→script→originality→
+      scenes→render→assets→SEO→thumbnail→export) extended with Final
+      Preview creation and approval, closing the last named step the
+      spec's golden-path wording called for. Content-intelligence
+      approval gating ("approve") is deliberately not chained into this
+      one test - it belongs to a separate pipeline stack
+      (`ContentIntelligencePipeline`) with its own dedicated coverage;
+      stitching both pipelines into one run would test an integration
+      that doesn't exist in the real app.
+- Found and fixed while auditing CI test coverage (not originally
+  scoped, but directly blocking a green CI run):
+  `tests/test_ffmpeg_capability_service.py` was a 4th instance of this
+  session's recurring dead-print-script pattern (module-level code, bare
+  asserts at collection time, zero real `pytest` test functions) -
+  rewritten into 8 real tests, most gated behind a `skipif` when
+  ffmpeg/ffprobe aren't on `PATH`.
 
 ## Explicitly out of scope
 

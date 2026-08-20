@@ -35,6 +35,14 @@ select = [
 ]
 ignore = [
     "E501",
+    # `class X(str, Enum)` is this codebase's established convention for
+    # every string-backed enum (used pervasively for Pydantic model
+    # fields that must serialize as plain strings) - UP042's suggested
+    # `enum.StrEnum` predates the codebase's Python-3.13 baseline
+    # adoption and was never applied; enforcing it now would be a large,
+    # non-functional rename across every model module for no behavior
+    # change.
+    "UP042",
 ]
 
 

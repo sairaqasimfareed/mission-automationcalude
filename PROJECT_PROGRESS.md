@@ -5,6 +5,85 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-08-20 - Phase 10: CI, pre-commit, and testing gaps
+
+**CI workflow and dependency-list fix.** Added `.github/workflows/ci.yml`
+running ruff → black --check → mypy → pytest on every push/PR to `main`,
+against Python 3.13 (matching `pyproject.toml`'s declared target), with
+system ffmpeg and headless Qt libraries (`libegl1`/`libgl1`/
+`libxkbcommon0`/`libdbus-1-3`) installed via apt so no test needs to be
+excluded from CI. Setting this up surfaced two real, pre-existing
+correctness gaps rather than just wiring automation around them:
+`requirements.txt` was missing `anthropic`, `openai`, `google-genai`,
+and `google-auth` - the real LLM provider SDKs `src/shared/llm/
+anthropic_provider.py`/`openai_provider.py`/`gemini_provider.py` actually
+import at runtime - meaning a fresh `pip install -r requirements.txt`
+could not have run the app or its test suite at all; fixed by adding
+them to `requirements.txt` and splitting out a new `requirements-dev.txt`
+(`-r requirements.txt` plus pytest/mypy/ruff/black) for CI and local dev
+installs. Separately, `ruff check .` failed repo-wide on 153 pre-existing
+`UP042` findings - this codebase's deliberate, pervasive convention of
+`class X(str, Enum)` for every Pydantic-serializable enum - which would
+have made every CI run red from the first commit; formalized as an
+ignored rule in `pyproject.toml` with a comment explaining why, rather
+than either leaving CI permanently red or mass-renaming ~150 enum
+classes to `enum.StrEnum` for a purely cosmetic, non-functional change.
+
+**Pre-commit hooks.** Added `.pre-commit-config.yaml`: ruff (`--fix`) +
+black + the standard hygiene hooks (trailing-whitespace, end-of-file-
+fixer, check-merge-conflict, a 5MB large-file guard).
+
+**Restart tests for content-intelligence stages.** New
+`tests/test_content_intelligence_pipeline_restart.py` (3 tests) proves
+what `docs/IMPLEMENTATION_STATE.md` had only claimed: that content-
+intelligence stages are restart-safe because their state lives entirely
+on the persisted `VideoJob`. Each test round-trips a job through a real
+`JsonJobStore` via a genuinely separate store instance pointed at the
+same directory (not the same instance's warm in-memory cache - see the
+existing `JsonJobStore` caching lesson this session already learned the
+hard way once), then continues the pipeline with a fresh
+`ContentIntelligencePipeline` instance too, proving a new process, not
+just the same one, can pick up where a prior run left off - including a
+pending approval decision still being resolvable after the round-trip.
+
+**Formal invalidation-matrix regression tests.** New
+`tests/test_invalidation_matrix_wiring.py` (7 tests) closes a gap the
+existing `test_invalidation_service.py` left open: that file proves
+`InvalidationService`'s own matrix logic exhaustively in isolation, but
+nothing anywhere proved the 4 real production call sites
+(`ContentIntelligencePipeline.run_revision`, `BulkStockAssignmentService`,
+`BulkClipIngestionService`, `MediaGenerationPipeline.run_voice/.run_music/
+.run_sound_effects`) actually invoke it correctly. This file drives each
+real service end to end (a job with a revised script, a bulk stock
+assignment, a bulk clip ingestion, each of voice/music/sound-effect
+generation) and asserts on `job.stale_artifacts` afterward, including
+one test confirming a stale flag genuinely gets cleared, not just added.
+
+**Golden-path end-to-end test.** `test_full_pipeline_reaches_final_export`
+(`tests/test_desktop_app_integration.py`) already drove create→research→
+script→originality→scenes→render→assets→SEO→thumbnail→export through the
+real GUI; extended it with Final Preview creation and approval, closing
+the last named step ("final preview") the production-hardening spec's
+golden-path wording called for. Content-intelligence approval gating
+("approve") is deliberately left out of this one test - documented in
+its own docstring as belonging to a separate pipeline stack with its own
+dedicated coverage, since a project uses one content pipeline or the
+other, never both in the same run.
+
+**A 4th dead print-script test file, found and fixed.** While auditing
+what CI would actually run, `tests/test_ffmpeg_capability_service.py`
+turned out to be another instance of this session's recurring pattern
+(after `test_provider_budget_service.py`, `test_stock_acquisition_service.py`,
+and `test_advanced_settings.py`): module-level code with bare `assert`
+statements executed once at collection time, zero real `def test_`
+functions - meaning it provided no real regression protection, and would
+have either silently passed (masking the absence of coverage) or failed
+CI outright depending on whether ffmpeg happened to be detected. Rewritten
+into 8 real pytest tests, most gated behind `@pytest.mark.skipif` when
+ffmpeg/ffprobe aren't on `PATH`, so it behaves correctly both locally and
+in CI (where ffmpeg is now installed via apt specifically so these tests
+run for real rather than being skipped).
+
 ## 2026-08-20 - Phase 9: GUI project header & recovery UX
 
 **Persistent cross-tab project header.** `ProjectHeaderService`
