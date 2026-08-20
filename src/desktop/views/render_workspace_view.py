@@ -8,7 +8,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
     QLineEdit,
-    QMessageBox,
     QProgressBar,
     QScrollArea,
     QVBoxLayout,
@@ -16,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.desktop.job_store import JobStore
+from src.desktop.recovery_dialog import show_recoverable_error
 from src.desktop.widgets import (
     badge,
     button,
@@ -418,7 +418,11 @@ class RenderWorkspaceView(QWidget):
         try:
             self._asset_workflow_service.search_stock(scene=scene, state=state)
         except (RuntimeError, ValueError) as error:
-            self._record_error(job, f"Stock search failed: {error}")
+            self._record_error(
+                job,
+                f"Stock search failed: {error}",
+                on_retry=lambda: self._handle_search_stock(scene_number, query_text),
+            )
 
             return
 
@@ -506,7 +510,11 @@ class RenderWorkspaceView(QWidget):
                 overrides_by_scene=job.scene_editing_overrides or None,
             )
         except (RuntimeError, ValueError) as error:
-            self._record_error(job, f"Render setup failed: {error}")
+            self._record_error(
+                job,
+                f"Render setup failed: {error}",
+                on_retry=lambda: self._execute_render(job, user_input=user_input),
+            )
 
             return
 
@@ -528,7 +536,9 @@ class RenderWorkspaceView(QWidget):
             lambda result, jid=job_id: self._handle_render_finished(jid, result)
         )
         worker.failed.connect(
-            lambda message, jid=job_id: self._handle_render_failed(jid, message)
+            lambda message, jid=job_id, ui=user_input: self._handle_render_failed(
+                jid, message, ui
+            )
         )
         worker.finished.connect(thread.quit)
         worker.failed.connect(thread.quit)
@@ -597,7 +607,12 @@ class RenderWorkspaceView(QWidget):
         if job_id == self._job_id:
             self._on_change()
 
-    def _handle_render_failed(self, job_id: UUID, message: str) -> None:
+    def _handle_render_failed(
+        self,
+        job_id: UUID,
+        message: str,
+        user_input: dict[str, object] | None = None,
+    ) -> None:
         self._rendering_job_ids.discard(job_id)
 
         job = self._job_store.get(job_id)
@@ -606,7 +621,12 @@ class RenderWorkspaceView(QWidget):
             job.errors.append(f"Render failed: {message}")
 
         if job_id == self._job_id:
-            QMessageBox.warning(self, "Render failed", message)
+            on_retry = (
+                (lambda: self._execute_render(job, user_input=user_input))
+                if job is not None
+                else None
+            )
+            show_recoverable_error(self, "Render failed", message, on_retry=on_retry)
             self._on_change()
 
     def _current_job(self) -> VideoJob | None:
@@ -634,7 +654,13 @@ class RenderWorkspaceView(QWidget):
 
         return None
 
-    def _record_error(self, job: VideoJob, message: str) -> None:
+    def _record_error(
+        self,
+        job: VideoJob,
+        message: str,
+        *,
+        on_retry: Callable[[], None] | None = None,
+    ) -> None:
         job.errors.append(message)
-        QMessageBox.warning(self, "Step failed", message)
+        show_recoverable_error(self, "Step failed", message, on_retry=on_retry)
         self._on_change()

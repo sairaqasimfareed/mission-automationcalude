@@ -319,15 +319,25 @@ that file's audio-regeneration row.
       those are genuinely "one provider among several categories" the
       way music/SFX are, so the leverage of wiring them was lower.
 
-## Phase 9 - GUI: project header & recovery UX
+## Phase 9 - GUI: project header & recovery UX (Done)
 
-- [ ] Persistent cross-tab project header (Project Name / Mode / Current
+- [x] Persistent cross-tab project header (Project Name / Mode / Current
       Stage / Approval Mode / Next Approval / Quality State / Budget
       State / Automation State / Readiness State) reading only from
-      canonical backend state (`VideoJob` + the new readiness service).
-- [ ] Structured recovery UX for voice/music/render/content-intelligence
-      failures, matching the asset workflow's existing recovery-option
-      pattern instead of a bare `QMessageBox.warning` string.
+      canonical backend state (`VideoJob` + `ProductionReadinessService`)
+      via `ProjectHeaderService`, wired into `ProjectWorkspaceView`.
+- [x] Recovery UX for voice/music/render/content-intelligence failures:
+      `show_recoverable_error()` (`src/desktop/recovery_dialog.py`) offers
+      a real Retry action (re-runs the exact handler/stage that failed)
+      instead of a dismiss-only `QMessageBox.warning`, across all 6
+      workspace views. Deliberately *not* the same per-`AssetFailureReason`
+      classified recovery `AssetModuleFailure` offers - these call sites
+      only ever have a raw exception message, not a classified reason, so
+      per-reason recovery options (choose a different provider, etc.)
+      remain a real, larger gap: adding them honestly would require each
+      of `MediaGenerationPipeline`/`RenderOrchestratorService`/
+      `ContentIntelligencePipeline` to classify its own failures into a
+      typed reason first, which none of them do today.
 
 ## Phase 10 - CI, pre-commit, and testing gaps
 

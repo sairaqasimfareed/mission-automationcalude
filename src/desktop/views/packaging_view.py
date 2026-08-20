@@ -7,13 +7,13 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFrame,
     QLineEdit,
-    QMessageBox,
     QScrollArea,
     QVBoxLayout,
     QWidget,
 )
 
 from src.desktop.job_store import JobStore
+from src.desktop.recovery_dialog import show_recoverable_error
 from src.desktop.widgets import (
     button,
     card,
@@ -207,7 +207,11 @@ class PackagingView(QWidget):
                 target_audience=target_audience,
             )
         except (RuntimeError, ValueError) as error:
-            self._record_error(job, f"SEO generation failed: {error}")
+            self._record_error(
+                job,
+                f"SEO generation failed: {error}",
+                on_retry=lambda: self._handle_generate_seo(target_audience),
+            )
 
             return
 
@@ -233,7 +237,11 @@ class PackagingView(QWidget):
                 project_id=job.project_name,
             )
         except (RuntimeError, ValueError) as error:
-            self._record_error(job, f"Thumbnail generation failed: {error}")
+            self._record_error(
+                job,
+                f"Thumbnail generation failed: {error}",
+                on_retry=lambda: self._handle_generate_thumbnail(target_audience),
+            )
 
             return
 
@@ -266,7 +274,11 @@ class PackagingView(QWidget):
                 thumbnail_artifact=thumbnail,
             )
         except (RuntimeError, ValueError) as error:
-            self._record_error(job, f"Final export failed: {error}")
+            self._record_error(
+                job,
+                f"Final export failed: {error}",
+                on_retry=self._handle_build_final_export,
+            )
 
             return
 
@@ -279,7 +291,13 @@ class PackagingView(QWidget):
 
         return self._job_store.get(self._job_id)
 
-    def _record_error(self, job: VideoJob, message: str) -> None:
+    def _record_error(
+        self,
+        job: VideoJob,
+        message: str,
+        *,
+        on_retry: Callable[[], None] | None = None,
+    ) -> None:
         job.errors.append(message)
-        QMessageBox.warning(self, "Step failed", message)
+        show_recoverable_error(self, "Step failed", message, on_retry=on_retry)
         self._on_change()

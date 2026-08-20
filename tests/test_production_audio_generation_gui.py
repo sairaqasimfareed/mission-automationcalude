@@ -67,7 +67,7 @@ def qapp() -> Iterator[QApplication]:
 @pytest.fixture(autouse=True)
 def no_blocking_dialogs(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "src.desktop.views.production_audio_view.QMessageBox.warning",
+        "src.desktop.views.production_audio_view.show_recoverable_error",
         lambda *args, **kwargs: None,
     )
 

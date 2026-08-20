@@ -84,6 +84,13 @@ functionality - see `docs/REMAINING_GAPS.md` for what to do about it.
 |---|---|---|---|---|---|---|
 | DRY_RUN/LIVE/MIXED execution mode | `ExecutionMode` (`src/models/advanced_settings.py`) | `AdvancedSettings.resolve_execution_mode()` (pure method, no separate service) | `VideoJob`'s advanced settings / `AdvancedSettings.execution_mode`+`.provider_execution_overrides` | Settings view still only displays the legacy `dry_run` boolean | `test_advanced_settings.py`, `test_production_application_factory.py` (MIXED-mode provider-selection cases) | Only wired into `ProductionApplicationFactory`'s music/SFX provider selection; `render_orchestrator_service.py`/`runtime_configuration_loader.py`/`startup_diagnostics.py`/`settings_view.py` still read the plain `dry_run` boolean |
 
+## GUI shell
+
+| Capability | Model | Service | Persistence | GUI | Tests | Gap |
+|---|---|---|---|---|---|---|
+| Persistent cross-tab project header | `ProjectHeaderSummary` (`src/services/project_header_service.py`, plain data holder - not a `MissionBaseModel`, never persisted) | `ProjectHeaderService.summarize()` (pure, recomputes fresh each call from `VideoJob` + `ProductionReadinessService` + `ApprovalGateService`) | - (derived fresh, nothing new persisted) | `ProjectWorkspaceView`'s header row, rebuilt on every `refresh()` | `test_project_header_service.py`, `test_desktop_app_integration.py::test_project_header_row_reflects_summary_and_rebuilds_on_refresh` | `current_stage` only reflects the legacy `ContentPipeline`'s stage tracking, not `ContentIntelligencePipeline`'s 12 stages; `budget_state` reports unfulfilled `ManualAudioRequirement` count as a proxy, since Phase 7's budget gating tracks spend per `ProviderProfile`, not per job |
+| Step-failure recovery dialog | - (no new model; wraps a raw exception message) | `show_recoverable_error()` (`src/desktop/recovery_dialog.py`) | - | All 6 workspace views' `_record_error()` (Content Studio, Clip Workspace, Production Audio, Render Workspace, Quality Center, Packaging) | `test_recovery_dialog.py`, plus each view's own GUI test file (`no_blocking_dialogs` fixture) | Only offers "Retry the same operation" - no per-classified-reason recovery options like `AssetModuleFailure` offers, since these callers only have a raw exception message, not a typed failure reason |
+
 ---
 
 Maintenance: add a row here in the same change that adds a new

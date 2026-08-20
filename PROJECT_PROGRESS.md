@@ -5,6 +5,79 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-08-20 - Phase 9: GUI project header & recovery UX
+
+**Persistent cross-tab project header.** `ProjectHeaderService`
+(`src/services/project_header_service.py`) computes 8 at-a-glance
+fields (Mode, Stage, Approval, Next approval, Quality, Budget,
+Automation, Readiness) fresh from `VideoJob` +
+`ProductionReadinessService` + `ApprovalGateService` on every call -
+no field is cached or tracked separately from the backend state it
+reflects, matching `ProductionReadinessService`'s own "never trust a
+stale verdict" convention. Two fields are documented narrower proxies
+rather than silently misleading: `current_stage` only reflects the
+legacy `ContentPipeline`'s stage tracking (`ContentIntelligencePipeline`'s
+12 stages never touch `VideoJob.current_stage`); `budget_state` reports
+unfulfilled `ManualAudioRequirement` count, since Phase 7's budget
+gating tracks spend per `ProviderProfile` globally, not per job.
+Wired into `ProjectWorkspaceView`: a header row inserted below the
+project-name heading, cleared and rebuilt from scratch on every
+`refresh()` (matching this codebase's established clear-and-rebuild
+pattern for dynamically refreshed widget rows, rather than mutating
+labels in place). `approval_mode_label()`/`APPROVAL_MODE_PRESETS` were
+extracted out of `ContentStudioView` into a new shared
+`src/desktop/approval_mode_labels.py` so both surfaces describe a
+project's approval policy identically instead of duplicating the
+preset-matching logic.
+
+**Recovery UX for step failures.** Every workspace view had its own
+identical `_record_error(job, message)` helper that appended to
+`VideoJob.errors` and showed a dismiss-only `QMessageBox.warning`. All
+6 (`ContentStudioView`, `ClipWorkspaceView`, `ProductionAudioView`,
+`RenderWorkspaceView`, `QualityCenterView`, `PackagingView`) now route
+through a new shared `show_recoverable_error()`
+(`src/desktop/recovery_dialog.py`), which adds a real Retry action
+button that re-invokes the exact handler/stage that failed (with its
+original arguments recaptured via closure) rather than just
+dismissing the error. This is deliberately *not* the same
+per-classified-reason recovery `AssetModuleFailure` offers elsewhere
+(e.g. "search stock" vs. "request manual upload") - these 19 call
+sites across the 6 views only ever have a raw exception message, not
+a typed failure reason, so "try again" is the one honest recovery
+action available without fabricating unsupported choices; documented
+as a real, larger remaining gap in `docs/REMAINING_GAPS.md`. The
+render-workspace case needed one extra piece of plumbing: retrying a
+failed render replays it with its original `user_input` (e.g.
+per-scene asset decisions), which required threading `user_input`
+through the worker thread's `failed` signal into
+`_handle_render_failed()` rather than losing it once the worker
+thread's closure went out of scope.
+
+All existing GUI tests that monkeypatched `QMessageBox.warning` per
+view module to avoid blocking on a real modal `exec()` call under the
+offscreen Qt test platform were updated to patch
+`show_recoverable_error` instead (5 test files); a new
+`tests/test_recovery_dialog.py` unit-tests the dialog itself (no
+retry falls back to plain warning; clicking Retry invokes the
+callback; clicking OK does not) by monkeypatching `QMessageBox.exec`/
+`.clickedButton` rather than actually blocking on a real dialog.
+
+Caught one ordering bug of its own while wiring this in: every
+`_record_error()` initially called `self._on_change()` *before*
+showing the dialog, so the error would be visible on screen the
+instant it happened. But `on_change()` here is
+`ProjectWorkspaceView.refresh()`, which tears down and rebuilds every
+workspace's widgets via `deleteLater()` - and `ContentStudioView`'s
+settings-save retry closure captures the live `QComboBox`/`QLineEdit`
+widgets it needs to re-read. `deleteLater()` is deferred, and the
+dialog's `exec()` runs a nested Qt event loop, so those deferred
+deletions could fire *during* the dialog, before Retry was even
+clicked - a click-Retry-after-refresh would then call into an already
+-deleted C++ object. Fixed by showing the dialog (and running any
+resulting retry) before calling `on_change()`, matching the original
+pre-Phase-9 ordering, so a retry closure's captured widgets are
+guaranteed to still be the current build's widgets.
+
 ## 2026-08-20 - Phase 8: Dry-run as an explicit execution mode
 
 Added `ExecutionMode` (`DRY_RUN`/`LIVE`/`MIXED`,

@@ -10,13 +10,19 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLineEdit,
-    QMessageBox,
     QScrollArea,
     QVBoxLayout,
     QWidget,
 )
 
+from src.desktop.approval_mode_labels import (
+    APPROVAL_MODE_PRESETS as _APPROVAL_MODE_PRESETS,
+)
+from src.desktop.approval_mode_labels import (
+    approval_mode_label as _approval_mode_label,
+)
 from src.desktop.job_store import JobStore
+from src.desktop.recovery_dialog import show_recoverable_error
 from src.desktop.widgets import (
     badge,
     button,
@@ -26,7 +32,7 @@ from src.desktop.widgets import (
     small_muted,
     status_label,
 )
-from src.models.approval import ApprovalPolicyConfig, HumanApprovalAction
+from src.models.approval import HumanApprovalAction
 from src.models.enums import Platform, ProductionMode, WorkflowStage
 from src.models.video_job import VideoJob
 from src.services.approval_gate_service import ApprovalGateService
@@ -42,42 +48,6 @@ _GENRE_IDS = [
     profile.genre_id
     for profile in GenreProfileRegistryService.with_default_profiles().list_all()
 ]
-
-# Named presets a user picks from, rather than editing 11 individual
-# AUTO/REVIEW/MANUAL fields by hand - per-decision-point overrides
-# remain possible via ApprovalPolicyConfig directly, just not through
-# this settings panel yet.
-_APPROVAL_MODE_PRESETS: dict[str, Callable[[], ApprovalPolicyConfig]] = {
-    "Fully Automatic": ApprovalPolicyConfig.full_auto,
-    "Custom Approval": ApprovalPolicyConfig.review_critical_stages,
-    "Approve Every Step": ApprovalPolicyConfig.manual_editorial,
-}
-
-
-_APPROVAL_FIELDS_TO_COMPARE = {"id", "created_at", "updated_at"}
-
-
-def _approval_mode_label(policy: ApprovalPolicyConfig) -> str:
-    """
-    Return the preset label matching one policy, or "Custom Approval"
-    as a safe fallback for a hand-edited policy that does not match
-    any of the three named presets exactly.
-
-    Compares only the AUTO/REVIEW/MANUAL fields - every
-    ApprovalPolicyConfig also carries its own id/created_at/
-    updated_at (MissionBaseModel), which would make two otherwise-
-    identical policies compare unequal by plain `==`.
-    """
-
-    policy_fields = policy.model_dump(exclude=_APPROVAL_FIELDS_TO_COMPARE)
-
-    for label, factory in _APPROVAL_MODE_PRESETS.items():
-        preset_fields = factory().model_dump(exclude=_APPROVAL_FIELDS_TO_COMPARE)
-
-        if policy_fields == preset_fields:
-            return label
-
-    return "Custom Approval"
 
 
 # (stage key, display label) in pipeline order. Each stage gets its
@@ -353,7 +323,11 @@ class ContentStudioView(QWidget):
                 job, pending.approval.decision_point, action
             )
         except ValueError as error:
-            self._record_error(job, f"Could not resolve approval decision: {error}")
+            self._record_error(
+                job,
+                f"Could not resolve approval decision: {error}",
+                on_retry=lambda: self._handle_resolve_approval(action),
+            )
 
             return
 
@@ -868,7 +842,11 @@ class ContentStudioView(QWidget):
         try:
             runners[stage_key](job)
         except (RuntimeError, ValueError) as error:
-            self._record_error(job, f"Content Intelligence stage failed: {error}")
+            self._record_error(
+                job,
+                f"Content Intelligence stage failed: {error}",
+                on_retry=lambda: self._handle_run_ci_stage(stage_key),
+            )
 
             return
 
@@ -894,7 +872,11 @@ class ContentStudioView(QWidget):
                     history=history, version_number=current.version_number
                 )
         except ValueError as error:
-            self._record_error(job, f"Could not update script version lock: {error}")
+            self._record_error(
+                job,
+                f"Could not update script version lock: {error}",
+                on_retry=self._handle_toggle_script_version_lock,
+            )
 
             return
 
@@ -1046,7 +1028,11 @@ class ContentStudioView(QWidget):
         try:
             research = self._content_pipeline.research_pipeline.run(job.topic)
         except (RuntimeError, ValueError) as error:
-            self._record_error(job, f"Research generation failed: {error}")
+            self._record_error(
+                job,
+                f"Research generation failed: {error}",
+                on_retry=self._handle_run_research,
+            )
 
             return
 
@@ -1063,7 +1049,11 @@ class ContentStudioView(QWidget):
         try:
             script = self._content_pipeline.script_pipeline.run(job.research)
         except (RuntimeError, ValueError) as error:
-            self._record_error(job, f"Script generation failed: {error}")
+            self._record_error(
+                job,
+                f"Script generation failed: {error}",
+                on_retry=self._handle_run_script,
+            )
 
             return
 
@@ -1080,7 +1070,11 @@ class ContentStudioView(QWidget):
         try:
             review = self._content_pipeline.originality_agent.analyze(job.script)
         except (RuntimeError, ValueError) as error:
-            self._record_error(job, f"Originality review failed: {error}")
+            self._record_error(
+                job,
+                f"Originality review failed: {error}",
+                on_retry=self._handle_run_originality,
+            )
 
             return
 
@@ -1112,7 +1106,18 @@ class ContentStudioView(QWidget):
             job.language = language_input.text()
             job.target_country = target_country_input.text()
         except ValueError as error:
-            self._record_error(job, f"Could not save project settings: {error}")
+            self._record_error(
+                job,
+                f"Could not save project settings: {error}",
+                on_retry=lambda: self._handle_save_settings(
+                    genre_select=genre_select,
+                    platform_select=platform_select,
+                    production_mode_select=production_mode_select,
+                    approval_mode_select=approval_mode_select,
+                    language_input=language_input,
+                    target_country_input=target_country_input,
+                ),
+            )
 
             return
 
@@ -1127,7 +1132,11 @@ class ContentStudioView(QWidget):
         try:
             scenes = self._content_pipeline.scene_planner.plan(job.script)
         except (RuntimeError, ValueError) as error:
-            self._record_error(job, f"Scene planning failed: {error}")
+            self._record_error(
+                job,
+                f"Scene planning failed: {error}",
+                on_retry=self._handle_plan_scenes,
+            )
 
             return
 
@@ -1141,7 +1150,13 @@ class ContentStudioView(QWidget):
 
         return self._job_store.get(self._job_id)
 
-    def _record_error(self, job: VideoJob, message: str) -> None:
+    def _record_error(
+        self,
+        job: VideoJob,
+        message: str,
+        *,
+        on_retry: Callable[[], None] | None = None,
+    ) -> None:
         job.errors.append(message)
-        QMessageBox.warning(self, "Step failed", message)
+        show_recoverable_error(self, "Step failed", message, on_retry=on_retry)
         self._on_change()

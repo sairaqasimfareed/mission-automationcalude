@@ -7,13 +7,13 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
-    QMessageBox,
     QScrollArea,
     QVBoxLayout,
     QWidget,
 )
 
 from src.desktop.job_store import JobStore
+from src.desktop.recovery_dialog import show_recoverable_error
 from src.desktop.widgets import badge, button, card, small_muted, status_label
 from src.models.blocker import BlockerSeverity
 from src.models.final_preview import FinalPreviewAction, FinalPreviewStatus
@@ -375,7 +375,11 @@ class QualityCenterView(QWidget):
         try:
             self._final_preview_service.create_preview(job)
         except (RuntimeError, ValueError) as error:
-            self._record_error(job, f"Could not create final preview: {error}")
+            self._record_error(
+                job,
+                f"Could not create final preview: {error}",
+                on_retry=self._handle_create_final_preview,
+            )
 
             return
 
@@ -390,7 +394,11 @@ class QualityCenterView(QWidget):
         try:
             self._final_preview_service.resolve(job, action)
         except ValueError as error:
-            self._record_error(job, f"Could not resolve final preview: {error}")
+            self._record_error(
+                job,
+                f"Could not resolve final preview: {error}",
+                on_retry=lambda: self._handle_resolve_final_preview(action),
+            )
 
             return
 
@@ -402,7 +410,13 @@ class QualityCenterView(QWidget):
 
         return self._job_store.get(self._job_id)
 
-    def _record_error(self, job: VideoJob, message: str) -> None:
+    def _record_error(
+        self,
+        job: VideoJob,
+        message: str,
+        *,
+        on_retry: Callable[[], None] | None = None,
+    ) -> None:
         job.errors.append(message)
-        QMessageBox.warning(self, "Step failed", message)
+        show_recoverable_error(self, "Step failed", message, on_retry=on_retry)
         self._on_change()

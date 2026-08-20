@@ -209,12 +209,12 @@ def test_running_a_stage_out_of_order_records_an_error_not_a_crash(
     qapp: QApplication,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # QMessageBox.warning() opens a real modal dialog and blocks
+    # show_recoverable_error() opens a real modal dialog and blocks
     # forever under the offscreen Qt platform (no display to dismiss
     # it) - same guard test_desktop_app_integration.py's
     # no_blocking_dialogs fixture applies for every other view.
     monkeypatch.setattr(
-        "src.desktop.views.content_studio_view.QMessageBox.warning",
+        "src.desktop.views.content_studio_view.show_recoverable_error",
         lambda *args, **kwargs: None,
     )
 

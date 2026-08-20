@@ -14,16 +14,24 @@ from src.desktop.views.packaging_view import PackagingView
 from src.desktop.views.production_audio_view import ProductionAudioView
 from src.desktop.views.quality_center_view import QualityCenterView
 from src.desktop.views.render_workspace_view import RenderWorkspaceView
-from src.desktop.widgets import button, heading, muted
+from src.desktop.widgets import button, heading, muted, small_muted, status_label
 from src.models.video_job import VideoJob
 from src.services.content_intelligence_pipeline import ContentIntelligencePipeline
 from src.services.content_pipeline import ContentPipeline
 from src.services.final_export.final_export_service import FinalExportService
 from src.services.media_generation_pipeline import MediaGenerationPipeline
+from src.services.project_header_service import ProjectHeaderService
 from src.services.project_render_runtime_factory import ProjectRenderRuntimeFactory
 from src.services.scene_asset_workflow_service import SceneAssetWorkflowService
 from src.services.seo.seo_package_service import SEOPackageService
 from src.services.thumbnail.thumbnail_package_service import ThumbnailPackageService
+
+_READINESS_HEADER_ROLE = {
+    "blocked": "error",
+    "ready for render": "warning",
+    "ready for final export": "warning",
+    "completed": "success",
+}
 
 _LEFT = Qt.AlignmentFlag.AlignLeft
 
@@ -72,6 +80,7 @@ class ProjectWorkspaceView(QWidget):
         self._job_store = job_store
         self._on_back = on_back
         self._job_id: UUID | None = None
+        self._project_header_service = ProjectHeaderService()
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(24, 20, 24, 20)
@@ -83,6 +92,16 @@ class ProjectWorkspaceView(QWidget):
 
         self._heading = heading("")
         outer.addWidget(self._heading)
+
+        # Persistent, cross-tab summary of the nine canonical-state
+        # fields (ProjectHeaderService) - rebuilt on every refresh()
+        # alongside every workspace tab, so it never drifts out of
+        # sync with what the tabs themselves show.
+        self._header_row_container = QWidget()
+        self._header_row_layout = QHBoxLayout(self._header_row_container)
+        self._header_row_layout.setContentsMargins(0, 0, 0, 0)
+        self._header_row_layout.setSpacing(16)
+        outer.addWidget(self._header_row_container)
 
         self._missing_label = muted("Project not found.")
         self._missing_label.setVisible(False)
@@ -179,6 +198,7 @@ class ProjectWorkspaceView(QWidget):
 
         if job is None:
             self._heading.setText("")
+            self._clear_header_row()
             self._missing_label.setVisible(True)
             self._stack.setVisible(False)
 
@@ -193,6 +213,43 @@ class ProjectWorkspaceView(QWidget):
         self._missing_label.setVisible(False)
         self._stack.setVisible(True)
         self._heading.setText(job.project_name)
+        self._refresh_header_row(job)
+
+    def _clear_header_row(self) -> None:
+        while self._header_row_layout.count():
+            item = self._header_row_layout.takeAt(0)
+
+            if item is None:
+                continue
+
+            widget = item.widget()
+
+            if widget is not None:
+                widget.deleteLater()
+
+    def _refresh_header_row(self, job: VideoJob) -> None:
+        self._clear_header_row()
+
+        summary = self._project_header_service.summarize(job)
+
+        fields = [
+            ("Mode", summary.production_mode),
+            ("Stage", summary.current_stage),
+            ("Approval", summary.approval_mode),
+            ("Next approval", summary.next_approval),
+            ("Quality", summary.quality_state),
+            ("Budget", summary.budget_state),
+            ("Automation", summary.automation_state),
+        ]
+
+        for label, value in fields:
+            self._header_row_layout.addWidget(small_muted(f"{label}: {value}"))
+
+        readiness_role = _READINESS_HEADER_ROLE.get(summary.readiness_state, "warning")
+        self._header_row_layout.addWidget(
+            status_label(f"Readiness: {summary.readiness_state}", role=readiness_role)
+        )
+        self._header_row_layout.addStretch()
 
         self._refresh_all(job)
 

@@ -29,15 +29,19 @@ from src.services.render_orchestrator_service import (  # noqa: E402
     RenderOrchestratorService,
 )
 
-# QMessageBox.warning() and QFileDialog.getOpenFileName() both open a
-# real modal dialog and call exec(), which blocks forever under the
-# offscreen Qt platform (no display to dismiss it). Every test in this
-# module patches them out so a genuine application error, or a test
-# that exercises the manual-upload file picker, can never hang the
-# test suite - discovered the hard way while building this integration
-# test. Each workspace view (ContentStudioView, RenderWorkspaceView,
-# PackagingView) imports QMessageBox itself, so each needs its own
-# patch target rather than one shared module.
+# QMessageBox.warning()/show_recoverable_error() and
+# QFileDialog.getOpenFileName() both open a real modal dialog and call
+# exec(), which blocks forever under the offscreen Qt platform (no
+# display to dismiss it). Every test in this module patches them out
+# so a genuine application error, or a test that exercises the
+# manual-upload file picker, can never hang the test suite -
+# discovered the hard way while building this integration test. Each
+# workspace view imports its own dialog function, so each needs its
+# own patch target rather than one shared module. project_form_view
+# still calls QMessageBox.warning() directly (it predates
+# show_recoverable_error and has no meaningful retry action); every
+# other workspace view now routes step failures through
+# show_recoverable_error() instead.
 
 
 @pytest.fixture(scope="module")
@@ -54,11 +58,11 @@ def no_blocking_dialogs(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
-        "src.desktop.views.content_studio_view.QMessageBox.warning",
+        "src.desktop.views.content_studio_view.show_recoverable_error",
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
-        "src.desktop.views.render_workspace_view.QMessageBox.warning",
+        "src.desktop.views.render_workspace_view.show_recoverable_error",
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
@@ -66,7 +70,19 @@ def no_blocking_dialogs(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda *args, **kwargs: ("", ""),
     )
     monkeypatch.setattr(
-        "src.desktop.views.packaging_view.QMessageBox.warning",
+        "src.desktop.views.packaging_view.show_recoverable_error",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "src.desktop.views.quality_center_view.show_recoverable_error",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "src.desktop.views.clip_workspace_view.show_recoverable_error",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "src.desktop.views.production_audio_view.show_recoverable_error",
         lambda *args, **kwargs: None,
     )
 
@@ -493,6 +509,47 @@ def test_workspace_views_refresh_without_crashing_on_a_fresh_project(
         workspace._show_workspace(target)
 
     assert workspace._stack.currentWidget() is workspace.packaging
+
+
+def test_project_header_row_reflects_summary_and_rebuilds_on_refresh(
+    qapp: QApplication,
+    no_blocking_dialogs: None,
+) -> None:
+    """
+    The persistent header row (ProjectHeaderService) is rebuilt from
+    scratch on every refresh() rather than mutated in place - this
+    confirms it renders the expected fields for a fresh project and
+    that repeated refresh() calls don't leak widgets into the layout.
+    """
+
+    window = MainWindow(job_store=InMemoryJobStore())
+
+    _create_project(window)
+
+    job = window._job_store.list_all()[0]
+    window._open_project(job.id)
+    workspace = window._detail_view
+
+    header_texts = [
+        workspace._header_row_layout.itemAt(i).widget().text()  # type: ignore[union-attr]
+        for i in range(workspace._header_row_layout.count())
+        if workspace._header_row_layout.itemAt(i).widget() is not None
+    ]
+
+    assert any(text.startswith("Mode:") for text in header_texts)
+    assert any(text.startswith("Stage:") for text in header_texts)
+    assert any(text.startswith("Approval:") for text in header_texts)
+    assert any(text.startswith("Next approval:") for text in header_texts)
+    assert any(text.startswith("Quality:") for text in header_texts)
+    assert any(text.startswith("Budget:") for text in header_texts)
+    assert any(text.startswith("Automation:") for text in header_texts)
+    assert any(text.startswith("Readiness:") for text in header_texts)
+
+    widget_count_before = workspace._header_row_layout.count()
+    workspace.refresh()
+    widget_count_after = workspace._header_row_layout.count()
+
+    assert widget_count_after == widget_count_before
 
 
 def test_render_progress_updates_live_and_survives_cross_workspace_refresh(

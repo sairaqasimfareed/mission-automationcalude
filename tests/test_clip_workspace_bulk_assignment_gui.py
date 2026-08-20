@@ -58,7 +58,7 @@ def no_blocking_dialogs(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
-        "src.desktop.views.clip_workspace_view.QMessageBox.warning",
+        "src.desktop.views.clip_workspace_view.show_recoverable_error",
         lambda *args, **kwargs: None,
     )
 

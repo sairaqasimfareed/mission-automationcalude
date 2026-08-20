@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.desktop.job_store import JobStore
+from src.desktop.recovery_dialog import show_recoverable_error
 from src.desktop.widgets import (
     badge,
     button,
@@ -282,7 +283,11 @@ class ClipWorkspaceView(QWidget):
         try:
             self._prompt_export_service.write_file(job.scenes, Path(destination_path))
         except OSError as error:
-            self._record_error(job, f"Could not export scene prompts: {error}")
+            self._record_error(
+                job,
+                f"Could not export scene prompts: {error}",
+                on_retry=self._handle_export_prompts,
+            )
 
             return
 
@@ -310,7 +315,11 @@ class ClipWorkspaceView(QWidget):
                 job=job, source_directory=Path(source_directory)
             )
         except ValueError as error:
-            self._record_error(job, f"Bulk clip ingestion failed: {error}")
+            self._record_error(
+                job,
+                f"Bulk clip ingestion failed: {error}",
+                on_retry=self._handle_ingest_clips,
+            )
 
             return
 
@@ -363,7 +372,11 @@ class ClipWorkspaceView(QWidget):
                 job=job, scene_numbers=scene_numbers
             )
         except ValueError as error:
-            self._record_error(job, f"Bulk stock assignment failed: {error}")
+            self._record_error(
+                job,
+                f"Bulk stock assignment failed: {error}",
+                on_retry=self._handle_bulk_assign_stock,
+            )
 
             return
 
@@ -396,7 +409,13 @@ class ClipWorkspaceView(QWidget):
 
         return self._job_store.get(self._job_id)
 
-    def _record_error(self, job: VideoJob, message: str) -> None:
+    def _record_error(
+        self,
+        job: VideoJob,
+        message: str,
+        *,
+        on_retry: Callable[[], None] | None = None,
+    ) -> None:
         job.errors.append(message)
-        QMessageBox.warning(self, "Step failed", message)
+        show_recoverable_error(self, "Step failed", message, on_retry=on_retry)
         self._on_change()
