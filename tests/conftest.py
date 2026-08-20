@@ -8,7 +8,7 @@ import pytest
 
 
 @pytest.fixture
-def temporary_directory() -> Generator[Path, None, None]:
+def temporary_directory() -> Generator[Path]:
     """
     Provide a temporary directory for FFmpeg execution tests.
 
@@ -23,7 +23,7 @@ def temporary_directory() -> Generator[Path, None, None]:
 
 
 @pytest.fixture
-def root() -> Generator[Path, None, None]:
+def root() -> Generator[Path]:
     """
     Provide a temporary root directory for FFmpeg hardening and
     diagnostics tests.

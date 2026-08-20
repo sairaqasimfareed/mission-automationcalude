@@ -68,9 +68,7 @@ class UnhealthyVoiceProvider(VoiceProvider):
         text: str,
         voice: str,
     ) -> str:
-        raise AssertionError(
-            "Unhealthy provider should not run."
-        )
+        raise AssertionError("Unhealthy provider should not run.")
 
 
 class FailingVoiceProvider(VoiceProvider):
@@ -88,9 +86,7 @@ class FailingVoiceProvider(VoiceProvider):
         text: str,
         voice: str,
     ) -> str:
-        raise ConnectionError(
-            "Simulated provider failure."
-        )
+        raise ConnectionError("Simulated provider failure.")
 
 
 class InvalidFormatVoiceProvider(VoiceProvider):
@@ -111,36 +107,25 @@ class InvalidFormatVoiceProvider(VoiceProvider):
         return "outputs/audio/generated_scene.exe"
 
 
-registry = (
-    VoiceProfileRegistryService
-    .with_default_profiles()
+registry = VoiceProfileRegistryService.with_default_profiles()
+
+validation_service = VoiceDirectiveValidationService(
+    voice_profile_registry=registry,
 )
 
-validation_service = (
-    VoiceDirectiveValidationService(
-        voice_profile_registry=registry,
-    )
-)
-
-resolution_service = (
-    VoiceDirectiveResolutionService(
-        voice_profile_registry=registry,
-        validation_service=validation_service,
-    )
+resolution_service = VoiceDirectiveResolutionService(
+    voice_profile_registry=registry,
+    validation_service=validation_service,
 )
 
 
 directives = SceneVoiceDirectives(
     scene_number=1,
-    voice_profile_id=(
-        "voice.horror_whisper"
-    ),
+    voice_profile_id=("voice.horror_whisper"),
     provider_preferences=(
         VoiceProviderPreferences(
             preferred_provider="Dummy Voice",
-            preferred_voice_id=(
-                "dummy-horror-voice"
-            ),
+            preferred_voice_id=("dummy-horror-voice"),
             preferred_output_format="wav",
         )
     ),
@@ -148,10 +133,7 @@ directives = SceneVoiceDirectives(
 
 blueprint = resolution_service.resolve(
     directives,
-    narration_text=(
-        "The ancient doorway slowly opened "
-        "into complete darkness."
-    ),
+    narration_text=("The ancient doorway slowly opened " "into complete darkness."),
     scene_duration_seconds=15.0,
 )
 
@@ -172,57 +154,27 @@ print("Output:", result.output_file)
 
 assert result.success is True
 
-assert (
-    result.status
-    == VoiceGenerationStatus.COMPLETED
-)
+assert result.status == VoiceGenerationStatus.COMPLETED
 
 assert result.provider == "Dummy Voice"
 
-assert (
-    result.output_file
-    == "outputs/audio/generated_scene.wav"
-)
+assert result.output_file == "outputs/audio/generated_scene.wav"
 
 assert result.audio_track is not None
 
-assert (
-    result.audio_track.track_type
-    == AudioTrackType.VOICEOVER
-)
+assert result.audio_track.track_type == AudioTrackType.VOICEOVER
 
-assert (
-    result.audio_track.status
-    == AudioTrackStatus.READY
-)
+assert result.audio_track.status == AudioTrackStatus.READY
 
-assert (
-    result.audio_track.start_time_seconds
-    == 2.5
-)
+assert result.audio_track.start_time_seconds == 2.5
 
-assert (
-    result.audio_track.provider
-    == "Dummy Voice"
-)
+assert result.audio_track.provider == "Dummy Voice"
 
-assert (
-    result.audio_track.metadata[
-        "scene_number"
-    ]
-    == 1
-)
+assert result.audio_track.metadata["scene_number"] == 1
 
-assert (
-    blueprint.status
-    == VoiceBlueprintResolutionStatus
-    .GENERATED
-)
+assert blueprint.status == VoiceBlueprintResolutionStatus.GENERATED
 
-assert (
-    blueprint.output_file
-    == "outputs/audio/generated_scene.wav"
-)
+assert blueprint.output_file == "outputs/audio/generated_scene.wav"
 
 
 available = service.available_providers()
@@ -238,35 +190,25 @@ unhealthy_service = VoiceGenerationService(
     ]
 )
 
-unhealthy_blueprint = (
-    resolution_service.resolve(
-        SceneVoiceDirectives(
-            scene_number=2,
-        ),
-        narration_text=(
-            "Narration for unhealthy provider."
-        ),
-        scene_duration_seconds=12.0,
-    )
+unhealthy_blueprint = resolution_service.resolve(
+    SceneVoiceDirectives(
+        scene_number=2,
+    ),
+    narration_text=("Narration for unhealthy provider."),
+    scene_duration_seconds=12.0,
 )
 
-unhealthy_result = (
-    unhealthy_service.generate(
-        unhealthy_blueprint,
-    )
+unhealthy_result = unhealthy_service.generate(
+    unhealthy_blueprint,
 )
 
 assert unhealthy_result.success is False
 
-assert (
-    unhealthy_result.failure
-    is not None
-)
+assert unhealthy_result.failure is not None
 
 assert (
     unhealthy_result.failure.reason
-    == VoiceGenerationFailureReason
-    .NO_PROVIDER_AVAILABLE
+    == VoiceGenerationFailureReason.NO_PROVIDER_AVAILABLE
 )
 
 
@@ -276,16 +218,12 @@ failing_service = VoiceGenerationService(
     ]
 )
 
-failing_blueprint = (
-    resolution_service.resolve(
-        SceneVoiceDirectives(
-            scene_number=3,
-        ),
-        narration_text=(
-            "Narration for failing provider."
-        ),
-        scene_duration_seconds=12.0,
-    )
+failing_blueprint = resolution_service.resolve(
+    SceneVoiceDirectives(
+        scene_number=3,
+    ),
+    narration_text=("Narration for failing provider."),
+    scene_duration_seconds=12.0,
 )
 
 failing_result = failing_service.generate(
@@ -295,65 +233,45 @@ failing_result = failing_service.generate(
 assert failing_result.success is False
 assert failing_result.failure is not None
 
-assert (
-    failing_result.failure.reason
-    == VoiceGenerationFailureReason
-    .PROVIDER_ERROR
-)
+assert failing_result.failure.reason == VoiceGenerationFailureReason.PROVIDER_ERROR
 
 assert failing_result.attempts == 1
 
 
-invalid_format_service = (
-    VoiceGenerationService(
-        providers=[
-            InvalidFormatVoiceProvider(),
-        ]
-    )
+invalid_format_service = VoiceGenerationService(
+    providers=[
+        InvalidFormatVoiceProvider(),
+    ]
 )
 
-invalid_format_blueprint = (
-    resolution_service.resolve(
-        SceneVoiceDirectives(
-            scene_number=4,
-        ),
-        narration_text=(
-            "Narration for invalid output format."
-        ),
-        scene_duration_seconds=12.0,
-    )
+invalid_format_blueprint = resolution_service.resolve(
+    SceneVoiceDirectives(
+        scene_number=4,
+    ),
+    narration_text=("Narration for invalid output format."),
+    scene_duration_seconds=12.0,
 )
 
-invalid_format_result = (
-    invalid_format_service.generate(
-        invalid_format_blueprint,
-    )
+invalid_format_result = invalid_format_service.generate(
+    invalid_format_blueprint,
 )
 
 assert invalid_format_result.success is False
 
-assert (
-    invalid_format_result.failure
-    is not None
-)
+assert invalid_format_result.failure is not None
 
 assert (
     invalid_format_result.failure.reason
-    == VoiceGenerationFailureReason
-    .UNSUPPORTED_OUTPUT_FORMAT
+    == VoiceGenerationFailureReason.UNSUPPORTED_OUTPUT_FORMAT
 )
 
 
-unknown_provider_blueprint = (
-    resolution_service.resolve(
-        SceneVoiceDirectives(
-            scene_number=5,
-        ),
-        narration_text=(
-            "Narration for unknown provider."
-        ),
-        scene_duration_seconds=12.0,
-    )
+unknown_provider_blueprint = resolution_service.resolve(
+    SceneVoiceDirectives(
+        scene_number=5,
+    ),
+    narration_text=("Narration for unknown provider."),
+    scene_duration_seconds=12.0,
 )
 
 unknown_provider_result = service.generate(
@@ -363,15 +281,11 @@ unknown_provider_result = service.generate(
 
 assert unknown_provider_result.success is False
 
-assert (
-    unknown_provider_result.failure
-    is not None
-)
+assert unknown_provider_result.failure is not None
 
 assert (
     unknown_provider_result.failure.reason
-    == VoiceGenerationFailureReason
-    .NO_PROVIDER_AVAILABLE
+    == VoiceGenerationFailureReason.NO_PROVIDER_AVAILABLE
 )
 
 
@@ -380,18 +294,14 @@ many_blueprints = [
         SceneVoiceDirectives(
             scene_number=7,
         ),
-        narration_text=(
-            "Narration for scene seven."
-        ),
+        narration_text=("Narration for scene seven."),
         scene_duration_seconds=10.0,
     ),
     resolution_service.resolve(
         SceneVoiceDirectives(
             scene_number=6,
         ),
-        narration_text=(
-            "Narration for scene six."
-        ),
+        narration_text=("Narration for scene six."),
         scene_duration_seconds=10.0,
     ),
 ]
@@ -400,30 +310,16 @@ many_results = service.generate_many(
     many_blueprints,
 )
 
-assert [
-    item.scene_number
-    for item in many_results
-] == [
+assert [item.scene_number for item in many_results] == [
     6,
     7,
 ]
 
-assert all(
-    item.success
-    for item in many_results
-)
+assert all(item.success for item in many_results)
 
-assert (
-    many_results[0]
-    .audio_track
-    is not None
-)
+assert many_results[0].audio_track is not None
 
-assert (
-    many_results[1]
-    .audio_track
-    is not None
-)
+assert many_results[1].audio_track is not None
 
 first_track = many_results[0].audio_track
 second_track = many_results[1].audio_track
@@ -431,12 +327,8 @@ second_track = many_results[1].audio_track
 assert first_track is not None
 assert second_track is not None
 
-assert (
-    second_track.start_time_seconds
-    == (
-        first_track.start_time_seconds
-        + first_track.duration_seconds
-    )
+assert second_track.start_time_seconds == (
+    first_track.start_time_seconds + first_track.duration_seconds
 )
 
 
@@ -448,15 +340,9 @@ try:
         ]
     )
 except ValueError:
-    print(
-        "Duplicate voice generation scenes "
-        "successfully blocked."
-    )
+    print("Duplicate voice generation scenes " "successfully blocked.")
 else:
-    raise AssertionError(
-        "Duplicate voice blueprint scenes "
-        "should fail."
-    )
+    raise AssertionError("Duplicate voice blueprint scenes " "should fail.")
 
 
 try:
@@ -465,25 +351,15 @@ try:
             SceneVoiceDirectives(
                 scene_number=8,
             ),
-            narration_text=(
-                "Narration with invalid start."
-            ),
+            narration_text=("Narration with invalid start."),
             scene_duration_seconds=10.0,
         ),
         start_time_seconds=-1.0,
     )
 except ValueError:
-    print(
-        "Negative voice start time "
-        "successfully blocked."
-    )
+    print("Negative voice start time " "successfully blocked.")
 else:
-    raise AssertionError(
-        "Negative voice start time should fail."
-    )
+    raise AssertionError("Negative voice start time should fail.")
 
 
-print(
-    "Voice Generation Service tests "
-    "completed successfully."
-)
+print("Voice Generation Service tests " "completed successfully.")

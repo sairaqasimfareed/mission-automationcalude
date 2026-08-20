@@ -32,9 +32,7 @@ class AnimationExecution(MissionBaseModel):
 
     schema_version: str = "1.0"
 
-    status: AnimationExecutionStatus = (
-        AnimationExecutionStatus.PLANNED
-    )
+    status: AnimationExecutionStatus = AnimationExecutionStatus.PLANNED
 
     scene_number: int = Field(
         ge=1,
@@ -56,9 +54,7 @@ class AnimationExecution(MissionBaseModel):
 
     target: str | None = None
 
-    intensity: DirectiveIntensity = (
-        DirectiveIntensity.MEDIUM
-    )
+    intensity: DirectiveIntensity = DirectiveIntensity.MEDIUM
 
     start_time_seconds: float = Field(
         ge=0.0,
@@ -117,9 +113,7 @@ class AnimationExecution(MissionBaseModel):
         cleaned = value.strip().lower()
 
         if not cleaned:
-            raise ValueError(
-                "Animation execution text cannot be empty."
-            )
+            raise ValueError("Animation execution text cannot be empty.")
 
         return cleaned
 
@@ -129,14 +123,8 @@ class AnimationExecution(MissionBaseModel):
         cls,
         value: str,
     ) -> str:
-        if (
-            not value.startswith("animation.")
-            or value == "animation."
-        ):
-            raise ValueError(
-                "Animation preset ID must start "
-                "with 'animation.'."
-            )
+        if not value.startswith("animation.") or value == "animation.":
+            raise ValueError("Animation preset ID must start " "with 'animation.'.")
 
         return value
 
@@ -164,13 +152,8 @@ class AnimationExecution(MissionBaseModel):
         for value in values:
             warning = value.strip()
 
-            if (
-                warning
-                and warning not in cleaned
-            ):
-                cleaned.append(
-                    warning
-                )
+            if warning and warning not in cleaned:
+                cleaned.append(warning)
 
         return cleaned
 
@@ -178,116 +161,51 @@ class AnimationExecution(MissionBaseModel):
     def validate_execution(
         self,
     ) -> AnimationExecution:
-        if (
-            self.scene_end_time_seconds
-            <= self.scene_start_time_seconds
-        ):
+        if self.scene_end_time_seconds <= self.scene_start_time_seconds:
             raise ValueError(
-                "Animation scene end time must be "
-                "greater than scene start time."
+                "Animation scene end time must be " "greater than scene start time."
             )
 
         calculated_scene_duration = (
-            self.scene_end_time_seconds
-            - self.scene_start_time_seconds
+            self.scene_end_time_seconds - self.scene_start_time_seconds
         )
 
-        if (
-            abs(
-                calculated_scene_duration
-                - self.scene_duration_seconds
+        if abs(calculated_scene_duration - self.scene_duration_seconds) > 0.001:
+            raise ValueError("Animation scene duration does not " "match scene timing.")
+
+        if self.end_time_seconds <= self.start_time_seconds:
+            raise ValueError("Animation end time must be greater " "than start time.")
+
+        calculated_duration = self.end_time_seconds - self.start_time_seconds
+
+        if abs(calculated_duration - self.duration_seconds) > 0.001:
+            raise ValueError("Animation duration does not " "match execution timing.")
+
+        if self.start_time_seconds < self.scene_start_time_seconds - 0.001:
+            raise ValueError("Animation cannot start before its scene.")
+
+        if self.end_time_seconds > self.scene_end_time_seconds + 0.001:
+            raise ValueError("Animation cannot end after its scene.")
+
+        expected_local_start = self.start_time_seconds - self.scene_start_time_seconds
+
+        expected_local_end = self.end_time_seconds - self.scene_start_time_seconds
+
+        if abs(expected_local_start - self.local_start_offset_seconds) > 0.001:
+            raise ValueError(
+                "Animation local start offset does " "not match global timing."
             )
-            > 0.001
+
+        if abs(expected_local_end - self.local_end_offset_seconds) > 0.001:
+            raise ValueError(
+                "Animation local end offset does " "not match global timing."
+            )
+
+        if self.status == AnimationExecutionStatus.APPLIED and not self.metadata.get(
+            "renderer"
         ):
             raise ValueError(
-                "Animation scene duration does not "
-                "match scene timing."
-            )
-
-        if (
-            self.end_time_seconds
-            <= self.start_time_seconds
-        ):
-            raise ValueError(
-                "Animation end time must be greater "
-                "than start time."
-            )
-
-        calculated_duration = (
-            self.end_time_seconds
-            - self.start_time_seconds
-        )
-
-        if (
-            abs(
-                calculated_duration
-                - self.duration_seconds
-            )
-            > 0.001
-        ):
-            raise ValueError(
-                "Animation duration does not "
-                "match execution timing."
-            )
-
-        if (
-            self.start_time_seconds
-            < self.scene_start_time_seconds - 0.001
-        ):
-            raise ValueError(
-                "Animation cannot start before its scene."
-            )
-
-        if (
-            self.end_time_seconds
-            > self.scene_end_time_seconds + 0.001
-        ):
-            raise ValueError(
-                "Animation cannot end after its scene."
-            )
-
-        expected_local_start = (
-            self.start_time_seconds
-            - self.scene_start_time_seconds
-        )
-
-        expected_local_end = (
-            self.end_time_seconds
-            - self.scene_start_time_seconds
-        )
-
-        if (
-            abs(
-                expected_local_start
-                - self.local_start_offset_seconds
-            )
-            > 0.001
-        ):
-            raise ValueError(
-                "Animation local start offset does "
-                "not match global timing."
-            )
-
-        if (
-            abs(
-                expected_local_end
-                - self.local_end_offset_seconds
-            )
-            > 0.001
-        ):
-            raise ValueError(
-                "Animation local end offset does "
-                "not match global timing."
-            )
-
-        if (
-            self.status
-            == AnimationExecutionStatus.APPLIED
-            and not self.metadata.get("renderer")
-        ):
-            raise ValueError(
-                "Applied animation execution requires "
-                "renderer metadata."
+                "Applied animation execution requires " "renderer metadata."
             )
 
         return self
@@ -306,10 +224,7 @@ class AnimationExecution(MissionBaseModel):
     def is_none(self) -> bool:
         """Return whether animation is effectively disabled."""
 
-        return (
-            self.preset_id == "animation.none"
-            or self.animation_type == "none"
-        )
+        return self.preset_id == "animation.none" or self.animation_type == "none"
 
 
 class AnimationExecutionPlan(MissionBaseModel):
@@ -317,9 +232,7 @@ class AnimationExecutionPlan(MissionBaseModel):
 
     schema_version: str = "1.0"
 
-    executions: list[
-        AnimationExecution
-    ] = Field(
+    executions: list[AnimationExecution] = Field(
         default_factory=list,
     )
 
@@ -369,40 +282,19 @@ class AnimationExecutionPlan(MissionBaseModel):
     def validate_plan(
         self,
     ) -> AnimationExecutionPlan:
-        if self.execution_count != len(
-            self.executions
-        ):
+        if self.execution_count != len(self.executions):
             raise ValueError(
-                "Animation execution count must match "
-                "execution collection."
+                "Animation execution count must match " "execution collection."
             )
 
-        if (
-            self.active_execution_count
-            > self.execution_count
-        ):
-            raise ValueError(
-                "Active animation count cannot exceed "
-                "execution count."
-            )
+        if self.active_execution_count > self.execution_count:
+            raise ValueError("Active animation count cannot exceed " "execution count.")
 
-        if (
-            self.ready_execution_count
-            > self.execution_count
-        ):
-            raise ValueError(
-                "Ready animation count cannot exceed "
-                "execution count."
-            )
+        if self.ready_execution_count > self.execution_count:
+            raise ValueError("Ready animation count cannot exceed " "execution count.")
 
-        if (
-            self.is_render_ready
-            and not self.is_valid
-        ):
-            raise ValueError(
-                "Render-ready animation plans "
-                "must be valid."
-            )
+        if self.is_render_ready and not self.is_valid:
+            raise ValueError("Render-ready animation plans " "must be valid.")
 
         return self
 
@@ -420,50 +312,34 @@ class AnimationExecutionPlan(MissionBaseModel):
             ),
         )
 
-        self.execution_count = len(
-            self.executions
-        )
+        self.execution_count = len(self.executions)
 
         self.active_execution_count = sum(
-            1
-            for execution in self.executions
-            if not execution.is_none
+            1 for execution in self.executions if not execution.is_none
         )
 
         self.skipped_execution_count = sum(
             1
             for execution in self.executions
-            if (
-                execution.status
-                == AnimationExecutionStatus.SKIPPED
-            )
+            if (execution.status == AnimationExecutionStatus.SKIPPED)
         )
 
         self.ready_execution_count = sum(
-            1
-            for execution in self.executions
-            if execution.is_ready
+            1 for execution in self.executions if execution.is_ready
         )
 
         self.scene_count = len(
-            {
-                execution.scene_number
-                for execution in self.executions
-            }
+            {execution.scene_number for execution in self.executions}
         )
 
         self.is_valid = all(
-            execution.status
-            != AnimationExecutionStatus.FAILED
+            execution.status != AnimationExecutionStatus.FAILED
             for execution in self.executions
         )
 
         self.is_render_ready = (
             self.is_valid
-            and (
-                self.ready_execution_count
-                + self.skipped_execution_count
-            )
+            and (self.ready_execution_count + self.skipped_execution_count)
             == self.execution_count
         )
 
@@ -471,10 +347,7 @@ class AnimationExecutionPlan(MissionBaseModel):
     def has_animations(self) -> bool:
         """Return whether active animations exist."""
 
-        return any(
-            not execution.is_none
-            for execution in self.executions
-        )
+        return any(not execution.is_none for execution in self.executions)
 
     @property
     def applied_count(self) -> int:
@@ -483,10 +356,7 @@ class AnimationExecutionPlan(MissionBaseModel):
         return sum(
             1
             for execution in self.executions
-            if (
-                execution.status
-                == AnimationExecutionStatus.APPLIED
-            )
+            if (execution.status == AnimationExecutionStatus.APPLIED)
         )
 
     @property
@@ -496,8 +366,5 @@ class AnimationExecutionPlan(MissionBaseModel):
         return sum(
             1
             for execution in self.executions
-            if (
-                execution.status
-                == AnimationExecutionStatus.FAILED
-            )
+            if (execution.status == AnimationExecutionStatus.FAILED)
         )

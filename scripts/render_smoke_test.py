@@ -17,10 +17,7 @@ from src.services.ffmpeg_execution_service import (
     FFmpegExecutionService,
 )
 
-
-OUTPUT_FILE = Path(
-    "outputs/smoke/ffmpeg_execution_smoke.mp4"
-)
+OUTPUT_FILE = Path("outputs/smoke/ffmpeg_execution_smoke.mp4")
 
 
 def report_progress(
@@ -43,34 +40,19 @@ def report_progress(
 def main() -> None:
     """Run one real one-second render through the execution service."""
 
-    capability_service = (
-        FFmpegCapabilityService()
-    )
+    capability_service = FFmpegCapabilityService()
 
-    resolved_config = (
-        capability_service.resolve(
-            FFmpegConfig(
-                video_codec=(
-                    FFmpegVideoCodec.LIBX264
-                ),
-                hardware_acceleration=(
-                    FFmpegHardwareAcceleration.NONE
-                ),
-            )
+    resolved_config = capability_service.resolve(
+        FFmpegConfig(
+            video_codec=(FFmpegVideoCodec.LIBX264),
+            hardware_acceleration=(FFmpegHardwareAcceleration.NONE),
         )
     )
 
-    ffmpeg_path = (
-        resolved_config
-        .capabilities
-        .ffmpeg_path
-    )
+    ffmpeg_path = resolved_config.capabilities.ffmpeg_path
 
     if ffmpeg_path is None:
-        raise RuntimeError(
-            "FFmpeg executable path "
-            "could not be resolved."
-        )
+        raise RuntimeError("FFmpeg executable path " "could not be resolved.")
 
     OUTPUT_FILE.parent.mkdir(
         parents=True,
@@ -86,16 +68,11 @@ def main() -> None:
         video_input_count=0,
         audio_input_count=0,
         metadata={
-            "purpose": (
-                "ffmpeg_execution_smoke_test"
-            ),
+            "purpose": ("ffmpeg_execution_smoke_test"),
         },
     )
 
-    filter_complex = (
-        "[0:v]null[video_final];"
-        "[1:a]anull[audio_final]"
-    )
+    filter_complex = "[0:v]null[video_final];" "[1:a]anull[audio_final]"
 
     command_plan = FFmpegCommandPlan(
         executable=ffmpeg_path,
@@ -103,29 +80,17 @@ def main() -> None:
         filter_complex=filter_complex,
         video_output_label="video_final",
         audio_output_label="audio_final",
-        output_file=(
-            OUTPUT_FILE.as_posix()
-        ),
+        output_file=(OUTPUT_FILE.as_posix()),
         arguments=[
             "-y",
             "-f",
             "lavfi",
             "-i",
-            (
-                "color="
-                "c=blue:"
-                "s=320x240:"
-                "r=30:"
-                "d=1"
-            ),
+            ("color=" "c=blue:" "s=320x240:" "r=30:" "d=1"),
             "-f",
             "lavfi",
             "-i",
-            (
-                "anullsrc="
-                "channel_layout=stereo:"
-                "sample_rate=48000"
-            ),
+            ("anullsrc=" "channel_layout=stereo:" "sample_rate=48000"),
             "-filter_complex",
             filter_complex,
             "-map",
@@ -149,9 +114,7 @@ def main() -> None:
             OUTPUT_FILE.as_posix(),
         ],
         metadata={
-            "purpose": (
-                "ffmpeg_execution_smoke_test"
-            ),
+            "purpose": ("ffmpeg_execution_smoke_test"),
         },
     )
 
@@ -172,15 +135,11 @@ def main() -> None:
     )
 
     print()
-    print(
-        "Starting real FFmpeg smoke render..."
-    )
+    print("Starting real FFmpeg smoke render...")
     print()
 
-    execution_service = (
-        FFmpegExecutionService(
-            default_timeout_seconds=30.0,
-        )
+    execution_service = FFmpegExecutionService(
+        default_timeout_seconds=30.0,
     )
 
     result = execution_service.execute(
@@ -234,18 +193,12 @@ def main() -> None:
 
     if result.stderr:
         print()
-        print(
-            "FFmpeg stderr tail:"
-        )
+        print("FFmpeg stderr tail:")
 
-        stderr_lines = (
-            result.stderr.splitlines()
-        )
+        stderr_lines = result.stderr.splitlines()
 
         for line in stderr_lines[-10:]:
-            print(
-                line
-            )
+            print(line)
 
     assert result.success is True
 
@@ -261,29 +214,14 @@ def main() -> None:
 
     assert OUTPUT_FILE.is_file()
 
-    assert (
-        OUTPUT_FILE.stat().st_size
-        > 0
-    )
+    assert OUTPUT_FILE.stat().st_size > 0
 
-    assert (
-        result.progress
-        .progress_percent
-        == 100.0
-    )
+    assert result.progress.progress_percent == 100.0
 
-    assert (
-        result.progress
-        .is_successful_terminal
-        is True
-    )
+    assert result.progress.is_successful_terminal is True
 
     print()
-    print(
-        "FFmpeg Execution Service "
-        "real smoke test completed "
-        "successfully."
-    )
+    print("FFmpeg Execution Service " "real smoke test completed " "successfully.")
 
 
 if __name__ == "__main__":

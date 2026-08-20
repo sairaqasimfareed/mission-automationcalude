@@ -56,11 +56,7 @@ class AssetStorageService:
         storage_root: str | Path,
         asset_index: AssetIndex,
     ) -> None:
-        self.storage_root = (
-            Path(storage_root)
-            .expanduser()
-            .resolve()
-        )
+        self.storage_root = Path(storage_root).expanduser().resolve()
 
         self.asset_index = asset_index
 
@@ -75,37 +71,24 @@ class AssetStorageService:
         source_path: str | Path,
         project_id: str,
         scene_number: int,
-        asset_type: IndexedAssetType = (
-            IndexedAssetType.VIDEO
-        ),
+        asset_type: IndexedAssetType = (IndexedAssetType.VIDEO),
         title: str | None = None,
         tags: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> AssetStorageResult:
         """Store or reuse one validated manual upload."""
 
-        normalized_project_id = (
-            self._sanitize_identifier(project_id)
-        )
+        normalized_project_id = self._sanitize_identifier(project_id)
 
         if scene_number < 1:
-            raise ValueError(
-                "Scene number must be at least 1."
-            )
+            raise ValueError("Scene number must be at least 1.")
 
-        source = (
-            Path(source_path)
-            .expanduser()
-            .resolve()
-        )
+        source = Path(source_path).expanduser().resolve()
 
         if not source.exists():
             return AssetStorageResult(
                 success=False,
-                message=(
-                    "Manual upload source file "
-                    "does not exist."
-                ),
+                message=("Manual upload source file " "does not exist."),
                 metadata={
                     "source_path": str(source),
                 },
@@ -114,35 +97,25 @@ class AssetStorageService:
         if not source.is_file():
             return AssetStorageResult(
                 success=False,
-                message=(
-                    "Manual upload source path "
-                    "is not a file."
-                ),
+                message=("Manual upload source path " "is not a file."),
                 metadata={
                     "source_path": str(source),
                 },
             )
 
         try:
-            content_hash = self._calculate_hash(
-                source
-            )
+            content_hash = self._calculate_hash(source)
         except OSError as error:
             return AssetStorageResult(
                 success=False,
-                message=(
-                    "Manual upload hash could not "
-                    "be calculated."
-                ),
+                message=("Manual upload hash could not " "be calculated."),
                 metadata={
                     "source_path": str(source),
                     "error_type": type(error).__name__,
                 },
             )
 
-        existing_asset = self._find_by_hash(
-            content_hash
-        )
+        existing_asset = self._find_by_hash(content_hash)
 
         if existing_asset is not None:
             return AssetStorageResult(
@@ -150,29 +123,20 @@ class AssetStorageService:
                 asset=existing_asset,
                 reused_existing=True,
                 copied_new_file=False,
-                message=(
-                    "An identical asset already exists "
-                    "and was reused."
-                ),
+                message=("An identical asset already exists " "and was reused."),
                 metadata={
                     "content_hash": content_hash,
                 },
             )
 
-        project_directory = (
-            self.storage_root
-            / normalized_project_id
-            / "manual_uploads"
-        )
+        project_directory = self.storage_root / normalized_project_id / "manual_uploads"
 
         project_directory.mkdir(
             parents=True,
             exist_ok=True,
         )
 
-        safe_stem = self._sanitize_filename(
-            source.stem
-        )
+        safe_stem = self._sanitize_filename(source.stem)
 
         destination_name = (
             f"scene_{scene_number:03}_"
@@ -181,10 +145,7 @@ class AssetStorageService:
             f"{source.suffix.lower()}"
         )
 
-        destination = (
-            project_directory
-            / destination_name
-        )
+        destination = project_directory / destination_name
 
         try:
             shutil.copy2(
@@ -194,33 +155,23 @@ class AssetStorageService:
         except OSError as error:
             return AssetStorageResult(
                 success=False,
-                message=(
-                    "Manual upload could not be copied "
-                    "to project storage."
-                ),
+                message=("Manual upload could not be copied " "to project storage."),
                 metadata={
                     "source_path": str(source),
-                    "destination_path": str(
-                        destination
-                    ),
+                    "destination_path": str(destination),
                     "error_type": type(error).__name__,
                 },
             )
 
-        file_size_bytes = (
-            destination.stat().st_size
-        )
+        file_size_bytes = destination.stat().st_size
 
         cleaned_title = (
             title.strip()
-            if title is not None
-            and title.strip()
+            if title is not None and title.strip()
             else self._build_title(source)
         )
 
-        cleaned_tags = self._clean_tags(
-            tags or []
-        )
+        cleaned_tags = self._clean_tags(tags or [])
 
         asset_metadata: dict[str, Any] = {
             "original_file_name": source.name,
@@ -230,16 +181,12 @@ class AssetStorageService:
             "extension": source.suffix.lower(),
         }
 
-        asset_metadata.update(
-            metadata or {}
-        )
+        asset_metadata.update(metadata or {})
 
         asset = IndexedAsset(
             asset_type=asset_type,
             source=IndexedAssetSource.MANUAL_UPLOAD,
-            file_path=str(
-                destination.resolve()
-            ),
+            file_path=str(destination.resolve()),
             title=cleaned_title,
             provider="Manual Upload",
             license_type="user_provided",
@@ -257,14 +204,10 @@ class AssetStorageService:
             asset=asset,
             reused_existing=False,
             copied_new_file=True,
-            message=(
-                "Manual upload was stored successfully."
-            ),
+            message=("Manual upload was stored successfully."),
             metadata={
                 "content_hash": content_hash,
-                "destination_path": str(
-                    destination.resolve()
-                ),
+                "destination_path": str(destination.resolve()),
             },
         )
 
@@ -308,15 +251,10 @@ class AssetStorageService:
         normalized = value.strip()
 
         if not normalized:
-            raise ValueError(
-                "Project ID cannot be empty."
-            )
+            raise ValueError("Project ID cannot be empty.")
 
         safe_value = "".join(
-            character
-            if character.isalnum()
-            or character in {"-", "_"}
-            else "_"
+            character if character.isalnum() or character in {"-", "_"} else "_"
             for character in normalized
         )
 
@@ -329,10 +267,7 @@ class AssetStorageService:
         """Create a safe filename stem."""
 
         safe_value = "".join(
-            character
-            if character.isalnum()
-            or character in {"-", "_"}
-            else "_"
+            character if character.isalnum() or character in {"-", "_"} else "_"
             for character in value.strip()
         )
 
@@ -344,12 +279,7 @@ class AssetStorageService:
     ) -> str:
         """Build a readable title from the filename."""
 
-        return (
-            file_path.stem
-            .replace("_", " ")
-            .replace("-", " ")
-            .strip()
-        )
+        return file_path.stem.replace("_", " ").replace("-", " ").strip()
 
     @staticmethod
     def _clean_tags(
@@ -362,10 +292,7 @@ class AssetStorageService:
         for value in values:
             normalized = value.strip().lower()
 
-            if (
-                normalized
-                and normalized not in cleaned
-            ):
+            if normalized and normalized not in cleaned:
                 cleaned.append(normalized)
 
         return cleaned

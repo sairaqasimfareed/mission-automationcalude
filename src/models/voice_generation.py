@@ -56,10 +56,7 @@ class VoiceGenerationFailure(MissionBaseModel):
         cleaned = value.strip()
 
         if not cleaned:
-            raise ValueError(
-                "Voice generation failure message "
-                "cannot be empty."
-            )
+            raise ValueError("Voice generation failure message " "cannot be empty.")
 
         return cleaned
 
@@ -73,9 +70,7 @@ class VoiceGenerationJob(MissionBaseModel):
 
     blueprint: ResolvedVoiceBlueprint
 
-    status: VoiceGenerationStatus = (
-        VoiceGenerationStatus.PENDING
-    )
+    status: VoiceGenerationStatus = VoiceGenerationStatus.PENDING
 
     selected_provider: str | None = None
 
@@ -100,13 +95,9 @@ class VoiceGenerationJob(MissionBaseModel):
     def validate_scene_number(
         self,
     ) -> VoiceGenerationJob:
-        if (
-            self.scene_number
-            != self.blueprint.scene_number
-        ):
+        if self.scene_number != self.blueprint.scene_number:
             raise ValueError(
-                "Voice generation job scene number "
-                "must match its blueprint."
+                "Voice generation job scene number " "must match its blueprint."
             )
 
         return self
@@ -149,47 +140,31 @@ class VoiceGenerationResult(MissionBaseModel):
         self,
     ) -> VoiceGenerationResult:
         if self.success:
-            if (
-                self.status
-                != VoiceGenerationStatus.COMPLETED
-            ):
+            if self.status != VoiceGenerationStatus.COMPLETED:
                 raise ValueError(
-                    "Successful voice generation must "
-                    "use COMPLETED status."
+                    "Successful voice generation must " "use COMPLETED status."
                 )
 
             if not self.output_file:
                 raise ValueError(
-                    "Successful voice generation requires "
-                    "an output file."
+                    "Successful voice generation requires " "an output file."
                 )
 
             if self.audio_track is None:
                 raise ValueError(
-                    "Successful voice generation requires "
-                    "an audio track."
+                    "Successful voice generation requires " "an audio track."
                 )
 
             if self.failure is not None:
                 raise ValueError(
-                    "Successful voice generation cannot "
-                    "contain a failure."
+                    "Successful voice generation cannot " "contain a failure."
                 )
 
         else:
-            if (
-                self.status
-                != VoiceGenerationStatus.FAILED
-            ):
-                raise ValueError(
-                    "Failed voice generation must use "
-                    "FAILED status."
-                )
+            if self.status != VoiceGenerationStatus.FAILED:
+                raise ValueError("Failed voice generation must use " "FAILED status.")
 
             if self.failure is None:
-                raise ValueError(
-                    "Failed voice generation requires "
-                    "failure details."
-                )
+                raise ValueError("Failed voice generation requires " "failure details.")
 
         return self

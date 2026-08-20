@@ -54,10 +54,7 @@ class FFmpegInputBinding(MissionBaseModel):
         cleaned = value.strip()
 
         if not cleaned:
-            raise ValueError(
-                "FFmpeg input binding text "
-                "cannot be empty."
-            )
+            raise ValueError("FFmpeg input binding text " "cannot be empty.")
 
         return cleaned
 
@@ -66,18 +63,10 @@ class FFmpegInputBinding(MissionBaseModel):
         self,
     ) -> FFmpegInputBinding:
         expected_suffix = (
-            ":v"
-            if (
-                self.media_type
-                == FFmpegInputMediaType.VIDEO
-            )
-            else ":a"
+            ":v" if (self.media_type == FFmpegInputMediaType.VIDEO) else ":a"
         )
 
-        expected_label = (
-            f"{self.input_index}"
-            f"{expected_suffix}"
-        )
+        expected_label = f"{self.input_index}" f"{expected_suffix}"
 
         if self.stream_label != expected_label:
             raise ValueError(
@@ -93,9 +82,7 @@ class FFmpegInputPlan(MissionBaseModel):
 
     schema_version: str = "1.0"
 
-    bindings: list[
-        FFmpegInputBinding
-    ] = Field(
+    bindings: list[FFmpegInputBinding] = Field(
         default_factory=list,
     )
 
@@ -122,39 +109,19 @@ class FFmpegInputPlan(MissionBaseModel):
     def validate_plan(
         self,
     ) -> FFmpegInputPlan:
-        if self.input_count != len(
-            self.bindings
-        ):
+        if self.input_count != len(self.bindings):
+            raise ValueError("FFmpeg input count must match " "binding collection.")
+
+        indices = [binding.input_index for binding in self.bindings]
+
+        if indices != list(range(len(self.bindings))):
             raise ValueError(
-                "FFmpeg input count must match "
-                "binding collection."
+                "FFmpeg input indices must be " "contiguous and ordered from zero."
             )
 
-        indices = [
-            binding.input_index
-            for binding in self.bindings
-        ]
-
-        if indices != list(
-            range(
-                len(
-                    self.bindings
-                )
-            )
-        ):
+        if self.video_input_count + self.audio_input_count != self.input_count:
             raise ValueError(
-                "FFmpeg input indices must be "
-                "contiguous and ordered from zero."
-            )
-
-        if (
-            self.video_input_count
-            + self.audio_input_count
-            != self.input_count
-        ):
-            raise ValueError(
-                "FFmpeg media input counts must "
-                "equal total input count."
+                "FFmpeg media input counts must " "equal total input count."
             )
 
         return self
@@ -168,13 +135,7 @@ class FFmpegInputPlan(MissionBaseModel):
         cleaned = render_node_id.strip()
 
         for binding in self.bindings:
-            if (
-                binding.render_node_id
-                == cleaned
-            ):
+            if binding.render_node_id == cleaned:
                 return binding
 
-        raise KeyError(
-            "FFmpeg input binding was not found: "
-            f"{cleaned}"
-        )
+        raise KeyError("FFmpeg input binding was not found: " f"{cleaned}")

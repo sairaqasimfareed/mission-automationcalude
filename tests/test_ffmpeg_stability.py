@@ -22,10 +22,7 @@ def build_command_plan() -> FFmpegCommandPlan:
             video_input_count=0,
             audio_input_count=0,
         ),
-        filter_complex=(
-            "[0:v]null[video_final];"
-            "[1:a]anull[audio_final]"
-        ),
+        filter_complex=("[0:v]null[video_final];" "[1:a]anull[audio_final]"),
         video_output_label="video_final",
         audio_output_label="audio_final",
         output_file="outputs/final_video.mp4",
@@ -36,10 +33,7 @@ def build_command_plan() -> FFmpegCommandPlan:
             "-i",
             "audio.wav",
             "-filter_complex",
-            (
-                "[0:v]null[video_final];"
-                "[1:a]anull[audio_final]"
-            ),
+            ("[0:v]null[video_final];" "[1:a]anull[audio_final]"),
             "-map",
             "[video_final]",
             "-map",
@@ -149,9 +143,7 @@ def test_command_property_is_deterministic() -> None:
 
     assert first is not second
 
-    print(
-        "Deterministic command-property test passed."
-    )
+    print("Deterministic command-property test passed.")
 
 
 def test_command_preview_is_deterministic() -> None:
@@ -166,19 +158,11 @@ def test_command_preview_is_deterministic() -> None:
     assert first == second
     assert second == third
 
-    assert (
-        "ffmpeg"
-        in first
-    )
+    assert "ffmpeg" in first
 
-    assert (
-        "outputs/final_video.mp4"
-        in first
-    )
+    assert "outputs/final_video.mp4" in first
 
-    print(
-        "Deterministic command-preview test passed."
-    )
+    print("Deterministic command-preview test passed.")
 
 
 def test_command_access_does_not_mutate_plan() -> None:
@@ -186,9 +170,7 @@ def test_command_access_does_not_mutate_plan() -> None:
 
     plan = build_command_plan()
 
-    before = deepcopy(
-        plan.model_dump()
-    )
+    before = deepcopy(plan.model_dump())
 
     _ = plan.command
     _ = plan.command_preview
@@ -199,9 +181,7 @@ def test_command_access_does_not_mutate_plan() -> None:
 
     assert before == after
 
-    print(
-        "Command property non-mutation test passed."
-    )
+    print("Command property non-mutation test passed.")
 
 
 def test_command_serialization_is_stable() -> None:
@@ -214,31 +194,17 @@ def test_command_serialization_is_stable() -> None:
 
     assert first == second
 
-    first_json = (
-        plan.model_dump_json()
-    )
+    first_json = plan.model_dump_json()
 
-    second_json = (
-        plan.model_dump_json()
-    )
+    second_json = plan.model_dump_json()
 
-    assert (
-        first_json
-        == second_json
-    )
+    assert first_json == second_json
 
-    restored = (
-        FFmpegCommandPlan
-        .model_validate_json(
-            first_json
-        )
-    )
+    restored = FFmpegCommandPlan.model_validate_json(first_json)
 
     assert restored == plan
 
-    print(
-        "Command serialization-stability test passed."
-    )
+    print("Command serialization-stability test passed.")
 
 
 def test_success_result_properties_are_idempotent() -> None:
@@ -246,33 +212,18 @@ def test_success_result_properties_are_idempotent() -> None:
 
     result = build_success_result()
 
-    first_command_line = (
-        result.command_line
-    )
+    first_command_line = result.command_line
 
-    first_summary = (
-        result.diagnostic_summary
-    )
+    first_summary = result.diagnostic_summary
 
-    first_stderr_tail = (
-        result.stderr_tail
-    )
+    first_stderr_tail = result.stderr_tail
 
     for _ in range(5):
-        assert (
-            result.command_line
-            == first_command_line
-        )
+        assert result.command_line == first_command_line
 
-        assert (
-            result.diagnostic_summary
-            == first_summary
-        )
+        assert result.diagnostic_summary == first_summary
 
-        assert (
-            result.stderr_tail
-            == first_stderr_tail
-        )
+        assert result.stderr_tail == first_stderr_tail
 
         assert result.has_output is True
         assert result.has_stdout is False
@@ -281,9 +232,7 @@ def test_success_result_properties_are_idempotent() -> None:
         assert result.is_timeout is False
         assert result.is_cancelled is False
 
-    print(
-        "Successful result idempotency test passed."
-    )
+    print("Successful result idempotency test passed.")
 
 
 def test_failure_result_properties_are_idempotent() -> None:
@@ -291,42 +240,22 @@ def test_failure_result_properties_are_idempotent() -> None:
 
     result = build_failure_result()
 
-    first_command_line = (
-        result.command_line
-    )
+    first_command_line = result.command_line
 
-    first_summary = (
-        result.diagnostic_summary
-    )
+    first_summary = result.diagnostic_summary
 
-    first_stderr_tail = (
-        result.stderr_tail
-    )
+    first_stderr_tail = result.stderr_tail
 
-    first_failure_stage = (
-        result.failure_stage
-    )
+    first_failure_stage = result.failure_stage
 
     for _ in range(5):
-        assert (
-            result.command_line
-            == first_command_line
-        )
+        assert result.command_line == first_command_line
 
-        assert (
-            result.diagnostic_summary
-            == first_summary
-        )
+        assert result.diagnostic_summary == first_summary
 
-        assert (
-            result.stderr_tail
-            == first_stderr_tail
-        )
+        assert result.stderr_tail == first_stderr_tail
 
-        assert (
-            result.failure_stage
-            == first_failure_stage
-        )
+        assert result.failure_stage == first_failure_stage
 
         assert result.has_output is False
         assert result.has_stdout is False
@@ -334,14 +263,9 @@ def test_failure_result_properties_are_idempotent() -> None:
         assert result.is_timeout is False
         assert result.is_cancelled is False
 
-    assert (
-        first_failure_stage
-        == "ffmpeg_exit"
-    )
+    assert first_failure_stage == "ffmpeg_exit"
 
-    print(
-        "Failed result idempotency test passed."
-    )
+    print("Failed result idempotency test passed.")
 
 
 def test_stderr_tail_is_deterministic() -> None:
@@ -349,13 +273,9 @@ def test_stderr_tail_is_deterministic() -> None:
 
     result = build_failure_result()
 
-    first = (
-        result.stderr_tail
-    )
+    first = result.stderr_tail
 
-    second = (
-        result.stderr_tail
-    )
+    second = result.stderr_tail
 
     assert first == second
 
@@ -363,19 +283,11 @@ def test_stderr_tail_is_deterministic() -> None:
 
     assert len(lines) == 20
 
-    assert (
-        lines[0]
-        == "diagnostic-line-6"
-    )
+    assert lines[0] == "diagnostic-line-6"
 
-    assert (
-        lines[-1]
-        == "diagnostic-line-25"
-    )
+    assert lines[-1] == "diagnostic-line-25"
 
-    print(
-        "Deterministic stderr-tail test passed."
-    )
+    print("Deterministic stderr-tail test passed.")
 
 
 def test_result_serialization_is_stable() -> None:
@@ -383,44 +295,28 @@ def test_result_serialization_is_stable() -> None:
 
     result = build_failure_result()
 
-    before = deepcopy(
-        result.model_dump()
-    )
+    before = deepcopy(result.model_dump())
 
     first = result.model_dump()
     second = result.model_dump()
 
     assert first == second
 
-    first_json = (
-        result.model_dump_json()
-    )
+    first_json = result.model_dump_json()
 
-    second_json = (
-        result.model_dump_json()
-    )
+    second_json = result.model_dump_json()
 
-    assert (
-        first_json
-        == second_json
-    )
+    assert first_json == second_json
 
     after = result.model_dump()
 
     assert before == after
 
-    restored = (
-        FFmpegExecutionResult
-        .model_validate_json(
-            first_json
-        )
-    )
+    restored = FFmpegExecutionResult.model_validate_json(first_json)
 
     assert restored == result
 
-    print(
-        "Execution-result serialization test passed."
-    )
+    print("Execution-result serialization test passed.")
 
 
 def test_metadata_access_does_not_mutate_models() -> None:
@@ -430,17 +326,9 @@ def test_metadata_access_does_not_mutate_models() -> None:
 
     result = build_failure_result()
 
-    original_plan_metadata = (
-        deepcopy(
-            plan.metadata
-        )
-    )
+    original_plan_metadata = deepcopy(plan.metadata)
 
-    original_result_metadata = (
-        deepcopy(
-            result.metadata
-        )
-    )
+    original_result_metadata = deepcopy(result.metadata)
 
     for _ in range(5):
         _ = plan.command
@@ -451,19 +339,11 @@ def test_metadata_access_does_not_mutate_models() -> None:
         _ = result.stderr_tail
         _ = result.diagnostic_summary
 
-    assert (
-        plan.metadata
-        == original_plan_metadata
-    )
+    assert plan.metadata == original_plan_metadata
 
-    assert (
-        result.metadata
-        == original_result_metadata
-    )
+    assert result.metadata == original_result_metadata
 
-    print(
-        "Metadata non-mutation test passed."
-    )
+    print("Metadata non-mutation test passed.")
 
 
 def test_two_equivalent_command_plans_are_equivalent() -> None:
@@ -472,29 +352,15 @@ def test_two_equivalent_command_plans_are_equivalent() -> None:
     first = build_command_plan()
     second = build_command_plan()
 
-    assert (
-        first.command
-        == second.command
-    )
+    assert first.command == second.command
 
-    assert (
-        first.command_preview
-        == second.command_preview
-    )
+    assert first.command_preview == second.command_preview
 
-    assert (
-        first.arguments
-        == second.arguments
-    )
+    assert first.arguments == second.arguments
 
-    assert (
-        first.output_file
-        == second.output_file
-    )
+    assert first.output_file == second.output_file
 
-    print(
-        "Equivalent command-plan stability test passed."
-    )
+    print("Equivalent command-plan stability test passed.")
 
 
 def test_two_equivalent_results_have_equal_diagnostics() -> None:
@@ -503,38 +369,22 @@ def test_two_equivalent_results_have_equal_diagnostics() -> None:
     first = build_failure_result()
     second = build_failure_result()
 
-    assert (
-        first.command_line
-        == second.command_line
-    )
+    assert first.command_line == second.command_line
 
-    assert (
-        first.failure_stage
-        == second.failure_stage
-    )
+    assert first.failure_stage == second.failure_stage
 
-    assert (
-        first.stderr_tail
-        == second.stderr_tail
-    )
+    assert first.stderr_tail == second.stderr_tail
 
-    assert (
-        first.diagnostic_summary
-        == second.diagnostic_summary
-    )
+    assert first.diagnostic_summary == second.diagnostic_summary
 
-    print(
-        "Equivalent result-diagnostics test passed."
-    )
+    print("Equivalent result-diagnostics test passed.")
 
 
 def main() -> None:
     """Run Sprint 18.7C stability regression tests."""
 
     print()
-    print(
-        "Running FFmpeg Stability tests..."
-    )
+    print("Running FFmpeg Stability tests...")
     print()
 
     test_command_property_is_deterministic()
@@ -560,10 +410,7 @@ def main() -> None:
     test_two_equivalent_results_have_equal_diagnostics()
 
     print()
-    print(
-        "FFmpeg Stability test suite "
-        "completed successfully."
-    )
+    print("FFmpeg Stability test suite " "completed successfully.")
 
 
 if __name__ == "__main__":

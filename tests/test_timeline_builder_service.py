@@ -12,7 +12,6 @@ from src.services.timeline_builder_service import (
     TimelineBuilderService,
 )
 
-
 clips = [
     VideoClip(
         scene_number=3,
@@ -20,10 +19,7 @@ clips = [
         duration_seconds=10,
         prompt="Scene 3",
         provider="Local Library",
-        local_file=(
-            "assets/videos/local/"
-            "scene_003.mp4"
-        ),
+        local_file=("assets/videos/local/" "scene_003.mp4"),
         source_status=SceneSourceStatus.READY,
         status=VideoClipStatus.READY,
     ),
@@ -33,10 +29,7 @@ clips = [
         duration_seconds=8,
         prompt="Scene 1",
         provider="Manual Upload",
-        local_file=(
-            "assets/videos/manual/"
-            "scene_001.mp4"
-        ),
+        local_file=("assets/videos/manual/" "scene_001.mp4"),
         source_status=SceneSourceStatus.READY,
         status=VideoClipStatus.READY,
     ),
@@ -46,10 +39,7 @@ clips = [
         duration_seconds=8,
         prompt="Scene 2",
         provider="Pexels",
-        local_file=(
-            "assets/videos/stock/"
-            "scene_002.mp4"
-        ),
+        local_file=("assets/videos/stock/" "scene_002.mp4"),
         source_status=SceneSourceStatus.READY,
         status=VideoClipStatus.READY,
     ),
@@ -75,32 +65,14 @@ assert timeline.clips[0].scene_number == 1
 assert timeline.clips[1].scene_number == 2
 assert timeline.clips[2].scene_number == 3
 
-assert (
-    timeline.items[0].start_time_seconds
-    == 0.0
-)
-assert (
-    timeline.items[0].end_time_seconds
-    == 8.0
-)
+assert timeline.items[0].start_time_seconds == 0.0
+assert timeline.items[0].end_time_seconds == 8.0
 
-assert (
-    timeline.items[1].start_time_seconds
-    == 8.0
-)
-assert (
-    timeline.items[1].end_time_seconds
-    == 16.0
-)
+assert timeline.items[1].start_time_seconds == 8.0
+assert timeline.items[1].end_time_seconds == 16.0
 
-assert (
-    timeline.items[2].start_time_seconds
-    == 16.0
-)
-assert (
-    timeline.items[2].end_time_seconds
-    == 26.0
-)
+assert timeline.items[2].start_time_seconds == 16.0
+assert timeline.items[2].end_time_seconds == 26.0
 
 assert timeline.calculate_duration() == 26.0
 
@@ -113,13 +85,9 @@ try:
         ]
     )
 except ValueError:
-    print(
-        "Duplicate scene number successfully blocked."
-    )
+    print("Duplicate scene number successfully blocked.")
 else:
-    raise AssertionError(
-        "Duplicate scene numbers should fail."
-    )
+    raise AssertionError("Duplicate scene numbers should fail.")
 
 
 pending_clip = VideoClip(
@@ -127,10 +95,7 @@ pending_clip = VideoClip(
     source_type=SceneSourceType.MANUAL_UPLOAD,
     duration_seconds=8,
     prompt="Pending Scene",
-    local_file=(
-        "assets/videos/manual/"
-        "pending.mp4"
-    ),
+    local_file=("assets/videos/manual/" "pending.mp4"),
     status=VideoClipStatus.PENDING,
 )
 
@@ -141,16 +106,9 @@ try:
         ]
     )
 except ValueError:
-    print(
-        "Pending clip successfully blocked."
-    )
+    print("Pending clip successfully blocked.")
 else:
-    raise AssertionError(
-        "Pending clips should fail."
-    )
+    raise AssertionError("Pending clips should fail.")
 
 
-print(
-    "Timeline Builder Service tests "
-    "completed successfully."
-)
+print("Timeline Builder Service tests " "completed successfully.")

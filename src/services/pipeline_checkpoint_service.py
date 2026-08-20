@@ -39,10 +39,7 @@ class PipelineCheckpointService:
         job: VideoJob,
         pipeline_state: PipelineState,
         metadata: dict[str, Any] | None = None,
-        previous_checkpoint: (
-            PipelineCheckpoint
-            | None
-        ) = None,
+        previous_checkpoint: PipelineCheckpoint | None = None,
     ) -> PipelineCheckpoint:
         """
         Create a validated checkpoint from current execution state.
@@ -58,161 +55,90 @@ class PipelineCheckpointService:
           classification for the re-executed stage.
         """
 
-        if (
-            previous_checkpoint is not None
-            and previous_checkpoint.job_id
-            != job.id
-        ):
+        if previous_checkpoint is not None and previous_checkpoint.job_id != job.id:
             raise ValueError(
                 "Previous pipeline checkpoint does "
                 "not belong to the supplied VideoJob."
             )
 
-        completed_stages = (
-            self._initial_stage_list(
-                previous_checkpoint,
-                completed=True,
-            )
+        completed_stages = self._initial_stage_list(
+            previous_checkpoint,
+            completed=True,
         )
 
-        skipped_stages = (
-            self._initial_stage_list(
-                previous_checkpoint,
-                completed=False,
-            )
+        skipped_stages = self._initial_stage_list(
+            previous_checkpoint,
+            completed=False,
         )
 
         self._apply_current_results(
-            results=(
-                pipeline_state.stages
-            ),
-            completed_stages=(
-                completed_stages
-            ),
-            skipped_stages=(
-                skipped_stages
-            ),
+            results=(pipeline_state.stages),
+            completed_stages=(completed_stages),
+            skipped_stages=(skipped_stages),
         )
 
-        failed_stage = (
-            self._last_stage_with_status(
-                pipeline_state.stages,
-                PipelineStageStatus.FAILED,
-            )
+        failed_stage = self._last_stage_with_status(
+            pipeline_state.stages,
+            PipelineStageStatus.FAILED,
         )
 
-        waiting_stage = (
-            self._last_stage_with_status(
-                pipeline_state.stages,
-                (
-                    PipelineStageStatus
-                    .WAITING_FOR_USER
-                ),
-            )
+        waiting_stage = self._last_stage_with_status(
+            pipeline_state.stages,
+            (PipelineStageStatus.WAITING_FOR_USER),
         )
 
-        stage_results = (
-            self._merge_stage_results(
-                previous_checkpoint=(
-                    previous_checkpoint
-                ),
-                current_results=(
-                    pipeline_state.stages
-                ),
-            )
+        stage_results = self._merge_stage_results(
+            previous_checkpoint=(previous_checkpoint),
+            current_results=(pipeline_state.stages),
         )
 
-        warnings = (
-            self._merge_messages(
-                (
-                    previous_checkpoint.warnings
-                    if previous_checkpoint
-                    is not None
-                    else []
-                ),
-                pipeline_state.warnings,
-            )
+        warnings = self._merge_messages(
+            (previous_checkpoint.warnings if previous_checkpoint is not None else []),
+            pipeline_state.warnings,
         )
 
-        errors = (
-            self._merge_messages(
-                (
-                    previous_checkpoint.errors
-                    if previous_checkpoint
-                    is not None
-                    else []
-                ),
-                pipeline_state.errors,
-            )
+        errors = self._merge_messages(
+            (previous_checkpoint.errors if previous_checkpoint is not None else []),
+            pipeline_state.errors,
         )
 
         return PipelineCheckpoint(
             job_id=job.id,
-            current_stage=(
-                pipeline_state.current_stage
-            ),
-            overall_progress=(
-                pipeline_state.overall_progress
-            ),
-            completed_stages=(
-                completed_stages
-            ),
-            skipped_stages=(
-                skipped_stages
-            ),
+            current_stage=(pipeline_state.current_stage),
+            overall_progress=(pipeline_state.overall_progress),
+            completed_stages=(completed_stages),
+            skipped_stages=(skipped_stages),
             failed_stage=failed_stage,
             waiting_stage=waiting_stage,
             stage_results=stage_results,
-            total_retry_count=(
-                job.retry_count
-            ),
+            total_retry_count=(job.retry_count),
             warnings=warnings,
             errors=errors,
-            metadata=dict(
-                metadata
-                or {}
-            ),
+            metadata=dict(metadata or {}),
         )
 
     @staticmethod
     def _initial_stage_list(
-        checkpoint: (
-            PipelineCheckpoint
-            | None
-        ),
+        checkpoint: PipelineCheckpoint | None,
         *,
         completed: bool,
-    ) -> list[
-        PipelineStageName
-    ]:
+    ) -> list[PipelineStageName]:
         """Return a copied historical stage classification."""
 
         if checkpoint is None:
             return []
 
-        values = (
-            checkpoint.completed_stages
-            if completed
-            else checkpoint.skipped_stages
-        )
+        values = checkpoint.completed_stages if completed else checkpoint.skipped_stages
 
-        return list(
-            values
-        )
+        return list(values)
 
     @classmethod
     def _apply_current_results(
         cls,
         *,
-        results: list[
-            StageResult
-        ],
-        completed_stages: list[
-            PipelineStageName
-        ],
-        skipped_stages: list[
-            PipelineStageName
-        ],
+        results: list[StageResult],
+        completed_stages: list[PipelineStageName],
+        skipped_stages: list[PipelineStageName],
     ) -> None:
         """
         Apply current execution results over historical classifications.
@@ -222,14 +148,9 @@ class PipelineCheckpointService:
         """
 
         for result in results:
-            stage = (
-                result.stage
-            )
+            stage = result.stage
 
-            if (
-                result.status
-                == PipelineStageStatus.COMPLETED
-            ):
+            if result.status == PipelineStageStatus.COMPLETED:
                 cls._append_stage_unique(
                     completed_stages,
                     stage,
@@ -242,14 +163,8 @@ class PipelineCheckpointService:
 
                 continue
 
-            if (
-                result.status
-                == PipelineStageStatus.SKIPPED
-            ):
-                if (
-                    stage
-                    not in completed_stages
-                ):
+            if result.status == PipelineStageStatus.SKIPPED:
+                if stage not in completed_stages:
                     cls._append_stage_unique(
                         skipped_stages,
                         stage,
@@ -257,16 +172,10 @@ class PipelineCheckpointService:
 
                 continue
 
-            if (
-                result.status
-                in {
-                    PipelineStageStatus.FAILED,
-                    (
-                        PipelineStageStatus
-                        .WAITING_FOR_USER
-                    ),
-                }
-            ):
+            if result.status in {
+                PipelineStageStatus.FAILED,
+                (PipelineStageStatus.WAITING_FOR_USER),
+            }:
                 cls._remove_stage(
                     completed_stages,
                     stage,
@@ -280,16 +189,9 @@ class PipelineCheckpointService:
     @staticmethod
     def _merge_stage_results(
         *,
-        previous_checkpoint: (
-            PipelineCheckpoint
-            | None
-        ),
-        current_results: list[
-            StageResult
-        ],
-    ) -> list[
-        StageResult
-    ]:
+        previous_checkpoint: PipelineCheckpoint | None,
+        current_results: list[StageResult],
+    ) -> list[StageResult]:
         """
         Preserve historical results and append current execution results.
 
@@ -298,22 +200,12 @@ class PipelineCheckpointService:
         are determined from the current run.
         """
 
-        merged: list[
-            StageResult
-        ] = []
+        merged: list[StageResult] = []
 
-        if (
-            previous_checkpoint
-            is not None
-        ):
-            merged.extend(
-                previous_checkpoint
-                .stage_results
-            )
+        if previous_checkpoint is not None:
+            merged.extend(previous_checkpoint.stage_results)
 
-        merged.extend(
-            current_results
-        )
+        merged.extend(current_results)
 
         return merged
 
@@ -330,65 +222,42 @@ class PipelineCheckpointService:
             *historical,
             *current,
         ]:
-            cleaned = (
-                value.strip()
-            )
+            cleaned = value.strip()
 
-            if (
-                cleaned
-                and cleaned
-                not in merged
-            ):
-                merged.append(
-                    cleaned
-                )
+            if cleaned and cleaned not in merged:
+                merged.append(cleaned)
 
         return merged
 
     @staticmethod
     def _append_stage_unique(
-        stages: list[
-            PipelineStageName
-        ],
+        stages: list[PipelineStageName],
         stage: PipelineStageName,
     ) -> None:
         """Append one stage exactly once."""
 
         if stage not in stages:
-            stages.append(
-                stage
-            )
+            stages.append(stage)
 
     @staticmethod
     def _remove_stage(
-        stages: list[
-            PipelineStageName
-        ],
+        stages: list[PipelineStageName],
         stage: PipelineStageName,
     ) -> None:
         """Remove one stage classification when present."""
 
         while stage in stages:
-            stages.remove(
-                stage
-            )
+            stages.remove(stage)
 
     @staticmethod
     def _last_stage_with_status(
-        results: list[
-            StageResult
-        ],
+        results: list[StageResult],
         status: PipelineStageStatus,
     ) -> PipelineStageName | None:
         """Return the most recent current-run stage with one status."""
 
-        for result in reversed(
-            results
-        ):
-            if (
-                result.status
-                == status
-            ):
+        for result in reversed(results):
+            if result.status == status:
                 return result.stage
 
         return None

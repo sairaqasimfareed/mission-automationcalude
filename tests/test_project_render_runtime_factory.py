@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TypeVar, cast
+from typing import cast
 
 from src.models.advanced_settings import AdvancedSettings
 from src.models.editing_directives import (
@@ -49,10 +49,7 @@ from src.services.voice_resolution_runtime import (
 )
 
 
-T = TypeVar("T")
-
-
-def _dependency(
+def _dependency[T](
     dependency_type: type[T],
 ) -> T:
     """
@@ -80,12 +77,8 @@ def _scene(
         scene_number=scene_number,
         title=f"Scene {scene_number}",
         narration=f"Narration {scene_number}.",
-        visual_prompt=(
-            f"Visual prompt {scene_number}."
-        ),
-        estimated_duration_seconds=(
-            scene_number * 10
-        ),
+        visual_prompt=(f"Visual prompt {scene_number}."),
+        estimated_duration_seconds=(scene_number * 10),
     )
 
 
@@ -98,9 +91,7 @@ def _job() -> VideoJob:
     """
 
     job = VideoJob(
-        project_name=(
-            "Project Runtime Factory Test"
-        ),
+        project_name=("Project Runtime Factory Test"),
         channel_name="Mission Channel",
         niche="documentary",
         topic="Runtime assembly",
@@ -121,9 +112,7 @@ def _directive(
 
     return SceneVoiceDirectives(
         scene_number=scene_number,
-        voice_profile_id=(
-            "voice.documentary"
-        ),
+        voice_profile_id=("voice.documentary"),
     )
 
 
@@ -134,34 +123,21 @@ def _blueprint(
 
     return ResolvedVoiceBlueprint(
         scene_number=scene_number,
-        status=(
-            VoiceBlueprintResolutionStatus
-            .RESOLVED
-        ),
+        status=(VoiceBlueprintResolutionStatus.RESOLVED),
         profile=(
             ResolvedVoiceProfileReference(
-                requested_profile_id=(
-                    "voice.documentary"
-                ),
-                resolved_profile_id=(
-                    "voice.documentary"
-                ),
-                display_name=(
-                    "Documentary Narrator"
-                ),
+                requested_profile_id=("voice.documentary"),
+                resolved_profile_id=("voice.documentary"),
+                display_name=("Documentary Narrator"),
                 found_exact_match=True,
                 used_fallback=False,
             )
         ),
-        narration_text=(
-            f"Narration {scene_number}."
-        ),
+        narration_text=(f"Narration {scene_number}."),
     )
 
 
-class RecordingDirectiveService(
-    GenreVoiceDirectiveGenerationService
-):
+class RecordingDirectiveService(GenreVoiceDirectiveGenerationService):
     """
     Record directive-generation calls without invoking genre registries.
     """
@@ -194,48 +170,29 @@ class RecordingDirectiveService(
         )
 
         return [
-            _directive(
-                scene.scene_number
-            )
+            _directive(scene.scene_number)
             for scene in sorted(
                 scenes,
-                key=lambda item: (
-                    item.scene_number
-                ),
+                key=lambda item: (item.scene_number),
             )
         ]
 
 
-class RecordingVoiceResolutionRuntime(
-    VoiceResolutionRuntime
-):
+class RecordingVoiceResolutionRuntime(VoiceResolutionRuntime):
     """
     Record voice-resolution requests and return valid blueprints.
     """
 
     def __init__(self) -> None:
-        self.calls: list[
-            list[VoiceResolutionRequest]
-        ] = []
+        self.calls: list[list[VoiceResolutionRequest]] = []
 
     def resolve_many(
         self,
-        requests: list[
-            VoiceResolutionRequest
-        ],
-    ) -> list[
-        ResolvedVoiceBlueprint
-    ]:
-        self.calls.append(
-            list(requests)
-        )
+        requests: list[VoiceResolutionRequest],
+    ) -> list[ResolvedVoiceBlueprint]:
+        self.calls.append(list(requests))
 
-        return [
-            _blueprint(
-                request[0].scene_number
-            )
-            for request in requests
-        ]
+        return [_blueprint(request[0].scene_number) for request in requests]
 
 
 class SyntheticStage:
@@ -267,15 +224,11 @@ def _stage(
 
     return cast(
         BasePipelineStage,
-        SyntheticStage(
-            stage_name
-        ),
+        SyntheticStage(stage_name),
     )
 
 
-class RecordingStageFactory(
-    RenderWorkflowStageFactory
-):
+class RecordingStageFactory(RenderWorkflowStageFactory):
     """
     Record stage-factory inputs and return canonical ordered stages.
     """
@@ -283,9 +236,7 @@ class RecordingStageFactory(
     def __init__(self) -> None:
         self.calls: list[
             tuple[
-                list[
-                    ResolvedVoiceBlueprint
-                ],
+                list[ResolvedVoiceBlueprint],
                 str,
                 str | None,
                 dict[
@@ -302,13 +253,9 @@ class RecordingStageFactory(
     def build(
         self,
         *,
-        voice_blueprints: list[
-            ResolvedVoiceBlueprint
-        ],
+        voice_blueprints: list[ResolvedVoiceBlueprint],
         genre_id: str,
-        voice_provider_name: (
-            str | None
-        ) = None,
+        voice_provider_name: str | None = None,
         overrides_by_scene: (
             dict[
                 int,
@@ -316,21 +263,13 @@ class RecordingStageFactory(
             ]
             | None
         ) = None,
-        output_resolution: str = (
-            "1920x1080"
-        ),
+        output_resolution: str = ("1920x1080"),
         frame_rate: int = 30,
-        warn_on_blueprint_fallbacks: (
-            bool
-        ) = True,
-    ) -> list[
-        BasePipelineStage
-    ]:
+        warn_on_blueprint_fallbacks: bool = True,
+    ) -> list[BasePipelineStage]:
         self.calls.append(
             (
-                list(
-                    voice_blueprints
-                ),
+                list(voice_blueprints),
                 genre_id,
                 voice_provider_name,
                 overrides_by_scene,
@@ -341,202 +280,95 @@ class RecordingStageFactory(
         )
 
         return [
-            _stage(
-                PipelineStageName.VOICE
-            ),
-            _stage(
-                PipelineStageName
-                .ASSET_SELECTION
-            ),
-            _stage(
-                PipelineStageName
-                .VIDEO_TIMELINE
-            ),
-            _stage(
-                PipelineStageName.RENDER
-            ),
+            _stage(PipelineStageName.VOICE),
+            _stage(PipelineStageName.ASSET_SELECTION),
+            _stage(PipelineStageName.VIDEO_TIMELINE),
+            _stage(PipelineStageName.RENDER),
         ]
 
 
 def _factory(
     *,
-    directive_service: (
-        RecordingDirectiveService
-        | None
-    ) = None,
-    voice_runtime: (
-        RecordingVoiceResolutionRuntime
-        | None
-    ) = None,
-    stage_factory: (
-        RecordingStageFactory
-        | None
-    ) = None,
-    advanced_settings: (
-        AdvancedSettings
-        | None
-    ) = None,
-    checkpoint_storage_service: (
-        PipelineCheckpointStorageService
-        | None
-    ) = None,
-    checkpoint_service: (
-        PipelineCheckpointService
-        | None
-    ) = None,
-    resume_planner_service: (
-        PipelineResumePlannerService
-        | None
-    ) = None,
+    directive_service: RecordingDirectiveService | None = None,
+    voice_runtime: RecordingVoiceResolutionRuntime | None = None,
+    stage_factory: RecordingStageFactory | None = None,
+    advanced_settings: AdvancedSettings | None = None,
+    checkpoint_storage_service: PipelineCheckpointStorageService | None = None,
+    checkpoint_service: PipelineCheckpointService | None = None,
+    resume_planner_service: PipelineResumePlannerService | None = None,
 ) -> ProjectRenderRuntimeFactory:
     """Build a test runtime factory."""
 
     return ProjectRenderRuntimeFactory(
         voice_directive_generation_service=(
-            directive_service
-            or RecordingDirectiveService()
+            directive_service or RecordingDirectiveService()
         ),
-        voice_resolution_runtime=(
-            voice_runtime
-            or RecordingVoiceResolutionRuntime()
-        ),
-        stage_factory=(
-            stage_factory
-            or RecordingStageFactory()
-        ),
-        advanced_settings=(
-            advanced_settings
-        ),
-        checkpoint_storage_service=(
-            checkpoint_storage_service
-        ),
-        checkpoint_service=(
-            checkpoint_service
-        ),
-        resume_planner_service=(
-            resume_planner_service
-        ),
+        voice_resolution_runtime=(voice_runtime or RecordingVoiceResolutionRuntime()),
+        stage_factory=(stage_factory or RecordingStageFactory()),
+        advanced_settings=(advanced_settings),
+        checkpoint_storage_service=(checkpoint_storage_service),
+        checkpoint_service=(checkpoint_service),
+        resume_planner_service=(resume_planner_service),
     )
 
 
 def test_exposes_configured_dependencies() -> None:
-    directive_service = (
-        RecordingDirectiveService()
-    )
+    directive_service = RecordingDirectiveService()
 
-    voice_runtime = (
-        RecordingVoiceResolutionRuntime()
-    )
+    voice_runtime = RecordingVoiceResolutionRuntime()
 
-    stage_factory = (
-        RecordingStageFactory()
-    )
+    stage_factory = RecordingStageFactory()
 
-    advanced_settings = (
-        AdvancedSettings()
-    )
+    advanced_settings = AdvancedSettings()
 
-    checkpoint_storage = _dependency(
-        PipelineCheckpointStorageService
-    )
+    checkpoint_storage = _dependency(PipelineCheckpointStorageService)
 
-    checkpoint_service = _dependency(
-        PipelineCheckpointService
-    )
+    checkpoint_service = _dependency(PipelineCheckpointService)
 
-    resume_planner = _dependency(
-        PipelineResumePlannerService
-    )
+    resume_planner = _dependency(PipelineResumePlannerService)
 
     factory = _factory(
-        directive_service=(
-            directive_service
-        ),
-        voice_runtime=(
-            voice_runtime
-        ),
-        stage_factory=(
-            stage_factory
-        ),
-        advanced_settings=(
-            advanced_settings
-        ),
-        checkpoint_storage_service=(
-            checkpoint_storage
-        ),
-        checkpoint_service=(
-            checkpoint_service
-        ),
-        resume_planner_service=(
-            resume_planner
-        ),
+        directive_service=(directive_service),
+        voice_runtime=(voice_runtime),
+        stage_factory=(stage_factory),
+        advanced_settings=(advanced_settings),
+        checkpoint_storage_service=(checkpoint_storage),
+        checkpoint_service=(checkpoint_service),
+        resume_planner_service=(resume_planner),
     )
 
-    assert (
-        factory
-        .voice_directive_generation_service
-        is directive_service
-    )
+    assert factory.voice_directive_generation_service is directive_service
 
-    assert (
-        factory.voice_resolution_runtime
-        is voice_runtime
-    )
+    assert factory.voice_resolution_runtime is voice_runtime
 
-    assert (
-        factory.stage_factory
-        is stage_factory
-    )
+    assert factory.stage_factory is stage_factory
 
-    assert (
-        factory.advanced_settings
-        is advanced_settings
-    )
+    assert factory.advanced_settings is advanced_settings
 
-    assert (
-        factory.checkpoint_storage_service
-        is checkpoint_storage
-    )
+    assert factory.checkpoint_storage_service is checkpoint_storage
 
-    assert (
-        factory.checkpoint_service
-        is checkpoint_service
-    )
+    assert factory.checkpoint_service is checkpoint_service
 
-    assert (
-        factory.resume_planner_service
-        is resume_planner
-    )
+    assert factory.resume_planner_service is resume_planner
 
 
 def test_build_generates_directives_for_job_scenes() -> None:
-    directive_service = (
-        RecordingDirectiveService()
-    )
+    directive_service = RecordingDirectiveService()
 
     factory = _factory(
-        directive_service=(
-            directive_service
-        ),
+        directive_service=(directive_service),
     )
 
     job = _job()
 
     factory.build(
         job=job,
-        genre_id=(
-            "genre.documentary"
-        ),
+        genre_id=("genre.documentary"),
         language="Urdu",
         language_code="ur-pk",
     )
 
-    assert (
-        len(
-            directive_service.calls
-        )
-        == 1
-    )
+    assert len(directive_service.calls) == 1
 
     (
         scenes,
@@ -547,115 +379,69 @@ def test_build_generates_directives_for_job_scenes() -> None:
 
     assert scenes == job.scenes
 
-    assert (
-        genre_id
-        == "genre.documentary"
-    )
+    assert genre_id == "genre.documentary"
 
     assert language == "Urdu"
 
-    assert (
-        language_code
-        == "ur-pk"
-    )
+    assert language_code == "ur-pk"
 
 
 def test_build_aligns_resolution_requests_by_scene_number() -> None:
-    voice_runtime = (
-        RecordingVoiceResolutionRuntime()
-    )
+    voice_runtime = RecordingVoiceResolutionRuntime()
 
     factory = _factory(
-        voice_runtime=(
-            voice_runtime
-        ),
+        voice_runtime=(voice_runtime),
     )
 
     factory.build(
         job=_job(),
-        genre_id=(
-            "genre.documentary"
-        ),
+        genre_id=("genre.documentary"),
     )
 
-    assert (
-        len(
-            voice_runtime.calls
-        )
-        == 1
-    )
+    assert len(voice_runtime.calls) == 1
 
-    requests = (
-        voice_runtime.calls[0]
-    )
+    requests = voice_runtime.calls[0]
 
-    assert [
-        request[0].scene_number
-        for request in requests
-    ] == [
+    assert [request[0].scene_number for request in requests] == [
         1,
         2,
     ]
 
-    assert [
-        request[1]
-        for request in requests
-    ] == [
+    assert [request[1] for request in requests] == [
         "Narration 1.",
         "Narration 2.",
     ]
 
-    assert [
-        request[2]
-        for request in requests
-    ] == [
+    assert [request[2] for request in requests] == [
         10,
         20,
     ]
 
 
 def test_build_forwards_resolved_blueprints_to_stage_factory() -> None:
-    stage_factory = (
-        RecordingStageFactory()
-    )
+    stage_factory = RecordingStageFactory()
 
     factory = _factory(
-        stage_factory=(
-            stage_factory
-        ),
+        stage_factory=(stage_factory),
     )
 
     factory.build(
         job=_job(),
-        genre_id=(
-            "genre.documentary"
-        ),
+        genre_id=("genre.documentary"),
     )
 
-    assert (
-        len(
-            stage_factory.calls
-        )
-        == 1
-    )
+    assert len(stage_factory.calls) == 1
 
-    blueprints = (
-        stage_factory.calls[0][0]
-    )
+    blueprints = stage_factory.calls[0][0]
 
-    assert [
-        blueprint.scene_number
-        for blueprint in blueprints
-    ] == [
+    assert [blueprint.scene_number for blueprint in blueprints] == [
         1,
         2,
     ]
 
 
 def test_build_forwards_render_configuration() -> None:
-    stage_factory = (
-        RecordingStageFactory()
-    )
+    stage_factory = RecordingStageFactory()
 
     overrides = cast(
         dict[
@@ -663,83 +449,45 @@ def test_build_forwards_render_configuration() -> None:
             SceneEditingDirectives,
         ],
         {
-            1: _dependency(
-                SceneEditingDirectives
-            ),
+            1: _dependency(SceneEditingDirectives),
         },
     )
 
     factory = _factory(
-        stage_factory=(
-            stage_factory
-        ),
+        stage_factory=(stage_factory),
     )
 
     factory.build(
         job=_job(),
-        genre_id=(
-            "genre.documentary"
-        ),
-        voice_provider_name=(
-            "elevenlabs"
-        ),
-        overrides_by_scene=(
-            overrides
-        ),
-        output_resolution=(
-            "3840x2160"
-        ),
+        genre_id=("genre.documentary"),
+        voice_provider_name=("elevenlabs"),
+        overrides_by_scene=(overrides),
+        output_resolution=("3840x2160"),
         frame_rate=60,
-        warn_on_blueprint_fallbacks=(
-            False
-        ),
+        warn_on_blueprint_fallbacks=(False),
     )
 
-    assert (
-        len(
-            stage_factory.calls
-        )
-        == 1
-    )
+    assert len(stage_factory.calls) == 1
 
     call = stage_factory.calls[0]
 
-    assert (
-        call[1]
-        == "genre.documentary"
-    )
+    assert call[1] == "genre.documentary"
 
-    assert (
-        call[2]
-        == "elevenlabs"
-    )
+    assert call[2] == "elevenlabs"
 
-    assert (
-        call[3]
-        is overrides
-    )
+    assert call[3] is overrides
 
-    assert (
-        call[4]
-        == "3840x2160"
-    )
+    assert call[4] == "3840x2160"
 
     assert call[5] == 60
 
-    assert (
-        call[6]
-        is False
-    )
+    assert call[6] is False
 
 
 def test_build_returns_render_orchestrator() -> None:
-    orchestrator = (
-        _factory().build(
-            job=_job(),
-            genre_id=(
-                "genre.documentary"
-            ),
-        )
+    orchestrator = _factory().build(
+        job=_job(),
+        genre_id=("genre.documentary"),
     )
 
     assert isinstance(
@@ -749,19 +497,12 @@ def test_build_returns_render_orchestrator() -> None:
 
 
 def test_build_registers_canonical_stage_order() -> None:
-    orchestrator = (
-        _factory().build(
-            job=_job(),
-            genre_id=(
-                "genre.documentary"
-            ),
-        )
+    orchestrator = _factory().build(
+        job=_job(),
+        genre_id=("genre.documentary"),
     )
 
-    assert [
-        stage.stage_name
-        for stage in orchestrator.stages
-    ] == [
+    assert [stage.stage_name for stage in orchestrator.stages] == [
         PipelineStageName.VOICE,
         PipelineStageName.ASSET_SELECTION,
         PipelineStageName.VIDEO_TIMELINE,
@@ -775,79 +516,42 @@ def test_build_creates_fresh_orchestrator() -> None:
 
     first = factory.build(
         job=job,
-        genre_id=(
-            "genre.documentary"
-        ),
+        genre_id=("genre.documentary"),
     )
 
     second = factory.build(
         job=job,
-        genre_id=(
-            "genre.documentary"
-        ),
+        genre_id=("genre.documentary"),
     )
 
     assert first is not second
 
 
 def test_build_preserves_orchestrator_runtime_configuration() -> None:
-    advanced_settings = (
-        AdvancedSettings()
-    )
+    advanced_settings = AdvancedSettings()
 
-    checkpoint_storage = _dependency(
-        PipelineCheckpointStorageService
-    )
+    checkpoint_storage = _dependency(PipelineCheckpointStorageService)
 
-    checkpoint_service = _dependency(
-        PipelineCheckpointService
-    )
+    checkpoint_service = _dependency(PipelineCheckpointService)
 
-    resume_planner = _dependency(
-        PipelineResumePlannerService
-    )
+    resume_planner = _dependency(PipelineResumePlannerService)
 
     factory = _factory(
-        advanced_settings=(
-            advanced_settings
-        ),
-        checkpoint_storage_service=(
-            checkpoint_storage
-        ),
-        checkpoint_service=(
-            checkpoint_service
-        ),
-        resume_planner_service=(
-            resume_planner
-        ),
+        advanced_settings=(advanced_settings),
+        checkpoint_storage_service=(checkpoint_storage),
+        checkpoint_service=(checkpoint_service),
+        resume_planner_service=(resume_planner),
     )
 
     orchestrator = factory.build(
         job=_job(),
-        genre_id=(
-            "genre.documentary"
-        ),
+        genre_id=("genre.documentary"),
     )
 
-    assert (
-        orchestrator.advanced_settings
-        is advanced_settings
-    )
+    assert orchestrator.advanced_settings is advanced_settings
 
-    assert (
-        orchestrator
-        .checkpoint_storage_service
-        is checkpoint_storage
-    )
+    assert orchestrator.checkpoint_storage_service is checkpoint_storage
 
-    assert (
-        orchestrator
-        ._checkpoint_service
-        is checkpoint_service
-    )
+    assert orchestrator._checkpoint_service is checkpoint_service
 
-    assert (
-        orchestrator
-        ._resume_planner_service
-        is resume_planner
-    )
+    assert orchestrator._resume_planner_service is resume_planner

@@ -15,9 +15,7 @@ from src.pipeline.stage_context import StageContext
 from src.pipeline.stage_result import StageResult
 
 
-class RetrySyntheticStage(
-    BasePipelineStage
-):
+class RetrySyntheticStage(BasePipelineStage):
     """Deterministic stage with configurable failure count."""
 
     def __init__(
@@ -26,13 +24,9 @@ class RetrySyntheticStage(
         stage_name: PipelineStageName,
         failures_before_success: int,
     ) -> None:
-        self._stage_name = (
-            stage_name
-        )
+        self._stage_name = stage_name
 
-        self._failures_before_success = (
-            failures_before_success
-        )
+        self._failures_before_success = failures_before_success
 
         self.execution_count = 0
         self.before_count = 0
@@ -60,28 +54,18 @@ class RetrySyntheticStage(
 
         self.execution_count += 1
 
-        if (
-            self.execution_count
-            <= self._failures_before_success
-        ):
+        if self.execution_count <= self._failures_before_success:
             return StageResult(
                 stage=self.stage_name,
-                status=(
-                    PipelineStageStatus.FAILED
-                ),
+                status=(PipelineStageStatus.FAILED),
                 errors=[
-                    (
-                        "Synthetic failure "
-                        f"{self.execution_count}."
-                    ),
+                    ("Synthetic failure " f"{self.execution_count}."),
                 ],
             )
 
         return StageResult(
             stage=self.stage_name,
-            status=(
-                PipelineStageStatus.COMPLETED
-            ),
+            status=(PipelineStageStatus.COMPLETED),
         )
 
     def after_execute(
@@ -95,9 +79,7 @@ class RetrySyntheticStage(
         self.after_count += 1
 
 
-class WaitingSyntheticStage(
-    BasePipelineStage
-):
+class WaitingSyntheticStage(BasePipelineStage):
     """Stage that requires external user input."""
 
     def __init__(
@@ -109,9 +91,7 @@ class WaitingSyntheticStage(
     def stage_name(
         self,
     ) -> PipelineStageName:
-        return (
-            PipelineStageName.ASSET_SELECTION
-        )
+        return PipelineStageName.ASSET_SELECTION
 
     def execute(
         self,
@@ -123,10 +103,7 @@ class WaitingSyntheticStage(
 
         return StageResult(
             stage=self.stage_name,
-            status=(
-                PipelineStageStatus
-                .WAITING_FOR_USER
-            ),
+            status=(PipelineStageStatus.WAITING_FOR_USER),
         )
 
 
@@ -143,9 +120,7 @@ def build_context() -> StageContext:
     return StageContext(
         job=job,
         pipeline_state=PipelineState(
-            current_stage=(
-                PipelineStageName.RESEARCH
-            ),
+            current_stage=(PipelineStageName.RESEARCH),
         ),
         dry_run=True,
     )
@@ -160,15 +135,9 @@ def build_retry_settings(
 
     return AdvancedSettings(
         retry_failed_stages=True,
-        maximum_stage_retries=(
-            maximum_retries
-        ),
-        stop_on_stage_failure=(
-            stop_on_failure
-        ),
-        allow_partial_output=(
-            not stop_on_failure
-        ),
+        maximum_stage_retries=(maximum_retries),
+        stop_on_stage_failure=(stop_on_failure),
+        allow_partial_output=(not stop_on_failure),
     )
 
 
@@ -182,32 +151,19 @@ def test_no_settings_preserves_no_retry_behavior() -> None:
 
     runner = PipelineRunner()
 
-    runner.register(
-        stage
-    )
+    runner.register(stage)
 
-    results = runner.run(
-        context
-    )
+    results = runner.run(context)
 
     assert stage.execution_count == 1
 
     assert len(results) == 1
 
-    assert (
-        results[0].status
-        == PipelineStageStatus.FAILED
-    )
+    assert results[0].status == PipelineStageStatus.FAILED
 
-    assert (
-        results[0].retry_count
-        == 0
-    )
+    assert results[0].retry_count == 0
 
-    assert (
-        context.job.retry_count
-        == 0
-    )
+    assert context.job.retry_count == 0
 
 
 def test_failed_stage_retries_and_recovers() -> None:
@@ -219,47 +175,24 @@ def test_failed_stage_retries_and_recovers() -> None:
     )
 
     runner = PipelineRunner(
-        advanced_settings=(
-            build_retry_settings(
-                maximum_retries=3
-            )
-        ),
+        advanced_settings=(build_retry_settings(maximum_retries=3)),
     )
 
-    runner.register(
-        stage
-    )
+    runner.register(stage)
 
-    results = runner.run(
-        context
-    )
+    results = runner.run(context)
 
     assert stage.execution_count == 2
 
-    assert (
-        results[0].status
-        == PipelineStageStatus.COMPLETED
-    )
+    assert results[0].status == PipelineStageStatus.COMPLETED
 
-    assert (
-        results[0].retry_count
-        == 1
-    )
+    assert results[0].retry_count == 1
 
-    assert (
-        results[0].attempted_execution_count
-        == 2
-    )
+    assert results[0].attempted_execution_count == 2
 
-    assert (
-        context.job.retry_count
-        == 1
-    )
+    assert context.job.retry_count == 1
 
-    assert (
-        context.pipeline_state.errors
-        == []
-    )
+    assert context.pipeline_state.errors == []
 
 
 def test_multiple_retries_are_counted() -> None:
@@ -271,37 +204,20 @@ def test_multiple_retries_are_counted() -> None:
     )
 
     runner = PipelineRunner(
-        advanced_settings=(
-            build_retry_settings(
-                maximum_retries=3
-            )
-        ),
+        advanced_settings=(build_retry_settings(maximum_retries=3)),
     )
 
-    runner.register(
-        stage
-    )
+    runner.register(stage)
 
-    results = runner.run(
-        context
-    )
+    results = runner.run(context)
 
     assert stage.execution_count == 3
 
-    assert (
-        results[0].status
-        == PipelineStageStatus.COMPLETED
-    )
+    assert results[0].status == PipelineStageStatus.COMPLETED
 
-    assert (
-        results[0].retry_count
-        == 2
-    )
+    assert results[0].retry_count == 2
 
-    assert (
-        context.job.retry_count
-        == 2
-    )
+    assert context.job.retry_count == 2
 
 
 def test_retry_limit_is_enforced() -> None:
@@ -313,47 +229,24 @@ def test_retry_limit_is_enforced() -> None:
     )
 
     runner = PipelineRunner(
-        advanced_settings=(
-            build_retry_settings(
-                maximum_retries=2
-            )
-        ),
+        advanced_settings=(build_retry_settings(maximum_retries=2)),
     )
 
-    runner.register(
-        stage
-    )
+    runner.register(stage)
 
-    results = runner.run(
-        context
-    )
+    results = runner.run(context)
 
-    assert (
-        stage.execution_count
-        == 3
-    )
+    assert stage.execution_count == 3
 
-    assert (
-        results[0].status
-        == PipelineStageStatus.FAILED
-    )
+    assert results[0].status == PipelineStageStatus.FAILED
 
-    assert (
-        results[0].retry_count
-        == 2
-    )
+    assert results[0].retry_count == 2
 
-    assert (
-        context.job.retry_count
-        == 2
-    )
+    assert context.job.retry_count == 2
 
-    assert (
-        context.pipeline_state.errors
-        == [
-            "Synthetic failure 3.",
-        ]
-    )
+    assert context.pipeline_state.errors == [
+        "Synthetic failure 3.",
+    ]
 
 
 def test_retry_disabled_does_not_retry() -> None:
@@ -373,75 +266,37 @@ def test_retry_disabled_does_not_retry() -> None:
         advanced_settings=settings,
     )
 
-    runner.register(
-        stage
-    )
+    runner.register(stage)
 
-    results = runner.run(
-        context
-    )
+    results = runner.run(context)
 
-    assert (
-        stage.execution_count
-        == 1
-    )
+    assert stage.execution_count == 1
 
-    assert (
-        results[0].retry_count
-        == 0
-    )
+    assert results[0].retry_count == 0
 
-    assert (
-        context.job.retry_count
-        == 0
-    )
+    assert context.job.retry_count == 0
 
 
 def test_waiting_for_user_is_never_retried() -> None:
     context = build_context()
 
-    stage = (
-        WaitingSyntheticStage()
-    )
+    stage = WaitingSyntheticStage()
 
     runner = PipelineRunner(
-        advanced_settings=(
-            build_retry_settings(
-                maximum_retries=3
-            )
-        ),
+        advanced_settings=(build_retry_settings(maximum_retries=3)),
     )
 
-    runner.register(
-        stage
-    )
+    runner.register(stage)
 
-    results = runner.run(
-        context
-    )
+    results = runner.run(context)
 
-    assert (
-        stage.execution_count
-        == 1
-    )
+    assert stage.execution_count == 1
 
-    assert (
-        results[0].status
-        == (
-            PipelineStageStatus
-            .WAITING_FOR_USER
-        )
-    )
+    assert results[0].status == (PipelineStageStatus.WAITING_FOR_USER)
 
-    assert (
-        results[0].retry_count
-        == 0
-    )
+    assert results[0].retry_count == 0
 
-    assert (
-        context.job.retry_count
-        == 0
-    )
+    assert context.job.retry_count == 0
 
 
 def test_hooks_execute_for_every_attempt() -> None:
@@ -453,20 +308,12 @@ def test_hooks_execute_for_every_attempt() -> None:
     )
 
     runner = PipelineRunner(
-        advanced_settings=(
-            build_retry_settings(
-                maximum_retries=3
-            )
-        ),
+        advanced_settings=(build_retry_settings(maximum_retries=3)),
     )
 
-    runner.register(
-        stage
-    )
+    runner.register(stage)
 
-    runner.run(
-        context
-    )
+    runner.run(context)
 
     assert stage.execution_count == 3
     assert stage.before_count == 3
@@ -495,29 +342,17 @@ def test_exhausted_failure_blocks_by_default() -> None:
         ),
     )
 
-    runner.register(
-        failed_stage
-    )
+    runner.register(failed_stage)
 
-    runner.register(
-        downstream_stage
-    )
+    runner.register(downstream_stage)
 
-    results = runner.run(
-        context
-    )
+    results = runner.run(context)
 
     assert len(results) == 1
 
-    assert (
-        failed_stage.execution_count
-        == 2
-    )
+    assert failed_stage.execution_count == 2
 
-    assert (
-        downstream_stage.execution_count
-        == 0
-    )
+    assert downstream_stage.execution_count == 0
 
 
 def test_partial_output_allows_continuation() -> None:
@@ -542,34 +377,19 @@ def test_partial_output_allows_continuation() -> None:
         ),
     )
 
-    runner.register(
-        failed_stage
-    )
+    runner.register(failed_stage)
 
-    runner.register(
-        downstream_stage
-    )
+    runner.register(downstream_stage)
 
-    results = runner.run(
-        context
-    )
+    results = runner.run(context)
 
     assert len(results) == 2
 
-    assert (
-        results[0].status
-        == PipelineStageStatus.FAILED
-    )
+    assert results[0].status == PipelineStageStatus.FAILED
 
-    assert (
-        results[1].status
-        == PipelineStageStatus.COMPLETED
-    )
+    assert results[1].status == PipelineStageStatus.COMPLETED
 
-    assert (
-        downstream_stage.execution_count
-        == 1
-    )
+    assert downstream_stage.execution_count == 1
 
 
 def test_job_retry_count_accumulates_across_stages() -> None:
@@ -586,56 +406,31 @@ def test_job_retry_count_accumulates_across_stages() -> None:
     )
 
     runner = PipelineRunner(
-        advanced_settings=(
-            build_retry_settings(
-                maximum_retries=3
-            )
-        ),
+        advanced_settings=(build_retry_settings(maximum_retries=3)),
     )
 
-    runner.register(
-        first_stage
-    )
+    runner.register(first_stage)
 
-    runner.register(
-        second_stage
-    )
+    runner.register(second_stage)
 
-    results = runner.run(
-        context
-    )
+    results = runner.run(context)
 
     assert len(results) == 2
 
-    assert (
-        results[0].retry_count
-        == 1
-    )
+    assert results[0].retry_count == 1
 
-    assert (
-        results[1].retry_count
-        == 2
-    )
+    assert results[1].retry_count == 2
 
-    assert (
-        context.job.retry_count
-        == 3
-    )
+    assert context.job.retry_count == 3
 
 
 def main() -> None:
     print()
-    print(
-        "Running Pipeline Retry tests..."
-    )
+    print("Running Pipeline Retry tests...")
     print()
 
-    (
-        test_no_settings_preserves_no_retry_behavior()
-    )
-    (
-        test_failed_stage_retries_and_recovers()
-    )
+    (test_no_settings_preserves_no_retry_behavior())
+    (test_failed_stage_retries_and_recovers())
     test_multiple_retries_are_counted()
     test_retry_limit_is_enforced()
     test_retry_disabled_does_not_retry()
@@ -643,15 +438,10 @@ def main() -> None:
     test_hooks_execute_for_every_attempt()
     test_exhausted_failure_blocks_by_default()
     test_partial_output_allows_continuation()
-    (
-        test_job_retry_count_accumulates_across_stages()
-    )
+    (test_job_retry_count_accumulates_across_stages())
 
     print()
-    print(
-        "Pipeline Retry tests "
-        "completed successfully."
-    )
+    print("Pipeline Retry tests " "completed successfully.")
 
 
 if __name__ == "__main__":

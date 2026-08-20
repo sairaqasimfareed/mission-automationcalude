@@ -18,11 +18,7 @@ from src.services.effect_registry_service import (
     EffectRegistryService,
 )
 
-
-registry = (
-    EffectRegistryService
-    .with_default_presets()
-)
+registry = EffectRegistryService.with_default_presets()
 
 service = EditingDirectiveValidationService(
     effect_registry=registry,
@@ -47,9 +43,7 @@ valid_directives = SceneEditingDirectives(
     ),
     visual_effects=[
         VisualEffectDirective(
-            preset_id=(
-                "visual.horror_dark_grade"
-            ),
+            preset_id=("visual.horror_dark_grade"),
         ),
         VisualEffectDirective(
             preset_id="visual.vignette_soft",
@@ -57,9 +51,7 @@ valid_directives = SceneEditingDirectives(
     ],
     animations=[
         AnimationDirective(
-            preset_id=(
-                "animation.slow_parallax"
-            ),
+            preset_id=("animation.slow_parallax"),
             duration_seconds=8.0,
         ),
     ],
@@ -141,9 +133,7 @@ timing_directives = SceneEditingDirectives(
     ),
     animations=[
         AnimationDirective(
-            preset_id=(
-                "animation.slow_parallax"
-            ),
+            preset_id=("animation.slow_parallax"),
             start_offset_seconds=7.0,
             duration_seconds=4.0,
         ),
@@ -151,10 +141,7 @@ timing_directives = SceneEditingDirectives(
     sound_effects=[
         SoundEffectDirective(
             preset_id="sfx.door_creak",
-            timing_mode=(
-                DirectiveTimingMode
-                .ABSOLUTE_SECONDS
-            ),
+            timing_mode=(DirectiveTimingMode.ABSOLUTE_SECONDS),
             start_offset_seconds=10.0,
         ),
     ],
@@ -170,22 +157,16 @@ assert timing_result.is_render_ready is False
 assert len(timing_result.errors) == 3
 
 
-long_transition_directives = (
-    SceneEditingDirectives(
-        scene_number=4,
-        transition_in=TransitionDirective(
-            preset_id=(
-                "transition.fade_black"
-            ),
-            duration_seconds=5.0,
-        ),
-        transition_out=TransitionDirective(
-            preset_id=(
-                "transition.cross_dissolve"
-            ),
-            duration_seconds=5.0,
-        ),
-    )
+long_transition_directives = SceneEditingDirectives(
+    scene_number=4,
+    transition_in=TransitionDirective(
+        preset_id=("transition.fade_black"),
+        duration_seconds=5.0,
+    ),
+    transition_out=TransitionDirective(
+        preset_id=("transition.cross_dissolve"),
+        duration_seconds=5.0,
+    ),
 )
 
 transition_result = service.validate(
@@ -211,10 +192,7 @@ updated_result = service.validate_and_update(
 
 assert updated_result.is_valid is True
 
-assert (
-    updated_directives.status
-    == EditingDirectiveStatus.READY
-)
+assert updated_directives.status == EditingDirectiveStatus.READY
 
 assert len(updated_directives.warnings) == 1
 
@@ -230,7 +208,4 @@ assert invalid_duration_result.is_valid is False
 assert invalid_duration_result.errors
 
 
-print(
-    "Editing Directive Validation Service "
-    "tests completed successfully."
-)
+print("Editing Directive Validation Service " "tests completed successfully.")

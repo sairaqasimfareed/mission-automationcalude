@@ -20,11 +20,7 @@ from src.services.genre_profile_registry_service import (
     GenreProfileRegistryService,
 )
 
-
-registry = (
-    GenreProfileRegistryService
-    .with_default_profiles()
-)
+registry = GenreProfileRegistryService.with_default_profiles()
 
 service = GenreDirectiveGenerationService(
     genre_registry=registry,
@@ -34,14 +30,8 @@ service = GenreDirectiveGenerationService(
 horror_scene = Scene(
     scene_number=1,
     title="The Locked Door",
-    narration=(
-        "A locked wooden door slowly "
-        "opens in the darkness."
-    ),
-    visual_prompt=(
-        "Dark hallway with an old "
-        "wooden door"
-    ),
+    narration=("A locked wooden door slowly " "opens in the darkness."),
+    visual_prompt=("Dark hallway with an old " "wooden door"),
     estimated_duration_seconds=8,
     status=SceneStatus.READY,
 )
@@ -68,75 +58,31 @@ print(
 
 assert horror_directives.scene_number == 1
 
-assert (
-    horror_directives.genre_preset_id
-    == "genre.horror"
-)
+assert horror_directives.genre_preset_id == "genre.horror"
 
-assert (
-    horror_directives.camera.preset_id
-    == "camera.slow_zoom_in"
-)
+assert horror_directives.camera.preset_id == "camera.slow_zoom_in"
 
-assert (
-    horror_directives.camera
-    .end_offset_seconds
-    == 8.0
-)
+assert horror_directives.camera.end_offset_seconds == 8.0
 
-assert (
-    horror_directives
-    .transition_in
-    .preset_id
-    == "transition.fade_black"
-)
+assert horror_directives.transition_in.preset_id == "transition.fade_black"
 
-assert (
-    horror_directives
-    .transition_in
-    .duration_seconds
-    == 0.8
-)
+assert horror_directives.transition_in.duration_seconds == 0.8
 
-assert (
-    horror_directives.music.preset_id
-    == "music.horror_low_drone"
-)
+assert horror_directives.music.preset_id == "music.horror_low_drone"
 
 assert horror_directives.music.enabled is True
 
-assert len(
-    horror_directives.visual_effects
-) == 3
+assert len(horror_directives.visual_effects) == 3
 
-assert len(
-    horror_directives.animations
-) == 2
+assert len(horror_directives.animations) == 2
 
-assert len(
-    horror_directives.sound_effects
-) == 2
+assert len(horror_directives.sound_effects) == 2
 
-assert (
-    horror_directives
-    .sound_effects[0]
-    .relative_position_percent
-    is not None
-)
+assert horror_directives.sound_effects[0].relative_position_percent is not None
 
-assert (
-    horror_directives
-    .subtitles
-    .preset_id
-    == "subtitle.cinematic"
-)
+assert horror_directives.subtitles.preset_id == "subtitle.cinematic"
 
-assert (
-    horror_directives.metadata[
-        "generated_from_genre_profile"
-    ]
-    is True
-)
+assert horror_directives.metadata["generated_from_genre_profile"] is True
 
 
 override_directives = SceneEditingDirectives(
@@ -174,9 +120,7 @@ override_directives = SceneEditingDirectives(
         maximum_words_per_line=6,
     ),
     metadata={
-        "override_source": (
-            "script_scene_directive"
-        ),
+        "override_source": ("script_scene_directive"),
     },
 )
 
@@ -186,10 +130,7 @@ overridden = service.generate(
     overrides=override_directives,
 )
 
-assert (
-    overridden.camera.preset_id
-    == "camera.none"
-)
+assert overridden.camera.preset_id == "camera.none"
 
 assert overridden.camera.zoom_end == 1.15
 
@@ -199,10 +140,7 @@ assert overridden.music.volume_percent == 0.0
 door_creak = next(
     effect
     for effect in overridden.sound_effects
-    if (
-        effect.preset_id
-        == "sfx.door_creak"
-    )
+    if (effect.preset_id == "sfx.door_creak")
 )
 
 assert door_creak.start_offset_seconds == 6.5
@@ -211,34 +149,16 @@ assert door_creak.volume_percent == 85.0
 vignette = next(
     effect
     for effect in overridden.visual_effects
-    if (
-        effect.preset_id
-        == "visual.vignette_soft"
-    )
+    if (effect.preset_id == "visual.vignette_soft")
 )
 
 assert vignette.enabled is False
 
-assert (
-    overridden
-    .subtitles
-    .maximum_words_per_line
-    == 6
-)
+assert overridden.subtitles.maximum_words_per_line == 6
 
-assert (
-    overridden.metadata[
-        "scene_overrides_applied"
-    ]
-    is True
-)
+assert overridden.metadata["scene_overrides_applied"] is True
 
-assert (
-    overridden.metadata[
-        "override_source"
-    ]
-    == "script_scene_directive"
-)
+assert overridden.metadata["override_source"] == "script_scene_directive"
 
 
 unknown_genre_directives = service.generate(
@@ -253,18 +173,9 @@ unknown_genre_directives = service.generate(
     genre_id="genre.not_registered",
 )
 
-assert (
-    unknown_genre_directives
-    .genre_preset_id
-    == "genre.default"
-)
+assert unknown_genre_directives.genre_preset_id == "genre.default"
 
-assert (
-    unknown_genre_directives.metadata[
-        "genre_fallback_used"
-    ]
-    is True
-)
+assert unknown_genre_directives.metadata["genre_fallback_used"] is True
 
 assert unknown_genre_directives.warnings
 
@@ -301,19 +212,14 @@ generated_many = service.generate_many(
     genre_id="genre.documentary",
 )
 
-assert [
-    directives.scene_number
-    for directives in generated_many
-] == [
+assert [directives.scene_number for directives in generated_many] == [
     1,
     2,
     3,
 ]
 
 assert all(
-    directives.genre_preset_id
-    == "genre.documentary"
-    for directives in generated_many
+    directives.genre_preset_id == "genre.documentary" for directives in generated_many
 )
 
 
@@ -325,14 +231,9 @@ try:
         ),
     )
 except ValueError:
-    print(
-        "Mismatched override scene "
-        "successfully blocked."
-    )
+    print("Mismatched override scene " "successfully blocked.")
 else:
-    raise AssertionError(
-        "Override scene mismatch should fail."
-    )
+    raise AssertionError("Override scene mismatch should fail.")
 
 
 try:
@@ -344,17 +245,9 @@ try:
         genre_id="genre.horror",
     )
 except ValueError:
-    print(
-        "Duplicate scene generation "
-        "successfully blocked."
-    )
+    print("Duplicate scene generation " "successfully blocked.")
 else:
-    raise AssertionError(
-        "Duplicate scenes should fail."
-    )
+    raise AssertionError("Duplicate scenes should fail.")
 
 
-print(
-    "Genre Directive Generation Service "
-    "tests completed successfully."
-)
+print("Genre Directive Generation Service " "tests completed successfully.")

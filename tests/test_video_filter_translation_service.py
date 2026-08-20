@@ -12,7 +12,6 @@ from src.services.video_filter_translation_service import (
     VideoFilterTranslationService,
 )
 
-
 capabilities = FFmpegCapabilities(
     ffmpeg_available=True,
     ffprobe_available=True,
@@ -32,9 +31,7 @@ capabilities = FFmpegCapabilities(
     },
 )
 
-service = (
-    VideoFilterTranslationService()
-)
+service = VideoFilterTranslationService()
 
 
 camera_node = RenderNode(
@@ -71,40 +68,26 @@ camera_node = RenderNode(
     },
 )
 
-camera_translation = (
-    service.translate_scene_node(
-        render_node=camera_node,
-        input_label="scene_1_base",
-        output_label="scene_1_camera",
-        width=1920,
-        height=1080,
-        frame_rate=30.0,
-        capabilities=capabilities,
-    )
+camera_translation = service.translate_scene_node(
+    render_node=camera_node,
+    input_label="scene_1_base",
+    output_label="scene_1_camera",
+    width=1920,
+    height=1080,
+    frame_rate=30.0,
+    capabilities=capabilities,
 )
 
 assert camera_translation.skipped is False
 assert camera_translation.filter_count == 1
 
-assert (
-    camera_translation
-    .filters[0]
-    .filter_name
-    == "zoompan"
-)
+assert camera_translation.filters[0].filter_name == "zoompan"
 
-assert (
-    "[scene_1_camera]"
-    in camera_translation
-    .filters[0]
-    .render_expression()
-)
+assert "[scene_1_camera]" in camera_translation.filters[0].render_expression()
 
 
 effect_node = RenderNode(
-    node_type=(
-        RenderNodeType.VISUAL_EFFECT
-    ),
+    node_type=(RenderNodeType.VISUAL_EFFECT),
     status=RenderNodeStatus.READY,
     scene_number=1,
     start_time_seconds=0.0,
@@ -114,9 +97,7 @@ effect_node = RenderNode(
         "scene_number": 1,
         "track_index": 0,
         "layer_index": 0,
-        "preset_id": (
-            "visual.horror_dark_grade"
-        ),
+        "preset_id": ("visual.horror_dark_grade"),
         "effect_type": "color_grade",
         "timing_mode": "full_scene",
         "intensity": "medium",
@@ -137,39 +118,25 @@ effect_node = RenderNode(
     },
 )
 
-effect_translation = (
-    service.translate_scene_node(
-        render_node=effect_node,
-        input_label="scene_1_camera",
-        output_label="scene_1_grade",
-        width=1920,
-        height=1080,
-        frame_rate=30.0,
-        capabilities=capabilities,
-    )
+effect_translation = service.translate_scene_node(
+    render_node=effect_node,
+    input_label="scene_1_camera",
+    output_label="scene_1_grade",
+    width=1920,
+    height=1080,
+    frame_rate=30.0,
+    capabilities=capabilities,
 )
 
 assert effect_translation.filter_count == 2
 
-assert (
-    effect_translation
-    .filters[0]
-    .filter_name
-    == "eq"
-)
+assert effect_translation.filters[0].filter_name == "eq"
 
-assert (
-    effect_translation
-    .filters[1]
-    .filter_name
-    == "colorbalance"
-)
+assert effect_translation.filters[1].filter_name == "colorbalance"
 
 
 vignette_node = RenderNode(
-    node_type=(
-        RenderNodeType.VISUAL_EFFECT
-    ),
+    node_type=(RenderNodeType.VISUAL_EFFECT),
     status=RenderNodeStatus.READY,
     scene_number=1,
     start_time_seconds=0.0,
@@ -179,9 +146,7 @@ vignette_node = RenderNode(
         "scene_number": 1,
         "track_index": 0,
         "layer_index": 0,
-        "preset_id": (
-            "visual.vignette_soft"
-        ),
+        "preset_id": ("visual.vignette_soft"),
         "effect_type": "vignette",
         "timing_mode": "full_scene",
         "intensity": "medium",
@@ -200,24 +165,17 @@ vignette_node = RenderNode(
     },
 )
 
-vignette_translation = (
-    service.translate_scene_node(
-        render_node=vignette_node,
-        input_label="scene_1_grade",
-        output_label="scene_1_vignette",
-        width=1920,
-        height=1080,
-        frame_rate=30.0,
-        capabilities=capabilities,
-    )
+vignette_translation = service.translate_scene_node(
+    render_node=vignette_node,
+    input_label="scene_1_grade",
+    output_label="scene_1_vignette",
+    width=1920,
+    height=1080,
+    frame_rate=30.0,
+    capabilities=capabilities,
 )
 
-assert (
-    vignette_translation
-    .filters[0]
-    .filter_name
-    == "vignette"
-)
+assert vignette_translation.filters[0].filter_name == "vignette"
 
 
 subtitle_node = RenderNode(
@@ -230,12 +188,8 @@ subtitle_node = RenderNode(
     payload={
         "scene_number": 1,
         "segment_index": 0,
-        "text": (
-            "The bunker door opened."
-        ),
-        "preset_id": (
-            "subtitle.cinematic"
-        ),
+        "text": ("The bunker door opened."),
+        "preset_id": ("subtitle.cinematic"),
         "animation_preset_id": None,
         "burn_into_video": True,
         "timing_source": "estimated",
@@ -250,38 +204,23 @@ subtitle_node = RenderNode(
     },
 )
 
-subtitle_translation = (
-    service.translate_scene_node(
-        render_node=subtitle_node,
-        input_label="scene_1_vignette",
-        output_label="scene_1_subtitle",
-        width=1920,
-        height=1080,
-        frame_rate=30.0,
-        capabilities=capabilities,
-    )
+subtitle_translation = service.translate_scene_node(
+    render_node=subtitle_node,
+    input_label="scene_1_vignette",
+    output_label="scene_1_subtitle",
+    width=1920,
+    height=1080,
+    frame_rate=30.0,
+    capabilities=capabilities,
 )
 
-assert (
-    subtitle_translation
-    .filters[0]
-    .filter_name
-    == "drawtext"
-)
+assert subtitle_translation.filters[0].filter_name == "drawtext"
 
-subtitle_expression = (
-    subtitle_translation
-    .filters[0]
-    .render_expression()
-)
+subtitle_expression = subtitle_translation.filters[0].render_expression()
 
-assert "between(t" in (
-    subtitle_expression
-)
+assert "between(t" in (subtitle_expression)
 
-assert "The bunker door opened." in (
-    subtitle_expression
-)
+assert "The bunker door opened." in (subtitle_expression)
 
 
 animation_node = RenderNode(
@@ -295,9 +234,7 @@ animation_node = RenderNode(
         "scene_number": 2,
         "track_index": 0,
         "layer_index": 0,
-        "preset_id": (
-            "animation.slow_parallax"
-        ),
+        "preset_id": ("animation.slow_parallax"),
         "animation_type": "parallax",
         "target": None,
         "intensity": "medium",
@@ -316,24 +253,17 @@ animation_node = RenderNode(
     },
 )
 
-animation_translation = (
-    service.translate_scene_node(
-        render_node=animation_node,
-        input_label="scene_2_base",
-        output_label="scene_2_animation",
-        width=1920,
-        height=1080,
-        frame_rate=30.0,
-        capabilities=capabilities,
-    )
+animation_translation = service.translate_scene_node(
+    render_node=animation_node,
+    input_label="scene_2_base",
+    output_label="scene_2_animation",
+    width=1920,
+    height=1080,
+    frame_rate=30.0,
+    capabilities=capabilities,
 )
 
-assert (
-    animation_translation
-    .filters[0]
-    .filter_name
-    == "zoompan"
-)
+assert animation_translation.filters[0].filter_name == "zoompan"
 
 assert animation_translation.warnings
 
@@ -348,12 +278,8 @@ transition_node = RenderNode(
         "status": "ready",
         "placement": "between_scenes",
         "direction": "between",
-        "preset_id": (
-            "transition.cross_dissolve"
-        ),
-        "transition_type": (
-            "cross_dissolve"
-        ),
+        "preset_id": ("transition.cross_dissolve"),
+        "transition_type": ("cross_dissolve"),
         "source_scene_number": 1,
         "target_scene_number": 2,
         "source_track_index": 0,
@@ -366,72 +292,41 @@ transition_node = RenderNode(
         "intensity": "medium",
         "requires_overlap": True,
         "implementation": {
-            "type": (
-                "cross_dissolve"
-            ),
+            "type": ("cross_dissolve"),
             "default_duration_seconds": 0.6,
         },
     },
 )
 
-transition_translation = (
-    service.translate_transition(
-        render_node=transition_node,
-        source_label="scene_1_final",
-        target_label="scene_2_final",
-        output_label="transition_1_2",
-        offset_seconds=7.4,
-        capabilities=capabilities,
-    )
+transition_translation = service.translate_transition(
+    render_node=transition_node,
+    source_label="scene_1_final",
+    target_label="scene_2_final",
+    output_label="transition_1_2",
+    offset_seconds=7.4,
+    capabilities=capabilities,
 )
 
-assert (
-    transition_translation
-    .filters[0]
-    .filter_name
-    == "xfade"
-)
+assert transition_translation.filters[0].filter_name == "xfade"
 
-transition_expression = (
-    transition_translation
-    .filters[0]
-    .render_expression()
-)
+transition_expression = transition_translation.filters[0].render_expression()
 
-assert "transition=fade" in (
-    transition_expression
-)
+assert "transition=fade" in (transition_expression)
 
-assert "duration=0.6" in (
-    transition_expression
-)
+assert "duration=0.6" in (transition_expression)
 
-assert "offset=7.4" in (
-    transition_expression
-)
+assert "offset=7.4" in (transition_expression)
 
 
-unsupported_node = (
-    camera_node.model_copy(
-        deep=True
-    )
-)
+unsupported_node = camera_node.model_copy(deep=True)
 
-unsupported_payload = dict(
-    unsupported_node.payload
-)
+unsupported_payload = dict(unsupported_node.payload)
 
-unsupported_payload[
-    "motion_type"
-] = "orbit"
+unsupported_payload["motion_type"] = "orbit"
 
-unsupported_payload[
-    "preset_id"
-] = "camera.orbit"
+unsupported_payload["preset_id"] = "camera.orbit"
 
-unsupported_node.payload = (
-    unsupported_payload
-)
+unsupported_node.payload = unsupported_payload
 
 try:
     service.translate_scene_node(
@@ -444,15 +339,9 @@ try:
         capabilities=capabilities,
     )
 except ValueError:
-    print(
-        "Unsupported camera motion "
-        "successfully blocked."
-    )
+    print("Unsupported camera motion " "successfully blocked.")
 else:
-    raise AssertionError(
-        "Unsupported camera motion "
-        "should fail."
-    )
+    raise AssertionError("Unsupported camera motion " "should fail.")
 
 
 def _camera_payload(*, preset_id, motion_type, direction):
@@ -593,13 +482,12 @@ for preset_id, expected_filters in expected_visual_filters.items():
     )
 
     actual_filters = [
-        filter_node.filter_name
-        for filter_node in visual_translation.filters
+        filter_node.filter_name for filter_node in visual_translation.filters
     ]
 
-    assert actual_filters == expected_filters, (
-        f"{preset_id}: expected {expected_filters}, got {actual_filters}"
-    )
+    assert (
+        actual_filters == expected_filters
+    ), f"{preset_id}: expected {expected_filters}, got {actual_filters}"
 
 
 def _animation_payload(preset_id):
@@ -648,10 +536,7 @@ for preset_id in [
         capabilities=capabilities,
     )
 
-    assert (
-        new_animation_translation.filters[0].filter_name
-        == "zoompan"
-    )
+    assert new_animation_translation.filters[0].filter_name == "zoompan"
     assert new_animation_translation.warnings
 
 
@@ -674,9 +559,7 @@ try:
 except ValueError:
     print("Unsupported animation preset successfully blocked.")
 else:
-    raise AssertionError(
-        "Unsupported animation preset should fail."
-    )
+    raise AssertionError("Unsupported animation preset should fail.")
 
 
 for transition_type, expected_xfade_name in [
@@ -725,16 +608,11 @@ for transition_type, expected_xfade_name in [
         capabilities=capabilities,
     )
 
-    new_transition_expression = (
-        new_transition_translation.filters[0].render_expression()
-    )
+    new_transition_expression = new_transition_translation.filters[
+        0
+    ].render_expression()
 
-    assert (
-        f"transition={expected_xfade_name}" in new_transition_expression
-    )
+    assert f"transition={expected_xfade_name}" in new_transition_expression
 
 
-print(
-    "Video Filter Translation Service tests "
-    "completed successfully."
-)
+print("Video Filter Translation Service tests " "completed successfully.")

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from copy import deepcopy
 from typing import Any
 
 from src.models.audio_timeline import AudioTimeline
@@ -41,38 +40,30 @@ class VoiceTimelineService:
     ) -> AudioTrack:
         """Attach one successful voice generation result."""
 
-        self._validate_generation_result(
-            result
-        )
+        self._validate_generation_result(result)
 
         source_track = result.audio_track
 
         if source_track is None:
             raise ValueError(
-                "Successful voice generation result "
-                "does not contain an audio track."
+                "Successful voice generation result " "does not contain an audio track."
             )
 
-        track = source_track.model_copy(
-            deep=True
-        )
+        track = source_track.model_copy(deep=True)
 
         self._prepare_voice_track(
             track=track,
             scene_number=result.scene_number,
         )
 
-        existing_tracks = (
-            self._find_scene_voice_tracks(
-                timeline=timeline,
-                scene_number=result.scene_number,
-            )
+        existing_tracks = self._find_scene_voice_tracks(
+            timeline=timeline,
+            scene_number=result.scene_number,
         )
 
         if existing_tracks and not replace:
             raise ValueError(
-                "A voice track is already attached "
-                f"for scene {result.scene_number}."
+                "A voice track is already attached " f"for scene {result.scene_number}."
             )
 
         if replace:
@@ -80,22 +71,14 @@ class VoiceTimelineService:
                 existing_track
                 for existing_track in timeline.tracks
                 if not (
-                    existing_track.track_type
-                    == AudioTrackType.VOICEOVER
-                    and self._read_scene_number(
-                        existing_track
-                    )
-                    == result.scene_number
+                    existing_track.track_type == AudioTrackType.VOICEOVER
+                    and self._read_scene_number(existing_track) == result.scene_number
                 )
             ]
 
-        timeline.tracks.append(
-            track
-        )
+        timeline.tracks.append(track)
 
-        self._sort_timeline_tracks(
-            timeline
-        )
+        self._sort_timeline_tracks(timeline)
 
         timeline.calculate_duration()
 
@@ -105,9 +88,7 @@ class VoiceTimelineService:
         self,
         timeline: AudioTimeline,
         *,
-        results: list[
-            VoiceGenerationResult
-        ],
+        results: list[VoiceGenerationResult],
         replace: bool = False,
     ) -> list[AudioTrack]:
         """
@@ -116,23 +97,16 @@ class VoiceTimelineService:
         All results are validated before the timeline is changed.
         """
 
-        result_scene_numbers = [
-            result.scene_number
-            for result in results
-        ]
+        result_scene_numbers = [result.scene_number for result in results]
 
-        if len(result_scene_numbers) != len(
-            set(result_scene_numbers)
-        ):
+        if len(result_scene_numbers) != len(set(result_scene_numbers)):
             raise ValueError(
                 "Duplicate voice generation scene numbers "
                 "cannot be attached together."
             )
 
         for result in results:
-            self._validate_generation_result(
-                result
-            )
+            self._validate_generation_result(result)
 
             if result.audio_track is None:
                 raise ValueError(
@@ -140,54 +114,32 @@ class VoiceTimelineService:
                     "does not contain an audio track."
                 )
 
-            candidate_track = (
-                result.audio_track.model_copy(
-                    deep=True
-                )
-            )
+            candidate_track = result.audio_track.model_copy(deep=True)
 
             self._prepare_voice_track(
                 track=candidate_track,
-                scene_number=(
-                    result.scene_number
-                ),
+                scene_number=(result.scene_number),
             )
 
         if not replace:
             existing_scene_numbers = {
-                scene_number
-                for scene_number in (
-                    self.voice_scene_numbers(
-                        timeline
-                    )
-                )
+                scene_number for scene_number in (self.voice_scene_numbers(timeline))
             }
 
-            duplicate_existing = (
-                existing_scene_numbers
-                & set(result_scene_numbers)
-            )
+            duplicate_existing = existing_scene_numbers & set(result_scene_numbers)
 
             if duplicate_existing:
                 duplicate_text = ", ".join(
-                    str(scene_number)
-                    for scene_number in sorted(
-                        duplicate_existing
-                    )
+                    str(scene_number) for scene_number in sorted(duplicate_existing)
                 )
 
                 raise ValueError(
-                    "Voice tracks already exist for "
-                    f"scenes: {duplicate_text}"
+                    "Voice tracks already exist for " f"scenes: {duplicate_text}"
                 )
 
-        working_timeline = timeline.model_copy(
-            deep=True
-        )
+        working_timeline = timeline.model_copy(deep=True)
 
-        attached_tracks: list[
-            AudioTrack
-        ] = []
+        attached_tracks: list[AudioTrack] = []
 
         for result in sorted(
             results,
@@ -201,18 +153,11 @@ class VoiceTimelineService:
                 )
             )
 
-        timeline.tracks = (
-            working_timeline.tracks
-        )
+        timeline.tracks = working_timeline.tracks
 
         timeline.calculate_duration()
 
-        return [
-            track.model_copy(
-                deep=True
-            )
-            for track in attached_tracks
-        ]
+        return [track.model_copy(deep=True) for track in attached_tracks]
 
     def replace_result(
         self,
@@ -237,9 +182,7 @@ class VoiceTimelineService:
         """Remove and return one scene voice track."""
 
         if scene_number < 1:
-            raise ValueError(
-                "Voice scene number must be positive."
-            )
+            raise ValueError("Voice scene number must be positive.")
 
         matches = self._find_scene_voice_tracks(
             timeline=timeline,
@@ -247,23 +190,17 @@ class VoiceTimelineService:
         )
 
         if not matches:
-            raise KeyError(
-                "Voice track was not found for "
-                f"scene {scene_number}."
-            )
+            raise KeyError("Voice track was not found for " f"scene {scene_number}.")
 
         if len(matches) > 1:
             raise ValueError(
-                "Multiple voice tracks exist for "
-                f"scene {scene_number}."
+                "Multiple voice tracks exist for " f"scene {scene_number}."
             )
 
         removed_track = matches[0]
 
         timeline.tracks = [
-            track
-            for track in timeline.tracks
-            if track.id != removed_track.id
+            track for track in timeline.tracks if track.id != removed_track.id
         ]
 
         timeline.calculate_duration()
@@ -284,15 +221,11 @@ class VoiceTimelineService:
         )
 
         if not matches:
-            raise KeyError(
-                "Voice track was not found for "
-                f"scene {scene_number}."
-            )
+            raise KeyError("Voice track was not found for " f"scene {scene_number}.")
 
         if len(matches) > 1:
             raise ValueError(
-                "Multiple voice tracks exist for "
-                f"scene {scene_number}."
+                "Multiple voice tracks exist for " f"scene {scene_number}."
             )
 
         return matches[0]
@@ -307,19 +240,11 @@ class VoiceTimelineService:
             (
                 track
                 for track in timeline.tracks
-                if (
-                    track.track_type
-                    == AudioTrackType.VOICEOVER
-                )
+                if (track.track_type == AudioTrackType.VOICEOVER)
             ),
             key=lambda track: (
                 track.start_time_seconds,
-                (
-                    self._read_scene_number(
-                        track
-                    )
-                    or 0
-                ),
+                (self._read_scene_number(track) or 0),
             ),
         )
 
@@ -331,27 +256,13 @@ class VoiceTimelineService:
 
         scene_numbers: list[int] = []
 
-        for track in self.voice_tracks(
-            timeline
-        ):
-            scene_number = (
-                self._read_scene_number(
-                    track
-                )
-            )
+        for track in self.voice_tracks(timeline):
+            scene_number = self._read_scene_number(track)
 
-            if (
-                scene_number is not None
-                and scene_number
-                not in scene_numbers
-            ):
-                scene_numbers.append(
-                    scene_number
-                )
+            if scene_number is not None and scene_number not in scene_numbers:
+                scene_numbers.append(scene_number)
 
-        return sorted(
-            scene_numbers
-        )
+        return sorted(scene_numbers)
 
     def missing_voice_scenes(
         self,
@@ -361,62 +272,34 @@ class VoiceTimelineService:
     ) -> list[int]:
         """Return expected scenes lacking voice tracks."""
 
-        normalized_expected = (
-            self._normalize_scene_numbers(
-                expected_scene_numbers
-            )
-        )
+        normalized_expected = self._normalize_scene_numbers(expected_scene_numbers)
 
-        existing = set(
-            self.voice_scene_numbers(
-                timeline
-            )
-        )
+        existing = set(self.voice_scene_numbers(timeline))
 
-        return sorted(
-            set(normalized_expected)
-            - existing
-        )
+        return sorted(set(normalized_expected) - existing)
 
     def validate(
         self,
         timeline: AudioTimeline,
         *,
-        expected_scene_numbers: (
-            list[int] | None
-        ) = None,
+        expected_scene_numbers: list[int] | None = None,
         require_gap_free: bool = False,
         allow_voice_overlap: bool = False,
     ) -> VoiceTimelineValidationResult:
         """Validate all voice tracks on an audio timeline."""
 
-        errors: list[
-            VoiceTimelineValidationIssue
-        ] = []
+        errors: list[VoiceTimelineValidationIssue] = []
 
-        warnings: list[
-            VoiceTimelineValidationIssue
-        ] = []
+        warnings: list[VoiceTimelineValidationIssue] = []
 
-        tracks = self.voice_tracks(
-            timeline
-        )
+        tracks = self.voice_tracks(timeline)
 
         if not tracks:
             errors.append(
                 VoiceTimelineValidationIssue(
-                    code=(
-                        VoiceTimelineValidationCode
-                        .NO_VOICE_TRACKS
-                    ),
-                    severity=(
-                        VoiceTimelineValidationSeverity
-                        .ERROR
-                    ),
-                    message=(
-                        "Audio timeline contains no "
-                        "voice tracks."
-                    ),
+                    code=(VoiceTimelineValidationCode.NO_VOICE_TRACKS),
+                    severity=(VoiceTimelineValidationSeverity.ERROR),
+                    message=("Audio timeline contains no " "voice tracks."),
                 )
             )
 
@@ -433,26 +316,15 @@ class VoiceTimelineService:
                 0.0,
             )
 
-            scene_number = (
-                self._read_scene_number(
-                    track
-                )
-            )
+            scene_number = self._read_scene_number(track)
 
             if scene_number is None:
                 errors.append(
                     VoiceTimelineValidationIssue(
-                        code=(
-                            VoiceTimelineValidationCode
-                            .MISSING_SCENE_NUMBER
-                        ),
-                        severity=(
-                            VoiceTimelineValidationSeverity
-                            .ERROR
-                        ),
+                        code=(VoiceTimelineValidationCode.MISSING_SCENE_NUMBER),
+                        severity=(VoiceTimelineValidationSeverity.ERROR),
                         message=(
-                            "Voice track metadata does "
-                            "not contain a scene number."
+                            "Voice track metadata does " "not contain a scene number."
                         ),
                         track_id=str(track.id),
                     )
@@ -460,18 +332,9 @@ class VoiceTimelineService:
             elif scene_number < 1:
                 errors.append(
                     VoiceTimelineValidationIssue(
-                        code=(
-                            VoiceTimelineValidationCode
-                            .INVALID_SCENE_NUMBER
-                        ),
-                        severity=(
-                            VoiceTimelineValidationSeverity
-                            .ERROR
-                        ),
-                        message=(
-                            "Voice track scene number "
-                            "must be positive."
-                        ),
+                        code=(VoiceTimelineValidationCode.INVALID_SCENE_NUMBER),
+                        severity=(VoiceTimelineValidationSeverity.ERROR),
+                        message=("Voice track scene number " "must be positive."),
                         scene_number=scene_number,
                         track_id=str(track.id),
                     )
@@ -480,9 +343,7 @@ class VoiceTimelineService:
                 scene_track_map.setdefault(
                     scene_number,
                     [],
-                ).append(
-                    track
-                )
+                ).append(track)
 
             self._validate_track(
                 track=track,
@@ -497,23 +358,15 @@ class VoiceTimelineService:
             if len(scene_tracks) > 1:
                 errors.append(
                     VoiceTimelineValidationIssue(
-                        code=(
-                            VoiceTimelineValidationCode
-                            .DUPLICATE_SCENE_VOICE
-                        ),
-                        severity=(
-                            VoiceTimelineValidationSeverity
-                            .ERROR
-                        ),
+                        code=(VoiceTimelineValidationCode.DUPLICATE_SCENE_VOICE),
+                        severity=(VoiceTimelineValidationSeverity.ERROR),
                         message=(
                             "Multiple primary voice tracks "
                             "use the same scene number."
                         ),
                         scene_number=scene_number,
                         metadata={
-                            "track_count": (
-                                len(scene_tracks)
-                            ),
+                            "track_count": (len(scene_tracks)),
                         },
                     )
                 )
@@ -524,80 +377,42 @@ class VoiceTimelineService:
         valid_timing_tracks = [
             track
             for track in tracks
-            if (
-                track.start_time_seconds >= 0
-                and track.duration_seconds > 0
-            )
+            if (track.start_time_seconds >= 0 and track.duration_seconds > 0)
         ]
 
         for previous, current in zip(
             valid_timing_tracks,
             valid_timing_tracks[1:],
+            strict=False,
         ):
-            previous_end = (
-                previous.start_time_seconds
-                + previous.duration_seconds
-            )
+            previous_end = previous.start_time_seconds + previous.duration_seconds
 
-            current_start = (
-                current.start_time_seconds
-            )
+            current_start = current.start_time_seconds
 
-            difference = (
-                current_start
-                - previous_end
-            )
+            difference = current_start - previous_end
 
-            previous_scene = (
-                self._read_scene_number(
-                    previous
-                )
-            )
+            previous_scene = self._read_scene_number(previous)
 
-            current_scene = (
-                self._read_scene_number(
-                    current
-                )
-            )
+            current_scene = self._read_scene_number(current)
 
-            if (
-                difference
-                > self.TIME_TOLERANCE_SECONDS
-            ):
+            if difference > self.TIME_TOLERANCE_SECONDS:
                 gap_duration += difference
 
-                issue = (
-                    VoiceTimelineValidationIssue(
-                        code=(
-                            VoiceTimelineValidationCode
-                            .VOICE_GAP
-                        ),
-                        severity=(
-                            VoiceTimelineValidationSeverity.ERROR
-                            if require_gap_free
-                            else (
-                                VoiceTimelineValidationSeverity
-                                .WARNING
-                            )
-                        ),
-                        message=(
-                            "A gap exists between "
-                            "voice tracks."
-                        ),
-                        scene_number=current_scene,
-                        related_scene_number=(
-                            previous_scene
-                        ),
-                        start_time_seconds=(
-                            previous_end
-                        ),
-                        end_time_seconds=(
-                            current_start
-                        ),
-                        metadata={
-                            "gap_seconds": difference,
-                        },
-                    )
+                issue = VoiceTimelineValidationIssue(
+                    code=(VoiceTimelineValidationCode.VOICE_GAP),
+                    severity=(
+                        VoiceTimelineValidationSeverity.ERROR
+                        if require_gap_free
+                        else (VoiceTimelineValidationSeverity.WARNING)
+                    ),
+                    message=("A gap exists between " "voice tracks."),
+                    scene_number=current_scene,
+                    related_scene_number=(previous_scene),
+                    start_time_seconds=(previous_end),
+                    end_time_seconds=(current_start),
+                    metadata={
+                        "gap_seconds": difference,
+                    },
                 )
 
                 if require_gap_free:
@@ -605,49 +420,26 @@ class VoiceTimelineService:
                 else:
                     warnings.append(issue)
 
-            elif (
-                difference
-                < -self.TIME_TOLERANCE_SECONDS
-            ):
-                overlap = abs(
-                    difference
-                )
+            elif difference < -self.TIME_TOLERANCE_SECONDS:
+                overlap = abs(difference)
 
                 overlap_duration += overlap
 
-                issue = (
-                    VoiceTimelineValidationIssue(
-                        code=(
-                            VoiceTimelineValidationCode
-                            .VOICE_OVERLAP
-                        ),
-                        severity=(
-                            VoiceTimelineValidationSeverity
-                            .WARNING
-                            if allow_voice_overlap
-                            else (
-                                VoiceTimelineValidationSeverity
-                                .ERROR
-                            )
-                        ),
-                        message=(
-                            "Voice tracks overlap on "
-                            "the audio timeline."
-                        ),
-                        scene_number=current_scene,
-                        related_scene_number=(
-                            previous_scene
-                        ),
-                        start_time_seconds=(
-                            current_start
-                        ),
-                        end_time_seconds=(
-                            previous_end
-                        ),
-                        metadata={
-                            "overlap_seconds": overlap,
-                        },
-                    )
+                issue = VoiceTimelineValidationIssue(
+                    code=(VoiceTimelineValidationCode.VOICE_OVERLAP),
+                    severity=(
+                        VoiceTimelineValidationSeverity.WARNING
+                        if allow_voice_overlap
+                        else (VoiceTimelineValidationSeverity.ERROR)
+                    ),
+                    message=("Voice tracks overlap on " "the audio timeline."),
+                    scene_number=current_scene,
+                    related_scene_number=(previous_scene),
+                    start_time_seconds=(current_start),
+                    end_time_seconds=(previous_end),
+                    metadata={
+                        "overlap_seconds": overlap,
+                    },
                 )
 
                 if allow_voice_overlap:
@@ -659,107 +451,55 @@ class VoiceTimelineService:
         unexpected_scene_numbers: list[int] = []
 
         if expected_scene_numbers is not None:
-            normalized_expected = (
-                self._normalize_scene_numbers(
-                    expected_scene_numbers
-                )
-            )
+            normalized_expected = self._normalize_scene_numbers(expected_scene_numbers)
 
-            expected_set = set(
-                normalized_expected
-            )
+            expected_set = set(normalized_expected)
 
-            actual_set = set(
-                scene_track_map
-            )
+            actual_set = set(scene_track_map)
 
-            missing_scene_numbers = sorted(
-                expected_set - actual_set
-            )
+            missing_scene_numbers = sorted(expected_set - actual_set)
 
-            unexpected_scene_numbers = sorted(
-                actual_set - expected_set
-            )
+            unexpected_scene_numbers = sorted(actual_set - expected_set)
 
-            for scene_number in (
-                missing_scene_numbers
-            ):
+            for scene_number in missing_scene_numbers:
                 errors.append(
                     VoiceTimelineValidationIssue(
-                        code=(
-                            VoiceTimelineValidationCode
-                            .MISSING_EXPECTED_SCENE
-                        ),
-                        severity=(
-                            VoiceTimelineValidationSeverity
-                            .ERROR
-                        ),
-                        message=(
-                            "Expected scene is missing "
-                            "a voice track."
-                        ),
+                        code=(VoiceTimelineValidationCode.MISSING_EXPECTED_SCENE),
+                        severity=(VoiceTimelineValidationSeverity.ERROR),
+                        message=("Expected scene is missing " "a voice track."),
                         scene_number=scene_number,
                     )
                 )
 
-            for scene_number in (
-                unexpected_scene_numbers
-            ):
+            for scene_number in unexpected_scene_numbers:
                 warnings.append(
                     VoiceTimelineValidationIssue(
-                        code=(
-                            VoiceTimelineValidationCode
-                            .UNEXPECTED_SCENE
-                        ),
-                        severity=(
-                            VoiceTimelineValidationSeverity
-                            .WARNING
-                        ),
+                        code=(VoiceTimelineValidationCode.UNEXPECTED_SCENE),
+                        severity=(VoiceTimelineValidationSeverity.WARNING),
                         message=(
-                            "Voice track references a "
-                            "scene that was not expected."
+                            "Voice track references a " "scene that was not expected."
                         ),
                         scene_number=scene_number,
                     )
                 )
 
-        total_duration = (
-            timeline.calculate_duration()
-        )
+        total_duration = timeline.calculate_duration()
 
         return VoiceTimelineValidationResult(
             is_valid=len(errors) == 0,
             errors=errors,
             warnings=warnings,
             voice_track_count=len(tracks),
-            unique_scene_count=(
-                len(scene_track_map)
-            ),
-            total_duration_seconds=(
-                total_duration
-            ),
-            voice_duration_seconds=(
-                voice_duration
-            ),
-            gap_duration_seconds=(
-                gap_duration
-            ),
-            overlap_duration_seconds=(
-                overlap_duration
-            ),
-            missing_scene_numbers=(
-                missing_scene_numbers
-            ),
-            unexpected_scene_numbers=(
-                unexpected_scene_numbers
-            ),
+            unique_scene_count=(len(scene_track_map)),
+            total_duration_seconds=(total_duration),
+            voice_duration_seconds=(voice_duration),
+            gap_duration_seconds=(gap_duration),
+            overlap_duration_seconds=(overlap_duration),
+            missing_scene_numbers=(missing_scene_numbers),
+            unexpected_scene_numbers=(unexpected_scene_numbers),
             metadata={
-                "require_gap_free": (
-                    require_gap_free
-                ),
-                "allow_voice_overlap": (
-                    allow_voice_overlap
-                ),
+                "require_gap_free": (require_gap_free),
+                "allow_voice_overlap": (allow_voice_overlap),
             },
         )
 
@@ -770,69 +510,30 @@ class VoiceTimelineService:
         """Validate a generation result before attachment."""
 
         if not result.success:
-            raise ValueError(
-                "Failed voice generation results "
-                "cannot be attached."
-            )
+            raise ValueError("Failed voice generation results " "cannot be attached.")
 
-        if (
-            result.status
-            != VoiceGenerationStatus.COMPLETED
-        ):
-            raise ValueError(
-                "Voice generation result must use "
-                "COMPLETED status."
-            )
+        if result.status != VoiceGenerationStatus.COMPLETED:
+            raise ValueError("Voice generation result must use " "COMPLETED status.")
 
         if result.audio_track is None:
+            raise ValueError("Voice generation result requires " "an audio track.")
+
+        if result.audio_track.track_type != AudioTrackType.VOICEOVER:
             raise ValueError(
-                "Voice generation result requires "
-                "an audio track."
+                "Voice generation result must contain " "a VOICEOVER track."
             )
 
-        if (
-            result.audio_track.track_type
-            != AudioTrackType.VOICEOVER
-        ):
-            raise ValueError(
-                "Voice generation result must contain "
-                "a VOICEOVER track."
-            )
-
-        if (
-            result.audio_track.status
-            != AudioTrackStatus.READY
-        ):
-            raise ValueError(
-                "Generated voice track must have "
-                "READY status."
-            )
+        if result.audio_track.status != AudioTrackStatus.READY:
+            raise ValueError("Generated voice track must have " "READY status.")
 
         if not result.audio_track.source_file.strip():
-            raise ValueError(
-                "Generated voice track requires "
-                "a source file."
-            )
+            raise ValueError("Generated voice track requires " "a source file.")
 
-        if (
-            result.audio_track
-            .duration_seconds
-            <= 0
-        ):
-            raise ValueError(
-                "Generated voice track requires "
-                "a positive duration."
-            )
+        if result.audio_track.duration_seconds <= 0:
+            raise ValueError("Generated voice track requires " "a positive duration.")
 
-        if (
-            result.audio_track
-            .start_time_seconds
-            < 0
-        ):
-            raise ValueError(
-                "Generated voice track start time "
-                "cannot be negative."
-            )
+        if result.audio_track.start_time_seconds < 0:
+            raise ValueError("Generated voice track start time " "cannot be negative.")
 
     @staticmethod
     def _prepare_voice_track(
@@ -842,87 +543,45 @@ class VoiceTimelineService:
     ) -> None:
         """Normalize scene metadata on a voice track."""
 
-        existing_scene_number = (
-            VoiceTimelineService
-            ._read_scene_number(
-                track
-            )
-        )
+        existing_scene_number = VoiceTimelineService._read_scene_number(track)
 
-        if (
-            existing_scene_number is not None
-            and existing_scene_number
-            != scene_number
-        ):
+        if existing_scene_number is not None and existing_scene_number != scene_number:
             raise ValueError(
-                "Voice track scene metadata does not "
-                "match its generation result."
+                "Voice track scene metadata does not " "match its generation result."
             )
 
-        track.metadata[
-            "scene_number"
-        ] = scene_number
+        track.metadata["scene_number"] = scene_number
 
-        track.metadata[
-            "primary_voice"
-        ] = True
+        track.metadata["primary_voice"] = True
 
-        track.metadata[
-            "timeline_attached"
-        ] = True
+        track.metadata["timeline_attached"] = True
 
     @staticmethod
     def _validate_track(
         *,
         track: AudioTrack,
         scene_number: int | None,
-        errors: list[
-            VoiceTimelineValidationIssue
-        ],
+        errors: list[VoiceTimelineValidationIssue],
     ) -> None:
         """Validate one timeline voice track."""
 
-        if (
-            track.track_type
-            != AudioTrackType.VOICEOVER
-        ):
+        if track.track_type != AudioTrackType.VOICEOVER:
             errors.append(
                 VoiceTimelineValidationIssue(
-                    code=(
-                        VoiceTimelineValidationCode
-                        .INVALID_TRACK_TYPE
-                    ),
-                    severity=(
-                        VoiceTimelineValidationSeverity
-                        .ERROR
-                    ),
-                    message=(
-                        "Voice timeline track must use "
-                        "VOICEOVER type."
-                    ),
+                    code=(VoiceTimelineValidationCode.INVALID_TRACK_TYPE),
+                    severity=(VoiceTimelineValidationSeverity.ERROR),
+                    message=("Voice timeline track must use " "VOICEOVER type."),
                     scene_number=scene_number,
                     track_id=str(track.id),
                 )
             )
 
-        if (
-            track.status
-            != AudioTrackStatus.READY
-        ):
+        if track.status != AudioTrackStatus.READY:
             errors.append(
                 VoiceTimelineValidationIssue(
-                    code=(
-                        VoiceTimelineValidationCode
-                        .TRACK_NOT_READY
-                    ),
-                    severity=(
-                        VoiceTimelineValidationSeverity
-                        .ERROR
-                    ),
-                    message=(
-                        "Voice timeline track is "
-                        "not READY."
-                    ),
+                    code=(VoiceTimelineValidationCode.TRACK_NOT_READY),
+                    severity=(VoiceTimelineValidationSeverity.ERROR),
+                    message=("Voice timeline track is " "not READY."),
                     scene_number=scene_number,
                     track_id=str(track.id),
                 )
@@ -931,18 +590,9 @@ class VoiceTimelineService:
         if not track.source_file.strip():
             errors.append(
                 VoiceTimelineValidationIssue(
-                    code=(
-                        VoiceTimelineValidationCode
-                        .MISSING_SOURCE_FILE
-                    ),
-                    severity=(
-                        VoiceTimelineValidationSeverity
-                        .ERROR
-                    ),
-                    message=(
-                        "Voice timeline track has no "
-                        "source file."
-                    ),
+                    code=(VoiceTimelineValidationCode.MISSING_SOURCE_FILE),
+                    severity=(VoiceTimelineValidationSeverity.ERROR),
+                    message=("Voice timeline track has no " "source file."),
                     scene_number=scene_number,
                     track_id=str(track.id),
                 )
@@ -951,18 +601,9 @@ class VoiceTimelineService:
         if track.duration_seconds <= 0:
             errors.append(
                 VoiceTimelineValidationIssue(
-                    code=(
-                        VoiceTimelineValidationCode
-                        .INVALID_DURATION
-                    ),
-                    severity=(
-                        VoiceTimelineValidationSeverity
-                        .ERROR
-                    ),
-                    message=(
-                        "Voice timeline track requires "
-                        "a positive duration."
-                    ),
+                    code=(VoiceTimelineValidationCode.INVALID_DURATION),
+                    severity=(VoiceTimelineValidationSeverity.ERROR),
+                    message=("Voice timeline track requires " "a positive duration."),
                     scene_number=scene_number,
                     track_id=str(track.id),
                 )
@@ -971,18 +612,9 @@ class VoiceTimelineService:
         if track.start_time_seconds < 0:
             errors.append(
                 VoiceTimelineValidationIssue(
-                    code=(
-                        VoiceTimelineValidationCode
-                        .INVALID_START_TIME
-                    ),
-                    severity=(
-                        VoiceTimelineValidationSeverity
-                        .ERROR
-                    ),
-                    message=(
-                        "Voice timeline track start "
-                        "time cannot be negative."
-                    ),
+                    code=(VoiceTimelineValidationCode.INVALID_START_TIME),
+                    severity=(VoiceTimelineValidationSeverity.ERROR),
+                    message=("Voice timeline track start " "time cannot be negative."),
                     scene_number=scene_number,
                     track_id=str(track.id),
                 )
@@ -994,11 +626,7 @@ class VoiceTimelineService:
     ) -> int | None:
         """Read a typed scene number from track metadata."""
 
-        raw_scene_number: Any = (
-            track.metadata.get(
-                "scene_number"
-            )
-        )
+        raw_scene_number: Any = track.metadata.get("scene_number")
 
         if isinstance(
             raw_scene_number,
@@ -1016,9 +644,7 @@ class VoiceTimelineService:
             raw_scene_number,
             str,
         ):
-            cleaned = (
-                raw_scene_number.strip()
-            )
+            cleaned = raw_scene_number.strip()
 
             if cleaned.isdigit():
                 return int(cleaned)
@@ -1037,15 +663,8 @@ class VoiceTimelineService:
             track
             for track in timeline.tracks
             if (
-                track.track_type
-                == AudioTrackType.VOICEOVER
-                and (
-                    VoiceTimelineService
-                    ._read_scene_number(
-                        track
-                    )
-                    == scene_number
-                )
+                track.track_type == AudioTrackType.VOICEOVER
+                and (VoiceTimelineService._read_scene_number(track) == scene_number)
             )
         ]
 
@@ -1069,13 +688,7 @@ class VoiceTimelineService:
                     track.track_type,
                     99,
                 ),
-                (
-                    VoiceTimelineService
-                    ._read_scene_number(
-                        track
-                    )
-                    or 0
-                ),
+                (VoiceTimelineService._read_scene_number(track) or 0),
             ),
         )
 
@@ -1086,23 +699,16 @@ class VoiceTimelineService:
         """Validate and normalize expected scene numbers."""
 
         if any(
-            isinstance(scene_number, bool)
-            or scene_number < 1
+            isinstance(scene_number, bool) or scene_number < 1
             for scene_number in scene_numbers
         ):
             raise ValueError(
-                "Expected voice scene numbers "
-                "must be positive integers."
+                "Expected voice scene numbers " "must be positive integers."
             )
 
-        if len(scene_numbers) != len(
-            set(scene_numbers)
-        ):
+        if len(scene_numbers) != len(set(scene_numbers)):
             raise ValueError(
-                "Expected voice scene numbers "
-                "cannot contain duplicates."
+                "Expected voice scene numbers " "cannot contain duplicates."
             )
 
-        return sorted(
-            scene_numbers
-        )
+        return sorted(scene_numbers)

@@ -32,9 +32,7 @@ class CameraExecution(MissionBaseModel):
 
     schema_version: str = "1.0"
 
-    status: CameraExecutionStatus = (
-        CameraExecutionStatus.PLANNED
-    )
+    status: CameraExecutionStatus = CameraExecutionStatus.PLANNED
 
     scene_number: int = Field(
         ge=1,
@@ -56,9 +54,7 @@ class CameraExecution(MissionBaseModel):
 
     direction: str | None = None
 
-    intensity: DirectiveIntensity = (
-        DirectiveIntensity.MEDIUM
-    )
+    intensity: DirectiveIntensity = DirectiveIntensity.MEDIUM
 
     start_time_seconds: float = Field(
         ge=0.0,
@@ -127,9 +123,7 @@ class CameraExecution(MissionBaseModel):
         cleaned = value.strip().lower()
 
         if not cleaned:
-            raise ValueError(
-                "Camera execution text cannot be empty."
-            )
+            raise ValueError("Camera execution text cannot be empty.")
 
         return cleaned
 
@@ -139,14 +133,8 @@ class CameraExecution(MissionBaseModel):
         cls,
         value: str,
     ) -> str:
-        if (
-            not value.startswith("camera.")
-            or value == "camera."
-        ):
-            raise ValueError(
-                "Camera preset ID must start "
-                "with 'camera.'."
-            )
+        if not value.startswith("camera.") or value == "camera.":
+            raise ValueError("Camera preset ID must start " "with 'camera.'.")
 
         return value
 
@@ -174,10 +162,7 @@ class CameraExecution(MissionBaseModel):
         for value in values:
             warning = value.strip()
 
-            if (
-                warning
-                and warning not in cleaned
-            ):
+            if warning and warning not in cleaned:
                 cleaned.append(warning)
 
         return cleaned
@@ -186,131 +171,57 @@ class CameraExecution(MissionBaseModel):
     def validate_execution(
         self,
     ) -> CameraExecution:
-        if (
-            self.scene_end_time_seconds
-            <= self.scene_start_time_seconds
-        ):
+        if self.scene_end_time_seconds <= self.scene_start_time_seconds:
             raise ValueError(
-                "Camera scene end time must be greater "
-                "than scene start time."
+                "Camera scene end time must be greater " "than scene start time."
             )
 
         calculated_scene_duration = (
-            self.scene_end_time_seconds
-            - self.scene_start_time_seconds
+            self.scene_end_time_seconds - self.scene_start_time_seconds
         )
 
-        if (
-            abs(
-                calculated_scene_duration
-                - self.scene_duration_seconds
+        if abs(calculated_scene_duration - self.scene_duration_seconds) > 0.001:
+            raise ValueError("Camera scene duration does not " "match scene timing.")
+
+        if self.end_time_seconds <= self.start_time_seconds:
+            raise ValueError(
+                "Camera execution end time must be " "greater than start time."
             )
-            > 0.001
+
+        calculated_duration = self.end_time_seconds - self.start_time_seconds
+
+        if abs(calculated_duration - self.duration_seconds) > 0.001:
+            raise ValueError("Camera execution duration does not " "match timing.")
+
+        if self.start_time_seconds < self.scene_start_time_seconds - 0.001:
+            raise ValueError("Camera execution cannot begin " "before its scene.")
+
+        if self.end_time_seconds > self.scene_end_time_seconds + 0.001:
+            raise ValueError("Camera execution cannot end " "after its scene.")
+
+        expected_local_start = self.start_time_seconds - self.scene_start_time_seconds
+
+        expected_local_end = self.end_time_seconds - self.scene_start_time_seconds
+
+        if abs(expected_local_start - self.local_start_offset_seconds) > 0.001:
+            raise ValueError(
+                "Camera local start offset does not " "match global timing."
+            )
+
+        if abs(expected_local_end - self.local_end_offset_seconds) > 0.001:
+            raise ValueError("Camera local end offset does not " "match global timing.")
+
+        if self.motion_type == "zoom" and (
+            self.zoom_start is None or self.zoom_end is None
         ):
             raise ValueError(
-                "Camera scene duration does not "
-                "match scene timing."
+                "Zoom camera executions require " "zoom_start and zoom_end."
             )
 
-        if (
-            self.end_time_seconds
-            <= self.start_time_seconds
+        if self.status == CameraExecutionStatus.APPLIED and not self.metadata.get(
+            "renderer"
         ):
-            raise ValueError(
-                "Camera execution end time must be "
-                "greater than start time."
-            )
-
-        calculated_duration = (
-            self.end_time_seconds
-            - self.start_time_seconds
-        )
-
-        if (
-            abs(
-                calculated_duration
-                - self.duration_seconds
-            )
-            > 0.001
-        ):
-            raise ValueError(
-                "Camera execution duration does not "
-                "match timing."
-            )
-
-        if (
-            self.start_time_seconds
-            < self.scene_start_time_seconds - 0.001
-        ):
-            raise ValueError(
-                "Camera execution cannot begin "
-                "before its scene."
-            )
-
-        if (
-            self.end_time_seconds
-            > self.scene_end_time_seconds + 0.001
-        ):
-            raise ValueError(
-                "Camera execution cannot end "
-                "after its scene."
-            )
-
-        expected_local_start = (
-            self.start_time_seconds
-            - self.scene_start_time_seconds
-        )
-
-        expected_local_end = (
-            self.end_time_seconds
-            - self.scene_start_time_seconds
-        )
-
-        if (
-            abs(
-                expected_local_start
-                - self.local_start_offset_seconds
-            )
-            > 0.001
-        ):
-            raise ValueError(
-                "Camera local start offset does not "
-                "match global timing."
-            )
-
-        if (
-            abs(
-                expected_local_end
-                - self.local_end_offset_seconds
-            )
-            > 0.001
-        ):
-            raise ValueError(
-                "Camera local end offset does not "
-                "match global timing."
-            )
-
-        if (
-            self.motion_type == "zoom"
-            and (
-                self.zoom_start is None
-                or self.zoom_end is None
-            )
-        ):
-            raise ValueError(
-                "Zoom camera executions require "
-                "zoom_start and zoom_end."
-            )
-
-        if (
-            self.status
-            == CameraExecutionStatus.APPLIED
-            and not self.metadata.get("renderer")
-        ):
-            raise ValueError(
-                "Applied camera execution requires "
-                "renderer metadata."
-            )
+            raise ValueError("Applied camera execution requires " "renderer metadata.")
 
         return self
 
@@ -328,10 +239,7 @@ class CameraExecution(MissionBaseModel):
     def is_static(self) -> bool:
         """Return whether camera motion is disabled."""
 
-        return (
-            self.preset_id == "camera.none"
-            or self.motion_type == "none"
-        )
+        return self.preset_id == "camera.none" or self.motion_type == "none"
 
     @property
     def is_zoom(self) -> bool:
@@ -345,9 +253,7 @@ class CameraExecutionPlan(MissionBaseModel):
 
     schema_version: str = "1.0"
 
-    executions: list[
-        CameraExecution
-    ] = Field(
+    executions: list[CameraExecution] = Field(
         default_factory=list,
     )
 
@@ -397,49 +303,22 @@ class CameraExecutionPlan(MissionBaseModel):
     def validate_plan(
         self,
     ) -> CameraExecutionPlan:
-        if self.execution_count != len(
-            self.executions
-        ):
+        if self.execution_count != len(self.executions):
             raise ValueError(
-                "Camera execution count must match "
-                "execution collection."
+                "Camera execution count must match " "execution collection."
             )
 
-        if (
-            self.static_execution_count
-            > self.execution_count
-        ):
-            raise ValueError(
-                "Static camera count cannot exceed "
-                "execution count."
-            )
+        if self.static_execution_count > self.execution_count:
+            raise ValueError("Static camera count cannot exceed " "execution count.")
 
-        if (
-            self.motion_execution_count
-            > self.execution_count
-        ):
-            raise ValueError(
-                "Motion camera count cannot exceed "
-                "execution count."
-            )
+        if self.motion_execution_count > self.execution_count:
+            raise ValueError("Motion camera count cannot exceed " "execution count.")
 
-        if (
-            self.ready_execution_count
-            > self.execution_count
-        ):
-            raise ValueError(
-                "Ready camera count cannot exceed "
-                "execution count."
-            )
+        if self.ready_execution_count > self.execution_count:
+            raise ValueError("Ready camera count cannot exceed " "execution count.")
 
-        if (
-            self.is_render_ready
-            and not self.is_valid
-        ):
-            raise ValueError(
-                "Render-ready camera plans "
-                "must be valid."
-            )
+        if self.is_render_ready and not self.is_valid:
+            raise ValueError("Render-ready camera plans " "must be valid.")
 
         return self
 
@@ -456,53 +335,36 @@ class CameraExecutionPlan(MissionBaseModel):
             ),
         )
 
-        self.execution_count = len(
-            self.executions
-        )
+        self.execution_count = len(self.executions)
 
         self.static_execution_count = sum(
-            1
-            for execution in self.executions
-            if execution.is_static
+            1 for execution in self.executions if execution.is_static
         )
 
-        self.motion_execution_count = (
-            self.execution_count
-            - self.static_execution_count
-        )
+        self.motion_execution_count = self.execution_count - self.static_execution_count
 
         self.ready_execution_count = sum(
-            1
-            for execution in self.executions
-            if execution.is_ready
+            1 for execution in self.executions if execution.is_ready
         )
 
         self.scene_count = len(
-            {
-                execution.scene_number
-                for execution in self.executions
-            }
+            {execution.scene_number for execution in self.executions}
         )
 
         self.is_valid = all(
-            execution.status
-            != CameraExecutionStatus.FAILED
+            execution.status != CameraExecutionStatus.FAILED
             for execution in self.executions
         )
 
         self.is_render_ready = (
-            self.is_valid
-            and self.ready_execution_count
-            == self.execution_count
+            self.is_valid and self.ready_execution_count == self.execution_count
         )
 
     @property
     def has_executions(self) -> bool:
         """Return whether camera executions exist."""
 
-        return bool(
-            self.executions
-        )
+        return bool(self.executions)
 
     @property
     def applied_count(self) -> int:
@@ -511,10 +373,7 @@ class CameraExecutionPlan(MissionBaseModel):
         return sum(
             1
             for execution in self.executions
-            if (
-                execution.status
-                == CameraExecutionStatus.APPLIED
-            )
+            if (execution.status == CameraExecutionStatus.APPLIED)
         )
 
     @property
@@ -524,8 +383,5 @@ class CameraExecutionPlan(MissionBaseModel):
         return sum(
             1
             for execution in self.executions
-            if (
-                execution.status
-                == CameraExecutionStatus.FAILED
-            )
+            if (execution.status == CameraExecutionStatus.FAILED)
         )

@@ -33,8 +33,7 @@ class LocalAssetScanner:
 
         if not root_path.is_dir():
             raise NotADirectoryError(
-                "Local asset scan path is not a directory: "
-                f"{root_path}"
+                "Local asset scan path is not a directory: " f"{root_path}"
             )
 
         library = LocalAssetLibrary(
@@ -47,9 +46,7 @@ class LocalAssetScanner:
         enriched_index = AssetIndex()
 
         for asset in base_index.assets:
-            enriched_index.add(
-                self._enrich_asset(asset)
-            )
+            enriched_index.add(self._enrich_asset(asset))
 
         return enriched_index
 
@@ -61,11 +58,7 @@ class LocalAssetScanner:
 
         file_path = Path(asset.file_path)
 
-        content_hash = (
-            self._calculate_hash(file_path)
-            if file_path.exists()
-            else None
-        )
+        content_hash = self._calculate_hash(file_path) if file_path.exists() else None
 
         metadata = dict(asset.metadata)
 

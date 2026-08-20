@@ -23,9 +23,7 @@ from src.pipeline.stage_result import (
 )
 
 
-class SyntheticStage(
-    BasePipelineStage
-):
+class SyntheticStage(BasePipelineStage):
     """Deterministic stage used by PipelineEngine resume tests."""
 
     def __init__(
@@ -52,9 +50,7 @@ class SyntheticStage(
 
         return StageResult(
             stage=self.stage_name,
-            status=(
-                PipelineStageStatus.COMPLETED
-            ),
+            status=(PipelineStageStatus.COMPLETED),
         )
 
 
@@ -69,83 +65,54 @@ def build_job() -> VideoJob:
 
 def test_normal_execution_preserves_behavior() -> None:
     voice_stage = SyntheticStage(
-        stage_name=(
-            PipelineStageName.VOICE
-        ),
+        stage_name=(PipelineStageName.VOICE),
     )
 
     runner = PipelineRunner()
 
-    runner.register(
-        voice_stage
-    )
+    runner.register(voice_stage)
 
-    engine = PipelineEngine(
-        runner
-    )
+    engine = PipelineEngine(runner)
 
     context = engine.run(
         build_job(),
         dry_run=True,
     )
 
-    assert (
-        voice_stage.execution_count
-        == 1
-    )
+    assert voice_stage.execution_count == 1
 
-    assert (
-        context.pipeline_state.current_stage
-        == PipelineStageName.VOICE
-    )
+    assert context.pipeline_state.current_stage == PipelineStageName.VOICE
 
-    assert (
-        context.pipeline_state.overall_progress
-        == 100
-    )
+    assert context.pipeline_state.overall_progress == 100
 
 
 def test_resume_plan_is_forwarded_to_runner() -> None:
     voice_stage = SyntheticStage(
-        stage_name=(
-            PipelineStageName.VOICE
-        ),
+        stage_name=(PipelineStageName.VOICE),
     )
 
     render_stage = SyntheticStage(
-        stage_name=(
-            PipelineStageName.RENDER
-        ),
+        stage_name=(PipelineStageName.RENDER),
     )
 
     runner = PipelineRunner()
 
-    runner.register(
-        voice_stage
-    )
+    runner.register(voice_stage)
 
-    runner.register(
-        render_stage
-    )
+    runner.register(render_stage)
 
-    engine = PipelineEngine(
-        runner
-    )
+    engine = PipelineEngine(runner)
 
     plan = PipelineResumePlan(
         resume_enabled=True,
-        resume_stage=(
-            PipelineStageName.RENDER
-        ),
+        resume_stage=(PipelineStageName.RENDER),
         skipped_stages=[
             PipelineStageName.VOICE,
         ],
         execution_stages=[
             PipelineStageName.RENDER,
         ],
-        checkpoint_stage=(
-            PipelineStageName.RENDER
-        ),
+        checkpoint_stage=(PipelineStageName.RENDER),
         resumed_from_failure=True,
     )
 
@@ -155,67 +122,36 @@ def test_resume_plan_is_forwarded_to_runner() -> None:
         resume_plan=plan,
     )
 
-    assert (
-        voice_stage.execution_count
-        == 0
-    )
+    assert voice_stage.execution_count == 0
 
-    assert (
-        render_stage.execution_count
-        == 1
-    )
+    assert render_stage.execution_count == 1
 
-    assert (
-        len(
-            context.pipeline_state.stages
-        )
-        == 2
-    )
+    assert len(context.pipeline_state.stages) == 2
 
-    assert (
-        context.pipeline_state.stages[0].status
-        == PipelineStageStatus.SKIPPED
-    )
+    assert context.pipeline_state.stages[0].status == PipelineStageStatus.SKIPPED
 
-    assert (
-        context.pipeline_state.stages[1].status
-        == PipelineStageStatus.COMPLETED
-    )
+    assert context.pipeline_state.stages[1].status == PipelineStageStatus.COMPLETED
 
-    assert (
-        context.pipeline_state.current_stage
-        == PipelineStageName.RENDER
-    )
+    assert context.pipeline_state.current_stage == PipelineStageName.RENDER
 
-    assert (
-        context.pipeline_state.overall_progress
-        == 100
-    )
+    assert context.pipeline_state.overall_progress == 100
 
 
 def test_completed_checkpoint_plan_executes_nothing() -> None:
     stage = SyntheticStage(
-        stage_name=(
-            PipelineStageName.RENDER
-        ),
+        stage_name=(PipelineStageName.RENDER),
     )
 
     runner = PipelineRunner()
 
-    runner.register(
-        stage
-    )
+    runner.register(stage)
 
-    engine = PipelineEngine(
-        runner
-    )
+    engine = PipelineEngine(runner)
 
     plan = PipelineResumePlan(
         resume_enabled=False,
         execution_stages=[],
-        checkpoint_stage=(
-            PipelineStageName.RENDER
-        ),
+        checkpoint_stage=(PipelineStageName.RENDER),
     )
 
     context = engine.run(
@@ -223,27 +159,16 @@ def test_completed_checkpoint_plan_executes_nothing() -> None:
         resume_plan=plan,
     )
 
-    assert (
-        stage.execution_count
-        == 0
-    )
+    assert stage.execution_count == 0
 
-    assert (
-        context.pipeline_state.stages
-        == []
-    )
+    assert context.pipeline_state.stages == []
 
-    assert (
-        context.pipeline_state.overall_progress
-        == 100
-    )
+    assert context.pipeline_state.overall_progress == 100
 
 
 def main() -> None:
     print()
-    print(
-        "Running Pipeline Engine Resume tests..."
-    )
+    print("Running Pipeline Engine Resume tests...")
     print()
 
     test_normal_execution_preserves_behavior()
@@ -251,10 +176,7 @@ def main() -> None:
     test_completed_checkpoint_plan_executes_nothing()
 
     print()
-    print(
-        "Pipeline Engine Resume tests "
-        "completed successfully."
-    )
+    print("Pipeline Engine Resume tests " "completed successfully.")
 
 
 if __name__ == "__main__":

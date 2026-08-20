@@ -80,9 +80,7 @@ def reference(
     *,
     preset_id: str,
     directive_path: str,
-    implementation: (
-        dict[str, Any] | None
-    ) = None,
+    implementation: dict[str, Any] | None = None,
 ) -> ResolvedPresetReference:
     return ResolvedPresetReference(
         directive_path=directive_path,
@@ -90,9 +88,7 @@ def reference(
         resolved_preset_id=preset_id,
         found_exact_match=True,
         used_fallback=False,
-        implementation=dict(
-            implementation or {}
-        ),
+        implementation=dict(implementation or {}),
     )
 
 
@@ -104,16 +100,12 @@ def blueprint(
         scene_number=scene_number,
         genre_preset=reference(
             preset_id="genre.default",
-            directive_path=(
-                "genre_preset_id"
-            ),
+            directive_path=("genre_preset_id"),
         ),
         camera=ResolvedCameraInstruction(
             preset=reference(
                 preset_id="camera.none",
-                directive_path=(
-                    "camera.preset_id"
-                ),
+                directive_path=("camera.preset_id"),
                 implementation={
                     "motion": "none",
                 },
@@ -123,9 +115,7 @@ def blueprint(
             ResolvedTransitionInstruction(
                 preset=reference(
                     preset_id="transition.cut",
-                    directive_path=(
-                        "transition_in.preset_id"
-                    ),
+                    directive_path=("transition_in.preset_id"),
                     implementation={
                         "type": "cut",
                     },
@@ -137,9 +127,7 @@ def blueprint(
             ResolvedTransitionInstruction(
                 preset=reference(
                     preset_id="transition.cut",
-                    directive_path=(
-                        "transition_out.preset_id"
-                    ),
+                    directive_path=("transition_out.preset_id"),
                     implementation={
                         "type": "cut",
                     },
@@ -152,9 +140,7 @@ def blueprint(
         music=ResolvedMusicInstruction(
             preset=reference(
                 preset_id="music.none",
-                directive_path=(
-                    "music.preset_id"
-                ),
+                directive_path=("music.preset_id"),
             ),
             enabled=False,
         ),
@@ -162,16 +148,12 @@ def blueprint(
         subtitles=ResolvedSubtitleInstruction(
             preset=reference(
                 preset_id="subtitle.default",
-                directive_path=(
-                    "subtitles.preset_id"
-                ),
+                directive_path=("subtitles.preset_id"),
             ),
             enabled=False,
             burn_into_video=False,
         ),
-        status=(
-            BlueprintResolutionStatus.RESOLVED
-        ),
+        status=(BlueprintResolutionStatus.RESOLVED),
     )
 
 
@@ -183,41 +165,23 @@ def video_item(
 ) -> VideoTimelineItem:
     clip = VideoClip(
         scene_number=scene_number,
-        source_type=(
-            SceneSourceType.MANUAL_UPLOAD
-        ),
-        duration_seconds=(
-            duration_seconds
-        ),
+        source_type=(SceneSourceType.MANUAL_UPLOAD),
+        duration_seconds=(duration_seconds),
         prompt=f"Scene {scene_number}",
-        local_file=(
-            "assets/videos/"
-            f"scene_{scene_number:03}.mp4"
-        ),
-        source_status=(
-            SceneSourceStatus.READY
-        ),
-        status=(
-            VideoClipStatus.READY
-        ),
+        local_file=("assets/videos/" f"scene_{scene_number:03}.mp4"),
+        source_status=(SceneSourceStatus.READY),
+        status=(VideoClipStatus.READY),
     )
 
     return VideoTimelineItem(
         clip=clip,
         scene_number=scene_number,
-        start_time_seconds=(
-            start_time_seconds
-        ),
-        end_time_seconds=(
-            start_time_seconds
-            + duration_seconds
-        ),
+        start_time_seconds=(start_time_seconds),
+        end_time_seconds=(start_time_seconds + duration_seconds),
         track_index=0,
         layer_index=0,
         enabled=True,
-        editing_blueprint=blueprint(
-            scene_number=scene_number
-        ),
+        editing_blueprint=blueprint(scene_number=scene_number),
     )
 
 
@@ -245,17 +209,11 @@ video_timeline = VideoTimeline(
 )
 
 voice_track = AudioTrack(
-    track_type=(
-        AudioTrackType.VOICEOVER
-    ),
-    source_file=(
-        "outputs/audio/voice.wav"
-    ),
+    track_type=(AudioTrackType.VOICEOVER),
+    source_file=("outputs/audio/voice.wav"),
     start_time_seconds=0.0,
     duration_seconds=15.0,
-    status=(
-        AudioTrackStatus.READY
-    ),
+    status=(AudioTrackStatus.READY),
     metadata={
         "scene_number": 1,
     },
@@ -268,16 +226,9 @@ audio_timeline = AudioTimeline(
 )
 
 master_plan = MasterEditPlan(
-    video_timeline=(
-        video_timeline
-    ),
-    audio_timeline=(
-        audio_timeline
-    ),
-    status=(
-        MasterEditPlanStatus
-        .READY_FOR_RENDER
-    ),
+    video_timeline=(video_timeline),
+    audio_timeline=(audio_timeline),
+    status=(MasterEditPlanStatus.READY_FOR_RENDER),
     video_duration_seconds=15.0,
     audio_duration_seconds=15.0,
     total_duration_seconds=15.0,
@@ -294,17 +245,13 @@ master_plan = MasterEditPlan(
 
 
 camera_execution = CameraExecution(
-    status=(
-        CameraExecutionStatus.READY
-    ),
+    status=(CameraExecutionStatus.READY),
     scene_number=1,
     track_index=0,
     layer_index=0,
     preset_id="camera.none",
     motion_type="none",
-    intensity=(
-        DirectiveIntensity.MEDIUM
-    ),
+    intensity=(DirectiveIntensity.MEDIUM),
     start_time_seconds=0.0,
     end_time_seconds=8.0,
     duration_seconds=8.0,
@@ -333,64 +280,45 @@ camera_plan = CameraExecutionPlan(
 )
 
 
-transition_execution = (
-    TransitionExecution(
-        status=(
-            TransitionExecutionStatus.READY
-        ),
-        placement=(
-            TransitionPlacement
-            .BETWEEN_SCENES
-        ),
-        direction=(
-            TransitionDirection.BETWEEN
-        ),
-        preset_id="transition.cut",
-        transition_type="cut",
-        source_scene_number=1,
-        target_scene_number=2,
-        source_track_index=0,
-        target_track_index=0,
-        start_time_seconds=8.0,
-        end_time_seconds=8.0,
-        duration_seconds=0.0,
-        requires_overlap=False,
-    )
+transition_execution = TransitionExecution(
+    status=(TransitionExecutionStatus.READY),
+    placement=(TransitionPlacement.BETWEEN_SCENES),
+    direction=(TransitionDirection.BETWEEN),
+    preset_id="transition.cut",
+    transition_type="cut",
+    source_scene_number=1,
+    target_scene_number=2,
+    source_track_index=0,
+    target_track_index=0,
+    start_time_seconds=8.0,
+    end_time_seconds=8.0,
+    duration_seconds=0.0,
+    requires_overlap=False,
 )
 
-transition_plan = (
-    TransitionExecutionPlan(
-        executions=[
-            transition_execution,
-        ],
-        timeline_duration_seconds=15.0,
-        scene_count=2,
-        transition_count=1,
-        timed_transition_count=0,
-        cut_transition_count=1,
-        overlap_transition_count=0,
-        ready_execution_count=1,
-        is_valid=True,
-        is_render_ready=True,
-    )
+transition_plan = TransitionExecutionPlan(
+    executions=[
+        transition_execution,
+    ],
+    timeline_duration_seconds=15.0,
+    scene_count=2,
+    transition_count=1,
+    timed_transition_count=0,
+    cut_transition_count=1,
+    overlap_transition_count=0,
+    ready_execution_count=1,
+    is_valid=True,
+    is_render_ready=True,
 )
 
 
 effect_execution = EffectExecution(
-    status=(
-        EffectExecutionStatus.READY
-    ),
+    status=(EffectExecutionStatus.READY),
     scene_number=1,
-    preset_id=(
-        "visual.vignette_soft"
-    ),
+    preset_id=("visual.vignette_soft"),
     effect_type="vignette",
-    timing_mode=(
-        DirectiveTimingMode.FULL_SCENE
-    ),
-    intensity=(
-        DirectiveIntensity.MEDIUM
-    ),
+    timing_mode=(DirectiveTimingMode.FULL_SCENE),
+    intensity=(DirectiveIntensity.MEDIUM),
     start_time_seconds=0.0,
     end_time_seconds=8.0,
     duration_seconds=8.0,
@@ -419,72 +347,56 @@ effect_plan = EffectExecutionPlan(
 )
 
 
-animation_execution = (
-    AnimationExecution(
-        status=(
-            AnimationExecutionStatus.READY
-        ),
-        scene_number=2,
-        preset_id=(
-            "animation.slow_parallax"
-        ),
-        animation_type="parallax",
-        start_time_seconds=8.0,
-        end_time_seconds=15.0,
-        duration_seconds=7.0,
-        scene_start_time_seconds=8.0,
-        scene_end_time_seconds=15.0,
-        scene_duration_seconds=7.0,
-        local_start_offset_seconds=0.0,
-        local_end_offset_seconds=7.0,
-        implementation={
-            "animation": "parallax",
-            "speed": "slow",
-        },
-    )
+animation_execution = AnimationExecution(
+    status=(AnimationExecutionStatus.READY),
+    scene_number=2,
+    preset_id=("animation.slow_parallax"),
+    animation_type="parallax",
+    start_time_seconds=8.0,
+    end_time_seconds=15.0,
+    duration_seconds=7.0,
+    scene_start_time_seconds=8.0,
+    scene_end_time_seconds=15.0,
+    scene_duration_seconds=7.0,
+    local_start_offset_seconds=0.0,
+    local_end_offset_seconds=7.0,
+    implementation={
+        "animation": "parallax",
+        "speed": "slow",
+    },
 )
 
-animation_plan = (
-    AnimationExecutionPlan(
-        executions=[
-            animation_execution,
-        ],
-        timeline_duration_seconds=15.0,
-        scene_count=1,
-        execution_count=1,
-        active_execution_count=1,
-        skipped_execution_count=0,
-        ready_execution_count=1,
-        is_valid=True,
-        is_render_ready=True,
-    )
+animation_plan = AnimationExecutionPlan(
+    executions=[
+        animation_execution,
+    ],
+    timeline_duration_seconds=15.0,
+    scene_count=1,
+    execution_count=1,
+    active_execution_count=1,
+    skipped_execution_count=0,
+    ready_execution_count=1,
+    is_valid=True,
+    is_render_ready=True,
 )
 
 
-subtitle_execution = (
-    SubtitleExecution(
-        status=(
-            SubtitleExecutionStatus.READY
-        ),
-        scene_number=1,
-        segment_index=0,
-        text="The bunker door opened.",
-        preset_id=(
-            "subtitle.default"
-        ),
-        burn_into_video=True,
-        timing_source=(
-            SubtitleTimingSource.ESTIMATED
-        ),
-        start_time_seconds=0.0,
-        end_time_seconds=3.0,
-        duration_seconds=3.0,
-        scene_start_time_seconds=0.0,
-        scene_end_time_seconds=8.0,
-        local_start_offset_seconds=0.0,
-        local_end_offset_seconds=3.0,
-        word_count=4,
-    )
+subtitle_execution = SubtitleExecution(
+    status=(SubtitleExecutionStatus.READY),
+    scene_number=1,
+    segment_index=0,
+    text="The bunker door opened.",
+    preset_id=("subtitle.default"),
+    burn_into_video=True,
+    timing_source=(SubtitleTimingSource.ESTIMATED),
+    start_time_seconds=0.0,
+    end_time_seconds=3.0,
+    duration_seconds=3.0,
+    scene_start_time_seconds=0.0,
+    scene_end_time_seconds=8.0,
+    local_start_offset_seconds=0.0,
+    local_end_offset_seconds=3.0,
+    word_count=4,
 )
 
 subtitle_plan = SubtitleExecutionPlan(
@@ -534,163 +446,72 @@ assert isinstance(
     RenderGraph,
 )
 
-assert (
-    graph.status
-    == RenderGraphStatus.READY
-)
+assert graph.status == RenderGraphStatus.READY
 
 assert graph.is_valid is True
 
-assert (
-    graph.is_render_ready
-    is True
-)
+assert graph.is_render_ready is True
 
 assert graph.output_node is not None
 
-assert (
-    graph.output_node.node_type
-    == RenderNodeType.OUTPUT
-)
+assert graph.output_node.node_type == RenderNodeType.OUTPUT
 
 
 video_nodes = [
-    node
-    for node in graph.nodes
-    if (
-        node.node_type
-        == RenderNodeType.VIDEO_CLIP
-    )
+    node for node in graph.nodes if (node.node_type == RenderNodeType.VIDEO_CLIP)
 ]
 
-assert len(
-    video_nodes
-) == 2
+assert len(video_nodes) == 2
 
 
 audio_nodes = [
-    node
-    for node in graph.nodes
-    if (
-        node.node_type
-        == RenderNodeType.AUDIO_TRACK
-    )
+    node for node in graph.nodes if (node.node_type == RenderNodeType.AUDIO_TRACK)
 ]
 
-assert len(
-    audio_nodes
-) == 1
+assert len(audio_nodes) == 1
 
 
-assert sum(
-    node.node_type
-    == RenderNodeType.CAMERA
-    for node in graph.nodes
-) == 1
+assert sum(node.node_type == RenderNodeType.CAMERA for node in graph.nodes) == 1
 
-assert sum(
-    node.node_type
-    == RenderNodeType.TRANSITION
-    for node in graph.nodes
-) == 1
+assert sum(node.node_type == RenderNodeType.TRANSITION for node in graph.nodes) == 1
 
-assert sum(
-    node.node_type
-    == RenderNodeType.VISUAL_EFFECT
-    for node in graph.nodes
-) == 1
+assert sum(node.node_type == RenderNodeType.VISUAL_EFFECT for node in graph.nodes) == 1
 
-assert sum(
-    node.node_type
-    == RenderNodeType.ANIMATION
-    for node in graph.nodes
-) == 1
+assert sum(node.node_type == RenderNodeType.ANIMATION for node in graph.nodes) == 1
 
-assert sum(
-    node.node_type
-    == RenderNodeType.SUBTITLE
-    for node in graph.nodes
-) == 1
+assert sum(node.node_type == RenderNodeType.SUBTITLE for node in graph.nodes) == 1
 
-assert sum(
-    node.node_type
-    == RenderNodeType.VIDEO_COMPOSITION
-    for node in graph.nodes
-) == 1
-
-assert sum(
-    node.node_type
-    == RenderNodeType.AUDIO_MIX
-    for node in graph.nodes
-) == 1
-
-assert sum(
-    node.node_type
-    == RenderNodeType.OUTPUT
-    for node in graph.nodes
-) == 1
-
-
-ordered = service.topological_order(
-    graph
+assert (
+    sum(node.node_type == RenderNodeType.VIDEO_COMPOSITION for node in graph.nodes) == 1
 )
 
-assert len(
-    ordered
-) == graph.node_count
+assert sum(node.node_type == RenderNodeType.AUDIO_MIX for node in graph.nodes) == 1
 
-ordered_ids = [
-    str(node.id)
-    for node in ordered
-]
+assert sum(node.node_type == RenderNodeType.OUTPUT for node in graph.nodes) == 1
 
-position_by_id = {
-    node_id: index
-    for index, node_id
-    in enumerate(
-        ordered_ids
-    )
-}
+
+ordered = service.topological_order(graph)
+
+assert len(ordered) == graph.node_count
+
+ordered_ids = [str(node.id) for node in ordered]
+
+position_by_id = {node_id: index for index, node_id in enumerate(ordered_ids)}
 
 for node in ordered:
-    for dependency_id in (
-        node.dependency_ids
-    ):
-        assert (
-            position_by_id[
-                dependency_id
-            ]
-            < position_by_id[
-                str(node.id)
-            ]
-        )
+    for dependency_id in node.dependency_ids:
+        assert position_by_id[dependency_id] < position_by_id[str(node.id)]
 
 
-summary = service.summary(
-    graph
-)
+summary = service.summary(graph)
 
-assert (
-    summary["node_count"]
-    == graph.node_count
-)
+assert summary["node_count"] == graph.node_count
 
-assert (
-    summary["edge_count"]
-    == graph.edge_count
-)
+assert summary["edge_count"] == graph.edge_count
 
-assert (
-    summary["is_render_ready"]
-    is True
-)
+assert summary["is_render_ready"] is True
 
-assert (
-    summary[
-        "node_type_counts"
-    ]["video_clip"]
-    == 2
-)
+assert summary["node_type_counts"]["video_clip"] == 2
 
 
 execution_graph = service.build(
@@ -702,38 +523,23 @@ execution_graph = service.build(
     animation_plan=animation_plan,
 )
 
-execution_order = (
-    service.topological_order(
-        execution_graph
-    )
-)
+execution_order = service.topological_order(execution_graph)
 
 for node in execution_order:
     service.mark_node_executed(
         execution_graph,
-        node_id=str(
-            node.id
-        ),
+        node_id=str(node.id),
         renderer="ffmpeg",
         renderer_metadata={
             "mode": "dry-run",
         },
     )
 
-assert (
-    execution_graph.status
-    == RenderGraphStatus.COMPLETED
-)
+assert execution_graph.status == RenderGraphStatus.COMPLETED
 
-assert (
-    execution_graph.completed
-    is True
-)
+assert execution_graph.completed is True
 
-assert (
-    execution_graph.executed_node_count
-    == execution_graph.node_count
-)
+assert execution_graph.executed_node_count == execution_graph.node_count
 
 
 dependency_graph = service.build(
@@ -745,30 +551,20 @@ dependency_graph = service.build(
     animation_plan=animation_plan,
 )
 
-output_node = (
-    dependency_graph.output_node
-)
+output_node = dependency_graph.output_node
 
 assert output_node is not None
 
 try:
     service.mark_node_executed(
         dependency_graph,
-        node_id=str(
-            output_node.id
-        ),
+        node_id=str(output_node.id),
         renderer="ffmpeg",
     )
 except ValueError:
-    print(
-        "Unresolved render dependencies "
-        "successfully blocked."
-    )
+    print("Unresolved render dependencies " "successfully blocked.")
 else:
-    raise AssertionError(
-        "Output node should not execute "
-        "before dependencies."
-    )
+    raise AssertionError("Output node should not execute " "before dependencies.")
 
 
 failure_graph = service.build(
@@ -780,89 +576,47 @@ failure_graph = service.build(
     animation_plan=animation_plan,
 )
 
-failed_node = (
-    failure_graph.nodes[0]
-)
+failed_node = failure_graph.nodes[0]
 
 service.mark_node_failed(
     failure_graph,
-    node_id=str(
-        failed_node.id
-    ),
-    error_message=(
-        "Simulated render-node failure."
-    ),
+    node_id=str(failed_node.id),
+    error_message=("Simulated render-node failure."),
 )
 
-assert (
-    failed_node.status
-    == RenderNodeStatus.FAILED
-)
+assert failed_node.status == RenderNodeStatus.FAILED
 
-assert (
-    failure_graph.status
-    == RenderGraphStatus.FAILED
-)
+assert failure_graph.status == RenderGraphStatus.FAILED
 
-assert (
-    failure_graph.is_valid
-    is False
-)
+assert failure_graph.is_valid is False
 
-assert (
-    failure_graph.is_render_ready
-    is False
-)
+assert failure_graph.is_render_ready is False
 
 
-not_ready_transition_plan = (
-    transition_plan.model_copy(
-        deep=True
-    )
-)
+not_ready_transition_plan = transition_plan.model_copy(deep=True)
 
-not_ready_transition_plan.is_render_ready = (
-    False
-)
+not_ready_transition_plan.is_render_ready = False
 
 try:
     service.build(
         master_plan=master_plan,
-        transition_plan=(
-            not_ready_transition_plan
-        ),
+        transition_plan=(not_ready_transition_plan),
         effect_plan=effect_plan,
         subtitle_plan=subtitle_plan,
         camera_plan=camera_plan,
         animation_plan=animation_plan,
     )
 except ValueError:
-    print(
-        "Non-ready execution plan "
-        "successfully blocked."
-    )
+    print("Non-ready execution plan " "successfully blocked.")
 else:
-    raise AssertionError(
-        "Non-ready execution plan "
-        "should fail."
-    )
+    raise AssertionError("Non-ready execution plan " "should fail.")
 
 
-serialized = (
-    graph.model_dump_json()
-)
+serialized = graph.model_dump_json()
 
-restored = (
-    RenderGraph
-    .model_validate_json(
-        serialized
-    )
-)
+restored = RenderGraph.model_validate_json(serialized)
 
 assert restored == graph
 
 
-print(
-    "Render Graph Builder Service tests "
-    "completed successfully."
-)
+print("Render Graph Builder Service tests " "completed successfully.")

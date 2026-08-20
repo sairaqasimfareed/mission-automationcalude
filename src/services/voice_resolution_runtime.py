@@ -21,7 +21,6 @@ from src.services.voice_profile_registry_service import (
     VoiceProfileRegistryService,
 )
 
-
 VoiceResolutionRequest = tuple[
     SceneVoiceDirectives,
     str,
@@ -56,9 +55,7 @@ class VoiceResolutionRuntime:
         result ordering remain owned by VoiceDirectiveResolutionService.
         """
 
-        return self.resolution_service.resolve_many(
-            requests
-        )
+        return self.resolution_service.resolve_many(requests)
 
 
 class VoiceResolutionRuntimeFactory:
@@ -85,17 +82,13 @@ class VoiceResolutionRuntimeFactory:
             profiles=profiles,
         )
 
-        validation_service = (
-            VoiceDirectiveValidationService(
-                voice_profile_registry=registry,
-            )
+        validation_service = VoiceDirectiveValidationService(
+            voice_profile_registry=registry,
         )
 
-        resolution_service = (
-            VoiceDirectiveResolutionService(
-                voice_profile_registry=registry,
-                validation_service=validation_service,
-            )
+        resolution_service = VoiceDirectiveResolutionService(
+            voice_profile_registry=registry,
+            validation_service=validation_service,
         )
 
         return VoiceResolutionRuntime(

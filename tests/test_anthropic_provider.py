@@ -25,9 +25,7 @@ class FakeAnthropicMessages:
         assert kwargs["model"] == "claude-test-model"
         assert kwargs["max_tokens"] == 500
         assert kwargs["temperature"] == 0.4
-        assert kwargs["system"] == (
-            "You are a helpful assistant."
-        )
+        assert kwargs["system"] == ("You are a helpful assistant.")
 
         assert kwargs["messages"] == [
             {
@@ -86,9 +84,7 @@ request = LLMRequest(
     prompt_version="v1",
 )
 
-response = adapter.create_operation(
-    request
-)()
+response = adapter.create_operation(request)()
 
 print("Content:", response.content)
 print("Request ID:", response.provider_request_id)
@@ -96,9 +92,7 @@ print("Input tokens:", response.usage.input_tokens)
 print("Output tokens:", response.usage.output_tokens)
 print("Total tokens:", response.usage.total_tokens)
 
-assert response.content == (
-    "Claude normalized response"
-)
+assert response.content == ("Claude normalized response")
 assert response.provider_request_id == "message-001"
 assert response.usage.input_tokens == 30
 assert response.usage.output_tokens == 20
@@ -128,23 +122,14 @@ multi_block_response = SimpleNamespace(
     ]
 )
 
-assert (
-    AnthropicProviderAdapter._extract_text(
-        multi_block_response
-    )
-    == "First second."
-)
+assert AnthropicProviderAdapter._extract_text(multi_block_response) == "First second."
 
 
 response_without_usage = SimpleNamespace(
     usage=None,
 )
 
-empty_usage = (
-    AnthropicProviderAdapter._extract_usage(
-        response_without_usage
-    )
-)
+empty_usage = AnthropicProviderAdapter._extract_usage(response_without_usage)
 
 assert empty_usage.input_tokens == 0
 assert empty_usage.output_tokens == 0
@@ -156,13 +141,9 @@ try:
         api_key=" ",
     )
 except ValueError:
-    print(
-        "Empty Anthropic API key successfully blocked."
-    )
+    print("Empty Anthropic API key successfully blocked.")
 else:
-    raise AssertionError(
-        "Empty Anthropic API key should fail."
-    )
+    raise AssertionError("Empty Anthropic API key should fail.")
 
 
 wrong_provider_request = LLMRequest(
@@ -173,20 +154,11 @@ wrong_provider_request = LLMRequest(
 )
 
 try:
-    adapter.create_operation(
-        wrong_provider_request
-    )
+    adapter.create_operation(wrong_provider_request)
 except ValueError:
-    print(
-        "Wrong provider request successfully blocked."
-    )
+    print("Wrong provider request successfully blocked.")
 else:
-    raise AssertionError(
-        "Anthropic adapter must reject "
-        "non-Anthropic requests."
-    )
+    raise AssertionError("Anthropic adapter must reject " "non-Anthropic requests.")
 
 
-print(
-    "Anthropic Provider tests completed successfully."
-)
+print("Anthropic Provider tests completed successfully.")

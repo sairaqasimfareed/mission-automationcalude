@@ -44,37 +44,21 @@ class ProjectRenderRuntimeFactory:
     def __init__(
         self,
         *,
-        voice_directive_generation_service: (
-            GenreVoiceDirectiveGenerationService
-        ),
+        voice_directive_generation_service: GenreVoiceDirectiveGenerationService,
         voice_resolution_runtime: VoiceResolutionRuntime,
         stage_factory: RenderWorkflowStageFactory,
         advanced_settings: AdvancedSettings | None = None,
-        checkpoint_storage_service: (
-            PipelineCheckpointStorageService | None
-        ) = None,
-        checkpoint_service: (
-            PipelineCheckpointService | None
-        ) = None,
-        resume_planner_service: (
-            PipelineResumePlannerService | None
-        ) = None,
+        checkpoint_storage_service: PipelineCheckpointStorageService | None = None,
+        checkpoint_service: PipelineCheckpointService | None = None,
+        resume_planner_service: PipelineResumePlannerService | None = None,
     ) -> None:
-        self._voice_directive_generation_service = (
-            voice_directive_generation_service
-        )
-        self._voice_resolution_runtime = (
-            voice_resolution_runtime
-        )
+        self._voice_directive_generation_service = voice_directive_generation_service
+        self._voice_resolution_runtime = voice_resolution_runtime
         self._stage_factory = stage_factory
         self._advanced_settings = advanced_settings
-        self._checkpoint_storage_service = (
-            checkpoint_storage_service
-        )
+        self._checkpoint_storage_service = checkpoint_storage_service
         self._checkpoint_service = checkpoint_service
-        self._resume_planner_service = (
-            resume_planner_service
-        )
+        self._resume_planner_service = resume_planner_service
 
     @property
     def voice_directive_generation_service(
@@ -126,9 +110,7 @@ class ProjectRenderRuntimeFactory:
         language: str = "English",
         language_code: str = "en",
         voice_provider_name: str | None = None,
-        overrides_by_scene: (
-            dict[int, SceneEditingDirectives] | None
-        ) = None,
+        overrides_by_scene: dict[int, SceneEditingDirectives] | None = None,
         output_resolution: str = "1920x1080",
         frame_rate: int = 30,
         warn_on_blueprint_fallbacks: bool = True,
@@ -141,13 +123,11 @@ class ProjectRenderRuntimeFactory:
         into the existing render-workflow stage factory.
         """
 
-        directives = (
-            self._voice_directive_generation_service.generate_many(
-                scenes=job.scenes,
-                genre_id=genre_id,
-                language=language,
-                language_code=language_code,
-            )
+        directives = self._voice_directive_generation_service.generate_many(
+            scenes=job.scenes,
+            genre_id=genre_id,
+            language=language,
+            language_code=language_code,
         )
 
         requests: list[VoiceResolutionRequest] = [
@@ -166,11 +146,7 @@ class ProjectRenderRuntimeFactory:
             )
         ]
 
-        voice_blueprints = (
-            self._voice_resolution_runtime.resolve_many(
-                requests
-            )
-        )
+        voice_blueprints = self._voice_resolution_runtime.resolve_many(requests)
 
         stages = self._stage_factory.build(
             voice_blueprints=voice_blueprints,
@@ -179,19 +155,13 @@ class ProjectRenderRuntimeFactory:
             overrides_by_scene=overrides_by_scene,
             output_resolution=output_resolution,
             frame_rate=frame_rate,
-            warn_on_blueprint_fallbacks=(
-                warn_on_blueprint_fallbacks
-            ),
+            warn_on_blueprint_fallbacks=(warn_on_blueprint_fallbacks),
         )
 
         return RenderOrchestratorService(
             stages=stages,
             advanced_settings=self._advanced_settings,
-            checkpoint_storage_service=(
-                self._checkpoint_storage_service
-            ),
+            checkpoint_storage_service=(self._checkpoint_storage_service),
             checkpoint_service=self._checkpoint_service,
-            resume_planner_service=(
-                self._resume_planner_service
-            ),
+            resume_planner_service=(self._resume_planner_service),
         )

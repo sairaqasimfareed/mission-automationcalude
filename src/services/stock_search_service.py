@@ -57,9 +57,7 @@ class StockSearchRequest(MissionBaseModel):
         cleaned = value.strip()
 
         if not cleaned:
-            raise ValueError(
-                "Stock search query cannot be empty."
-            )
+            raise ValueError("Stock search query cannot be empty.")
 
         return cleaned
 
@@ -177,18 +175,9 @@ class DryRunStockProvider:
             provider=self.provider_name,
             provider_asset_id="dry-run-video-001",
             title=request.query,
-            page_url=(
-                "https://example.com/stock/"
-                "dry-run-video-001"
-            ),
-            file_url=(
-                "https://example.com/videos/"
-                "dry-run-video-001.mp4"
-            ),
-            thumbnail_url=(
-                "https://example.com/thumbnails/"
-                "dry-run-video-001.jpg"
-            ),
+            page_url=("https://example.com/stock/" "dry-run-video-001"),
+            file_url=("https://example.com/videos/" "dry-run-video-001.mp4"),
+            thumbnail_url=("https://example.com/thumbnails/" "dry-run-video-001.jpg"),
             license_type="royalty_free",
             attribution_required=False,
             duration_seconds=8.0,
@@ -241,9 +230,7 @@ class StockSearchService:
 
             response = provider.search(request)
 
-            combined_results.extend(
-                response.results
-            )
+            combined_results.extend(response.results)
 
         return sorted(
             combined_results,

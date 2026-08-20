@@ -63,9 +63,7 @@ class SyntheticVoiceSpecification:
     failure_message: str | None = None
 
 
-class SyntheticVoiceGenerationService(
-    VoiceGenerationService
-):
+class SyntheticVoiceGenerationService(VoiceGenerationService):
     """
     Deterministic voice service used to isolate VoicePipelineStage.
 
@@ -83,21 +81,15 @@ class SyntheticVoiceGenerationService(
         ],
         raise_error: Exception | None = None,
     ) -> None:
-        self._specifications = dict(
-            specifications
-        )
+        self._specifications = dict(specifications)
 
-        self._raise_error = (
-            raise_error
-        )
+        self._raise_error = raise_error
 
         self.generated_scene_numbers: list[int] = []
 
         self.received_start_times: list[float] = []
 
-        self.received_provider_names: list[
-            str | None
-        ] = []
+        self.received_provider_names: list[str | None] = []
 
     def generate(
         self,
@@ -106,148 +98,82 @@ class SyntheticVoiceGenerationService(
         start_time_seconds: float = 0.0,
         provider_name: str | None = None,
     ) -> VoiceGenerationResult:
-        self.generated_scene_numbers.append(
-            blueprint.scene_number
-        )
+        self.generated_scene_numbers.append(blueprint.scene_number)
 
-        self.received_start_times.append(
-            start_time_seconds
-        )
+        self.received_start_times.append(start_time_seconds)
 
-        self.received_provider_names.append(
-            provider_name
-        )
+        self.received_provider_names.append(provider_name)
 
         if self._raise_error is not None:
             raise self._raise_error
 
-        specification = (
-            self._specifications[
-                blueprint.scene_number
-            ]
-        )
+        specification = self._specifications[blueprint.scene_number]
 
-        if (
-            specification.failure_message
-            is not None
-        ):
+        if specification.failure_message is not None:
             return VoiceGenerationResult(
                 success=False,
-                scene_number=(
-                    blueprint.scene_number
-                ),
-                status=(
-                    VoiceGenerationStatus.FAILED
-                ),
-                provider=(
-                    specification.provider
-                ),
+                scene_number=(blueprint.scene_number),
+                status=(VoiceGenerationStatus.FAILED),
+                provider=(specification.provider),
                 attempts=1,
                 failure=(
                     VoiceGenerationFailure(
-                        reason=(
-                            VoiceGenerationFailureReason
-                            .PROVIDER_ERROR
-                        ),
-                        message=(
-                            specification
-                            .failure_message
-                        ),
-                        provider=(
-                            specification.provider
-                        ),
+                        reason=(VoiceGenerationFailureReason.PROVIDER_ERROR),
+                        message=(specification.failure_message),
+                        provider=(specification.provider),
                         recoverable=True,
                     )
                 ),
                 warnings=(
-                    [
-                        specification.warning
-                    ]
-                    if (
-                        specification.warning
-                        is not None
-                    )
+                    [specification.warning]
+                    if (specification.warning is not None)
                     else []
                 ),
             )
 
-        output_file = (
-            "outputs/audio/"
-            f"scene_{blueprint.scene_number:03d}.wav"
-        )
+        output_file = "outputs/audio/" f"scene_{blueprint.scene_number:03d}.wav"
 
         track = AudioTrack(
-            track_type=(
-                AudioTrackType.VOICEOVER
-            ),
+            track_type=(AudioTrackType.VOICEOVER),
             source_file=output_file,
-            start_time_seconds=(
-                start_time_seconds
-            ),
-            duration_seconds=(
-                specification.duration_seconds
-            ),
-            provider=(
-                specification.provider
-            ),
-            status=(
-                AudioTrackStatus.READY
-            ),
+            start_time_seconds=(start_time_seconds),
+            duration_seconds=(specification.duration_seconds),
+            provider=(specification.provider),
+            status=(AudioTrackStatus.READY),
             metadata={
-                "scene_number": (
-                    blueprint.scene_number
-                ),
+                "scene_number": (blueprint.scene_number),
             },
         )
 
         return VoiceGenerationResult(
             success=True,
-            scene_number=(
-                blueprint.scene_number
-            ),
-            status=(
-                VoiceGenerationStatus.COMPLETED
-            ),
-            provider=(
-                specification.provider
-            ),
+            scene_number=(blueprint.scene_number),
+            status=(VoiceGenerationStatus.COMPLETED),
+            provider=(specification.provider),
             output_file=output_file,
             audio_track=track,
             attempts=1,
             warnings=(
-                [
-                    specification.warning
-                ]
-                if (
-                    specification.warning
-                    is not None
-                )
-                else []
+                [specification.warning] if (specification.warning is not None) else []
             ),
         )
 
 
-class RaisingVoiceTimelineService(
-    VoiceTimelineService
-):
+class RaisingVoiceTimelineService(VoiceTimelineService):
     """Timeline service used to verify exception propagation."""
 
     def attach_many(
         self,
         timeline: object,
         *,
-        results: list[
-            VoiceGenerationResult
-        ],
+        results: list[VoiceGenerationResult],
         replace: bool = False,
     ) -> list[AudioTrack]:
         del timeline
         del results
         del replace
 
-        raise RuntimeError(
-            "Synthetic voice timeline exception."
-        )
+        raise RuntimeError("Synthetic voice timeline exception.")
 
 
 def build_research() -> ResearchResult:
@@ -263,10 +189,7 @@ def build_script() -> Script:
 
     return Script(
         title="Voice stage test script",
-        content=(
-            "Synthetic narration content "
-            "for voice-stage testing."
-        ),
+        content=("Synthetic narration content " "for voice-stage testing."),
         prompt_version="test-1.0",
         word_count=7,
         estimated_duration_seconds=10,
@@ -281,17 +204,9 @@ def build_scene(
 
     return Scene(
         scene_number=scene_number,
-        title=(
-            f"Voice Scene {scene_number}"
-        ),
-        narration=(
-            f"Synthetic narration for "
-            f"scene {scene_number}."
-        ),
-        visual_prompt=(
-            "Synthetic visual for "
-            "voice-stage testing."
-        ),
+        title=(f"Voice Scene {scene_number}"),
+        narration=(f"Synthetic narration for " f"scene {scene_number}."),
+        visual_prompt=("Synthetic visual for " "voice-stage testing."),
         estimated_duration_seconds=5,
     )
 
@@ -331,9 +246,7 @@ def build_context(
     return StageContext(
         job=job,
         pipeline_state=PipelineState(
-            current_stage=(
-                PipelineStageName.VOICE
-            ),
+            current_stage=(PipelineStageName.VOICE),
         ),
         dry_run=True,
     )
@@ -349,17 +262,12 @@ def build_blueprint(
     directive resolution have their own dedicated test suites.
     """
 
-    return (
-        ResolvedVoiceBlueprint
-        .model_construct(
-            scene_number=scene_number,
-        )
+    return ResolvedVoiceBlueprint.model_construct(
+        scene_number=scene_number,
     )
 
 
-def build_blueprints() -> list[
-    ResolvedVoiceBlueprint
-]:
+def build_blueprints() -> list[ResolvedVoiceBlueprint]:
     """Build deliberately reversed blueprint ordering."""
 
     return [
@@ -377,64 +285,48 @@ def build_success_service(
 ) -> SyntheticVoiceGenerationService:
     """Build successful deterministic generation for two scenes."""
 
-    return (
-        SyntheticVoiceGenerationService(
-            specifications={
-                1: (
-                    SyntheticVoiceSpecification(
-                        duration_seconds=4.0,
-                        provider=provider_one,
-                        warning=warning_one,
-                    )
-                ),
-                2: (
-                    SyntheticVoiceSpecification(
-                        duration_seconds=6.0,
-                        provider=provider_two,
-                        warning=warning_two,
-                    )
-                ),
-            },
-        )
+    return SyntheticVoiceGenerationService(
+        specifications={
+            1: (
+                SyntheticVoiceSpecification(
+                    duration_seconds=4.0,
+                    provider=provider_one,
+                    warning=warning_one,
+                )
+            ),
+            2: (
+                SyntheticVoiceSpecification(
+                    duration_seconds=6.0,
+                    provider=provider_two,
+                    warning=warning_two,
+                )
+            ),
+        },
     )
 
 
 def test_requires_blueprints() -> None:
-    service = (
-        SyntheticVoiceGenerationService(
-            specifications={},
-        )
+    service = SyntheticVoiceGenerationService(
+        specifications={},
     )
 
     try:
         VoicePipelineStage(
             blueprints=[],
             generation_service=service,
-            timeline_service=(
-                VoiceTimelineService()
-            ),
+            timeline_service=(VoiceTimelineService()),
         )
     except ValueError as error:
-        assert (
-            "at least one resolved voice blueprint"
-            in str(error)
-        )
+        assert "at least one resolved voice blueprint" in str(error)
     else:
-        raise AssertionError(
-            "Empty blueprint collection "
-            "must fail."
-        )
+        raise AssertionError("Empty blueprint collection " "must fail.")
 
 
 def test_duplicate_blueprints_rejected() -> None:
-    service = (
-        SyntheticVoiceGenerationService(
-            specifications={
-                1: (
-                    SyntheticVoiceSpecification()
-                ),
-            },
-        )
+    service = SyntheticVoiceGenerationService(
+        specifications={
+            1: (SyntheticVoiceSpecification()),
+        },
     )
 
     try:
@@ -444,37 +336,22 @@ def test_duplicate_blueprints_rejected() -> None:
                 build_blueprint(1),
             ],
             generation_service=service,
-            timeline_service=(
-                VoiceTimelineService()
-            ),
+            timeline_service=(VoiceTimelineService()),
         )
     except ValueError as error:
-        assert (
-            "duplicate scene blueprints"
-            in str(error)
-        )
+        assert "duplicate scene blueprints" in str(error)
     else:
-        raise AssertionError(
-            "Duplicate voice blueprints "
-            "must fail."
-        )
+        raise AssertionError("Duplicate voice blueprints " "must fail.")
 
 
 def test_stage_name() -> None:
     stage = VoicePipelineStage(
         blueprints=build_blueprints(),
-        generation_service=(
-            build_success_service()
-        ),
-        timeline_service=(
-            VoiceTimelineService()
-        ),
+        generation_service=(build_success_service()),
+        timeline_service=(VoiceTimelineService()),
     )
 
-    assert (
-        stage.stage_name
-        == PipelineStageName.VOICE
-    )
+    assert stage.stage_name == PipelineStageName.VOICE
 
 
 def test_missing_scenes_fails() -> None:
@@ -489,51 +366,31 @@ def test_missing_scenes_fails() -> None:
         generation_service=(
             SyntheticVoiceGenerationService(
                 specifications={
-                    1: (
-                        SyntheticVoiceSpecification()
-                    ),
+                    1: (SyntheticVoiceSpecification()),
                 },
             )
         ),
-        timeline_service=(
-            VoiceTimelineService()
-        ),
+        timeline_service=(VoiceTimelineService()),
     )
 
-    result = stage.execute(
-        build_context(
-            job
-        )
-    )
+    result = stage.execute(build_context(job))
 
-    assert (
-        result.status
-        == PipelineStageStatus.FAILED
-    )
+    assert result.status == PipelineStageStatus.FAILED
 
     assert result.errors == [
         "Voice stage requires planned scenes.",
     ]
 
-    assert (
-        result.metadata[
-            "result_count"
-        ]
-        == 0
-    )
+    assert result.metadata["result_count"] == 0
 
 
 def test_missing_blueprint_coverage_fails() -> None:
     job = build_job()
 
-    service = (
-        SyntheticVoiceGenerationService(
-            specifications={
-                1: (
-                    SyntheticVoiceSpecification()
-                ),
-            },
-        )
+    service = SyntheticVoiceGenerationService(
+        specifications={
+            1: (SyntheticVoiceSpecification()),
+        },
     )
 
     stage = VoicePipelineStage(
@@ -541,43 +398,24 @@ def test_missing_blueprint_coverage_fails() -> None:
             build_blueprint(1),
         ],
         generation_service=service,
-        timeline_service=(
-            VoiceTimelineService()
-        ),
+        timeline_service=(VoiceTimelineService()),
     )
 
-    result = stage.execute(
-        build_context(
-            job
-        )
-    )
+    result = stage.execute(build_context(job))
 
-    assert (
-        result.status
-        == PipelineStageStatus.FAILED
-    )
+    assert result.status == PipelineStageStatus.FAILED
 
     assert result.errors == [
-        (
-            "Voice stage is missing resolved "
-            "blueprints for scene(s): 2."
-        ),
+        ("Voice stage is missing resolved " "blueprints for scene(s): 2."),
     ]
 
-    assert (
-        service.generated_scene_numbers
-        == []
-    )
+    assert service.generated_scene_numbers == []
 
 
 def test_unknown_blueprint_scene_fails() -> None:
     job = build_job()
 
-    service = (
-        SyntheticVoiceGenerationService(
-            specifications={}
-        )
-    )
+    service = SyntheticVoiceGenerationService(specifications={})
 
     stage = VoicePipelineStage(
         blueprints=[
@@ -586,308 +424,165 @@ def test_unknown_blueprint_scene_fails() -> None:
             build_blueprint(3),
         ],
         generation_service=service,
-        timeline_service=(
-            VoiceTimelineService()
-        ),
+        timeline_service=(VoiceTimelineService()),
     )
 
-    result = stage.execute(
-        build_context(
-            job
-        )
-    )
+    result = stage.execute(build_context(job))
 
-    assert (
-        result.status
-        == PipelineStageStatus.FAILED
-    )
+    assert result.status == PipelineStageStatus.FAILED
 
     assert result.errors == [
-        (
-            "Voice stage received blueprints "
-            "for unknown scene(s): 3."
-        ),
+        ("Voice stage received blueprints " "for unknown scene(s): 3."),
     ]
 
-    assert (
-        service.generated_scene_numbers
-        == []
-    )
+    assert service.generated_scene_numbers == []
 
 
 def test_successful_voice_generation() -> None:
     job = build_job()
 
-    service = (
-        build_success_service()
-    )
+    service = build_success_service()
 
     stage = VoicePipelineStage(
         blueprints=build_blueprints(),
         generation_service=service,
-        timeline_service=(
-            VoiceTimelineService()
-        ),
+        timeline_service=(VoiceTimelineService()),
     )
 
-    result = stage.execute(
-        build_context(
-            job
-        )
-    )
+    result = stage.execute(build_context(job))
 
-    assert (
-        result.status
-        == PipelineStageStatus.COMPLETED
-    )
+    assert result.status == PipelineStageStatus.COMPLETED
 
     assert result.successful is True
 
     assert result.errors == []
 
-    assert (
-        job.voice_status
-        == VoiceStatus.READY
-    )
+    assert job.voice_status == VoiceStatus.READY
 
-    assert (
-        job.voice_file
-        == "outputs/audio/scene_001.wav"
-    )
+    assert job.voice_file == "outputs/audio/scene_001.wav"
 
-    assert (
-        job.voice_provider
-        == "synthetic-voice"
-    )
+    assert job.voice_provider == "synthetic-voice"
 
-    assert (
-        job.audio_timeline
-        is not None
-    )
+    assert job.audio_timeline is not None
 
-    assert (
-        len(
-            job.audio_timeline.tracks
-        )
-        == 2
-    )
+    assert len(job.audio_timeline.tracks) == 2
 
-    assert (
-        result.metadata[
-            "result_count"
-        ]
-        == 2
-    )
+    assert result.metadata["result_count"] == 2
 
-    assert (
-        result.metadata[
-            "successful_count"
-        ]
-        == 2
-    )
+    assert result.metadata["successful_count"] == 2
 
-    assert (
-        result.metadata[
-            "failed_count"
-        ]
-        == 0
-    )
+    assert result.metadata["failed_count"] == 0
 
-    assert (
-        result.metadata[
-            "timeline_attached"
-        ]
-        is True
-    )
+    assert result.metadata["timeline_attached"] is True
 
 
 def test_generation_order_is_deterministic() -> None:
     job = build_job()
 
-    service = (
-        build_success_service()
-    )
+    service = build_success_service()
 
     stage = VoicePipelineStage(
         blueprints=build_blueprints(),
         generation_service=service,
-        timeline_service=(
-            VoiceTimelineService()
-        ),
+        timeline_service=(VoiceTimelineService()),
     )
 
-    result = stage.execute(
-        build_context(
-            job
-        )
-    )
+    result = stage.execute(build_context(job))
 
-    assert (
-        result.status
-        == PipelineStageStatus.COMPLETED
-    )
+    assert result.status == PipelineStageStatus.COMPLETED
 
-    assert (
-        service.generated_scene_numbers
-        == [
-            1,
-            2,
-        ]
-    )
+    assert service.generated_scene_numbers == [
+        1,
+        2,
+    ]
 
 
 def test_scene_start_times_are_sequential() -> None:
     job = build_job()
 
-    service = (
-        build_success_service()
-    )
+    service = build_success_service()
 
     stage = VoicePipelineStage(
         blueprints=build_blueprints(),
         generation_service=service,
-        timeline_service=(
-            VoiceTimelineService()
-        ),
+        timeline_service=(VoiceTimelineService()),
     )
 
-    result = stage.execute(
-        build_context(
-            job
-        )
-    )
+    result = stage.execute(build_context(job))
 
-    assert (
-        result.status
-        == PipelineStageStatus.COMPLETED
-    )
+    assert result.status == PipelineStageStatus.COMPLETED
 
-    assert (
-        service.received_start_times
-        == [
-            0.0,
-            4.0,
-        ]
-    )
+    assert service.received_start_times == [
+        0.0,
+        4.0,
+    ]
 
-    assert (
-        job.audio_timeline
-        is not None
-    )
+    assert job.audio_timeline is not None
 
-    assert (
-        job.audio_timeline
-        .calculate_duration()
-        == 10.0
-    )
+    assert job.audio_timeline.calculate_duration() == 10.0
 
 
 def test_provider_override_is_normalized_and_forwarded() -> None:
     job = build_job()
 
-    service = (
-        build_success_service()
-    )
+    service = build_success_service()
 
     stage = VoicePipelineStage(
         blueprints=build_blueprints(),
         generation_service=service,
-        timeline_service=(
-            VoiceTimelineService()
-        ),
-        provider_name=(
-            "  synthetic-voice  "
-        ),
+        timeline_service=(VoiceTimelineService()),
+        provider_name=("  synthetic-voice  "),
     )
 
-    result = stage.execute(
-        build_context(
-            job
-        )
-    )
+    result = stage.execute(build_context(job))
 
-    assert (
-        result.status
-        == PipelineStageStatus.COMPLETED
-    )
+    assert result.status == PipelineStageStatus.COMPLETED
 
-    assert (
-        service.received_provider_names
-        == [
-            "synthetic-voice",
-            "synthetic-voice",
-        ]
-    )
+    assert service.received_provider_names == [
+        "synthetic-voice",
+        "synthetic-voice",
+    ]
 
 
 def test_empty_provider_override_becomes_none() -> None:
     job = build_job()
 
-    service = (
-        build_success_service()
-    )
+    service = build_success_service()
 
     stage = VoicePipelineStage(
         blueprints=build_blueprints(),
         generation_service=service,
-        timeline_service=(
-            VoiceTimelineService()
-        ),
+        timeline_service=(VoiceTimelineService()),
         provider_name="   ",
     )
 
-    result = stage.execute(
-        build_context(
-            job
-        )
-    )
+    result = stage.execute(build_context(job))
 
-    assert (
-        result.status
-        == PipelineStageStatus.COMPLETED
-    )
+    assert result.status == PipelineStageStatus.COMPLETED
 
-    assert (
-        service.received_provider_names
-        == [
-            None,
-            None,
-        ]
-    )
+    assert service.received_provider_names == [
+        None,
+        None,
+    ]
 
 
 def test_warnings_are_aggregated_and_deduplicated() -> None:
     job = build_job()
 
-    service = (
-        build_success_service(
-            warning_one=(
-                "Shared voice warning."
-            ),
-            warning_two=(
-                "Shared voice warning."
-            ),
-        )
+    service = build_success_service(
+        warning_one=("Shared voice warning."),
+        warning_two=("Shared voice warning."),
     )
 
     stage = VoicePipelineStage(
         blueprints=build_blueprints(),
         generation_service=service,
-        timeline_service=(
-            VoiceTimelineService()
-        ),
+        timeline_service=(VoiceTimelineService()),
     )
 
-    result = stage.execute(
-        build_context(
-            job
-        )
-    )
+    result = stage.execute(build_context(job))
 
-    assert (
-        result.status
-        == PipelineStageStatus.COMPLETED
-    )
+    assert result.status == PipelineStageStatus.COMPLETED
 
     assert result.warnings == [
         "Shared voice warning.",
@@ -897,48 +592,31 @@ def test_warnings_are_aggregated_and_deduplicated() -> None:
 def test_failed_generation_stops_pipeline() -> None:
     job = build_job()
 
-    service = (
-        SyntheticVoiceGenerationService(
-            specifications={
-                1: (
-                    SyntheticVoiceSpecification(
-                        provider=(
-                            "synthetic-voice"
-                        ),
-                        failure_message=(
-                            "Synthetic voice failure."
-                        ),
-                    )
-                ),
-                2: (
-                    SyntheticVoiceSpecification(
-                        provider=(
-                            "synthetic-voice"
-                        ),
-                    )
-                ),
-            },
-        )
+    service = SyntheticVoiceGenerationService(
+        specifications={
+            1: (
+                SyntheticVoiceSpecification(
+                    provider=("synthetic-voice"),
+                    failure_message=("Synthetic voice failure."),
+                )
+            ),
+            2: (
+                SyntheticVoiceSpecification(
+                    provider=("synthetic-voice"),
+                )
+            ),
+        },
     )
 
     stage = VoicePipelineStage(
         blueprints=build_blueprints(),
         generation_service=service,
-        timeline_service=(
-            VoiceTimelineService()
-        ),
+        timeline_service=(VoiceTimelineService()),
     )
 
-    result = stage.execute(
-        build_context(
-            job
-        )
-    )
+    result = stage.execute(build_context(job))
 
-    assert (
-        result.status
-        == PipelineStageStatus.FAILED
-    )
+    assert result.status == PipelineStageStatus.FAILED
 
     assert result.successful is False
 
@@ -946,219 +624,119 @@ def test_failed_generation_stops_pipeline() -> None:
         "Synthetic voice failure.",
     ]
 
-    assert (
-        service.generated_scene_numbers
-        == [
-            1,
-        ]
-    )
+    assert service.generated_scene_numbers == [
+        1,
+    ]
 
-    assert (
-        job.voice_status
-        == VoiceStatus.FAILED
-    )
+    assert job.voice_status == VoiceStatus.FAILED
 
-    assert (
-        job.voice_file
-        is None
-    )
+    assert job.voice_file is None
 
-    assert (
-        job.audio_timeline
-        is None
-    )
+    assert job.audio_timeline is None
 
-    assert (
-        result.metadata[
-            "result_count"
-        ]
-        == 1
-    )
+    assert result.metadata["result_count"] == 1
 
-    assert (
-        result.metadata[
-            "failed_count"
-        ]
-        == 1
-    )
+    assert result.metadata["failed_count"] == 1
 
-    assert (
-        result.metadata[
-            "timeline_attached"
-        ]
-        is False
-    )
+    assert result.metadata["timeline_attached"] is False
 
 
 def test_mixed_providers_do_not_claim_single_provider() -> None:
     job = build_job()
 
-    service = (
-        build_success_service(
-            provider_one="provider-a",
-            provider_two="provider-b",
-        )
+    service = build_success_service(
+        provider_one="provider-a",
+        provider_two="provider-b",
     )
 
     stage = VoicePipelineStage(
         blueprints=build_blueprints(),
         generation_service=service,
-        timeline_service=(
-            VoiceTimelineService()
-        ),
+        timeline_service=(VoiceTimelineService()),
     )
 
-    result = stage.execute(
-        build_context(
-            job
-        )
-    )
+    result = stage.execute(build_context(job))
 
-    assert (
-        result.status
-        == PipelineStageStatus.COMPLETED
-    )
+    assert result.status == PipelineStageStatus.COMPLETED
 
-    assert (
-        job.voice_provider
-        is None
-    )
+    assert job.voice_provider is None
 
-    assert (
-        result.metadata[
-            "providers"
-        ]
-        == [
-            "provider-a",
-            "provider-b",
-        ]
-    )
+    assert result.metadata["providers"] == [
+        "provider-a",
+        "provider-b",
+    ]
 
 
 def test_single_provider_is_recorded() -> None:
     job = build_job()
 
-    service = (
-        build_success_service(
-            provider_one="provider-a",
-            provider_two="provider-a",
-        )
+    service = build_success_service(
+        provider_one="provider-a",
+        provider_two="provider-a",
     )
 
     stage = VoicePipelineStage(
         blueprints=build_blueprints(),
         generation_service=service,
-        timeline_service=(
-            VoiceTimelineService()
-        ),
+        timeline_service=(VoiceTimelineService()),
     )
 
-    result = stage.execute(
-        build_context(
-            job
-        )
-    )
+    result = stage.execute(build_context(job))
 
-    assert (
-        result.status
-        == PipelineStageStatus.COMPLETED
-    )
+    assert result.status == PipelineStageStatus.COMPLETED
 
-    assert (
-        job.voice_provider
-        == "provider-a"
-    )
+    assert job.voice_provider == "provider-a"
 
 
 def test_generation_service_exception_propagates() -> None:
     job = build_job()
 
-    service = (
-        SyntheticVoiceGenerationService(
-            specifications={
-                1: (
-                    SyntheticVoiceSpecification()
-                ),
-                2: (
-                    SyntheticVoiceSpecification()
-                ),
-            },
-            raise_error=RuntimeError(
-                "Synthetic generation exception."
-            ),
-        )
+    service = SyntheticVoiceGenerationService(
+        specifications={
+            1: (SyntheticVoiceSpecification()),
+            2: (SyntheticVoiceSpecification()),
+        },
+        raise_error=RuntimeError("Synthetic generation exception."),
     )
 
     stage = VoicePipelineStage(
         blueprints=build_blueprints(),
         generation_service=service,
-        timeline_service=(
-            VoiceTimelineService()
-        ),
+        timeline_service=(VoiceTimelineService()),
     )
 
     try:
-        stage.execute(
-            build_context(
-                job
-            )
-        )
+        stage.execute(build_context(job))
     except RuntimeError as error:
-        assert (
-            str(error)
-            == (
-                "Synthetic generation "
-                "exception."
-            )
-        )
+        assert str(error) == ("Synthetic generation " "exception.")
     else:
         raise AssertionError(
-            "Unexpected voice-generation "
-            "exceptions must propagate."
+            "Unexpected voice-generation " "exceptions must propagate."
         )
 
 
 def test_timeline_service_exception_propagates() -> None:
     job = build_job()
 
-    service = (
-        build_success_service()
-    )
+    service = build_success_service()
 
     stage = VoicePipelineStage(
         blueprints=build_blueprints(),
         generation_service=service,
-        timeline_service=(
-            RaisingVoiceTimelineService()
-        ),
+        timeline_service=(RaisingVoiceTimelineService()),
     )
 
     try:
-        stage.execute(
-            build_context(
-                job
-            )
-        )
+        stage.execute(build_context(job))
     except RuntimeError as error:
-        assert (
-            str(error)
-            == (
-                "Synthetic voice timeline "
-                "exception."
-            )
-        )
+        assert str(error) == ("Synthetic voice timeline " "exception.")
     else:
-        raise AssertionError(
-            "Unexpected voice-timeline "
-            "exceptions must propagate."
-        )
+        raise AssertionError("Unexpected voice-timeline " "exceptions must propagate.")
 
 
 def main() -> None:
     print()
-    print(
-        "Running Voice Pipeline Stage tests..."
-    )
+    print("Running Voice Pipeline Stage tests...")
     print()
 
     test_requires_blueprints()
@@ -1180,10 +758,7 @@ def main() -> None:
     test_timeline_service_exception_propagates()
 
     print()
-    print(
-        "Voice Pipeline Stage tests "
-        "completed successfully."
-    )
+    print("Voice Pipeline Stage tests " "completed successfully.")
 
 
 if __name__ == "__main__":

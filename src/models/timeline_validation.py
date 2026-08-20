@@ -26,21 +26,13 @@ class TimelineValidationCode(str, Enum):
     CLIP_NOT_READY = "clip_not_ready"
     MISSING_CLIP_SOURCE = "missing_clip_source"
 
-    MISSING_EDITING_BLUEPRINT = (
-        "missing_editing_blueprint"
-    )
+    MISSING_EDITING_BLUEPRINT = "missing_editing_blueprint"
 
-    UNRESOLVED_EDITING_BLUEPRINT = (
-        "unresolved_editing_blueprint"
-    )
+    UNRESOLVED_EDITING_BLUEPRINT = "unresolved_editing_blueprint"
 
-    EDITING_BLUEPRINT_SCENE_MISMATCH = (
-        "editing_blueprint_scene_mismatch"
-    )
+    EDITING_BLUEPRINT_SCENE_MISMATCH = "editing_blueprint_scene_mismatch"
 
-    EDITING_BLUEPRINT_FALLBACK_USED = (
-        "editing_blueprint_fallback_used"
-    )
+    EDITING_BLUEPRINT_FALLBACK_USED = "editing_blueprint_fallback_used"
 
 
 class TimelineValidationIssue(MissionBaseModel):
@@ -104,6 +96,5 @@ class TimelineValidationResult(MissionBaseModel):
 
         return (
             self.enabled_item_count > 0
-            and self.render_ready_item_count
-            == self.enabled_item_count
+            and self.render_ready_item_count == self.enabled_item_count
         )

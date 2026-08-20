@@ -77,13 +77,8 @@ class StageResult(MissionBaseModel):
         for value in values:
             cleaned = value.strip()
 
-            if (
-                cleaned
-                and cleaned not in normalized
-            ):
-                normalized.append(
-                    cleaned
-                )
+            if cleaned and cleaned not in normalized:
+                normalized.append(cleaned)
 
         return normalized
 
@@ -93,25 +88,11 @@ class StageResult(MissionBaseModel):
     ) -> StageResult:
         """Prevent contradictory terminal stage results."""
 
-        if (
-            self.status
-            == PipelineStageStatus.FAILED
-            and not self.errors
-        ):
-            raise ValueError(
-                "Failed pipeline stage requires "
-                "at least one error."
-            )
+        if self.status == PipelineStageStatus.FAILED and not self.errors:
+            raise ValueError("Failed pipeline stage requires " "at least one error.")
 
-        if (
-            self.status
-            == PipelineStageStatus.COMPLETED
-            and self.errors
-        ):
-            raise ValueError(
-                "Completed pipeline stage cannot "
-                "contain errors."
-            )
+        if self.status == PipelineStageStatus.COMPLETED and self.errors:
+            raise ValueError("Completed pipeline stage cannot " "contain errors.")
 
         return self
 
@@ -121,10 +102,7 @@ class StageResult(MissionBaseModel):
     ) -> bool:
         """Return whether the stage completed successfully."""
 
-        return (
-            self.status
-            == PipelineStageStatus.COMPLETED
-        )
+        return self.status == PipelineStageStatus.COMPLETED
 
     @property
     def failed(
@@ -132,10 +110,7 @@ class StageResult(MissionBaseModel):
     ) -> bool:
         """Return whether the stage explicitly failed."""
 
-        return (
-            self.status
-            == PipelineStageStatus.FAILED
-        )
+        return self.status == PipelineStageStatus.FAILED
 
     @property
     def waiting_for_user(
@@ -143,10 +118,7 @@ class StageResult(MissionBaseModel):
     ) -> bool:
         """Return whether execution is blocked on user input."""
 
-        return (
-            self.status
-            == PipelineStageStatus.WAITING_FOR_USER
-        )
+        return self.status == PipelineStageStatus.WAITING_FOR_USER
 
     @property
     def attempted_execution_count(
@@ -160,10 +132,7 @@ class StageResult(MissionBaseModel):
         retry_count=2 -> three executions
         """
 
-        return (
-            self.retry_count
-            + 1
-        )
+        return self.retry_count + 1
 
     def with_retry_count(
         self,
@@ -177,9 +146,7 @@ class StageResult(MissionBaseModel):
         """
 
         if retry_count < 0:
-            raise ValueError(
-                "Retry count cannot be negative."
-            )
+            raise ValueError("Retry count cannot be negative.")
 
         return self.model_copy(
             update={

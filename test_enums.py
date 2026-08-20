@@ -1,7 +1,7 @@
 from src.models.enums import (
-    ProductionMode,
-    Platform,
     JobStatus,
+    Platform,
+    ProductionMode,
     WorkflowStage,
 )
 

@@ -23,9 +23,7 @@ from src.services.ffmpeg_execution_service import (
 )
 
 
-class ScriptedExecutionService(
-    FFmpegExecutionService
-):
+class ScriptedExecutionService(FFmpegExecutionService):
     """
     FFmpeg execution service using a deterministic Python subprocess.
 
@@ -44,12 +42,8 @@ class ScriptedExecutionService(
         terminate_grace_seconds: float = 1.0,
     ) -> None:
         super().__init__(
-            default_timeout_seconds=(
-                default_timeout_seconds
-            ),
-            terminate_grace_seconds=(
-                terminate_grace_seconds
-            ),
+            default_timeout_seconds=(default_timeout_seconds),
+            terminate_grace_seconds=(terminate_grace_seconds),
         )
 
         type(self)._active_script = script
@@ -74,11 +68,7 @@ def build_command_plan(
 ) -> FFmpegCommandPlan:
     """Build the minimum valid command plan needed by the executor."""
 
-    resolved_executable = (
-        executable
-        if executable is not None
-        else sys.executable
-    )
+    resolved_executable = executable if executable is not None else sys.executable
 
     return FFmpegCommandPlan(
         executable=resolved_executable,
@@ -88,19 +78,10 @@ def build_command_plan(
             video_input_count=0,
             audio_input_count=0,
         ),
-        filter_complex=(
-            "[0:v]null[video_final];"
-            "[1:a]anull[audio_final]"
-        ),
-        video_output_label=(
-            "video_final"
-        ),
-        audio_output_label=(
-            "audio_final"
-        ),
-        output_file=(
-            output_file.as_posix()
-        ),
+        filter_complex=("[0:v]null[video_final];" "[1:a]anull[audio_final]"),
+        video_output_label=("video_final"),
+        audio_output_label=("audio_final"),
+        output_file=(output_file.as_posix()),
         arguments=[
             "-version",
             output_file.as_posix(),
@@ -113,33 +94,13 @@ def test_progress_parsers() -> None:
 
     service = FFmpegExecutionService()
 
-    assert (
-        service._parse_ffmpeg_timestamp(
-            "00:00:01.500000"
-        )
-        == 1.5
-    )
+    assert service._parse_ffmpeg_timestamp("00:00:01.500000") == 1.5
 
-    assert (
-        service._parse_ffmpeg_timestamp(
-            "00:01:30.000000"
-        )
-        == 90.0
-    )
+    assert service._parse_ffmpeg_timestamp("00:01:30.000000") == 90.0
 
-    assert (
-        service._parse_ffmpeg_timestamp(
-            "01:00:00.000000"
-        )
-        == 3600.0
-    )
+    assert service._parse_ffmpeg_timestamp("01:00:00.000000") == 3600.0
 
-    assert (
-        service._parse_ffmpeg_timestamp(
-            "invalid"
-        )
-        is None
-    )
+    assert service._parse_ffmpeg_timestamp("invalid") is None
 
     assert (
         service._extract_processed_seconds(
@@ -162,9 +123,7 @@ def test_progress_parsers() -> None:
     assert (
         service._extract_processed_seconds(
             {
-                "out_time": (
-                    "00:00:03.250000"
-                ),
+                "out_time": ("00:00:03.250000"),
             }
         )
         == 3.25
@@ -194,37 +153,15 @@ def test_progress_parsers() -> None:
         == 0.0
     )
 
-    assert (
-        service._parse_speed(
-            "2.5x"
-        )
-        == 2.5
-    )
+    assert service._parse_speed("2.5x") == 2.5
 
-    assert (
-        service._parse_speed(
-            "N/A"
-        )
-        is None
-    )
+    assert service._parse_speed("N/A") is None
 
-    assert (
-        service._parse_bitrate_kbps(
-            "128.0kbits/s"
-        )
-        == 128.0
-    )
+    assert service._parse_bitrate_kbps("128.0kbits/s") == 128.0
 
-    assert (
-        service._parse_bitrate_kbps(
-            "1.5Mbits/s"
-        )
-        == 1500.0
-    )
+    assert service._parse_bitrate_kbps("1.5Mbits/s") == 1500.0
 
-    print(
-        "Progress parser tests passed."
-    )
+    print("Progress parser tests passed.")
 
 
 def test_successful_execution(
@@ -232,10 +169,7 @@ def test_successful_execution(
 ) -> None:
     """Test successful subprocess execution and output validation."""
 
-    output_file = (
-        temporary_directory
-        / "success.mp4"
-    )
+    output_file = temporary_directory / "success.mp4"
 
     script = (
         "import pathlib,sys,time;"
@@ -254,30 +188,19 @@ def test_successful_execution(
         "sys.exit(0)"
     )
 
-    service = ScriptedExecutionService(
-        script
-    )
+    service = ScriptedExecutionService(script)
 
-    progress_events: list[
-        RenderProgress
-    ] = []
+    progress_events: list[RenderProgress] = []
 
     result = service.execute(
-        build_command_plan(
-            output_file
-        ),
+        build_command_plan(output_file),
         total_duration_seconds=1.0,
-        progress_callback=(
-            progress_events.append
-        ),
+        progress_callback=(progress_events.append),
     )
 
     assert result.success is True
 
-    assert (
-        result.status
-        == FFmpegExecutionStatus.SUCCEEDED
-    )
+    assert result.status == FFmpegExecutionStatus.SUCCEEDED
 
     assert result.exit_code == 0
 
@@ -285,10 +208,7 @@ def test_successful_execution(
 
     assert result.has_output is True
 
-    assert (
-        result.output_size_bytes
-        is not None
-    )
+    assert result.output_size_bytes is not None
 
     assert result.output_size_bytes > 0
 
@@ -296,45 +216,23 @@ def test_successful_execution(
 
     assert output_file.is_file()
 
-    assert (
-        result.progress.status
-        == RenderProgressStatus.COMPLETED
-    )
+    assert result.progress.status == RenderProgressStatus.COMPLETED
 
-    assert (
-        result.progress.progress_percent
-        == 100.0
-    )
+    assert result.progress.progress_percent == 100.0
 
-    assert len(
-        progress_events
-    ) >= 3
+    assert len(progress_events) >= 3
 
-    assert (
-        progress_events[0].status
-        == RenderProgressStatus.STARTING
-    )
+    assert progress_events[0].status == RenderProgressStatus.STARTING
 
-    assert (
-        progress_events[-1].status
-        == RenderProgressStatus.COMPLETED
-    )
+    assert progress_events[-1].status == RenderProgressStatus.COMPLETED
 
     assert any(
-        event.status
-        == RenderProgressStatus.RUNNING
-        for event in progress_events
+        event.status == RenderProgressStatus.RUNNING for event in progress_events
     )
 
-    assert any(
-        event.processed_duration_seconds
-        >= 0.5
-        for event in progress_events
-    )
+    assert any(event.processed_duration_seconds >= 0.5 for event in progress_events)
 
-    print(
-        "Successful execution test passed."
-    )
+    print("Successful execution test passed.")
 
 
 def test_non_zero_exit(
@@ -342,10 +240,7 @@ def test_non_zero_exit(
 ) -> None:
     """Test normalization of an FFmpeg process failure."""
 
-    output_file = (
-        temporary_directory
-        / "failed.mp4"
-    )
+    output_file = temporary_directory / "failed.mp4"
 
     script = (
         "import sys;"
@@ -356,46 +251,28 @@ def test_non_zero_exit(
         "sys.exit(7)"
     )
 
-    service = ScriptedExecutionService(
-        script
-    )
+    service = ScriptedExecutionService(script)
 
     result = service.execute(
-        build_command_plan(
-            output_file
-        ),
+        build_command_plan(output_file),
         total_duration_seconds=1.0,
     )
 
     assert result.success is False
 
-    assert (
-        result.status
-        == FFmpegExecutionStatus.FAILED
-    )
+    assert result.status == FFmpegExecutionStatus.FAILED
 
     assert result.exit_code == 7
 
-    assert (
-        result.error_message
-        is not None
-    )
+    assert result.error_message is not None
 
-    assert (
-        "synthetic ffmpeg failure"
-        in result.error_message
-    )
+    assert "synthetic ffmpeg failure" in result.error_message
 
-    assert (
-        result.progress.status
-        == RenderProgressStatus.FAILED
-    )
+    assert result.progress.status == RenderProgressStatus.FAILED
 
     assert result.output_exists is False
 
-    print(
-        "Non-zero exit test passed."
-    )
+    print("Non-zero exit test passed.")
 
 
 def test_missing_output(
@@ -403,10 +280,7 @@ def test_missing_output(
 ) -> None:
     """Reject successful process exit when output was not created."""
 
-    output_file = (
-        temporary_directory
-        / "missing.mp4"
-    )
+    output_file = temporary_directory / "missing.mp4"
 
     script = (
         "import sys;"
@@ -415,46 +289,26 @@ def test_missing_output(
         "sys.exit(0)"
     )
 
-    service = ScriptedExecutionService(
-        script
-    )
+    service = ScriptedExecutionService(script)
 
     result = service.execute(
-        build_command_plan(
-            output_file
-        ),
+        build_command_plan(output_file),
         total_duration_seconds=1.0,
     )
 
     assert result.success is False
 
-    assert (
-        result.status
-        == FFmpegExecutionStatus.FAILED
-    )
+    assert result.status == FFmpegExecutionStatus.FAILED
 
     assert result.exit_code == 0
 
-    assert (
-        result.error_message
-        is not None
-    )
+    assert result.error_message is not None
 
-    assert (
-        "does not exist"
-        in result.error_message
-    )
+    assert "does not exist" in result.error_message
 
-    assert (
-        result.metadata.get(
-            "failure_stage"
-        )
-        == "output_presence"
-    )
+    assert result.metadata.get("failure_stage") == "output_presence"
 
-    print(
-        "Missing output test passed."
-    )
+    print("Missing output test passed.")
 
 
 def test_empty_output(
@@ -462,10 +316,7 @@ def test_empty_output(
 ) -> None:
     """Reject zero-byte renderer output."""
 
-    output_file = (
-        temporary_directory
-        / "empty.mp4"
-    )
+    output_file = temporary_directory / "empty.mp4"
 
     script = (
         "import pathlib,sys;"
@@ -476,46 +327,26 @@ def test_empty_output(
         "sys.exit(0)"
     )
 
-    service = ScriptedExecutionService(
-        script
-    )
+    service = ScriptedExecutionService(script)
 
     result = service.execute(
-        build_command_plan(
-            output_file
-        ),
+        build_command_plan(output_file),
         total_duration_seconds=1.0,
     )
 
     assert result.success is False
 
-    assert (
-        result.status
-        == FFmpegExecutionStatus.FAILED
-    )
+    assert result.status == FFmpegExecutionStatus.FAILED
 
     assert result.exit_code == 0
 
-    assert (
-        result.error_message
-        is not None
-    )
+    assert result.error_message is not None
 
-    assert (
-        "empty"
-        in result.error_message.lower()
-    )
+    assert "empty" in result.error_message.lower()
 
-    assert (
-        result.metadata.get(
-            "failure_stage"
-        )
-        == "output_size"
-    )
+    assert result.metadata.get("failure_stage") == "output_size"
 
-    print(
-        "Empty output test passed."
-    )
+    print("Empty output test passed.")
 
 
 def test_timeout(
@@ -523,10 +354,7 @@ def test_timeout(
 ) -> None:
     """Test timeout termination and typed timeout result."""
 
-    output_file = (
-        temporary_directory
-        / "timeout.mp4"
-    )
+    output_file = temporary_directory / "timeout.mp4"
 
     script = (
         "import time;"
@@ -542,43 +370,24 @@ def test_timeout(
     )
 
     result = service.execute(
-        build_command_plan(
-            output_file
-        ),
+        build_command_plan(output_file),
         total_duration_seconds=10.0,
         timeout_seconds=0.25,
     )
 
     assert result.success is False
 
-    assert (
-        result.status
-        == FFmpegExecutionStatus.TIMED_OUT
-    )
+    assert result.status == FFmpegExecutionStatus.TIMED_OUT
 
-    assert (
-        result.progress.status
-        == RenderProgressStatus.TIMED_OUT
-    )
+    assert result.progress.status == RenderProgressStatus.TIMED_OUT
 
-    assert (
-        result.error_message
-        is not None
-    )
+    assert result.error_message is not None
 
-    assert (
-        "timeout"
-        in result.error_message.lower()
-    )
+    assert "timeout" in result.error_message.lower()
 
-    assert (
-        result.progress.progress_percent
-        < 100.0
-    )
+    assert result.progress.progress_percent < 100.0
 
-    print(
-        "Timeout test passed."
-    )
+    print("Timeout test passed.")
 
 
 def test_cancellation(
@@ -586,10 +395,7 @@ def test_cancellation(
 ) -> None:
     """Test cooperative cancellation."""
 
-    output_file = (
-        temporary_directory
-        / "cancelled.mp4"
-    )
+    output_file = temporary_directory / "cancelled.mp4"
 
     script = (
         "import time;"
@@ -613,42 +419,24 @@ def test_cancellation(
     )
 
     result = service.execute(
-        build_command_plan(
-            output_file
-        ),
+        build_command_plan(output_file),
         total_duration_seconds=10.0,
-        cancellation_check=(
-            cancellation_check
-        ),
+        cancellation_check=(cancellation_check),
     )
 
     assert result.success is False
 
-    assert (
-        result.status
-        == FFmpegExecutionStatus.CANCELLED
-    )
+    assert result.status == FFmpegExecutionStatus.CANCELLED
 
-    assert (
-        result.progress.status
-        == RenderProgressStatus.CANCELLED
-    )
+    assert result.progress.status == RenderProgressStatus.CANCELLED
 
-    assert (
-        result.error_message
-        is not None
-    )
+    assert result.error_message is not None
 
-    assert (
-        "cancel"
-        in result.error_message.lower()
-    )
+    assert "cancel" in result.error_message.lower()
 
     assert checks >= 3
 
-    print(
-        "Cancellation test passed."
-    )
+    print("Cancellation test passed.")
 
 
 def test_process_start_failure(
@@ -656,22 +444,14 @@ def test_process_start_failure(
 ) -> None:
     """Test executable-not-found normalization."""
 
-    output_file = (
-        temporary_directory
-        / "start_failure.mp4"
-    )
+    output_file = temporary_directory / "start_failure.mp4"
 
     command_plan = build_command_plan(
         output_file,
-        executable=(
-            "definitely_missing_ffmpeg_"
-            "executable_12345"
-        ),
+        executable=("definitely_missing_ffmpeg_" "executable_12345"),
     )
 
-    service = (
-        FFmpegExecutionService()
-    )
+    service = FFmpegExecutionService()
 
     result = service.execute(
         command_plan,
@@ -680,33 +460,17 @@ def test_process_start_failure(
 
     assert result.success is False
 
-    assert (
-        result.status
-        == FFmpegExecutionStatus.FAILED
-    )
+    assert result.status == FFmpegExecutionStatus.FAILED
 
     assert result.exit_code is None
 
-    assert (
-        result.error_message
-        is not None
-    )
+    assert result.error_message is not None
 
-    assert (
-        "Could not start FFmpeg process"
-        in result.error_message
-    )
+    assert "Could not start FFmpeg process" in result.error_message
 
-    assert (
-        result.metadata.get(
-            "failure_stage"
-        )
-        == "process_start"
-    )
+    assert result.metadata.get("failure_stage") == "process_start"
 
-    print(
-        "Process-start failure test passed."
-    )
+    print("Process-start failure test passed.")
 
 
 def test_progress_callback_failure_isolated(
@@ -714,10 +478,7 @@ def test_progress_callback_failure_isolated(
 ) -> None:
     """A broken UI callback must not kill a successful render."""
 
-    output_file = (
-        temporary_directory
-        / "callback.mp4"
-    )
+    output_file = temporary_directory / "callback.mp4"
 
     script = (
         "import pathlib,sys;"
@@ -739,22 +500,14 @@ def test_progress_callback_failure_isolated(
 
         callback_count += 1
 
-        raise RuntimeError(
-            "Synthetic callback failure."
-        )
+        raise RuntimeError("Synthetic callback failure.")
 
-    service = ScriptedExecutionService(
-        script
-    )
+    service = ScriptedExecutionService(script)
 
     result = service.execute(
-        build_command_plan(
-            output_file
-        ),
+        build_command_plan(output_file),
         total_duration_seconds=1.0,
-        progress_callback=(
-            broken_callback
-        ),
+        progress_callback=(broken_callback),
     )
 
     assert result.success is True
@@ -763,53 +516,35 @@ def test_progress_callback_failure_isolated(
 
     assert output_file.exists()
 
-    print(
-        "Callback isolation test passed."
-    )
+    print("Callback isolation test passed.")
 
 
 def test_progress_snapshot() -> None:
     """Test conversion of raw FFmpeg progress to RenderProgress."""
 
-    service = (
-        FFmpegExecutionService()
+    service = FFmpegExecutionService()
+
+    start_time = __import__("time").perf_counter()
+
+    progress = service._progress_from_snapshot(
+        snapshot={
+            "frame": "15",
+            "fps": "30.0",
+            "out_time_us": "500000",
+            "total_size": "2048",
+            "bitrate": "128.0kbits/s",
+            "speed": "2.0x",
+            "progress": "continue",
+        },
+        total_duration_seconds=1.0,
+        start_time=start_time,
     )
 
-    start_time = (
-        __import__("time")
-        .perf_counter()
-    )
+    assert progress.status == RenderProgressStatus.RUNNING
 
-    progress = (
-        service._progress_from_snapshot(
-            snapshot={
-                "frame": "15",
-                "fps": "30.0",
-                "out_time_us": "500000",
-                "total_size": "2048",
-                "bitrate": "128.0kbits/s",
-                "speed": "2.0x",
-                "progress": "continue",
-            },
-            total_duration_seconds=1.0,
-            start_time=start_time,
-        )
-    )
+    assert progress.progress_percent == 50.0
 
-    assert (
-        progress.status
-        == RenderProgressStatus.RUNNING
-    )
-
-    assert (
-        progress.progress_percent
-        == 50.0
-    )
-
-    assert (
-        progress.processed_duration_seconds
-        == 0.5
-    )
+    assert progress.processed_duration_seconds == 0.5
 
     assert progress.frame == 15
 
@@ -817,19 +552,11 @@ def test_progress_snapshot() -> None:
 
     assert progress.speed == 2.0
 
-    assert (
-        progress.bitrate_kbps
-        == 128.0
-    )
+    assert progress.bitrate_kbps == 128.0
 
-    assert (
-        progress.output_size_bytes
-        == 2048
-    )
+    assert progress.output_size_bytes == 2048
 
-    print(
-        "Progress snapshot test passed."
-    )
+    print("Progress snapshot test passed.")
 
 
 def test_real_ffmpeg_smoke(
@@ -842,22 +569,14 @@ def test_real_ffmpeg_smoke(
     deterministic executor tests continue to run.
     """
 
-    ffmpeg_path = shutil.which(
-        "ffmpeg"
-    )
+    ffmpeg_path = shutil.which("ffmpeg")
 
     if ffmpeg_path is None:
-        print(
-            "Real FFmpeg smoke test skipped: "
-            "FFmpeg is unavailable."
-        )
+        print("Real FFmpeg smoke test skipped: " "FFmpeg is unavailable.")
 
         return
 
-    output_file = (
-        temporary_directory
-        / "real_ffmpeg_smoke.mp4"
-    )
+    output_file = temporary_directory / "real_ffmpeg_smoke.mp4"
 
     command_plan = FFmpegCommandPlan(
         executable=ffmpeg_path,
@@ -867,44 +586,22 @@ def test_real_ffmpeg_smoke(
             video_input_count=0,
             audio_input_count=0,
         ),
-        filter_complex=(
-            "[0:v]null[video_final];"
-            "[1:a]anull[audio_final]"
-        ),
-        video_output_label=(
-            "video_final"
-        ),
-        audio_output_label=(
-            "audio_final"
-        ),
-        output_file=(
-            output_file.as_posix()
-        ),
+        filter_complex=("[0:v]null[video_final];" "[1:a]anull[audio_final]"),
+        video_output_label=("video_final"),
+        audio_output_label=("audio_final"),
+        output_file=(output_file.as_posix()),
         arguments=[
             "-y",
             "-f",
             "lavfi",
             "-i",
-            (
-                "color="
-                "c=black:"
-                "s=160x120:"
-                "r=10:"
-                "d=1"
-            ),
+            ("color=" "c=black:" "s=160x120:" "r=10:" "d=1"),
             "-f",
             "lavfi",
             "-i",
-            (
-                "anullsrc="
-                "channel_layout=stereo:"
-                "sample_rate=44100"
-            ),
+            ("anullsrc=" "channel_layout=stereo:" "sample_rate=44100"),
             "-filter_complex",
-            (
-                "[0:v]null[video_final];"
-                "[1:a]anull[audio_final]"
-            ),
+            ("[0:v]null[video_final];" "[1:a]anull[audio_final]"),
             "-map",
             "[video_final]",
             "-map",
@@ -946,23 +643,16 @@ def test_real_ffmpeg_smoke(
 
     assert output_file.stat().st_size > 0
 
-    assert (
-        result.progress.status
-        == RenderProgressStatus.COMPLETED
-    )
+    assert result.progress.status == RenderProgressStatus.COMPLETED
 
-    print(
-        "Real FFmpeg integration test passed."
-    )
+    print("Real FFmpeg integration test passed.")
 
 
 def main() -> None:
     """Run the complete Sprint 18.6 execution test suite."""
 
     print()
-    print(
-        "Running FFmpeg Execution Service tests..."
-    )
+    print("Running FFmpeg Execution Service tests...")
     print()
 
     test_progress_parsers()
@@ -972,51 +662,28 @@ def main() -> None:
     with tempfile.TemporaryDirectory(
         prefix="mission_ffmpeg_tests_"
     ) as temporary_directory:
-        root = Path(
-            temporary_directory
-        )
+        root = Path(temporary_directory)
 
-        test_successful_execution(
-            root
-        )
+        test_successful_execution(root)
 
-        test_non_zero_exit(
-            root
-        )
+        test_non_zero_exit(root)
 
-        test_missing_output(
-            root
-        )
+        test_missing_output(root)
 
-        test_empty_output(
-            root
-        )
+        test_empty_output(root)
 
-        test_timeout(
-            root
-        )
+        test_timeout(root)
 
-        test_cancellation(
-            root
-        )
+        test_cancellation(root)
 
-        test_process_start_failure(
-            root
-        )
+        test_process_start_failure(root)
 
-        test_progress_callback_failure_isolated(
-            root
-        )
+        test_progress_callback_failure_isolated(root)
 
-        test_real_ffmpeg_smoke(
-            root
-        )
+        test_real_ffmpeg_smoke(root)
 
     print()
-    print(
-        "FFmpeg Execution Service automated "
-        "test suite completed successfully."
-    )
+    print("FFmpeg Execution Service automated " "test suite completed successfully.")
 
 
 if __name__ == "__main__":

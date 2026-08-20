@@ -53,7 +53,6 @@ from src.services.production_render_service import (
     ProductionRenderService,
 )
 
-
 SMOKE_DURATION_SECONDS = 3
 SMOKE_WIDTH = 640
 SMOKE_HEIGHT = 360
@@ -93,14 +92,10 @@ def _require_ffmpeg() -> tuple[str, str]:
     ffprobe = shutil.which("ffprobe")
 
     if ffmpeg is None:
-        raise RuntimeError(
-            "Real production render smoke requires ffmpeg."
-        )
+        raise RuntimeError("Real production render smoke requires ffmpeg.")
 
     if ffprobe is None:
-        raise RuntimeError(
-            "Real production render smoke requires ffprobe."
-        )
+        raise RuntimeError("Real production render smoke requires ffprobe.")
 
     return (
         ffmpeg,
@@ -211,9 +206,7 @@ def _preset_reference(
         resolved_preset_id=preset_id,
         found_exact_match=True,
         used_fallback=False,
-        implementation=dict(
-            implementation or {}
-        ),
+        implementation=dict(implementation or {}),
         metadata={},
     )
 
@@ -250,9 +243,7 @@ def _editing_blueprint(
         transition_in=(
             ResolvedTransitionInstruction(
                 preset=_preset_reference(
-                    directive_path=(
-                        "transition_in.preset_id"
-                    ),
+                    directive_path=("transition_in.preset_id"),
                     preset_id="transition.cut",
                     implementation={
                         "type": "cut",
@@ -265,9 +256,7 @@ def _editing_blueprint(
         transition_out=(
             ResolvedTransitionInstruction(
                 preset=_preset_reference(
-                    directive_path=(
-                        "transition_out.preset_id"
-                    ),
+                    directive_path=("transition_out.preset_id"),
                     preset_id="transition.cut",
                     implementation={
                         "type": "cut",
@@ -294,9 +283,7 @@ def _editing_blueprint(
         sound_effects=[],
         subtitles=ResolvedSubtitleInstruction(
             preset=_preset_reference(
-                directive_path=(
-                    "subtitles.preset_id"
-                ),
+                directive_path=("subtitles.preset_id"),
                 preset_id="subtitle.none",
             ),
             animation_preset=None,
@@ -320,25 +307,14 @@ def _video_timeline(
 
     clip = VideoClip(
         scene_number=1,
-        source_type=(
-            SceneSourceType.MANUAL_UPLOAD
-        ),
-        duration_seconds=(
-            SMOKE_DURATION_SECONDS
-        ),
-        prompt=(
-            "Real ProductionRenderService "
-            "FFmpeg integration smoke."
-        ),
+        source_type=(SceneSourceType.MANUAL_UPLOAD),
+        duration_seconds=(SMOKE_DURATION_SECONDS),
+        prompt=("Real ProductionRenderService " "FFmpeg integration smoke."),
         provider="F.4E synthetic fixture",
         local_file=source_file.as_posix(),
-        resolution=(
-            f"{SMOKE_WIDTH}x{SMOKE_HEIGHT}"
-        ),
+        resolution=(f"{SMOKE_WIDTH}x{SMOKE_HEIGHT}"),
         aspect_ratio="16:9",
-        source_status=(
-            SceneSourceStatus.READY
-        ),
+        source_status=(SceneSourceStatus.READY),
         status=VideoClipStatus.READY,
     )
 
@@ -346,9 +322,7 @@ def _video_timeline(
         clip=clip,
         scene_number=1,
         start_time_seconds=0.0,
-        end_time_seconds=float(
-            SMOKE_DURATION_SECONDS
-        ),
+        end_time_seconds=float(SMOKE_DURATION_SECONDS),
         track_index=0,
         layer_index=0,
         enabled=True,
@@ -366,16 +340,11 @@ def _video_timeline(
         items=[
             item,
         ],
-        output_resolution=(
-            f"{SMOKE_WIDTH}x{SMOKE_HEIGHT}"
-        ),
+        output_resolution=(f"{SMOKE_WIDTH}x{SMOKE_HEIGHT}"),
         frame_rate=SMOKE_FRAME_RATE,
     )
 
-    assert (
-        timeline.calculate_duration()
-        == float(SMOKE_DURATION_SECONDS)
-    )
+    assert timeline.calculate_duration() == float(SMOKE_DURATION_SECONDS)
 
     assert item.is_render_ready is True
 
@@ -392,9 +361,7 @@ def _audio_timeline(
         track_type=AudioTrackType.VOICEOVER,
         source_file=source_file.as_posix(),
         start_time_seconds=0.0,
-        duration_seconds=float(
-            SMOKE_DURATION_SECONDS
-        ),
+        duration_seconds=float(SMOKE_DURATION_SECONDS),
         volume=1.0,
         fade_in_seconds=0.0,
         fade_out_seconds=0.0,
@@ -415,10 +382,7 @@ def _audio_timeline(
         channels=2,
     )
 
-    assert (
-        timeline.calculate_duration()
-        == float(SMOKE_DURATION_SECONDS)
-    )
+    assert timeline.calculate_duration() == float(SMOKE_DURATION_SECONDS)
 
     return timeline
 
@@ -434,25 +398,16 @@ def _voice_blueprint() -> ResolvedVoiceBlueprint:
 
     return ResolvedVoiceBlueprint(
         scene_number=1,
-        status=(
-            VoiceBlueprintResolutionStatus.RESOLVED
-        ),
+        status=(VoiceBlueprintResolutionStatus.RESOLVED),
         profile=ResolvedVoiceProfileReference(
-            requested_profile_id=(
-                "voice.ffmpeg_smoke"
-            ),
-            resolved_profile_id=(
-                "voice.ffmpeg_smoke"
-            ),
-            display_name=(
-                "FFmpeg Smoke Voice"
-            ),
+            requested_profile_id=("voice.ffmpeg_smoke"),
+            resolved_profile_id=("voice.ffmpeg_smoke"),
+            display_name=("FFmpeg Smoke Voice"),
             found_exact_match=True,
             used_fallback=False,
         ),
         narration_text=(
-            "This is the real production render "
-            "integration smoke test."
+            "This is the real production render " "integration smoke test."
         ),
     )
 
@@ -470,11 +425,7 @@ def _probe_output(
             "-v",
             "error",
             "-show_entries",
-            (
-                "format=duration:"
-                "stream=index,codec_type,"
-                "codec_name,width,height"
-            ),
+            ("format=duration:" "stream=index,codec_type," "codec_name,width,height"),
             "-of",
             "default=noprint_wrappers=1",
             output_file.as_posix(),
@@ -509,23 +460,11 @@ def test_real_production_render_service_executes_ffmpeg(
         ffprobe,
     ) = _require_ffmpeg()
 
-    source_video = (
-        tmp_path
-        / "inputs"
-        / "scene_001.mp4"
-    )
+    source_video = tmp_path / "inputs" / "scene_001.mp4"
 
-    source_audio = (
-        tmp_path
-        / "inputs"
-        / "voice_001.wav"
-    )
+    source_audio = tmp_path / "inputs" / "voice_001.wav"
 
-    output_file = (
-        tmp_path
-        / "outputs"
-        / "production_render_smoke.mp4"
-    )
+    output_file = tmp_path / "outputs" / "production_render_smoke.mp4"
 
     _create_source_video(
         ffmpeg=ffmpeg,
@@ -550,20 +489,14 @@ def test_real_production_render_service_executes_ffmpeg(
         source_file=source_audio,
     )
 
-    voice_blueprint = (
-        _voice_blueprint()
-    )
+    voice_blueprint = _voice_blueprint()
 
     service = ProductionRenderService(
         ffmpeg_config=FFmpegConfig(
             ffmpeg_path=ffmpeg,
             ffprobe_path=ffprobe,
-            video_codec=(
-                FFmpegVideoCodec.LIBX264
-            ),
-            hardware_acceleration=(
-                FFmpegHardwareAcceleration.NONE
-            ),
+            video_codec=(FFmpegVideoCodec.LIBX264),
+            hardware_acceleration=(FFmpegHardwareAcceleration.NONE),
             timeout_seconds=60.0,
         ),
         output_file=output_file.as_posix(),
@@ -579,18 +512,13 @@ def test_real_production_render_service_executes_ffmpeg(
 
     assert result.success is True
 
-    assert (
-        result.status
-        == RenderStatus.COMPLETED
-    )
+    assert result.status == RenderStatus.COMPLETED
 
     assert result.render_engine == "ffmpeg"
 
     assert result.output_file is not None
 
-    rendered_file = Path(
-        result.output_file
-    )
+    rendered_file = Path(result.output_file)
 
     assert rendered_file == output_file
 
@@ -600,10 +528,7 @@ def test_real_production_render_service_executes_ffmpeg(
 
     assert result.render_time_seconds >= 0.0
 
-    assert (
-        result.duration_seconds
-        == SMOKE_DURATION_SECONDS
-    )
+    assert result.duration_seconds == SMOKE_DURATION_SECONDS
 
     probe_output = _probe_output(
         ffprobe=ffprobe,
@@ -616,12 +541,6 @@ def test_real_production_render_service_executes_ffmpeg(
 
     assert "codec_name=h264" in probe_output
 
-    assert (
-        f"width={SMOKE_WIDTH}"
-        in probe_output
-    )
+    assert f"width={SMOKE_WIDTH}" in probe_output
 
-    assert (
-        f"height={SMOKE_HEIGHT}"
-        in probe_output
-    )
+    assert f"height={SMOKE_HEIGHT}" in probe_output

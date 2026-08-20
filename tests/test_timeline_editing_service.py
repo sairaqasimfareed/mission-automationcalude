@@ -27,16 +27,11 @@ def build_clip(
 ) -> VideoClip:
     return VideoClip(
         scene_number=scene_number,
-        source_type=(
-            SceneSourceType.MANUAL_UPLOAD
-        ),
+        source_type=(SceneSourceType.MANUAL_UPLOAD),
         duration_seconds=duration_seconds,
         prompt=f"Scene {scene_number}",
         provider="Manual Upload",
-        local_file=(
-            "assets/videos/manual/"
-            f"{file_name}"
-        ),
+        local_file=("assets/videos/manual/" f"{file_name}"),
         source_status=SceneSourceStatus.READY,
         status=VideoClipStatus.READY,
     )
@@ -100,18 +95,14 @@ assert gap_result.is_valid is False
 assert gap_result.gap_duration_seconds > 0
 
 
-compacted_count = editor.compact_primary_track(
-    timeline
-)
+compacted_count = editor.compact_primary_track(timeline)
 
 assert compacted_count == 3
 assert timeline.items[0].start_time_seconds == 0.0
 assert timeline.items[1].start_time_seconds == 8.0
 assert timeline.items[2].start_time_seconds == 16.0
 
-compacted_result = validator.validate(
-    timeline
-)
+compacted_result = validator.validate(timeline)
 
 assert compacted_result.is_valid is True
 
@@ -128,22 +119,14 @@ replaced_item = editor.replace_scene_clip(
     replacement_clip=replacement_clip,
 )
 
-assert (
-    replaced_item.clip.local_file
-    == (
-        "assets/videos/manual/"
-        "scene_002_replacement.mp4"
-    )
+assert replaced_item.clip.local_file == (
+    "assets/videos/manual/" "scene_002_replacement.mp4"
 )
 
 assert replaced_item.duration_seconds == 12.0
 
 assert any(
-    clip.local_file
-    == (
-        "assets/videos/manual/"
-        "scene_002_replacement.mp4"
-    )
+    clip.local_file == ("assets/videos/manual/" "scene_002_replacement.mp4")
     for clip in timeline.clips
 )
 
@@ -152,9 +135,7 @@ editor.compact_primary_track(timeline)
 
 assert timeline.calculate_duration() == 30.0
 
-valid_after_replacement = validator.validate(
-    timeline
-)
+valid_after_replacement = validator.validate(timeline)
 
 assert valid_after_replacement.is_valid is True
 
@@ -169,17 +150,13 @@ assert len(timeline.items) == 2
 assert len(timeline.clips) == 2
 
 # Removing scene 2 leaves a gap until compacted.
-removed_result = validator.validate(
-    timeline
-)
+removed_result = validator.validate(timeline)
 
 assert removed_result.is_valid is False
 
 editor.compact_primary_track(timeline)
 
-final_result = validator.validate(
-    timeline
-)
+final_result = validator.validate(timeline)
 
 assert final_result.is_valid is True
 assert timeline.calculate_duration() == 18.0
@@ -192,13 +169,9 @@ try:
         new_start_time_seconds=5.0,
     )
 except KeyError:
-    print(
-        "Missing timeline scene successfully blocked."
-    )
+    print("Missing timeline scene successfully blocked.")
 else:
-    raise AssertionError(
-        "Missing timeline scene should fail."
-    )
+    raise AssertionError("Missing timeline scene should fail.")
 
 
 try:
@@ -208,16 +181,9 @@ try:
         new_start_time_seconds=-1.0,
     )
 except ValueError:
-    print(
-        "Negative timeline position successfully blocked."
-    )
+    print("Negative timeline position successfully blocked.")
 else:
-    raise AssertionError(
-        "Negative timeline position should fail."
-    )
+    raise AssertionError("Negative timeline position should fail.")
 
 
-print(
-    "Timeline Editing Service tests "
-    "completed successfully."
-)
+print("Timeline Editing Service tests " "completed successfully.")

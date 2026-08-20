@@ -28,9 +28,7 @@ class StockAcquisitionRequest(MissionBaseModel):
         normalized = value.strip()
 
         if not normalized:
-            raise ValueError(
-                "Stock acquisition project ID cannot be empty."
-            )
+            raise ValueError("Stock acquisition project ID cannot be empty.")
 
         return normalized
 
@@ -38,33 +36,16 @@ class StockAcquisitionRequest(MissionBaseModel):
     def validate_acquisition_request(
         self,
     ) -> StockAcquisitionRequest:
-        if (
-            self.scene.source_type
-            != SceneSourceType.STOCK_FOOTAGE
-        ):
-            raise ValueError(
-                "Stock acquisition requires a stock-footage scene."
-            )
+        if self.scene.source_type != SceneSourceType.STOCK_FOOTAGE:
+            raise ValueError("Stock acquisition requires a stock-footage scene.")
 
-        if (
-            self.candidate.source_type
-            != SceneSourceType.STOCK_FOOTAGE
-        ):
-            raise ValueError(
-                "Stock acquisition requires a stock-footage candidate."
-            )
+        if self.candidate.source_type != SceneSourceType.STOCK_FOOTAGE:
+            raise ValueError("Stock acquisition requires a stock-footage candidate.")
 
         if not self.candidate.approved:
-            raise ValueError(
-                "Stock acquisition requires an approved candidate."
-            )
+            raise ValueError("Stock acquisition requires an approved candidate.")
 
-        if (
-            self.candidate.source_url is None
-            or not self.candidate.source_url.strip()
-        ):
-            raise ValueError(
-                "Approved stock candidate requires a source URL."
-            )
+        if self.candidate.source_url is None or not self.candidate.source_url.strip():
+            raise ValueError("Approved stock candidate requires a source URL.")
 
         return self

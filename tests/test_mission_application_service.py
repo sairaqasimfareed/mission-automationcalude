@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, TypeVar, cast
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import pytest
@@ -76,10 +76,8 @@ from src.shared.exceptions import ConfigurationError
 from src.shared.llm.models import LLMCallResult, LLMCallStatus, LLMProvider
 from src.shared.llm.request import LLMRequest
 
-T = TypeVar("T")
 
-
-def _as(
+def _as[T](
     dependency_type: type[T],
     value: object,
 ) -> T:

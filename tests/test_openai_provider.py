@@ -17,9 +17,7 @@ class FakeResponses:
     ) -> Any:
         assert kwargs["model"] == "test-model"
         assert kwargs["input"] == "Generate a response."
-        assert kwargs["instructions"] == (
-            "You are a test assistant."
-        )
+        assert kwargs["instructions"] == ("You are a test assistant.")
         assert kwargs["max_output_tokens"] == 200
 
         return SimpleNamespace(
@@ -43,7 +41,7 @@ class FakeClient:
         self,
         *,
         timeout: int,
-    ) -> "FakeClient":
+    ) -> FakeClient:
         self.timeout = timeout
         return self
 
@@ -65,9 +63,7 @@ request = LLMRequest(
     prompt_version="v1",
 )
 
-response = adapter.create_operation(
-    request
-)()
+response = adapter.create_operation(request)()
 
 print("Content:", response.content)
 print("Request ID:", response.provider_request_id)
@@ -90,9 +86,7 @@ try:
 except ValueError:
     print("Empty API key successfully blocked.")
 else:
-    raise AssertionError(
-        "Empty API key should fail."
-    )
+    raise AssertionError("Empty API key should fail.")
 
 
 wrong_provider_request = LLMRequest(
@@ -103,17 +97,11 @@ wrong_provider_request = LLMRequest(
 )
 
 try:
-    adapter.create_operation(
-        wrong_provider_request
-    )
+    adapter.create_operation(wrong_provider_request)
 except ValueError:
-    print(
-        "Wrong provider request successfully blocked."
-    )
+    print("Wrong provider request successfully blocked.")
 else:
-    raise AssertionError(
-        "OpenAI adapter must reject non-OpenAI requests."
-    )
+    raise AssertionError("OpenAI adapter must reject non-OpenAI requests.")
 
 
 print("OpenAI Provider tests completed successfully.")

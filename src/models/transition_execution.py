@@ -49,9 +49,7 @@ class TransitionExecution(MissionBaseModel):
 
     schema_version: str = "1.0"
 
-    status: TransitionExecutionStatus = (
-        TransitionExecutionStatus.PLANNED
-    )
+    status: TransitionExecutionStatus = TransitionExecutionStatus.PLANNED
 
     placement: TransitionPlacement
     direction: TransitionDirection
@@ -101,9 +99,7 @@ class TransitionExecution(MissionBaseModel):
         ge=0.0,
     )
 
-    intensity: DirectiveIntensity = (
-        DirectiveIntensity.MEDIUM
-    )
+    intensity: DirectiveIntensity = DirectiveIntensity.MEDIUM
 
     requires_overlap: bool = False
 
@@ -131,10 +127,7 @@ class TransitionExecution(MissionBaseModel):
         cleaned = value.strip().lower()
 
         if not cleaned:
-            raise ValueError(
-                "Transition execution text "
-                "cannot be empty."
-            )
+            raise ValueError("Transition execution text " "cannot be empty.")
 
         return cleaned
 
@@ -144,14 +137,8 @@ class TransitionExecution(MissionBaseModel):
         cls,
         value: str,
     ) -> str:
-        if (
-            not value.startswith("transition.")
-            or value == "transition."
-        ):
-            raise ValueError(
-                "Transition preset ID must start "
-                "with 'transition.'."
-            )
+        if not value.startswith("transition.") or value == "transition.":
+            raise ValueError("Transition preset ID must start " "with 'transition.'.")
 
         return value
 
@@ -166,10 +153,7 @@ class TransitionExecution(MissionBaseModel):
         for value in values:
             warning = value.strip()
 
-            if (
-                warning
-                and warning not in cleaned
-            ):
+            if warning and warning not in cleaned:
                 cleaned.append(warning)
 
         return cleaned
@@ -178,150 +162,79 @@ class TransitionExecution(MissionBaseModel):
     def validate_execution(
         self,
     ) -> TransitionExecution:
-        actual_duration = (
-            self.end_time_seconds
-            - self.start_time_seconds
-        )
+        actual_duration = self.end_time_seconds - self.start_time_seconds
 
         if self.duration_seconds == 0.0:
-            if (
-                abs(actual_duration) > 0.001
-            ):
+            if abs(actual_duration) > 0.001:
                 raise ValueError(
-                    "Zero-duration transitions require "
-                    "matching start and end times."
+                    "Zero-duration transitions require " "matching start and end times."
                 )
         else:
-            if (
-                self.end_time_seconds
-                <= self.start_time_seconds
-            ):
+            if self.end_time_seconds <= self.start_time_seconds:
                 raise ValueError(
-                    "Transition end time must be greater "
-                    "than start time."
+                    "Transition end time must be greater " "than start time."
                 )
 
-            if (
-                abs(
-                    actual_duration
-                    - self.duration_seconds
-                )
-                > 0.001
-            ):
+            if abs(actual_duration - self.duration_seconds) > 0.001:
                 raise ValueError(
-                    "Transition timing duration must "
-                    "match duration_seconds."
+                    "Transition timing duration must " "match duration_seconds."
                 )
 
-        if self.placement == (
-            TransitionPlacement.TIMELINE_IN
-        ):
+        if self.placement == (TransitionPlacement.TIMELINE_IN):
             if self.direction != TransitionDirection.IN:
-                raise ValueError(
-                    "Timeline-in transitions require "
-                    "IN direction."
-                )
+                raise ValueError("Timeline-in transitions require " "IN direction.")
 
             if self.source_scene_number is not None:
                 raise ValueError(
-                    "Timeline-in transitions cannot "
-                    "have a source scene."
+                    "Timeline-in transitions cannot " "have a source scene."
                 )
 
             if self.target_scene_number is None:
-                raise ValueError(
-                    "Timeline-in transitions require "
-                    "a target scene."
-                )
+                raise ValueError("Timeline-in transitions require " "a target scene.")
 
-        elif self.placement == (
-            TransitionPlacement.TIMELINE_OUT
-        ):
+        elif self.placement == (TransitionPlacement.TIMELINE_OUT):
             if self.direction != TransitionDirection.OUT:
-                raise ValueError(
-                    "Timeline-out transitions require "
-                    "OUT direction."
-                )
+                raise ValueError("Timeline-out transitions require " "OUT direction.")
 
             if self.source_scene_number is None:
-                raise ValueError(
-                    "Timeline-out transitions require "
-                    "a source scene."
-                )
+                raise ValueError("Timeline-out transitions require " "a source scene.")
 
             if self.target_scene_number is not None:
                 raise ValueError(
-                    "Timeline-out transitions cannot "
-                    "have a target scene."
+                    "Timeline-out transitions cannot " "have a target scene."
                 )
 
-        elif self.placement == (
-            TransitionPlacement.BETWEEN_SCENES
-        ):
-            if (
-                self.direction
-                != TransitionDirection.BETWEEN
-            ):
+        elif self.placement == (TransitionPlacement.BETWEEN_SCENES):
+            if self.direction != TransitionDirection.BETWEEN:
                 raise ValueError(
-                    "Between-scene transitions require "
-                    "BETWEEN direction."
+                    "Between-scene transitions require " "BETWEEN direction."
                 )
 
             if self.source_scene_number is None:
-                raise ValueError(
-                    "Between-scene transitions require "
-                    "a source scene."
-                )
+                raise ValueError("Between-scene transitions require " "a source scene.")
 
             if self.target_scene_number is None:
-                raise ValueError(
-                    "Between-scene transitions require "
-                    "a target scene."
-                )
+                raise ValueError("Between-scene transitions require " "a target scene.")
 
-            if (
-                self.source_scene_number
-                == self.target_scene_number
-            ):
-                raise ValueError(
-                    "A transition cannot connect a scene "
-                    "to itself."
-                )
+            if self.source_scene_number == self.target_scene_number:
+                raise ValueError("A transition cannot connect a scene " "to itself.")
 
         if self.requires_overlap:
-            if (
-                self.overlap_start_seconds is None
-                or self.overlap_end_seconds is None
-            ):
+            if self.overlap_start_seconds is None or self.overlap_end_seconds is None:
                 raise ValueError(
-                    "Overlap-based transitions require "
-                    "overlap start and end times."
+                    "Overlap-based transitions require " "overlap start and end times."
                 )
 
-            if (
-                self.overlap_end_seconds
-                <= self.overlap_start_seconds
-            ):
+            if self.overlap_end_seconds <= self.overlap_start_seconds:
                 raise ValueError(
-                    "Transition overlap end must be "
-                    "greater than overlap start."
+                    "Transition overlap end must be " "greater than overlap start."
                 )
 
-            overlap_duration = (
-                self.overlap_end_seconds
-                - self.overlap_start_seconds
-            )
+            overlap_duration = self.overlap_end_seconds - self.overlap_start_seconds
 
-            if (
-                abs(
-                    overlap_duration
-                    - self.duration_seconds
-                )
-                > 0.001
-            ):
+            if abs(overlap_duration - self.duration_seconds) > 0.001:
                 raise ValueError(
-                    "Transition overlap duration must "
-                    "match duration_seconds."
+                    "Transition overlap duration must " "match duration_seconds."
                 )
 
         else:
@@ -330,20 +243,14 @@ class TransitionExecution(MissionBaseModel):
                 or self.overlap_end_seconds is not None
             ):
                 raise ValueError(
-                    "Non-overlap transitions cannot "
-                    "contain overlap timing."
+                    "Non-overlap transitions cannot " "contain overlap timing."
                 )
 
-        if (
-            self.status
-            == TransitionExecutionStatus.APPLIED
-            and not self.metadata.get(
-                "renderer",
-            )
+        if self.status == TransitionExecutionStatus.APPLIED and not self.metadata.get(
+            "renderer",
         ):
             raise ValueError(
-                "Applied transition execution requires "
-                "renderer metadata."
+                "Applied transition execution requires " "renderer metadata."
             )
 
         return self
@@ -352,10 +259,7 @@ class TransitionExecution(MissionBaseModel):
     def is_cut(self) -> bool:
         """Return whether the transition represents a cut."""
 
-        return (
-            self.preset_id == "transition.cut"
-            or self.transition_type == "cut"
-        )
+        return self.preset_id == "transition.cut" or self.transition_type == "cut"
 
     @property
     def is_timed(self) -> bool:
@@ -380,18 +284,13 @@ class TransitionExecution(MissionBaseModel):
         values: list[int] = []
 
         if self.source_scene_number is not None:
-            values.append(
-                self.source_scene_number
-            )
+            values.append(self.source_scene_number)
 
         if (
             self.target_scene_number is not None
-            and self.target_scene_number
-            not in values
+            and self.target_scene_number not in values
         ):
-            values.append(
-                self.target_scene_number
-            )
+            values.append(self.target_scene_number)
 
         return values
 
@@ -406,9 +305,7 @@ class TransitionExecutionPlan(MissionBaseModel):
 
     schema_version: str = "1.0"
 
-    executions: list[
-        TransitionExecution
-    ] = Field(
+    executions: list[TransitionExecution] = Field(
         default_factory=list,
     )
 
@@ -462,63 +359,37 @@ class TransitionExecutionPlan(MissionBaseModel):
     def validate_plan(
         self,
     ) -> TransitionExecutionPlan:
-        if self.transition_count != len(
-            self.executions
-        ):
+        if self.transition_count != len(self.executions):
             raise ValueError(
-                "Transition plan count must match "
-                "its execution collection."
+                "Transition plan count must match " "its execution collection."
             )
 
-        if self.timed_transition_count > (
-            self.transition_count
-        ):
+        if self.timed_transition_count > (self.transition_count):
             raise ValueError(
-                "Timed transition count cannot exceed "
-                "total transition count."
+                "Timed transition count cannot exceed " "total transition count."
             )
 
-        if self.cut_transition_count > (
-            self.transition_count
-        ):
+        if self.cut_transition_count > (self.transition_count):
             raise ValueError(
-                "Cut transition count cannot exceed "
-                "total transition count."
+                "Cut transition count cannot exceed " "total transition count."
             )
 
-        if self.overlap_transition_count > (
-            self.transition_count
-        ):
+        if self.overlap_transition_count > (self.transition_count):
             raise ValueError(
-                "Overlap transition count cannot exceed "
-                "total transition count."
+                "Overlap transition count cannot exceed " "total transition count."
             )
 
-        if self.ready_execution_count > (
-            self.transition_count
-        ):
+        if self.ready_execution_count > (self.transition_count):
             raise ValueError(
-                "Ready execution count cannot exceed "
-                "total transition count."
+                "Ready execution count cannot exceed " "total transition count."
             )
 
-        if (
-            self.is_render_ready
-            and not self.is_valid
-        ):
-            raise ValueError(
-                "Render-ready transition plans "
-                "must be valid."
-            )
+        if self.is_render_ready and not self.is_valid:
+            raise ValueError("Render-ready transition plans " "must be valid.")
 
-        if (
-            self.is_render_ready
-            and self.ready_execution_count
-            != self.transition_count
-        ):
+        if self.is_render_ready and self.ready_execution_count != self.transition_count:
             raise ValueError(
-                "Render-ready transition plans require "
-                "all executions to be ready."
+                "Render-ready transition plans require " "all executions to be ready."
             )
 
         return self
@@ -537,32 +408,22 @@ class TransitionExecutionPlan(MissionBaseModel):
             ),
         )
 
-        self.transition_count = len(
-            self.executions
-        )
+        self.transition_count = len(self.executions)
 
         self.timed_transition_count = sum(
-            1
-            for execution in self.executions
-            if execution.is_timed
+            1 for execution in self.executions if execution.is_timed
         )
 
         self.cut_transition_count = sum(
-            1
-            for execution in self.executions
-            if execution.is_cut
+            1 for execution in self.executions if execution.is_cut
         )
 
         self.overlap_transition_count = sum(
-            1
-            for execution in self.executions
-            if execution.requires_overlap
+            1 for execution in self.executions if execution.requires_overlap
         )
 
         self.ready_execution_count = sum(
-            1
-            for execution in self.executions
-            if execution.is_ready
+            1 for execution in self.executions if execution.is_ready
         )
 
         scene_numbers = {
@@ -571,29 +432,22 @@ class TransitionExecutionPlan(MissionBaseModel):
             for scene_number in execution.scene_numbers
         }
 
-        self.scene_count = len(
-            scene_numbers
-        )
+        self.scene_count = len(scene_numbers)
 
         self.is_valid = all(
-            execution.status
-            != TransitionExecutionStatus.FAILED
+            execution.status != TransitionExecutionStatus.FAILED
             for execution in self.executions
         )
 
         self.is_render_ready = (
-            self.is_valid
-            and self.ready_execution_count
-            == self.transition_count
+            self.is_valid and self.ready_execution_count == self.transition_count
         )
 
     @property
     def has_transitions(self) -> bool:
         """Return whether any transitions are planned."""
 
-        return bool(
-            self.executions
-        )
+        return bool(self.executions)
 
     @property
     def applied_count(self) -> int:
@@ -602,10 +456,7 @@ class TransitionExecutionPlan(MissionBaseModel):
         return sum(
             1
             for execution in self.executions
-            if (
-                execution.status
-                == TransitionExecutionStatus.APPLIED
-            )
+            if (execution.status == TransitionExecutionStatus.APPLIED)
         )
 
     @property
@@ -615,8 +466,5 @@ class TransitionExecutionPlan(MissionBaseModel):
         return sum(
             1
             for execution in self.executions
-            if (
-                execution.status
-                == TransitionExecutionStatus.FAILED
-            )
+            if (execution.status == TransitionExecutionStatus.FAILED)
         )

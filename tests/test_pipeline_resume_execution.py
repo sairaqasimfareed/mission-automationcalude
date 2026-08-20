@@ -18,22 +18,16 @@ from src.pipeline.stage_context import StageContext
 from src.pipeline.stage_result import StageResult
 
 
-class SyntheticResumeStage(
-    BasePipelineStage
-):
+class SyntheticResumeStage(BasePipelineStage):
     """Deterministic stage used for resume execution tests."""
 
     def __init__(
         self,
         *,
         stage_name: PipelineStageName,
-        statuses: list[
-            PipelineStageStatus
-        ] | None = None,
+        statuses: list[PipelineStageStatus] | None = None,
     ) -> None:
-        self._stage_name = (
-            stage_name
-        )
+        self._stage_name = stage_name
 
         self._statuses = list(
             statuses
@@ -44,8 +38,7 @@ class SyntheticResumeStage(
 
         if not self._statuses:
             raise ValueError(
-                "Synthetic resume stage requires "
-                "at least one result status."
+                "Synthetic resume stage requires " "at least one result status."
             )
 
         self.execution_count = 0
@@ -76,40 +69,21 @@ class SyntheticResumeStage(
 
         index = min(
             self.execution_count - 1,
-            len(
-                self._statuses
-            ) - 1,
+            len(self._statuses) - 1,
         )
 
-        status = (
-            self._statuses[
-                index
-            ]
-        )
+        status = self._statuses[index]
 
-        if (
-            status
-            == PipelineStageStatus.FAILED
-        ):
+        if status == PipelineStageStatus.FAILED:
             return StageResult(
                 stage=self.stage_name,
                 status=status,
                 errors=[
-                    (
-                        "Synthetic resume "
-                        f"failure "
-                        f"{self.execution_count}."
-                    ),
+                    ("Synthetic resume " f"failure " f"{self.execution_count}."),
                 ],
             )
 
-        if (
-            status
-            == (
-                PipelineStageStatus
-                .WAITING_FOR_USER
-            )
-        ):
+        if status == (PipelineStageStatus.WAITING_FOR_USER):
             return StageResult(
                 stage=self.stage_name,
                 status=status,
@@ -138,9 +112,7 @@ def build_context() -> StageContext:
     """Build minimum valid resume execution context."""
 
     job = VideoJob(
-        project_name=(
-            "Pipeline Resume Execution Test"
-        ),
+        project_name=("Pipeline Resume Execution Test"),
         channel_name="Mission Channel",
         niche="automation",
         topic="Resume-aware pipeline runner",
@@ -149,55 +121,37 @@ def build_context() -> StageContext:
     return StageContext(
         job=job,
         pipeline_state=PipelineState(
-            current_stage=(
-                PipelineStageName.VOICE
-            ),
+            current_stage=(PipelineStageName.VOICE),
         ),
         dry_run=True,
     )
 
 
-def build_stages() -> list[
-    SyntheticResumeStage
-]:
+def build_stages() -> list[SyntheticResumeStage]:
     """Build the canonical resume test pipeline."""
 
     return [
         SyntheticResumeStage(
-            stage_name=(
-                PipelineStageName.VOICE
-            ),
+            stage_name=(PipelineStageName.VOICE),
         ),
         SyntheticResumeStage(
-            stage_name=(
-                PipelineStageName
-                .ASSET_SELECTION
-            ),
+            stage_name=(PipelineStageName.ASSET_SELECTION),
         ),
         SyntheticResumeStage(
-            stage_name=(
-                PipelineStageName
-                .VIDEO_TIMELINE
-            ),
+            stage_name=(PipelineStageName.VIDEO_TIMELINE),
         ),
         SyntheticResumeStage(
-            stage_name=(
-                PipelineStageName.RENDER
-            ),
+            stage_name=(PipelineStageName.RENDER),
         ),
     ]
 
 
 def register_stages(
     runner: PipelineRunner,
-    stages: list[
-        SyntheticResumeStage
-    ],
+    stages: list[SyntheticResumeStage],
 ) -> None:
     for stage in stages:
-        runner.register(
-            stage
-        )
+        runner.register(stage)
 
 
 def test_normal_execution_is_unchanged() -> None:
@@ -212,29 +166,15 @@ def test_normal_execution_is_unchanged() -> None:
         stages,
     )
 
-    results = runner.run(
-        context
-    )
+    results = runner.run(context)
 
-    assert len(
-        results
-    ) == 4
+    assert len(results) == 4
 
-    assert all(
-        stage.execution_count == 1
-        for stage in stages
-    )
+    assert all(stage.execution_count == 1 for stage in stages)
 
-    assert all(
-        result.status
-        == PipelineStageStatus.COMPLETED
-        for result in results
-    )
+    assert all(result.status == PipelineStageStatus.COMPLETED for result in results)
 
-    assert (
-        context.pipeline_state.overall_progress
-        == 100
-    )
+    assert context.pipeline_state.overall_progress == 100
 
 
 def test_resume_skips_completed_stages() -> None:
@@ -251,28 +191,16 @@ def test_resume_skips_completed_stages() -> None:
 
     plan = PipelineResumePlan(
         resume_enabled=True,
-        resume_stage=(
-            PipelineStageName
-            .VIDEO_TIMELINE
-        ),
+        resume_stage=(PipelineStageName.VIDEO_TIMELINE),
         skipped_stages=[
             PipelineStageName.VOICE,
-            (
-                PipelineStageName
-                .ASSET_SELECTION
-            ),
+            (PipelineStageName.ASSET_SELECTION),
         ],
         execution_stages=[
-            (
-                PipelineStageName
-                .VIDEO_TIMELINE
-            ),
+            (PipelineStageName.VIDEO_TIMELINE),
             PipelineStageName.RENDER,
         ],
-        checkpoint_stage=(
-            PipelineStageName
-            .VIDEO_TIMELINE
-        ),
+        checkpoint_stage=(PipelineStageName.VIDEO_TIMELINE),
         resumed_from_failure=True,
     )
 
@@ -281,54 +209,26 @@ def test_resume_skips_completed_stages() -> None:
         resume_plan=plan,
     )
 
-    assert (
-        stages[0].execution_count
-        == 0
-    )
+    assert stages[0].execution_count == 0
 
-    assert (
-        stages[1].execution_count
-        == 0
-    )
+    assert stages[1].execution_count == 0
 
-    assert (
-        stages[2].execution_count
-        == 1
-    )
+    assert stages[2].execution_count == 1
 
-    assert (
-        stages[3].execution_count
-        == 1
-    )
+    assert stages[3].execution_count == 1
 
-    assert [
-        result.status
-        for result in results
-    ] == [
+    assert [result.status for result in results] == [
         PipelineStageStatus.SKIPPED,
         PipelineStageStatus.SKIPPED,
         PipelineStageStatus.COMPLETED,
         PipelineStageStatus.COMPLETED,
     ]
 
-    assert (
-        results[0].metadata[
-            "resume_skip"
-        ]
-        is True
-    )
+    assert results[0].metadata["resume_skip"] is True
 
-    assert (
-        results[1].metadata[
-            "resume_skip"
-        ]
-        is True
-    )
+    assert results[1].metadata["resume_skip"] is True
 
-    assert (
-        context.pipeline_state.overall_progress
-        == 100
-    )
+    assert context.pipeline_state.overall_progress == 100
 
 
 def test_skipped_stage_hooks_are_not_called() -> None:
@@ -345,28 +245,16 @@ def test_skipped_stage_hooks_are_not_called() -> None:
 
     plan = PipelineResumePlan(
         resume_enabled=True,
-        resume_stage=(
-            PipelineStageName
-            .ASSET_SELECTION
-        ),
+        resume_stage=(PipelineStageName.ASSET_SELECTION),
         skipped_stages=[
             PipelineStageName.VOICE,
         ],
         execution_stages=[
-            (
-                PipelineStageName
-                .ASSET_SELECTION
-            ),
-            (
-                PipelineStageName
-                .VIDEO_TIMELINE
-            ),
+            (PipelineStageName.ASSET_SELECTION),
+            (PipelineStageName.VIDEO_TIMELINE),
             PipelineStageName.RENDER,
         ],
-        checkpoint_stage=(
-            PipelineStageName
-            .ASSET_SELECTION
-        ),
+        checkpoint_stage=(PipelineStageName.ASSET_SELECTION),
         resumed_from_waiting=True,
     )
 
@@ -375,55 +263,33 @@ def test_skipped_stage_hooks_are_not_called() -> None:
         resume_plan=plan,
     )
 
-    assert (
-        stages[0].before_count
-        == 0
-    )
+    assert stages[0].before_count == 0
 
-    assert (
-        stages[0].execution_count
-        == 0
-    )
+    assert stages[0].execution_count == 0
 
-    assert (
-        stages[0].after_count
-        == 0
-    )
+    assert stages[0].after_count == 0
 
 
 def test_waiting_resume_stage_blocks_again() -> None:
     context = build_context()
 
     voice_stage = SyntheticResumeStage(
-        stage_name=(
-            PipelineStageName.VOICE
-        ),
+        stage_name=(PipelineStageName.VOICE),
     )
 
     asset_stage = SyntheticResumeStage(
-        stage_name=(
-            PipelineStageName
-            .ASSET_SELECTION
-        ),
+        stage_name=(PipelineStageName.ASSET_SELECTION),
         statuses=[
-            (
-                PipelineStageStatus
-                .WAITING_FOR_USER
-            ),
+            (PipelineStageStatus.WAITING_FOR_USER),
         ],
     )
 
     timeline_stage = SyntheticResumeStage(
-        stage_name=(
-            PipelineStageName
-            .VIDEO_TIMELINE
-        ),
+        stage_name=(PipelineStageName.VIDEO_TIMELINE),
     )
 
     render_stage = SyntheticResumeStage(
-        stage_name=(
-            PipelineStageName.RENDER
-        ),
+        stage_name=(PipelineStageName.RENDER),
     )
 
     stages = [
@@ -442,28 +308,16 @@ def test_waiting_resume_stage_blocks_again() -> None:
 
     plan = PipelineResumePlan(
         resume_enabled=True,
-        resume_stage=(
-            PipelineStageName
-            .ASSET_SELECTION
-        ),
+        resume_stage=(PipelineStageName.ASSET_SELECTION),
         skipped_stages=[
             PipelineStageName.VOICE,
         ],
         execution_stages=[
-            (
-                PipelineStageName
-                .ASSET_SELECTION
-            ),
-            (
-                PipelineStageName
-                .VIDEO_TIMELINE
-            ),
+            (PipelineStageName.ASSET_SELECTION),
+            (PipelineStageName.VIDEO_TIMELINE),
             PipelineStageName.RENDER,
         ],
-        checkpoint_stage=(
-            PipelineStageName
-            .ASSET_SELECTION
-        ),
+        checkpoint_stage=(PipelineStageName.ASSET_SELECTION),
         resumed_from_waiting=True,
     )
 
@@ -472,70 +326,34 @@ def test_waiting_resume_stage_blocks_again() -> None:
         resume_plan=plan,
     )
 
-    assert len(
-        results
-    ) == 2
+    assert len(results) == 2
 
-    assert (
-        results[0].status
-        == PipelineStageStatus.SKIPPED
-    )
+    assert results[0].status == PipelineStageStatus.SKIPPED
 
-    assert (
-        results[1].status
-        == (
-            PipelineStageStatus
-            .WAITING_FOR_USER
-        )
-    )
+    assert results[1].status == (PipelineStageStatus.WAITING_FOR_USER)
 
-    assert (
-        voice_stage.execution_count
-        == 0
-    )
+    assert voice_stage.execution_count == 0
 
-    assert (
-        asset_stage.execution_count
-        == 1
-    )
+    assert asset_stage.execution_count == 1
 
-    assert (
-        timeline_stage.execution_count
-        == 0
-    )
+    assert timeline_stage.execution_count == 0
 
-    assert (
-        render_stage.execution_count
-        == 0
-    )
+    assert render_stage.execution_count == 0
 
-    assert (
-        context.pipeline_state.current_stage
-        == (
-            PipelineStageName
-            .ASSET_SELECTION
-        )
-    )
+    assert context.pipeline_state.current_stage == (PipelineStageName.ASSET_SELECTION)
 
-    assert (
-        context.pipeline_state.overall_progress
-        == 50
-    )
+    assert context.pipeline_state.overall_progress == 50
 
 
 def test_resumed_failed_stage_can_retry() -> None:
     context = build_context()
 
     voice_stage = SyntheticResumeStage(
-        stage_name=(
-            PipelineStageName.VOICE
-        ),
+        stage_name=(PipelineStageName.VOICE),
     )
 
     render_stage = SyntheticResumeStage(
-        stage_name=(
-            PipelineStageName.RENDER
-        ),
+        stage_name=(PipelineStageName.RENDER),
         statuses=[
             PipelineStageStatus.FAILED,
             PipelineStageStatus.COMPLETED,
@@ -551,28 +369,20 @@ def test_resumed_failed_stage_can_retry() -> None:
         ),
     )
 
-    runner.register(
-        voice_stage
-    )
+    runner.register(voice_stage)
 
-    runner.register(
-        render_stage
-    )
+    runner.register(render_stage)
 
     plan = PipelineResumePlan(
         resume_enabled=True,
-        resume_stage=(
-            PipelineStageName.RENDER
-        ),
+        resume_stage=(PipelineStageName.RENDER),
         skipped_stages=[
             PipelineStageName.VOICE,
         ],
         execution_stages=[
             PipelineStageName.RENDER,
         ],
-        checkpoint_stage=(
-            PipelineStageName.RENDER
-        ),
+        checkpoint_stage=(PipelineStageName.RENDER),
         resumed_from_failure=True,
     )
 
@@ -581,39 +391,19 @@ def test_resumed_failed_stage_can_retry() -> None:
         resume_plan=plan,
     )
 
-    assert len(
-        results
-    ) == 2
+    assert len(results) == 2
 
-    assert (
-        voice_stage.execution_count
-        == 0
-    )
+    assert voice_stage.execution_count == 0
 
-    assert (
-        render_stage.execution_count
-        == 2
-    )
+    assert render_stage.execution_count == 2
 
-    assert (
-        results[-1].status
-        == PipelineStageStatus.COMPLETED
-    )
+    assert results[-1].status == PipelineStageStatus.COMPLETED
 
-    assert (
-        results[-1].retry_count
-        == 1
-    )
+    assert results[-1].retry_count == 1
 
-    assert (
-        context.job.retry_count
-        == 1
-    )
+    assert context.job.retry_count == 1
 
-    assert (
-        context.pipeline_state.errors
-        == []
-    )
+    assert context.pipeline_state.errors == []
 
 
 def test_disabled_resume_plan_runs_full_pipeline() -> None:
@@ -632,14 +422,8 @@ def test_disabled_resume_plan_runs_full_pipeline() -> None:
         resume_enabled=False,
         execution_stages=[
             PipelineStageName.VOICE,
-            (
-                PipelineStageName
-                .ASSET_SELECTION
-            ),
-            (
-                PipelineStageName
-                .VIDEO_TIMELINE
-            ),
+            (PipelineStageName.ASSET_SELECTION),
+            (PipelineStageName.VIDEO_TIMELINE),
             PipelineStageName.RENDER,
         ],
     )
@@ -649,14 +433,9 @@ def test_disabled_resume_plan_runs_full_pipeline() -> None:
         resume_plan=plan,
     )
 
-    assert len(
-        results
-    ) == 4
+    assert len(results) == 4
 
-    assert all(
-        stage.execution_count == 1
-        for stage in stages
-    )
+    assert all(stage.execution_count == 1 for stage in stages)
 
 
 def test_completed_checkpoint_plan_executes_nothing() -> None:
@@ -674,9 +453,7 @@ def test_completed_checkpoint_plan_executes_nothing() -> None:
     plan = PipelineResumePlan(
         resume_enabled=False,
         execution_stages=[],
-        checkpoint_stage=(
-            PipelineStageName.RENDER
-        ),
+        checkpoint_stage=(PipelineStageName.RENDER),
     )
 
     results = runner.run(
@@ -686,15 +463,9 @@ def test_completed_checkpoint_plan_executes_nothing() -> None:
 
     assert results == []
 
-    assert all(
-        stage.execution_count == 0
-        for stage in stages
-    )
+    assert all(stage.execution_count == 0 for stage in stages)
 
-    assert (
-        context.pipeline_state.overall_progress
-        == 100
-    )
+    assert context.pipeline_state.overall_progress == 100
 
 
 def test_unregistered_resume_stage_is_rejected() -> None:
@@ -704,17 +475,13 @@ def test_unregistered_resume_stage_is_rejected() -> None:
 
     runner.register(
         SyntheticResumeStage(
-            stage_name=(
-                PipelineStageName.VOICE
-            ),
+            stage_name=(PipelineStageName.VOICE),
         )
     )
 
     plan = PipelineResumePlan(
         resume_enabled=True,
-        resume_stage=(
-            PipelineStageName.SCRIPT
-        ),
+        resume_stage=(PipelineStageName.SCRIPT),
         execution_stages=[
             PipelineStageName.SCRIPT,
         ],
@@ -727,47 +494,31 @@ def test_unregistered_resume_stage_is_rejected() -> None:
             resume_plan=plan,
         )
     except ValueError as error:
-        assert (
-            "unregistered stage"
-            in str(error)
-        )
+        assert "unregistered stage" in str(error)
     else:
-        raise AssertionError(
-            "Unregistered resume stage "
-            "must fail."
-        )
+        raise AssertionError("Unregistered resume stage " "must fail.")
 
 
 def test_resume_execution_order_is_validated() -> None:
     context = build_context()
 
     voice_stage = SyntheticResumeStage(
-        stage_name=(
-            PipelineStageName.VOICE
-        ),
+        stage_name=(PipelineStageName.VOICE),
     )
 
     render_stage = SyntheticResumeStage(
-        stage_name=(
-            PipelineStageName.RENDER
-        ),
+        stage_name=(PipelineStageName.RENDER),
     )
 
     runner = PipelineRunner()
 
-    runner.register(
-        voice_stage
-    )
+    runner.register(voice_stage)
 
-    runner.register(
-        render_stage
-    )
+    runner.register(render_stage)
 
     plan = PipelineResumePlan(
         resume_enabled=True,
-        resume_stage=(
-            PipelineStageName.RENDER
-        ),
+        resume_stage=(PipelineStageName.RENDER),
         execution_stages=[
             PipelineStageName.RENDER,
             PipelineStageName.VOICE,
@@ -781,57 +532,35 @@ def test_resume_execution_order_is_validated() -> None:
             resume_plan=plan,
         )
     except ValueError as error:
-        assert (
-            "preserve registered stage order"
-            in str(error)
-        )
+        assert "preserve registered stage order" in str(error)
     else:
-        raise AssertionError(
-            "Out-of-order resume plan "
-            "must fail."
-        )
+        raise AssertionError("Out-of-order resume plan " "must fail.")
 
-    assert (
-        voice_stage.execution_count
-        == 0
-    )
+    assert voice_stage.execution_count == 0
 
-    assert (
-        render_stage.execution_count
-        == 0
-    )
+    assert render_stage.execution_count == 0
 
 
 def test_enabled_resume_plan_must_cover_pipeline() -> None:
     context = build_context()
 
     voice_stage = SyntheticResumeStage(
-        stage_name=(
-            PipelineStageName.VOICE
-        ),
+        stage_name=(PipelineStageName.VOICE),
     )
 
     render_stage = SyntheticResumeStage(
-        stage_name=(
-            PipelineStageName.RENDER
-        ),
+        stage_name=(PipelineStageName.RENDER),
     )
 
     runner = PipelineRunner()
 
-    runner.register(
-        voice_stage
-    )
+    runner.register(voice_stage)
 
-    runner.register(
-        render_stage
-    )
+    runner.register(render_stage)
 
     plan = PipelineResumePlan(
         resume_enabled=True,
-        resume_stage=(
-            PipelineStageName.RENDER
-        ),
+        resume_stage=(PipelineStageName.RENDER),
         execution_stages=[
             PipelineStageName.RENDER,
         ],
@@ -844,32 +573,18 @@ def test_enabled_resume_plan_must_cover_pipeline() -> None:
             resume_plan=plan,
         )
     except ValueError as error:
-        assert (
-            "account for every registered stage"
-            in str(error)
-        )
+        assert "account for every registered stage" in str(error)
     else:
-        raise AssertionError(
-            "Incomplete resume plan must fail."
-        )
+        raise AssertionError("Incomplete resume plan must fail.")
 
-    assert (
-        voice_stage.execution_count
-        == 0
-    )
+    assert voice_stage.execution_count == 0
 
-    assert (
-        render_stage.execution_count
-        == 0
-    )
+    assert render_stage.execution_count == 0
 
 
 def main() -> None:
     print()
-    print(
-        "Running Pipeline Resume "
-        "Execution tests..."
-    )
+    print("Running Pipeline Resume " "Execution tests...")
     print()
 
     test_normal_execution_is_unchanged()
@@ -878,18 +593,13 @@ def main() -> None:
     test_waiting_resume_stage_blocks_again()
     test_resumed_failed_stage_can_retry()
     test_disabled_resume_plan_runs_full_pipeline()
-    (
-        test_completed_checkpoint_plan_executes_nothing()
-    )
+    (test_completed_checkpoint_plan_executes_nothing())
     test_unregistered_resume_stage_is_rejected()
     test_resume_execution_order_is_validated()
     test_enabled_resume_plan_must_cover_pipeline()
 
     print()
-    print(
-        "Pipeline Resume Execution tests "
-        "completed successfully."
-    )
+    print("Pipeline Resume Execution tests " "completed successfully.")
 
 
 if __name__ == "__main__":

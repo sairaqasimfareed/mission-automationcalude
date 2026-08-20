@@ -39,22 +39,16 @@ def reference(
     *,
     preset_id: str,
     directive_path: str,
-    implementation: (
-        dict[str, Any] | None
-    ) = None,
+    implementation: dict[str, Any] | None = None,
     used_fallback: bool = False,
 ) -> ResolvedPresetReference:
     return ResolvedPresetReference(
         directive_path=directive_path,
         requested_preset_id=preset_id,
         resolved_preset_id=preset_id,
-        found_exact_match=(
-            not used_fallback
-        ),
+        found_exact_match=(not used_fallback),
         used_fallback=used_fallback,
-        implementation=dict(
-            implementation or {}
-        ),
+        implementation=dict(implementation or {}),
     )
 
 
@@ -79,22 +73,12 @@ def build_blueprint(
             preset=reference(
                 preset_id=camera_preset_id,
                 directive_path="camera.preset_id",
-                implementation=(
-                    camera_implementation
-                ),
-                used_fallback=(
-                    used_fallback
-                ),
+                implementation=(camera_implementation),
+                used_fallback=(used_fallback),
             ),
-            intensity=(
-                DirectiveIntensity.MEDIUM
-            ),
-            start_offset_seconds=(
-                start_offset_seconds
-            ),
-            end_offset_seconds=(
-                end_offset_seconds
-            ),
+            intensity=(DirectiveIntensity.MEDIUM),
+            start_offset_seconds=(start_offset_seconds),
+            end_offset_seconds=(end_offset_seconds),
             zoom_start=zoom_start,
             zoom_end=zoom_end,
         ),
@@ -102,9 +86,7 @@ def build_blueprint(
             ResolvedTransitionInstruction(
                 preset=reference(
                     preset_id="transition.cut",
-                    directive_path=(
-                        "transition_in.preset_id"
-                    ),
+                    directive_path=("transition_in.preset_id"),
                     implementation={
                         "type": "cut",
                     },
@@ -116,9 +98,7 @@ def build_blueprint(
             ResolvedTransitionInstruction(
                 preset=reference(
                     preset_id="transition.cut",
-                    directive_path=(
-                        "transition_out.preset_id"
-                    ),
+                    directive_path=("transition_out.preset_id"),
                     implementation={
                         "type": "cut",
                     },
@@ -139,16 +119,12 @@ def build_blueprint(
         subtitles=ResolvedSubtitleInstruction(
             preset=reference(
                 preset_id="subtitle.default",
-                directive_path=(
-                    "subtitles.preset_id"
-                ),
+                directive_path=("subtitles.preset_id"),
             ),
             enabled=False,
             burn_into_video=False,
         ),
-        status=(
-            BlueprintResolutionStatus.RESOLVED
-        ),
+        status=(BlueprintResolutionStatus.RESOLVED),
     )
 
 
@@ -161,31 +137,19 @@ def build_item(
 ) -> VideoTimelineItem:
     clip = VideoClip(
         scene_number=scene_number,
-        source_type=(
-            SceneSourceType.MANUAL_UPLOAD
-        ),
+        source_type=(SceneSourceType.MANUAL_UPLOAD),
         duration_seconds=duration_seconds,
         prompt=f"Scene {scene_number}",
-        local_file=(
-            "assets/videos/"
-            f"scene_{scene_number:03}.mp4"
-        ),
-        source_status=(
-            SceneSourceStatus.READY
-        ),
+        local_file=("assets/videos/" f"scene_{scene_number:03}.mp4"),
+        source_status=(SceneSourceStatus.READY),
         status=VideoClipStatus.READY,
     )
 
     return VideoTimelineItem(
         clip=clip,
         scene_number=scene_number,
-        start_time_seconds=(
-            start_time_seconds
-        ),
-        end_time_seconds=(
-            start_time_seconds
-            + duration_seconds
-        ),
+        start_time_seconds=(start_time_seconds),
+        end_time_seconds=(start_time_seconds + duration_seconds),
         editing_blueprint=blueprint,
     )
 
@@ -203,9 +167,7 @@ static_blueprint = build_blueprint(
 
 zoom_blueprint = build_blueprint(
     scene_number=2,
-    camera_preset_id=(
-        "camera.slow_zoom_in"
-    ),
+    camera_preset_id=("camera.slow_zoom_in"),
     camera_implementation={
         "motion": "zoom",
         "direction": "in",
@@ -268,9 +230,7 @@ assert plan.is_render_ready is True
 
 
 static_execution = next(
-    execution
-    for execution in plan.executions
-    if execution.scene_number == 1
+    execution for execution in plan.executions if execution.scene_number == 1
 )
 
 assert static_execution.is_static is True
@@ -280,9 +240,7 @@ assert static_execution.end_time_seconds == 8.0
 
 
 zoom_execution = next(
-    execution
-    for execution in plan.executions
-    if execution.scene_number == 2
+    execution for execution in plan.executions if execution.scene_number == 2
 )
 
 assert zoom_execution.is_zoom is True
@@ -296,9 +254,7 @@ assert zoom_execution.zoom_end == 1.08
 
 partial_blueprint = build_blueprint(
     scene_number=1,
-    camera_preset_id=(
-        "camera.slow_zoom_in"
-    ),
+    camera_preset_id=("camera.slow_zoom_in"),
     camera_implementation={
         "motion": "zoom",
         "direction": "in",
@@ -316,45 +272,24 @@ partial_item = build_item(
     blueprint=partial_blueprint,
 )
 
-partial_execution = (
-    service.build_execution(
-        item=partial_item,
-    )
+partial_execution = service.build_execution(
+    item=partial_item,
 )
 
-assert (
-    partial_execution.start_time_seconds
-    == 12.0
-)
+assert partial_execution.start_time_seconds == 12.0
 
-assert (
-    partial_execution.end_time_seconds
-    == 16.0
-)
+assert partial_execution.end_time_seconds == 16.0
 
-assert (
-    partial_execution.duration_seconds
-    == 4.0
-)
+assert partial_execution.duration_seconds == 4.0
 
-assert (
-    partial_execution
-    .local_start_offset_seconds
-    == 2.0
-)
+assert partial_execution.local_start_offset_seconds == 2.0
 
-assert (
-    partial_execution
-    .local_end_offset_seconds
-    == 6.0
-)
+assert partial_execution.local_end_offset_seconds == 6.0
 
 
 override_zoom_blueprint = build_blueprint(
     scene_number=1,
-    camera_preset_id=(
-        "camera.slow_zoom_in"
-    ),
+    camera_preset_id=("camera.slow_zoom_in"),
     camera_implementation={
         "motion": "zoom",
         "direction": "in",
@@ -372,10 +307,8 @@ override_item = build_item(
     blueprint=override_zoom_blueprint,
 )
 
-override_execution = (
-    service.build_execution(
-        item=override_item,
-    )
+override_execution = service.build_execution(
+    item=override_item,
 )
 
 assert override_execution.zoom_start == 1.02
@@ -390,18 +323,12 @@ motion_only_plan = service.build_plan(
 assert motion_only_plan.execution_count == 1
 assert motion_only_plan.static_execution_count == 0
 assert motion_only_plan.motion_execution_count == 1
-assert (
-    motion_only_plan.executions[0]
-    .scene_number
-    == 2
-)
+assert motion_only_plan.executions[0].scene_number == 2
 
 
 fallback_blueprint = build_blueprint(
     scene_number=1,
-    camera_preset_id=(
-        "camera.slow_zoom_in"
-    ),
+    camera_preset_id=("camera.slow_zoom_in"),
     camera_implementation={
         "motion": "zoom",
         "direction": "in",
@@ -431,12 +358,7 @@ fallback_plan = service.build_plan(
 
 assert fallback_plan.warnings
 
-assert any(
-    "fallback preset"
-    in warning.lower()
-    for warning
-    in fallback_plan.warnings
-)
+assert any("fallback preset" in warning.lower() for warning in fallback_plan.warnings)
 
 
 invalid_timing_blueprint = build_blueprint(
@@ -461,15 +383,9 @@ try:
         item=invalid_item,
     )
 except ValueError:
-    print(
-        "Out-of-scene camera timing "
-        "successfully blocked."
-    )
+    print("Out-of-scene camera timing " "successfully blocked.")
 else:
-    raise AssertionError(
-        "Out-of-scene camera timing "
-        "should fail."
-    )
+    raise AssertionError("Out-of-scene camera timing " "should fail.")
 
 
 missing_scale_blueprint = build_blueprint(
@@ -493,19 +409,12 @@ try:
         item=missing_scale_item,
     )
 except ValueError:
-    print(
-        "Missing zoom scale values "
-        "successfully blocked."
-    )
+    print("Missing zoom scale values " "successfully blocked.")
 else:
-    raise AssertionError(
-        "Zoom without scales should fail."
-    )
+    raise AssertionError("Zoom without scales should fail.")
 
 
-summary = service.summary(
-    plan
-)
+summary = service.summary(plan)
 
 assert summary["execution_count"] == 2
 assert summary["static_execution_count"] == 1
@@ -517,30 +426,20 @@ application_plan = service.build_plan(
     timeline,
 )
 
-first_execution = (
-    application_plan.executions[0]
-)
+first_execution = application_plan.executions[0]
 
 applied = service.mark_applied(
     application_plan,
-    execution_id=str(
-        first_execution.id
-    ),
+    execution_id=str(first_execution.id),
     renderer="ffmpeg",
     renderer_metadata={
         "mode": "dry-run",
     },
 )
 
-assert (
-    applied.status
-    == CameraExecutionStatus.APPLIED
-)
+assert applied.status == CameraExecutionStatus.APPLIED
 
-assert (
-    applied.metadata["renderer"]
-    == "ffmpeg"
-)
+assert applied.metadata["renderer"] == "ffmpeg"
 
 assert application_plan.applied_count == 1
 
@@ -550,10 +449,7 @@ service.mark_all_applied(
     renderer="ffmpeg",
 )
 
-assert (
-    application_plan.applied_count
-    == application_plan.execution_count
-)
+assert application_plan.applied_count == application_plan.execution_count
 
 
 failure_plan = service.build_plan(
@@ -562,21 +458,14 @@ failure_plan = service.build_plan(
 
 failed = service.mark_failed(
     failure_plan,
-    execution_id=str(
-        failure_plan.executions[0].id
-    ),
-    error_message=(
-        "Simulated camera renderer failure."
-    ),
+    execution_id=str(failure_plan.executions[0].id),
+    error_message=("Simulated camera renderer failure."),
     failure_metadata={
         "renderer": "ffmpeg",
     },
 )
 
-assert (
-    failed.status
-    == CameraExecutionStatus.FAILED
-)
+assert failed.status == CameraExecutionStatus.FAILED
 
 assert failure_plan.failed_count == 1
 assert failure_plan.is_valid is False
@@ -589,32 +478,16 @@ try:
         track_index=-1,
     )
 except ValueError:
-    print(
-        "Negative camera track index "
-        "successfully blocked."
-    )
+    print("Negative camera track index " "successfully blocked.")
 else:
-    raise AssertionError(
-        "Negative camera track index "
-        "should fail."
-    )
+    raise AssertionError("Negative camera track index " "should fail.")
 
 
-serialized = (
-    plan.model_dump_json()
-)
+serialized = plan.model_dump_json()
 
-restored = (
-    CameraExecutionPlan
-    .model_validate_json(
-        serialized
-    )
-)
+restored = CameraExecutionPlan.model_validate_json(serialized)
 
 assert restored == plan
 
 
-print(
-    "Camera Execution Service tests "
-    "completed successfully."
-)
+print("Camera Execution Service tests " "completed successfully.")

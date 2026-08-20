@@ -7,7 +7,6 @@ from src.services.stock_search_service import (
     StockSearchService,
 )
 
-
 stock_service = StockSearchService(
     providers=[
         DryRunStockProvider(),
@@ -37,9 +36,7 @@ asset = results[0]
 
 assert asset.asset_type == AssetType.VIDEO
 assert asset.provider == "Dry Run Stock"
-assert asset.provider_asset_id == (
-    "dry-run-video-001"
-)
+assert asset.provider_asset_id == ("dry-run-video-001")
 assert asset.title == "ancient Roman streets"
 assert asset.file_url.endswith(".mp4")
 assert asset.license_type == "royalty_free"
@@ -67,9 +64,7 @@ try:
 except ValueError:
     print("Empty asset query successfully blocked.")
 else:
-    raise AssertionError(
-        "Empty asset query should fail."
-    )
+    raise AssertionError("Empty asset query should fail.")
 
 
 try:
@@ -81,11 +76,7 @@ try:
 except ValueError:
     print("Invalid asset limit successfully blocked.")
 else:
-    raise AssertionError(
-        "Invalid asset limit should fail."
-    )
+    raise AssertionError("Invalid asset limit should fail.")
 
 
-print(
-    "Asset Search Service tests completed successfully."
-)
+print("Asset Search Service tests completed successfully.")

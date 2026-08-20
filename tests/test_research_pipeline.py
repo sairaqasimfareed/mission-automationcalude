@@ -61,9 +61,7 @@ pipeline = ResearchPipeline(
     research_agent=FakeResearchAgent(),  # type: ignore[arg-type]
 )
 
-result = pipeline.run(
-    "Top 10 Hidden Underground Cities"
-)
+result = pipeline.run("Top 10 Hidden Underground Cities")
 
 print("Topic:", result.topic)
 print("Final status:", result.status)
@@ -73,9 +71,7 @@ print(
     result.claude_suggested_changes,
 )
 
-assert result.topic == (
-    "Top 10 Hidden Underground Cities"
-)
+assert result.topic == ("Top 10 Hidden Underground Cities")
 
 assert result.status == ResearchStatus.APPROVED
 
@@ -85,6 +81,4 @@ assert len(result.key_facts) >= 5
 
 assert result.fact_confidence_score >= 90
 
-print(
-    "Research pipeline test completed successfully."
-)
+print("Research pipeline test completed successfully.")

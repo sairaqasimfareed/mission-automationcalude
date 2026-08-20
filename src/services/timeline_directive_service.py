@@ -30,8 +30,7 @@ class TimelineDirectiveService:
 
         if not blueprint.is_resolved:
             raise ValueError(
-                "Only resolved editing blueprints may "
-                "be attached to a timeline."
+                "Only resolved editing blueprints may " "be attached to a timeline."
             )
 
         item = self._find_item(
@@ -39,46 +38,28 @@ class TimelineDirectiveService:
             scene_number=blueprint.scene_number,
         )
 
-        if (
-            item.editing_blueprint is not None
-            and not replace
-        ):
+        if item.editing_blueprint is not None and not replace:
             raise ValueError(
-                "The timeline scene already contains "
-                "an editing blueprint."
+                "The timeline scene already contains " "an editing blueprint."
             )
 
         item.editing_blueprint = blueprint
 
-        item.transition_in = (
-            blueprint.transition_in
-            .preset.resolved_preset_id
+        item.transition_in = blueprint.transition_in.preset.resolved_preset_id
+
+        item.transition_out = blueprint.transition_out.preset.resolved_preset_id
+
+        item.metadata["editing_blueprint_attached"] = True
+
+        item.metadata["editing_blueprint_status"] = blueprint.status.value
+
+        item.metadata["editing_blueprint_fallback_count"] = blueprint.fallback_count
+
+        item.metadata["editing_blueprint_exact_match_count"] = (
+            blueprint.exact_match_count
         )
 
-        item.transition_out = (
-            blueprint.transition_out
-            .preset.resolved_preset_id
-        )
-
-        item.metadata[
-            "editing_blueprint_attached"
-        ] = True
-
-        item.metadata[
-            "editing_blueprint_status"
-        ] = blueprint.status.value
-
-        item.metadata[
-            "editing_blueprint_fallback_count"
-        ] = blueprint.fallback_count
-
-        item.metadata[
-            "editing_blueprint_exact_match_count"
-        ] = blueprint.exact_match_count
-
-        item.metadata[
-            "editing_blueprint_schema_version"
-        ] = blueprint.schema_version
+        item.metadata["editing_blueprint_schema_version"] = blueprint.schema_version
 
         return item
 
@@ -86,9 +67,7 @@ class TimelineDirectiveService:
         self,
         timeline: VideoTimeline,
         *,
-        blueprints: list[
-            ResolvedSceneEditingBlueprint
-        ],
+        blueprints: list[ResolvedSceneEditingBlueprint],
         replace: bool = False,
         require_all_timeline_scenes: bool = False,
     ) -> list[VideoTimelineItem]:
@@ -99,46 +78,27 @@ class TimelineDirectiveService:
         timeline item is modified.
         """
 
-        scene_numbers = [
-            blueprint.scene_number
-            for blueprint in blueprints
-        ]
+        scene_numbers = [blueprint.scene_number for blueprint in blueprints]
 
-        if len(scene_numbers) != len(
-            set(scene_numbers)
-        ):
+        if len(scene_numbers) != len(set(scene_numbers)):
             raise ValueError(
-                "Duplicate editing blueprint scene numbers "
-                "cannot be attached."
+                "Duplicate editing blueprint scene numbers " "cannot be attached."
             )
 
         if require_all_timeline_scenes:
             enabled_scene_numbers = {
-                item.scene_number
-                for item in timeline.items
-                if item.enabled
+                item.scene_number for item in timeline.items if item.enabled
             }
 
-            blueprint_scene_numbers = set(
-                scene_numbers
-            )
+            blueprint_scene_numbers = set(scene_numbers)
 
-            missing_scene_numbers = (
-                enabled_scene_numbers
-                - blueprint_scene_numbers
-            )
+            missing_scene_numbers = enabled_scene_numbers - blueprint_scene_numbers
 
-            extra_scene_numbers = (
-                blueprint_scene_numbers
-                - enabled_scene_numbers
-            )
+            extra_scene_numbers = blueprint_scene_numbers - enabled_scene_numbers
 
             if missing_scene_numbers:
                 missing_text = ", ".join(
-                    str(scene_number)
-                    for scene_number in sorted(
-                        missing_scene_numbers
-                    )
+                    str(scene_number) for scene_number in sorted(missing_scene_numbers)
                 )
 
                 raise ValueError(
@@ -148,10 +108,7 @@ class TimelineDirectiveService:
 
             if extra_scene_numbers:
                 extra_text = ", ".join(
-                    str(scene_number)
-                    for scene_number in sorted(
-                        extra_scene_numbers
-                    )
+                    str(scene_number) for scene_number in sorted(extra_scene_numbers)
                 )
 
                 raise ValueError(
@@ -159,9 +116,7 @@ class TimelineDirectiveService:
                     f"timeline scenes: {extra_text}"
                 )
 
-        attached_items: list[
-            VideoTimelineItem
-        ] = []
+        attached_items: list[VideoTimelineItem] = []
 
         for blueprint in blueprints:
             attached_items.append(
@@ -192,8 +147,7 @@ class TimelineDirectiveService:
 
         if blueprint is None:
             raise ValueError(
-                "The timeline scene does not contain "
-                "an editing blueprint."
+                "The timeline scene does not contain " "an editing blueprint."
             )
 
         item.editing_blueprint = None
@@ -203,11 +157,7 @@ class TimelineDirectiveService:
             item.transition_out = None
 
         metadata_keys = [
-            key
-            for key in item.metadata
-            if key.startswith(
-                "editing_blueprint_"
-            )
+            key for key in item.metadata if key.startswith("editing_blueprint_")
         ]
 
         for key in metadata_keys:
@@ -240,17 +190,12 @@ class TimelineDirectiveService:
 
         if blueprint is None:
             raise ValueError(
-                "The timeline scene does not contain "
-                "an editing blueprint."
+                "The timeline scene does not contain " "an editing blueprint."
             )
 
-        blueprint.status = (
-            BlueprintResolutionStatus.APPLIED
-        )
+        blueprint.status = BlueprintResolutionStatus.APPLIED
 
-        item.metadata[
-            "editing_blueprint_status"
-        ] = blueprint.status.value
+        item.metadata["editing_blueprint_status"] = blueprint.status.value
 
         return item
 
@@ -265,18 +210,10 @@ class TimelineDirectiveService:
         scene_numbers = [
             item.scene_number
             for item in timeline.items
-            if (
-                item.editing_blueprint is None
-                and (
-                    item.enabled
-                    or not enabled_only
-                )
-            )
+            if (item.editing_blueprint is None and (item.enabled or not enabled_only))
         ]
 
-        return sorted(
-            scene_numbers
-        )
+        return sorted(scene_numbers)
 
     def render_ready_items(
         self,
@@ -284,11 +221,7 @@ class TimelineDirectiveService:
     ) -> list[VideoTimelineItem]:
         """Return enabled items with resolved blueprints."""
 
-        return [
-            item
-            for item in timeline.ordered_items()
-            if item.is_render_ready
-        ]
+        return [item for item in timeline.ordered_items() if item.is_render_ready]
 
     @staticmethod
     def _find_item(
@@ -298,22 +231,14 @@ class TimelineDirectiveService:
     ) -> VideoTimelineItem:
         """Return one timeline item by scene number."""
 
-        matches = [
-            item
-            for item in timeline.items
-            if item.scene_number == scene_number
-        ]
+        matches = [item for item in timeline.items if item.scene_number == scene_number]
 
         if not matches:
-            raise KeyError(
-                "Timeline scene was not found: "
-                f"{scene_number}"
-            )
+            raise KeyError("Timeline scene was not found: " f"{scene_number}")
 
         if len(matches) > 1:
             raise ValueError(
-                "Multiple timeline items use the same "
-                f"scene number: {scene_number}"
+                "Multiple timeline items use the same " f"scene number: {scene_number}"
             )
 
         return matches[0]

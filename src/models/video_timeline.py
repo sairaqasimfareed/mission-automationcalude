@@ -41,27 +41,19 @@ class VideoTimeline(MissionBaseModel):
         """Calculate and store the complete timeline duration."""
 
         if self.items:
-            enabled_items = [
-                item
-                for item in self.items
-                if item.enabled
-            ]
+            enabled_items = [item for item in self.items if item.enabled]
 
             if not enabled_items:
                 self.total_duration_seconds = 0.0
             else:
                 self.total_duration_seconds = max(
-                    item.end_time_seconds
-                    for item in enabled_items
+                    item.end_time_seconds for item in enabled_items
                 )
 
             return self.total_duration_seconds
 
         self.total_duration_seconds = float(
-            sum(
-                clip.duration_seconds
-                for clip in self.clips
-            )
+            sum(clip.duration_seconds for clip in self.clips)
         )
 
         return self.total_duration_seconds
@@ -70,11 +62,7 @@ class VideoTimeline(MissionBaseModel):
         """Return enabled timeline items in playback order."""
 
         return sorted(
-            (
-                item
-                for item in self.items
-                if item.enabled
-            ),
+            (item for item in self.items if item.enabled),
             key=lambda item: (
                 item.start_time_seconds,
                 item.track_index,

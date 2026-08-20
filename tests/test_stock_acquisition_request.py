@@ -7,14 +7,10 @@ from src.models.stock_acquisition_request import (
     StockAcquisitionRequest,
 )
 
-
 scene = Scene(
     scene_number=1,
     title="Roman Soldiers",
-    narration=(
-        "Roman soldiers march through "
-        "the ancient city."
-    ),
+    narration=("Roman soldiers march through " "the ancient city."),
     visual_prompt="Roman soldiers marching",
     stock_query="Roman soldiers marching",
     estimated_duration_seconds=8,
@@ -25,10 +21,7 @@ scene = Scene(
 candidate = AssetCandidate(
     title="Roman Soldiers Marching",
     source_type=SceneSourceType.STOCK_FOOTAGE,
-    source_url=(
-        "https://example.com/"
-        "roman-soldiers.mp4"
-    ),
+    source_url=("https://example.com/" "roman-soldiers.mp4"),
     provider="Pexels",
     provider_asset_id="pexels-001",
     license_type="royalty_free",
@@ -46,10 +39,7 @@ print("Scene:", request.scene.scene_number)
 print("Candidate:", request.candidate.title)
 
 assert request.project_id == "history-project"
-assert (
-    request.scene.source_type
-    == SceneSourceType.STOCK_FOOTAGE
-)
+assert request.scene.source_type == SceneSourceType.STOCK_FOOTAGE
 assert request.candidate.approved is True
 
 
@@ -64,13 +54,9 @@ try:
         ),
     )
 except ValueError:
-    print(
-        "Unapproved stock candidate successfully blocked."
-    )
+    print("Unapproved stock candidate successfully blocked.")
 else:
-    raise AssertionError(
-        "Unapproved stock candidate should fail."
-    )
+    raise AssertionError("Unapproved stock candidate should fail.")
 
 
 try:
@@ -80,13 +66,9 @@ try:
         candidate=candidate,
     )
 except ValueError:
-    print(
-        "Empty project ID successfully blocked."
-    )
+    print("Empty project ID successfully blocked.")
 else:
-    raise AssertionError(
-        "Empty project ID should fail."
-    )
+    raise AssertionError("Empty project ID should fail.")
 
 
 try:
@@ -95,23 +77,14 @@ try:
         scene=scene,
         candidate=candidate.model_copy(
             update={
-                "source_type": (
-                    SceneSourceType.LOCAL_LIBRARY
-                ),
+                "source_type": (SceneSourceType.LOCAL_LIBRARY),
             }
         ),
     )
 except ValueError:
-    print(
-        "Invalid stock candidate source successfully blocked."
-    )
+    print("Invalid stock candidate source successfully blocked.")
 else:
-    raise AssertionError(
-        "Non-stock candidate should fail."
-    )
+    raise AssertionError("Non-stock candidate should fail.")
 
 
-print(
-    "Stock Acquisition Request tests "
-    "completed successfully."
-)
+print("Stock Acquisition Request tests " "completed successfully.")

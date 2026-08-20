@@ -17,7 +17,6 @@ from src.services.asset_decision_service import (
     AssetDecisionService,
 )
 
-
 service = AssetDecisionService()
 
 
@@ -47,10 +46,7 @@ local_result = service.apply_decision(
 print("Local status:", local_result.status)
 
 assert local_result.status == AssetWorkflowStatus.READY
-assert (
-    local_result.selected_source
-    == SceneSourceType.LOCAL_LIBRARY
-)
+assert local_result.selected_source == SceneSourceType.LOCAL_LIBRARY
 assert local_result.selected_candidate is not None
 assert local_result.selected_candidate.approved is True
 
@@ -63,9 +59,7 @@ manual_request_state = SceneAssetState(
 
 manual_request_result = service.apply_decision(
     state=manual_request_state,
-    decision=(
-        AssetUserDecision.REQUEST_MANUAL_UPLOAD
-    ),
+    decision=(AssetUserDecision.REQUEST_MANUAL_UPLOAD),
 )
 
 print(
@@ -73,34 +67,20 @@ print(
     manual_request_result.status,
 )
 
-assert (
-    manual_request_result.status
-    == AssetWorkflowStatus.WAITING_FOR_MANUAL_UPLOAD
-)
+assert manual_request_result.status == AssetWorkflowStatus.WAITING_FOR_MANUAL_UPLOAD
 assert manual_request_result.manual_upload_requested is True
-assert (
-    manual_request_result.selected_source
-    == SceneSourceType.MANUAL_UPLOAD
-)
+assert manual_request_result.selected_source == SceneSourceType.MANUAL_UPLOAD
 
 
 with TemporaryDirectory() as temporary_directory:
-    upload_file = (
-        Path(temporary_directory)
-        / "manual_roman_clip.mp4"
-    )
+    upload_file = Path(temporary_directory) / "manual_roman_clip.mp4"
 
-    upload_file.write_bytes(
-        b"manual-video"
-    )
+    upload_file.write_bytes(b"manual-video")
 
     manual_ready_state = SceneAssetState(
         scene_id="scene-003",
         scene_number=3,
-        status=(
-            AssetWorkflowStatus
-            .WAITING_FOR_MANUAL_UPLOAD
-        ),
+        status=(AssetWorkflowStatus.WAITING_FOR_MANUAL_UPLOAD),
     )
 
     manual_ready_result = service.apply_decision(
@@ -114,20 +94,13 @@ with TemporaryDirectory() as temporary_directory:
         manual_ready_result.status,
     )
 
-    assert (
-        manual_ready_result.status
-        == AssetWorkflowStatus.READY
-    )
+    assert manual_ready_result.status == AssetWorkflowStatus.READY
 
-    assert (
-        manual_ready_result.selected_source
-        == SceneSourceType.MANUAL_UPLOAD
-    )
+    assert manual_ready_result.selected_source == SceneSourceType.MANUAL_UPLOAD
 
     assert manual_ready_result.selected_candidate is not None
-    assert (
-        manual_ready_result.selected_candidate.file_path
-        == str(upload_file.resolve())
+    assert manual_ready_result.selected_candidate.file_path == str(
+        upload_file.resolve()
     )
 
 
@@ -139,29 +112,19 @@ decline_state = SceneAssetState(
 
 decline_result = service.apply_decision(
     state=decline_state,
-    decision=(
-        AssetUserDecision.DECLINE_MANUAL_UPLOAD
-    ),
+    decision=(AssetUserDecision.DECLINE_MANUAL_UPLOAD),
 )
 
-assert (
-    decline_result.status
-    == AssetWorkflowStatus.SEARCHING_STOCK
-)
+assert decline_result.status == AssetWorkflowStatus.SEARCHING_STOCK
 
 assert decline_result.manual_upload_declined is True
-assert (
-    decline_result.selected_source
-    == SceneSourceType.STOCK_FOOTAGE
-)
+assert decline_result.selected_source == SceneSourceType.STOCK_FOOTAGE
 
 
 stock_candidate = AssetCandidate(
     title="Roman Soldiers",
     source_type=SceneSourceType.STOCK_FOOTAGE,
-    source_url=(
-        "https://example.com/roman-soldiers.mp4"
-    ),
+    source_url=("https://example.com/roman-soldiers.mp4"),
     provider="Dry Run Stock",
     provider_asset_id="stock-001",
     license_type="royalty_free",
@@ -183,10 +146,7 @@ stock_result = service.apply_decision(
 )
 
 assert stock_result.status == AssetWorkflowStatus.READY
-assert (
-    stock_result.selected_source
-    == SceneSourceType.STOCK_FOOTAGE
-)
+assert stock_result.selected_source == SceneSourceType.STOCK_FOOTAGE
 assert stock_result.selected_candidate is not None
 assert stock_result.selected_candidate.approved is True
 
@@ -199,10 +159,7 @@ recovery_state = SceneAssetState(
 recovery_state.record_failure(
     AssetModuleFailure(
         module_name="stock",
-        reason=(
-            AssetFailureReason
-            .STOCK_API_QUOTA_EXHAUSTED
-        ),
+        reason=(AssetFailureReason.STOCK_API_QUOTA_EXHAUSTED),
         message="Stock API credits are exhausted.",
         recovery_options=[
             AssetRecoveryAction.RETRY_STOCK_SEARCH,
@@ -217,20 +174,14 @@ retry_result = service.apply_decision(
     decision=AssetUserDecision.RETRY,
 )
 
-assert (
-    retry_result.status
-    == AssetWorkflowStatus.SEARCHING_STOCK
-)
+assert retry_result.status == AssetWorkflowStatus.SEARCHING_STOCK
 assert retry_result.active_failure is None
 
 
 skip_state = SceneAssetState(
     scene_id="scene-007",
     scene_number=7,
-    status=(
-        AssetWorkflowStatus
-        .WAITING_FOR_RECOVERY_DECISION
-    ),
+    status=(AssetWorkflowStatus.WAITING_FOR_RECOVERY_DECISION),
 )
 
 skip_result = service.apply_decision(
@@ -254,17 +205,10 @@ disabled_stock_result = service.apply_decision(
     decision=AssetUserDecision.SEARCH_STOCK,
 )
 
-assert (
-    disabled_stock_result.status
-    == AssetWorkflowStatus
-    .WAITING_FOR_RECOVERY_DECISION
-)
+assert disabled_stock_result.status == AssetWorkflowStatus.WAITING_FOR_RECOVERY_DECISION
 
 assert disabled_stock_result.active_failure is not None
-assert (
-    disabled_stock_result.active_failure.reason
-    == AssetFailureReason.MODULE_DISABLED
-)
+assert disabled_stock_result.active_failure.reason == AssetFailureReason.MODULE_DISABLED
 
 
 try:
@@ -276,15 +220,9 @@ try:
         decision=AssetUserDecision.IMAGE_TO_VIDEO,
     )
 except ValueError:
-    print(
-        "Image-to-video decision successfully blocked."
-    )
+    print("Image-to-video decision successfully blocked.")
 else:
-    raise AssertionError(
-        "Image-to-video decision should fail."
-    )
+    raise AssertionError("Image-to-video decision should fail.")
 
 
-print(
-    "Asset Decision Service tests completed successfully."
-)
+print("Asset Decision Service tests completed successfully.")

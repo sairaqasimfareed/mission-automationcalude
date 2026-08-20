@@ -17,7 +17,6 @@ from src.services.manual_upload_service import (
     ManualUploadService,
 )
 
-
 with TemporaryDirectory() as temporary_directory:
     root = Path(temporary_directory)
 
@@ -42,9 +41,7 @@ with TemporaryDirectory() as temporary_directory:
 
     valid_video = incoming / "ancient_city.mp4"
 
-    valid_video.write_bytes(
-        b"valid-video"
-    )
+    valid_video.write_bytes(b"valid-video")
 
     valid_result = service.process_video_upload(
         file_path=valid_video,
@@ -62,10 +59,7 @@ with TemporaryDirectory() as temporary_directory:
     assert valid_result.candidate is not None
     assert valid_result.indexed_asset is not None
 
-    assert (
-        valid_result.candidate.source_type
-        == SceneSourceType.MANUAL_UPLOAD
-    )
+    assert valid_result.candidate.source_type == SceneSourceType.MANUAL_UPLOAD
 
     assert valid_result.candidate.approved is True
 
@@ -86,27 +80,20 @@ with TemporaryDirectory() as temporary_directory:
         encoding="utf-8",
     )
 
-    invalid_type_result = (
-        service.process_video_upload(
-            file_path=invalid_type_file,
-            project_id="documentary-project",
-            scene_number=5,
-        )
+    invalid_type_result = service.process_video_upload(
+        file_path=invalid_type_file,
+        project_id="documentary-project",
+        scene_number=5,
     )
 
     assert invalid_type_result.success is False
     assert invalid_type_result.failure is not None
 
-    assert (
-        invalid_type_result.failure.reason
-        == AssetFailureReason.INVALID_FILE_TYPE
-    )
+    assert invalid_type_result.failure.reason == AssetFailureReason.INVALID_FILE_TYPE
 
     large_video = incoming / "large_video.mp4"
 
-    large_video.write_bytes(
-        b"x" * 101
-    )
+    large_video.write_bytes(b"x" * 101)
 
     large_result = service.process_video_upload(
         file_path=large_video,
@@ -117,10 +104,7 @@ with TemporaryDirectory() as temporary_directory:
     assert large_result.success is False
     assert large_result.failure is not None
 
-    assert (
-        large_result.failure.reason
-        == AssetFailureReason.FILE_TOO_LARGE
-    )
+    assert large_result.failure.reason == AssetFailureReason.FILE_TOO_LARGE
 
     missing_result = service.process_video_upload(
         file_path=incoming / "missing.mp4",
@@ -131,13 +115,7 @@ with TemporaryDirectory() as temporary_directory:
     assert missing_result.success is False
     assert missing_result.failure is not None
 
-    assert (
-        missing_result.failure.reason
-        == AssetFailureReason.FILE_NOT_FOUND
-    )
+    assert missing_result.failure.reason == AssetFailureReason.FILE_NOT_FOUND
 
 
-print(
-    "Manual Upload Service tests "
-    "completed successfully."
-)
+print("Manual Upload Service tests " "completed successfully.")

@@ -19,15 +19,11 @@ class FilterGraph(MissionBaseModel):
 
     schema_version: str = "1.0"
 
-    video_chains: list[
-        FilterChain
-    ] = Field(
+    video_chains: list[FilterChain] = Field(
         default_factory=list,
     )
 
-    audio_chains: list[
-        FilterChain
-    ] = Field(
+    audio_chains: list[FilterChain] = Field(
         default_factory=list,
     )
 
@@ -56,23 +52,15 @@ class FilterGraph(MissionBaseModel):
         self,
     ) -> FilterGraph:
         for chain in self.video_chains:
-            if (
-                chain.media_type
-                != FilterMediaType.VIDEO
-            ):
+            if chain.media_type != FilterMediaType.VIDEO:
                 raise ValueError(
-                    "Video filter collection contains "
-                    "a non-video chain."
+                    "Video filter collection contains " "a non-video chain."
                 )
 
         for chain in self.audio_chains:
-            if (
-                chain.media_type
-                != FilterMediaType.AUDIO
-            ):
+            if chain.media_type != FilterMediaType.AUDIO:
                 raise ValueError(
-                    "Audio filter collection contains "
-                    "a non-audio chain."
+                    "Audio filter collection contains " "a non-audio chain."
                 )
 
         return self
@@ -88,10 +76,7 @@ class FilterGraph(MissionBaseModel):
             ]
         )
 
-        self.is_valid = (
-            bool(self.video_output_label)
-            and bool(self.audio_output_label)
-        )
+        self.is_valid = bool(self.video_output_label) and bool(self.audio_output_label)
 
     def render_filter_complex(
         self,
@@ -104,10 +89,6 @@ class FilterGraph(MissionBaseModel):
             *self.video_chains,
             *self.audio_chains,
         ]:
-            expressions.extend(
-                chain.render_expressions()
-            )
+            expressions.extend(chain.render_expressions())
 
-        return ";".join(
-            expressions
-        )
+        return ";".join(expressions)

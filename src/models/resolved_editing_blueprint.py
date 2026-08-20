@@ -16,9 +16,7 @@ class BlueprintResolutionStatus(str, Enum):
     """Lifecycle state of a resolved editing blueprint."""
 
     RESOLVED = "resolved"
-    RESOLVED_WITH_FALLBACKS = (
-        "resolved_with_fallbacks"
-    )
+    RESOLVED_WITH_FALLBACKS = "resolved_with_fallbacks"
     FAILED = "failed"
     APPLIED = "applied"
 
@@ -48,9 +46,7 @@ class ResolvedCameraInstruction(MissionBaseModel):
 
     preset: ResolvedPresetReference
 
-    intensity: DirectiveIntensity = (
-        DirectiveIntensity.MEDIUM
-    )
+    intensity: DirectiveIntensity = DirectiveIntensity.MEDIUM
 
     start_offset_seconds: float = 0.0
     end_offset_seconds: float | None = None
@@ -59,34 +55,24 @@ class ResolvedCameraInstruction(MissionBaseModel):
     zoom_end: float | None = None
 
 
-class ResolvedTransitionInstruction(
-    MissionBaseModel
-):
+class ResolvedTransitionInstruction(MissionBaseModel):
     """Resolved transition instruction."""
 
     preset: ResolvedPresetReference
 
     duration_seconds: float = 0.0
 
-    intensity: DirectiveIntensity = (
-        DirectiveIntensity.MEDIUM
-    )
+    intensity: DirectiveIntensity = DirectiveIntensity.MEDIUM
 
 
-class ResolvedVisualEffectInstruction(
-    MissionBaseModel
-):
+class ResolvedVisualEffectInstruction(MissionBaseModel):
     """Resolved visual-effect instruction."""
 
     preset: ResolvedPresetReference
 
-    intensity: DirectiveIntensity = (
-        DirectiveIntensity.MEDIUM
-    )
+    intensity: DirectiveIntensity = DirectiveIntensity.MEDIUM
 
-    timing_mode: DirectiveTimingMode = (
-        DirectiveTimingMode.FULL_SCENE
-    )
+    timing_mode: DirectiveTimingMode = DirectiveTimingMode.FULL_SCENE
 
     start_offset_seconds: float = 0.0
     duration_seconds: float | None = None
@@ -96,16 +82,12 @@ class ResolvedVisualEffectInstruction(
     enabled: bool = True
 
 
-class ResolvedAnimationInstruction(
-    MissionBaseModel
-):
+class ResolvedAnimationInstruction(MissionBaseModel):
     """Resolved animation instruction."""
 
     preset: ResolvedPresetReference
 
-    intensity: DirectiveIntensity = (
-        DirectiveIntensity.MEDIUM
-    )
+    intensity: DirectiveIntensity = DirectiveIntensity.MEDIUM
 
     start_offset_seconds: float = 0.0
     duration_seconds: float | None = None
@@ -118,9 +100,7 @@ class ResolvedMusicInstruction(MissionBaseModel):
 
     preset: ResolvedPresetReference
 
-    intensity: DirectiveIntensity = (
-        DirectiveIntensity.LOW
-    )
+    intensity: DirectiveIntensity = DirectiveIntensity.LOW
 
     volume_percent: float = 25.0
 
@@ -131,39 +111,29 @@ class ResolvedMusicInstruction(MissionBaseModel):
     enabled: bool = True
 
 
-class ResolvedSoundEffectInstruction(
-    MissionBaseModel
-):
+class ResolvedSoundEffectInstruction(MissionBaseModel):
     """Resolved sound-effect instruction."""
 
     preset: ResolvedPresetReference
 
-    timing_mode: DirectiveTimingMode = (
-        DirectiveTimingMode.ABSOLUTE_SECONDS
-    )
+    timing_mode: DirectiveTimingMode = DirectiveTimingMode.ABSOLUTE_SECONDS
 
     start_offset_seconds: float = 0.0
     relative_position_percent: float | None = None
 
     volume_percent: float = 70.0
 
-    intensity: DirectiveIntensity = (
-        DirectiveIntensity.MEDIUM
-    )
+    intensity: DirectiveIntensity = DirectiveIntensity.MEDIUM
 
     enabled: bool = True
 
 
-class ResolvedSubtitleInstruction(
-    MissionBaseModel
-):
+class ResolvedSubtitleInstruction(MissionBaseModel):
     """Resolved subtitle styling instruction."""
 
     preset: ResolvedPresetReference
 
-    animation_preset: (
-        ResolvedPresetReference | None
-    ) = None
+    animation_preset: ResolvedPresetReference | None = None
 
     enabled: bool = True
     burn_into_video: bool = True
@@ -171,9 +141,7 @@ class ResolvedSubtitleInstruction(
     maximum_words_per_line: int = 8
 
 
-class ResolvedSceneEditingBlueprint(
-    MissionBaseModel
-):
+class ResolvedSceneEditingBlueprint(MissionBaseModel):
     """
     Complete provider-independent editing blueprint.
 
@@ -193,23 +161,17 @@ class ResolvedSceneEditingBlueprint(
     transition_in: ResolvedTransitionInstruction
     transition_out: ResolvedTransitionInstruction
 
-    visual_effects: list[
-        ResolvedVisualEffectInstruction
-    ] = Field(
+    visual_effects: list[ResolvedVisualEffectInstruction] = Field(
         default_factory=list,
     )
 
-    animations: list[
-        ResolvedAnimationInstruction
-    ] = Field(
+    animations: list[ResolvedAnimationInstruction] = Field(
         default_factory=list,
     )
 
     music: ResolvedMusicInstruction
 
-    sound_effects: list[
-        ResolvedSoundEffectInstruction
-    ] = Field(
+    sound_effects: list[ResolvedSoundEffectInstruction] = Field(
         default_factory=list,
     )
 
@@ -240,7 +202,6 @@ class ResolvedSceneEditingBlueprint(
 
         return self.status in {
             BlueprintResolutionStatus.RESOLVED,
-            BlueprintResolutionStatus
-            .RESOLVED_WITH_FALLBACKS,
+            BlueprintResolutionStatus.RESOLVED_WITH_FALLBACKS,
             BlueprintResolutionStatus.APPLIED,
         }

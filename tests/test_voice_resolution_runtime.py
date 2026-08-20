@@ -38,9 +38,7 @@ def _documentary_profile() -> VoiceProfile:
     return VoiceProfile(
         profile_id="voice.documentary",
         display_name="Documentary Narrator",
-        fallback_profile_id=(
-            "voice.neutral_narrator"
-        ),
+        fallback_profile_id=("voice.neutral_narrator"),
         provider_mappings={
             "elevenlabs": {
                 "voice_id": "test-voice",
@@ -97,14 +95,12 @@ def test_runtime_services_share_registry() -> None:
     runtime = _runtime()
 
     assert (
-        runtime.validation_service
-        .voice_profile_registry
+        runtime.validation_service.voice_profile_registry
         is runtime.voice_profile_registry
     )
 
     assert (
-        runtime.resolution_service
-        .voice_profile_registry
+        runtime.resolution_service.voice_profile_registry
         is runtime.voice_profile_registry
     )
 
@@ -112,23 +108,15 @@ def test_runtime_services_share_registry() -> None:
 def test_resolution_service_uses_runtime_validation_service() -> None:
     runtime = _runtime()
 
-    assert (
-        runtime.resolution_service
-        .validation_service
-        is runtime.validation_service
-    )
+    assert runtime.resolution_service.validation_service is runtime.validation_service
 
 
 def test_factory_registers_supplied_profiles() -> None:
     runtime = _runtime()
 
-    assert runtime.voice_profile_registry.contains(
-        "voice.neutral_narrator"
-    )
+    assert runtime.voice_profile_registry.contains("voice.neutral_narrator")
 
-    assert runtime.voice_profile_registry.contains(
-        "voice.documentary"
-    )
+    assert runtime.voice_profile_registry.contains("voice.documentary")
 
 
 def test_factory_creates_fresh_runtime_graph() -> None:
@@ -149,20 +137,11 @@ def test_factory_creates_fresh_runtime_graph() -> None:
 
     assert first is not second
 
-    assert (
-        first.voice_profile_registry
-        is not second.voice_profile_registry
-    )
+    assert first.voice_profile_registry is not second.voice_profile_registry
 
-    assert (
-        first.validation_service
-        is not second.validation_service
-    )
+    assert first.validation_service is not second.validation_service
 
-    assert (
-        first.resolution_service
-        is not second.resolution_service
-    )
+    assert first.resolution_service is not second.resolution_service
 
 
 def test_resolve_many_returns_resolved_blueprints() -> None:
@@ -186,28 +165,16 @@ def test_resolve_many_returns_resolved_blueprints() -> None:
 
     assert blueprint.scene_number == 1
 
-    assert (
-        blueprint.status
-        == VoiceBlueprintResolutionStatus.RESOLVED
-    )
+    assert blueprint.status == VoiceBlueprintResolutionStatus.RESOLVED
 
-    assert (
-        blueprint.profile.requested_profile_id
-        == "voice.documentary"
-    )
+    assert blueprint.profile.requested_profile_id == "voice.documentary"
 
-    assert (
-        blueprint.profile.resolved_profile_id
-        == "voice.documentary"
-    )
+    assert blueprint.profile.resolved_profile_id == "voice.documentary"
 
     assert blueprint.profile.found_exact_match
     assert not blueprint.profile.used_fallback
 
-    assert (
-        blueprint.narration_text
-        == "First scene narration."
-    )
+    assert blueprint.narration_text == "First scene narration."
 
 
 def test_resolve_many_orders_blueprints_by_scene_number() -> None:
@@ -232,10 +199,7 @@ def test_resolve_many_orders_blueprints_by_scene_number() -> None:
         ]
     )
 
-    assert [
-        blueprint.scene_number
-        for blueprint in blueprints
-    ] == [
+    assert [blueprint.scene_number for blueprint in blueprints] == [
         1,
         2,
     ]
@@ -247,8 +211,7 @@ def test_resolve_many_rejects_duplicate_scene_numbers() -> None:
     with pytest.raises(
         ValueError,
         match=(
-            "Duplicate voice directive scene numbers "
-            "cannot be resolved together"
+            "Duplicate voice directive scene numbers " "cannot be resolved together"
         ),
     ):
         runtime.resolve_many(
@@ -279,9 +242,7 @@ def test_unknown_profile_uses_neutral_fallback() -> None:
             (
                 _directives(
                     scene_number=1,
-                    voice_profile_id=(
-                        "voice.unknown_profile"
-                    ),
+                    voice_profile_id=("voice.unknown_profile"),
                 ),
                 "Fallback narration.",
                 20.0,
@@ -293,23 +254,11 @@ def test_unknown_profile_uses_neutral_fallback() -> None:
 
     blueprint = blueprints[0]
 
-    assert (
-        blueprint.status
-        == (
-            VoiceBlueprintResolutionStatus
-            .RESOLVED_WITH_FALLBACK
-        )
-    )
+    assert blueprint.status == (VoiceBlueprintResolutionStatus.RESOLVED_WITH_FALLBACK)
 
-    assert (
-        blueprint.profile.requested_profile_id
-        == "voice.unknown_profile"
-    )
+    assert blueprint.profile.requested_profile_id == "voice.unknown_profile"
 
-    assert (
-        blueprint.profile.resolved_profile_id
-        == "voice.neutral_narrator"
-    )
+    assert blueprint.profile.resolved_profile_id == "voice.neutral_narrator"
 
     assert blueprint.profile.used_fallback
 
@@ -331,9 +280,4 @@ def test_runtime_does_not_require_provider_credentials() -> None:
 
     assert len(blueprints) == 1
 
-    assert (
-        blueprints[0]
-        .profile
-        .resolved_profile_id
-        == "voice.documentary"
-    )
+    assert blueprints[0].profile.resolved_profile_id == "voice.documentary"

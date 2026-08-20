@@ -110,9 +110,7 @@ class FFmpegExecutionResult(MissionBaseModel):
             argument = value.strip()
 
             if argument:
-                cleaned.append(
-                    argument
-                )
+                cleaned.append(argument)
 
         return cleaned
 
@@ -135,72 +133,31 @@ class FFmpegExecutionResult(MissionBaseModel):
     def validate_result(
         self,
     ) -> FFmpegExecutionResult:
-        if self.success != (
-            self.status
-            == FFmpegExecutionStatus.SUCCEEDED
-        ):
-            raise ValueError(
-                "Success flag does not match "
-                "execution status."
-            )
+        if self.success != (self.status == FFmpegExecutionStatus.SUCCEEDED):
+            raise ValueError("Success flag does not match " "execution status.")
 
-        if (
-            self.success
-            and self.exit_code != 0
-        ):
-            raise ValueError(
-                "Successful execution must "
-                "return exit code 0."
-            )
+        if self.success and self.exit_code != 0:
+            raise ValueError("Successful execution must " "return exit code 0.")
 
-        if (
-            not self.success
-            and self.error_message is None
-        ):
-            raise ValueError(
-                "Failed execution requires "
-                "an error message."
-            )
+        if not self.success and self.error_message is None:
+            raise ValueError("Failed execution requires " "an error message.")
 
-        if (
-            self.output_exists
-            and self.output_file is None
-        ):
-            raise ValueError(
-                "Existing output requires "
-                "an output filename."
-            )
+        if self.output_exists and self.output_file is None:
+            raise ValueError("Existing output requires " "an output filename.")
 
-        if (
-            self.output_file is not None
-            and self.output_exists
-        ):
-            path = Path(
-                self.output_file
-            )
+        if self.output_file is not None and self.output_exists:
+            path = Path(self.output_file)
 
             if path.name == "":
-                raise ValueError(
-                    "Output filename is invalid."
-                )
+                raise ValueError("Output filename is invalid.")
 
-        if (
-            self.success
-            and not self.progress.is_successful_terminal
-        ):
+        if self.success and not self.progress.is_successful_terminal:
             raise ValueError(
-                "Successful execution requires "
-                "completed render progress."
+                "Successful execution requires " "completed render progress."
             )
 
-        if (
-            not self.success
-            and not self.progress.is_terminal
-        ):
-            raise ValueError(
-                "Failed execution requires "
-                "terminal render progress."
-            )
+        if not self.success and not self.progress.is_terminal:
+            raise ValueError("Failed execution requires " "terminal render progress.")
 
         return self
 
@@ -208,34 +165,25 @@ class FFmpegExecutionResult(MissionBaseModel):
     def has_output(self) -> bool:
         """Return whether a rendered output exists."""
 
-        return (
-            self.output_exists
-            and self.output_file is not None
-        )
+        return self.output_exists and self.output_file is not None
 
     @property
     def command_line(self) -> str:
         """Return the FFmpeg command as one readable string."""
 
-        return " ".join(
-            self.ffmpeg_command
-        )
+        return " ".join(self.ffmpeg_command)
 
     @property
     def has_stdout(self) -> bool:
         """Return whether FFmpeg produced stdout text."""
 
-        return bool(
-            self.stdout.strip()
-        )
+        return bool(self.stdout.strip())
 
     @property
     def has_stderr(self) -> bool:
         """Return whether FFmpeg produced stderr text."""
 
-        return bool(
-            self.stderr.strip()
-        )
+        return bool(self.stderr.strip())
 
     @property
     def stderr_tail(self) -> str:
@@ -249,15 +197,9 @@ class FFmpegExecutionResult(MissionBaseModel):
         if not self.stderr:
             return ""
 
-        lines = [
-            line
-            for line in self.stderr.splitlines()
-            if line.strip()
-        ]
+        lines = [line for line in self.stderr.splitlines() if line.strip()]
 
-        return "\n".join(
-            lines[-20:]
-        )
+        return "\n".join(lines[-20:])
 
     @property
     def failure_stage(self) -> str | None:
@@ -268,9 +210,7 @@ class FFmpegExecutionResult(MissionBaseModel):
         result metadata so this model remains provider-independent.
         """
 
-        value = self.metadata.get(
-            "failure_stage"
-        )
+        value = self.metadata.get("failure_stage")
 
         if not isinstance(
             value,
@@ -286,19 +226,13 @@ class FFmpegExecutionResult(MissionBaseModel):
     def is_timeout(self) -> bool:
         """Return whether execution terminated because of timeout."""
 
-        return (
-            self.status
-            == FFmpegExecutionStatus.TIMED_OUT
-        )
+        return self.status == FFmpegExecutionStatus.TIMED_OUT
 
     @property
     def is_cancelled(self) -> bool:
         """Return whether execution was cancelled."""
 
-        return (
-            self.status
-            == FFmpegExecutionStatus.CANCELLED
-        )
+        return self.status == FFmpegExecutionStatus.CANCELLED
 
     @property
     def diagnostic_summary(self) -> str:
@@ -310,10 +244,7 @@ class FFmpegExecutionResult(MissionBaseModel):
         """
 
         if self.success:
-            output = (
-                self.output_file
-                or "unknown output"
-            )
+            output = self.output_file or "unknown output"
 
             return (
                 "FFmpeg execution succeeded "
@@ -321,23 +252,11 @@ class FFmpegExecutionResult(MissionBaseModel):
                 f"{output}"
             )
 
-        stage = (
-            self.failure_stage
-            or "unknown"
-        )
+        stage = self.failure_stage or "unknown"
 
-        error = (
-            self.error_message
-            or "Unknown FFmpeg execution error."
-        )
+        error = self.error_message or "Unknown FFmpeg execution error."
 
-        exit_code = (
-            "unknown"
-            if self.exit_code is None
-            else str(
-                self.exit_code
-            )
-        )
+        exit_code = "unknown" if self.exit_code is None else str(self.exit_code)
 
         return (
             "FFmpeg execution failed "
@@ -395,10 +314,7 @@ class FFmpegExecutionResult(MissionBaseModel):
         """Create a failed execution result."""
 
         if status == FFmpegExecutionStatus.SUCCEEDED:
-            raise ValueError(
-                "Failed factory cannot create "
-                "successful execution."
-            )
+            raise ValueError("Failed factory cannot create " "successful execution.")
 
         return cls(
             status=status,

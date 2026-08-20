@@ -60,36 +60,24 @@ class StockDownloadService:
         self,
         *,
         temporary_directory: str | Path,
-        maximum_file_size_bytes: int = (
-            5 * 1024 * 1024 * 1024
-        ),
+        maximum_file_size_bytes: int = (5 * 1024 * 1024 * 1024),
         timeout_seconds: float = 60.0,
         opener: Callable[..., BinaryIO] | None = None,
     ) -> None:
         if maximum_file_size_bytes < 1:
-            raise ValueError(
-                "Maximum stock download size must be positive."
-            )
+            raise ValueError("Maximum stock download size must be positive.")
 
         if timeout_seconds <= 0:
-            raise ValueError(
-                "Stock download timeout must be positive."
-            )
+            raise ValueError("Stock download timeout must be positive.")
 
-        self.temporary_directory = (
-            Path(temporary_directory)
-            .expanduser()
-            .resolve()
-        )
+        self.temporary_directory = Path(temporary_directory).expanduser().resolve()
 
         self.temporary_directory.mkdir(
             parents=True,
             exist_ok=True,
         )
 
-        self.maximum_file_size_bytes = (
-            maximum_file_size_bytes
-        )
+        self.maximum_file_size_bytes = maximum_file_size_bytes
 
         self.timeout_seconds = timeout_seconds
         self._opener = opener
@@ -109,24 +97,19 @@ class StockDownloadService:
             return StockDownloadResult(
                 success=False,
                 source_url="",
-                message=(
-                    "Stock download URL cannot be empty."
-                ),
+                message=("Stock download URL cannot be empty."),
                 error_type="InvalidUrl",
                 retryable=False,
             )
 
-        extension = self._detect_extension(
-            normalized_url
-        )
+        extension = self._detect_extension(normalized_url)
 
         if extension not in self.SUPPORTED_VIDEO_EXTENSIONS:
             return StockDownloadResult(
                 success=False,
                 source_url=normalized_url,
                 message=(
-                    "The stock asset URL does not use "
-                    "a supported video extension."
+                    "The stock asset URL does not use " "a supported video extension."
                 ),
                 error_type="UnsupportedFileType",
                 retryable=False,
@@ -138,23 +121,16 @@ class StockDownloadService:
         temporary_path: Path | None = None
 
         try:
-            stream = self._open_url(
-                normalized_url
-            )
+            stream = self._open_url(normalized_url)
 
             with stream:
-                content_type = self._read_content_type(
-                    stream
-                )
+                content_type = self._read_content_type(stream)
 
-                declared_size = self._read_content_length(
-                    stream
-                )
+                declared_size = self._read_content_length(stream)
 
                 if (
                     declared_size is not None
-                    and declared_size
-                    > self.maximum_file_size_bytes
+                    and declared_size > self.maximum_file_size_bytes
                 ):
                     return StockDownloadResult(
                         success=False,
@@ -167,30 +143,22 @@ class StockDownloadService:
                         retryable=False,
                         content_type=content_type,
                         metadata={
-                            "declared_size_bytes": str(
-                                declared_size
-                            ),
+                            "declared_size_bytes": str(declared_size),
                             "maximum_file_size_bytes": str(
                                 self.maximum_file_size_bytes
                             ),
                         },
                     )
 
-                temporary_path = self._create_temp_path(
-                    extension
-                )
+                temporary_path = self._create_temp_path(extension)
 
-                file_size, content_hash = (
-                    self._copy_stream_with_hash(
-                        source=stream,
-                        destination=temporary_path,
-                    )
+                file_size, content_hash = self._copy_stream_with_hash(
+                    source=stream,
+                    destination=temporary_path,
                 )
 
         except TimeoutError as error:
-            self._delete_if_present(
-                temporary_path
-            )
+            self._delete_if_present(temporary_path)
 
             return StockDownloadResult(
                 success=False,
@@ -201,16 +169,12 @@ class StockDownloadService:
             )
 
         except HTTPError as error:
-            self._delete_if_present(
-                temporary_path
-            )
+            self._delete_if_present(temporary_path)
 
             return StockDownloadResult(
                 success=False,
                 source_url=normalized_url,
-                message=(
-                    "Stock provider returned an HTTP error."
-                ),
+                message=("Stock provider returned an HTTP error."),
                 error_type=type(error).__name__,
                 retryable=error.code >= 500,
                 metadata={
@@ -219,55 +183,42 @@ class StockDownloadService:
             )
 
         except URLError as error:
-            self._delete_if_present(
-                temporary_path
-            )
+            self._delete_if_present(temporary_path)
 
             return StockDownloadResult(
                 success=False,
                 source_url=normalized_url,
-                message=(
-                    "Could not connect to the stock provider."
-                ),
+                message=("Could not connect to the stock provider."),
                 error_type=type(error).__name__,
                 retryable=True,
             )
 
         except ConnectionError as error:
-            self._delete_if_present(
-                temporary_path
-            )
+            self._delete_if_present(temporary_path)
 
             return StockDownloadResult(
                 success=False,
                 source_url=normalized_url,
-                message=(
-                    "Could not connect to the stock provider."
-                ),
+                message=("Could not connect to the stock provider."),
                 error_type=type(error).__name__,
                 retryable=True,
             )
 
         except OSError as error:
-            self._delete_if_present(
-                temporary_path
-            )
+            self._delete_if_present(temporary_path)
 
             return StockDownloadResult(
                 success=False,
                 source_url=normalized_url,
                 message=(
-                    "The stock asset could not be written "
-                    "to temporary storage."
+                    "The stock asset could not be written " "to temporary storage."
                 ),
                 error_type=type(error).__name__,
                 retryable=False,
             )
 
         except ValueError as error:
-            self._delete_if_present(
-                temporary_path
-            )
+            self._delete_if_present(temporary_path)
 
             return StockDownloadResult(
                 success=False,
@@ -280,27 +231,19 @@ class StockDownloadService:
         metadata: dict[str, str] = {}
 
         if provider_name:
-            metadata["provider_name"] = (
-                provider_name.strip()
-            )
+            metadata["provider_name"] = provider_name.strip()
 
         if provider_asset_id:
-            metadata["provider_asset_id"] = (
-                provider_asset_id.strip()
-            )
+            metadata["provider_asset_id"] = provider_asset_id.strip()
 
         return StockDownloadResult(
             success=True,
             source_url=normalized_url,
-            temporary_file_path=str(
-                temporary_path.resolve()
-            ),
+            temporary_file_path=str(temporary_path.resolve()),
             content_hash=content_hash,
             file_size_bytes=file_size,
             content_type=content_type,
-            message=(
-                "Stock asset downloaded successfully."
-            ),
+            message=("Stock asset downloaded successfully."),
             retryable=False,
             metadata=metadata,
         )
@@ -320,19 +263,17 @@ class StockDownloadService:
         request = Request(
             source_url,
             headers={
-                "User-Agent": (
-                    "Mission-Automation/1.0"
-                ),
+                "User-Agent": ("Mission-Automation/1.0"),
             },
         )
 
         return cast(
-    BinaryIO,
-    urlopen(
-        request,
-        timeout=self.timeout_seconds,
-    ),
-)
+            BinaryIO,
+            urlopen(
+                request,
+                timeout=self.timeout_seconds,
+            ),
+        )
 
     def _copy_stream_with_hash(
         self,
@@ -347,22 +288,16 @@ class StockDownloadService:
 
         with destination.open("wb") as output:
             while True:
-                chunk = source.read(
-                    1024 * 1024
-                )
+                chunk = source.read(1024 * 1024)
 
                 if not chunk:
                     break
 
                 total_bytes += len(chunk)
 
-                if (
-                    total_bytes
-                    > self.maximum_file_size_bytes
-                ):
+                if total_bytes > self.maximum_file_size_bytes:
                     raise ValueError(
-                        "The stock asset exceeds the "
-                        "maximum allowed download size."
+                        "The stock asset exceeds the " "maximum allowed download size."
                     )
 
                 output.write(chunk)
@@ -385,9 +320,7 @@ class StockDownloadService:
             dir=self.temporary_directory,
             delete=False,
         ) as temporary_file:
-            return Path(
-                temporary_file.name
-            )
+            return Path(temporary_file.name)
 
     @staticmethod
     def _detect_extension(
@@ -417,9 +350,7 @@ class StockDownloadService:
         if headers is None:
             return None
 
-        content_type = headers.get(
-            "Content-Type"
-        )
+        content_type = headers.get("Content-Type")
 
         if content_type is None:
             return None
@@ -441,9 +372,7 @@ class StockDownloadService:
         if headers is None:
             return None
 
-        raw_length = headers.get(
-            "Content-Length"
-        )
+        raw_length = headers.get("Content-Length")
 
         if raw_length is None:
             return None
@@ -463,8 +392,6 @@ class StockDownloadService:
             return
 
         try:
-            file_path.unlink(
-                missing_ok=True
-            )
+            file_path.unlink(missing_ok=True)
         except OSError:
             pass

@@ -23,19 +23,13 @@ class ResearchPipeline:
         profile_ids: list[str] | None = None,
         estimated_cost_usd: float = 0.0,
     ) -> None:
-        self.research_agent = (
-            research_agent
-            or ResearchAgent(
-                llm_service=llm_service,
-                profile_ids=profile_ids,
-                estimated_cost_usd=estimated_cost_usd,
-            )
+        self.research_agent = research_agent or ResearchAgent(
+            llm_service=llm_service,
+            profile_ids=profile_ids,
+            estimated_cost_usd=estimated_cost_usd,
         )
 
-        self.review_service = (
-            review_service
-            or ResearchReviewService()
-        )
+        self.review_service = review_service or ResearchReviewService()
 
     def run(
         self,

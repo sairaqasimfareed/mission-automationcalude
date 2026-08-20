@@ -42,9 +42,7 @@ class OpenAIProviderAdapter(LLMProviderAdapter):
         normalized_api_key = api_key.strip()
 
         if not normalized_api_key:
-            raise ValueError(
-                "OpenAI API key cannot be empty."
-            )
+            raise ValueError("OpenAI API key cannot be empty.")
 
         self._client = client or OpenAI(
             api_key=normalized_api_key,
@@ -57,9 +55,7 @@ class OpenAIProviderAdapter(LLMProviderAdapter):
         """Create a retry-compatible OpenAI operation."""
 
         if request.provider != LLMProvider.OPENAI:
-            raise ValueError(
-                "OpenAIProviderAdapter requires an OpenAI request."
-            )
+            raise ValueError("OpenAIProviderAdapter requires an OpenAI request.")
 
         def operation() -> LLMProviderResponse:
             return self._execute(request)
@@ -78,19 +74,13 @@ class OpenAIProviderAdapter(LLMProviderAdapter):
         }
 
         if request.system_prompt is not None:
-            request_arguments["instructions"] = (
-                request.system_prompt
-            )
+            request_arguments["instructions"] = request.system_prompt
 
         if request.max_output_tokens is not None:
-            request_arguments["max_output_tokens"] = (
-                request.max_output_tokens
-            )
+            request_arguments["max_output_tokens"] = request.max_output_tokens
 
         if request.temperature != 0.7:
-            request_arguments["temperature"] = (
-                request.temperature
-            )
+            request_arguments["temperature"] = request.temperature
 
         try:
             response = self._client.with_options(
@@ -100,25 +90,17 @@ class OpenAIProviderAdapter(LLMProviderAdapter):
             )
 
         except openai.APITimeoutError as error:
-            raise TimeoutError(
-                "OpenAI request timed out."
-            ) from error
+            raise TimeoutError("OpenAI request timed out.") from error
 
         except openai.APIConnectionError as error:
-            raise ConnectionError(
-                "Could not connect to OpenAI."
-            ) from error
+            raise ConnectionError("Could not connect to OpenAI.") from error
 
         except openai.RateLimitError as error:
-            raise ConnectionError(
-                "OpenAI rate limit reached."
-            ) from error
+            raise ConnectionError("OpenAI rate limit reached.") from error
 
         except openai.APIStatusError as error:
             error_request_id = (
-                str(error.request_id)
-                if error.request_id is not None
-                else "unknown"
+                str(error.request_id) if error.request_id is not None else "unknown"
             )
 
             raise RuntimeError(
@@ -137,9 +119,7 @@ class OpenAIProviderAdapter(LLMProviderAdapter):
         )
 
         provider_request_id: str | None = (
-            str(raw_request_id)
-            if raw_request_id is not None
-            else None
+            str(raw_request_id) if raw_request_id is not None else None
         )
 
         raw_response_id = getattr(
@@ -148,11 +128,7 @@ class OpenAIProviderAdapter(LLMProviderAdapter):
             None,
         )
 
-        response_id = (
-            str(raw_response_id)
-            if raw_response_id is not None
-            else ""
-        )
+        response_id = str(raw_response_id) if raw_response_id is not None else ""
 
         return LLMProviderResponse(
             content=content,

@@ -62,9 +62,7 @@ class FilterNode(MissionBaseModel):
         cleaned = value.strip().lower()
 
         if not cleaned:
-            raise ValueError(
-                "FFmpeg filter name cannot be empty."
-            )
+            raise ValueError("FFmpeg filter name cannot be empty.")
 
         return cleaned
 
@@ -80,18 +78,10 @@ class FilterNode(MissionBaseModel):
         cleaned: list[str] = []
 
         for value in values:
-            normalized = (
-                value.strip()
-                .strip("[]")
-            )
+            normalized = value.strip().strip("[]")
 
-            if (
-                normalized
-                and normalized not in cleaned
-            ):
-                cleaned.append(
-                    normalized
-                )
+            if normalized and normalized not in cleaned:
+                cleaned.append(normalized)
 
         return cleaned
 
@@ -101,11 +91,7 @@ class FilterNode(MissionBaseModel):
         cls,
         values: list[str],
     ) -> list[str]:
-        return [
-            value.strip()
-            for value in values
-            if value.strip()
-        ]
+        return [value.strip() for value in values if value.strip()]
 
     @field_validator("source_render_node_id")
     @classmethod
@@ -126,8 +112,7 @@ class FilterNode(MissionBaseModel):
     ) -> FilterNode:
         if not self.output_labels:
             raise ValueError(
-                "FFmpeg filter node requires "
-                "at least one output label."
+                "FFmpeg filter node requires " "at least one output label."
             )
 
         return self
@@ -135,37 +120,16 @@ class FilterNode(MissionBaseModel):
     def render_expression(self) -> str:
         """Render this node as one filter_complex expression."""
 
-        inputs = "".join(
-            f"[{label}]"
-            for label in self.input_labels
-        )
+        inputs = "".join(f"[{label}]" for label in self.input_labels)
 
-        outputs = "".join(
-            f"[{label}]"
-            for label in self.output_labels
-        )
+        outputs = "".join(f"[{label}]" for label in self.output_labels)
 
         arguments: list[str] = []
 
-        arguments.extend(
-            self.raw_arguments
-        )
+        arguments.extend(self.raw_arguments)
 
-        arguments.extend(
-            f"{key}={value}"
-            for key, value
-            in self.options.items()
-        )
+        arguments.extend(f"{key}={value}" for key, value in self.options.items())
 
-        argument_text = (
-            "=" + ":".join(arguments)
-            if arguments
-            else ""
-        )
+        argument_text = "=" + ":".join(arguments) if arguments else ""
 
-        return (
-            f"{inputs}"
-            f"{self.filter_name}"
-            f"{argument_text}"
-            f"{outputs}"
-        )
+        return f"{inputs}" f"{self.filter_name}" f"{argument_text}" f"{outputs}"

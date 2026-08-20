@@ -26,13 +26,9 @@ class SuccessfulLLMService:
         estimated_cost_usd: float = 0.0,
         profile_ids: list[str] | None = None,
     ) -> LLMServiceResult:
-        assert request.prompt_version == (
-            "research_prompt_v2.0.0"
-        )
+        assert request.prompt_version == ("research_prompt_v2.0.0")
 
-        assert "Hidden Underground Cities" in (
-            request.prompt
-        )
+        assert "Hidden Underground Cities" in (request.prompt)
 
         assert estimated_cost_usd == 0.25
 
@@ -69,26 +65,22 @@ class SuccessfulLLMService:
                 "gemini-backup",
             ],
             attempts=[
-    LLMServiceAttempt(
-        attempt_number=1,
-        profile_id="openai-main",
-        provider_name="OpenAI",
-        model="openai-test-model",
-        status=(
-            LLMCallStatus.PROVIDER_ERROR
-        ),
-        error_message=(
-            "Primary provider unavailable."
-        ),
-    ),
-    LLMServiceAttempt(
-        attempt_number=2,
-        profile_id="gemini-backup",
-        provider_name="Google Gemini",
-        model="gemini-test-model",
-        status=LLMCallStatus.SUCCESS,
-    ),
-],
+                LLMServiceAttempt(
+                    attempt_number=1,
+                    profile_id="openai-main",
+                    provider_name="OpenAI",
+                    model="openai-test-model",
+                    status=(LLMCallStatus.PROVIDER_ERROR),
+                    error_message=("Primary provider unavailable."),
+                ),
+                LLMServiceAttempt(
+                    attempt_number=2,
+                    profile_id="gemini-backup",
+                    provider_name="Google Gemini",
+                    model="gemini-test-model",
+                    status=LLMCallStatus.SUCCESS,
+                ),
+            ],
             used_failover=True,
         )
 
@@ -102,32 +94,23 @@ agent = ResearchAgent(
     estimated_cost_usd=0.25,
 )
 
-research = agent.research(
-    "Top 10 Hidden Underground Cities"
-)
+research = agent.research("Top 10 Hidden Underground Cities")
 
 print("Topic:", research.topic)
 print("Summary:", research.research_summary)
 print("Status:", research.status)
 print("Prompt version:", research.prompt_version)
 
-assert research.topic == (
-    "Top 10 Hidden Underground Cities"
-)
+assert research.topic == ("Top 10 Hidden Underground Cities")
 
-assert "Underground cities" in (
-    research.research_summary
-)
+assert "Underground cities" in (research.research_summary)
 
-assert research.prompt_version == (
-    "research_prompt_v2.0.0"
-)
+assert research.prompt_version == ("research_prompt_v2.0.0")
 
 assert research.status.value == "under_review"
 
 assert research.sources[0].title == (
-    "LLM-generated research draft via "
-    "gemini-backup"
+    "LLM-generated research draft via " "gemini-backup"
 )
 
 
@@ -136,9 +119,7 @@ try:
 except ValueError:
     print("Empty research topic successfully blocked.")
 else:
-    raise AssertionError(
-        "Empty research topic should fail."
-    )
+    raise AssertionError("Empty research topic should fail.")
 
 
 try:
@@ -147,13 +128,9 @@ try:
         estimated_cost_usd=-1.0,
     )
 except ValueError:
-    print(
-        "Negative research cost successfully blocked."
-    )
+    print("Negative research cost successfully blocked.")
 else:
-    raise AssertionError(
-        "Negative research cost should fail."
-    )
+    raise AssertionError("Negative research cost should fail.")
 
 
 print("Research Agent tests completed successfully.")

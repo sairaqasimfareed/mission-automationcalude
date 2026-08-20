@@ -17,11 +17,7 @@ from src.services.voice_profile_registry_service import (
     VoiceProfileRegistryService,
 )
 
-
-registry = (
-    VoiceProfileRegistryService
-    .with_default_profiles()
-)
+registry = VoiceProfileRegistryService.with_default_profiles()
 
 service = VoiceDirectiveValidationService(
     voice_profile_registry=registry,
@@ -49,10 +45,7 @@ valid_directives = SceneVoiceDirectives(
     ],
     pause_directives=[
         VoicePauseDirective(
-            after_text=(
-                "The ancient door "
-                "slowly opened."
-            ),
+            after_text=("The ancient door " "slowly opened."),
             duration_seconds=0.8,
         ),
     ],
@@ -82,43 +75,25 @@ print(
 
 print(
     "Estimated duration:",
-    valid_result
-    .estimated_speech_duration_seconds,
+    valid_result.estimated_speech_duration_seconds,
 )
 
 assert valid_result.is_valid is True
 assert valid_result.is_generation_ready is True
 assert valid_result.errors == []
 
-assert (
-    valid_result.profile_reference
-    is not None
-)
+assert valid_result.profile_reference is not None
 
-assert (
-    valid_result.profile_reference
-    .found_exact_match
-    is True
-)
+assert valid_result.profile_reference.found_exact_match is True
 
-assert (
-    valid_result.narration_word_count
-    > 0
-)
+assert valid_result.narration_word_count > 0
 
-assert (
-    valid_result.explicit_instruction_count
-    == 3
-)
+assert valid_result.explicit_instruction_count == 3
 
 
-fallback_directives = (
-    SceneVoiceDirectives(
-        scene_number=2,
-        voice_profile_id=(
-            "voice.not_registered"
-        ),
-    )
+fallback_directives = SceneVoiceDirectives(
+    scene_number=2,
+    voice_profile_id=("voice.not_registered"),
 )
 
 fallback_result = service.validate(
@@ -128,26 +103,14 @@ fallback_result = service.validate(
 )
 
 assert fallback_result.is_valid is True
-assert (
-    fallback_result.is_generation_ready
-    is True
-)
+assert fallback_result.is_generation_ready is True
 
-assert (
-    fallback_result.profile_reference
-    is not None
-)
+assert fallback_result.profile_reference is not None
 
-assert (
-    fallback_result.profile_reference
-    .used_fallback
-    is True
-)
+assert fallback_result.profile_reference.used_fallback is True
 
 assert any(
-    issue.code
-    == VoiceValidationCode
-    .VOICE_PROFILE_FALLBACK_USED
+    issue.code == VoiceValidationCode.VOICE_PROFILE_FALLBACK_USED
     for issue in fallback_result.warnings
 )
 
@@ -164,33 +127,27 @@ assert empty_result.is_valid is False
 assert empty_result.is_generation_ready is False
 
 assert any(
-    issue.code
-    == VoiceValidationCode.EMPTY_NARRATION
-    for issue in empty_result.errors
+    issue.code == VoiceValidationCode.EMPTY_NARRATION for issue in empty_result.errors
 )
 
 
-invalid_reference_directives = (
-    SceneVoiceDirectives(
-        scene_number=4,
-        pause_directives=[
-            VoicePauseDirective(
-                after_text=(
-                    "Text that is missing"
-                ),
-                duration_seconds=1.0,
-            ),
-            VoicePauseDirective(
-                at_character_index=999,
-                duration_seconds=1.0,
-            ),
-        ],
-        emphasis_directives=[
-            VoiceEmphasisDirective(
-                text="missing phrase",
-            ),
-        ],
-    )
+invalid_reference_directives = SceneVoiceDirectives(
+    scene_number=4,
+    pause_directives=[
+        VoicePauseDirective(
+            after_text=("Text that is missing"),
+            duration_seconds=1.0,
+        ),
+        VoicePauseDirective(
+            at_character_index=999,
+            duration_seconds=1.0,
+        ),
+    ],
+    emphasis_directives=[
+        VoiceEmphasisDirective(
+            text="missing phrase",
+        ),
+    ],
 )
 
 invalid_reference_result = service.validate(
@@ -202,23 +159,17 @@ invalid_reference_result = service.validate(
 assert invalid_reference_result.is_valid is False
 
 assert any(
-    issue.code
-    == VoiceValidationCode
-    .PAUSE_TEXT_NOT_FOUND
+    issue.code == VoiceValidationCode.PAUSE_TEXT_NOT_FOUND
     for issue in invalid_reference_result.errors
 )
 
 assert any(
-    issue.code
-    == VoiceValidationCode
-    .PAUSE_INDEX_OUT_OF_RANGE
+    issue.code == VoiceValidationCode.PAUSE_INDEX_OUT_OF_RANGE
     for issue in invalid_reference_result.errors
 )
 
 assert any(
-    issue.code
-    == VoiceValidationCode
-    .EMPHASIS_TEXT_NOT_FOUND
+    issue.code == VoiceValidationCode.EMPHASIS_TEXT_NOT_FOUND
     for issue in invalid_reference_result.errors
 )
 
@@ -240,18 +191,12 @@ unused_pronunciation_result = service.validate(
 assert unused_pronunciation_result.is_valid is True
 
 assert any(
-    issue.code
-    == VoiceValidationCode
-    .PRONUNCIATION_TEXT_NOT_FOUND
-    for issue in (
-        unused_pronunciation_result.warnings
-    )
+    issue.code == VoiceValidationCode.PRONUNCIATION_TEXT_NOT_FOUND
+    for issue in (unused_pronunciation_result.warnings)
 )
 
 
-long_narration = " ".join(
-    ["word"] * 100
-)
+long_narration = " ".join(["word"] * 100)
 
 duration_result = service.validate(
     SceneVoiceDirectives(
@@ -265,9 +210,7 @@ duration_result = service.validate(
 assert duration_result.is_valid is False
 
 assert any(
-    issue.code
-    == VoiceValidationCode
-    .SPEECH_EXCEEDS_SCENE
+    issue.code == VoiceValidationCode.SPEECH_EXCEEDS_SCENE
     for issue in duration_result.errors
 )
 
@@ -283,9 +226,7 @@ short_narration_result = service.validate(
 assert short_narration_result.is_valid is True
 
 assert any(
-    issue.code
-    == VoiceValidationCode
-    .EXCESSIVE_SPEECH_GAP
+    issue.code == VoiceValidationCode.EXCESSIVE_SPEECH_GAP
     for issue in short_narration_result.warnings
 )
 
@@ -296,18 +237,13 @@ updated_directives = SceneVoiceDirectives(
 
 updated_result = service.validate_and_update(
     updated_directives,
-    narration_text=(
-        "This narration is valid."
-    ),
+    narration_text=("This narration is valid."),
     scene_duration_seconds=8.0,
 )
 
 assert updated_result.is_valid is True
 
-assert (
-    updated_directives.status
-    == VoiceDirectiveStatus.READY
-)
+assert updated_directives.status == VoiceDirectiveStatus.READY
 
 
 failed_directives = SceneVoiceDirectives(
@@ -322,15 +258,9 @@ failed_result = service.validate_and_update(
 
 assert failed_result.is_valid is False
 
-assert (
-    failed_directives.status
-    == VoiceDirectiveStatus.FAILED
-)
+assert failed_directives.status == VoiceDirectiveStatus.FAILED
 
 assert failed_directives.warnings
 
 
-print(
-    "Voice Directive Validation Service "
-    "tests completed successfully."
-)
+print("Voice Directive Validation Service " "tests completed successfully.")

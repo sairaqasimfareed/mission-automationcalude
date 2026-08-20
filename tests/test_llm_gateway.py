@@ -10,7 +10,6 @@ from src.shared.llm.models import (
 from src.shared.llm.providers import LLMProviderResponse
 from src.shared.llm.retry import RetryConfig
 
-
 gateway = LLMGateway(
     retry_config=RetryConfig(
         max_attempts=2,
@@ -103,17 +102,11 @@ malformed_result = gateway.call(
 print("Malformed status:", malformed_result.status)
 print("Malformed error:", malformed_result.error_message)
 
-assert (
-    malformed_result.status
-    == LLMCallStatus.MALFORMED_RESPONSE
-)
+assert malformed_result.status == LLMCallStatus.MALFORMED_RESPONSE
 assert malformed_result.is_success is False
 assert malformed_result.content == "This is not valid JSON"
 assert malformed_result.usage.total_tokens == 10
-assert (
-    malformed_result.provider_request_id
-    == "request-malformed-001"
-)
+assert malformed_result.provider_request_id == "request-malformed-001"
 
 
 non_object_json_result = gateway.call(
@@ -130,14 +123,8 @@ non_object_json_result = gateway.call(
     expect_json=True,
 )
 
-assert (
-    non_object_json_result.status
-    == LLMCallStatus.MALFORMED_RESPONSE
-)
-assert (
-    "Expected a JSON object"
-    in (non_object_json_result.error_message or "")
-)
+assert non_object_json_result.status == LLMCallStatus.MALFORMED_RESPONSE
+assert "Expected a JSON object" in (non_object_json_result.error_message or "")
 
 
 attempt_counter = {
@@ -194,10 +181,7 @@ failure_result = failing_gateway.call(
 print("Failure status:", failure_result.status)
 print("Failure retries:", failure_result.retry_count)
 
-assert (
-    failure_result.status
-    == LLMCallStatus.RETRY_EXHAUSTED
-)
+assert failure_result.status == LLMCallStatus.RETRY_EXHAUSTED
 assert failure_result.is_success is False
 assert failure_result.retry_count == 1
 assert failure_result.error_message is not None
@@ -220,9 +204,7 @@ circuit_gateway = LLMGateway(
 circuit_result = circuit_gateway.call(
     provider=LLMProvider.OPENAI,
     model="test-model",
-    operation=lambda: LLMProviderResponse(
-        content="Should not execute"
-    ),
+    operation=lambda: LLMProviderResponse(content="Should not execute"),
 )
 
 print("Circuit status:", circuit_result.status)

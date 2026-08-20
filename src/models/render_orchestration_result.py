@@ -74,13 +74,8 @@ class RenderOrchestrationResult(MissionBaseModel):
         for value in values:
             normalized = value.strip()
 
-            if (
-                normalized
-                and normalized not in cleaned
-            ):
-                cleaned.append(
-                    normalized
-                )
+            if normalized and normalized not in cleaned:
+                cleaned.append(normalized)
 
         return cleaned
 
@@ -100,9 +95,7 @@ class RenderOrchestrationResult(MissionBaseModel):
 
         for value in values:
             if value not in cleaned:
-                cleaned.append(
-                    value
-                )
+                cleaned.append(value)
 
         return cleaned
 
@@ -117,50 +110,38 @@ class RenderOrchestrationResult(MissionBaseModel):
         if self.success:
             if self.status != JobStatus.COMPLETED:
                 raise ValueError(
-                    "Successful render orchestration "
-                    "must have COMPLETED job status."
+                    "Successful render orchestration " "must have COMPLETED job status."
                 )
 
             if self.failed_stage is not None:
                 raise ValueError(
-                    "Successful render orchestration "
-                    "cannot contain a failed stage."
+                    "Successful render orchestration " "cannot contain a failed stage."
                 )
 
             if self.errors:
                 raise ValueError(
-                    "Successful render orchestration "
-                    "cannot contain errors."
+                    "Successful render orchestration " "cannot contain errors."
                 )
 
             if self.render_result is None:
                 raise ValueError(
-                    "Successful render orchestration "
-                    "requires a render result."
+                    "Successful render orchestration " "requires a render result."
                 )
 
             if not self.render_result.success:
                 raise ValueError(
-                    "Successful orchestration requires "
-                    "a successful render result."
+                    "Successful orchestration requires " "a successful render result."
                 )
 
-            if (
-                self.render_result.status
-                != RenderStatus.COMPLETED
-            ):
+            if self.render_result.status != RenderStatus.COMPLETED:
                 raise ValueError(
-                    "Successful orchestration requires "
-                    "a completed render result."
+                    "Successful orchestration requires " "a completed render result."
                 )
 
-            if (
-                self.current_stage
-                not in {
-                    WorkflowStage.READY_FOR_UPLOAD,
-                    WorkflowStage.UPLOADED,
-                }
-            ):
+            if self.current_stage not in {
+                WorkflowStage.READY_FOR_UPLOAD,
+                WorkflowStage.UPLOADED,
+            }:
                 raise ValueError(
                     "Successful render orchestration must "
                     "finish at READY_FOR_UPLOAD or UPLOADED."
@@ -169,45 +150,27 @@ class RenderOrchestrationResult(MissionBaseModel):
         else:
             if self.status == JobStatus.COMPLETED:
                 raise ValueError(
-                    "Failed orchestration cannot have "
-                    "COMPLETED job status."
+                    "Failed orchestration cannot have " "COMPLETED job status."
                 )
 
-            if (
-                self.status == JobStatus.FAILED
-                and self.failed_stage is None
-            ):
-                raise ValueError(
-                    "Failed orchestration requires "
-                    "a failed stage."
-                )
+            if self.status == JobStatus.FAILED and self.failed_stage is None:
+                raise ValueError("Failed orchestration requires " "a failed stage.")
 
-            if (
-                self.status == JobStatus.FAILED
-                and not self.errors
-            ):
-                raise ValueError(
-                    "Failed orchestration requires "
-                    "at least one error."
-                )
+            if self.status == JobStatus.FAILED and not self.errors:
+                raise ValueError("Failed orchestration requires " "at least one error.")
 
         if self.failed_stage is not None:
             if self.failed_stage in self.completed_stages:
                 raise ValueError(
-                    "Failed stage cannot also appear "
-                    "in completed stages."
+                    "Failed stage cannot also appear " "in completed stages."
                 )
 
         if self.job.status != self.status:
-            raise ValueError(
-                "Orchestration status must match "
-                "VideoJob status."
-            )
+            raise ValueError("Orchestration status must match " "VideoJob status.")
 
         if self.job.current_stage != self.current_stage:
             raise ValueError(
-                "Orchestration current stage must match "
-                "VideoJob current stage."
+                "Orchestration current stage must match " "VideoJob current stage."
             )
 
         if (
@@ -216,8 +179,7 @@ class RenderOrchestrationResult(MissionBaseModel):
             and self.render_result != self.job.render_result
         ):
             raise ValueError(
-                "Orchestration render result must match "
-                "VideoJob render result."
+                "Orchestration render result must match " "VideoJob render result."
             )
 
         return self
@@ -236,43 +198,31 @@ class RenderOrchestrationResult(MissionBaseModel):
     def is_failed(self) -> bool:
         """Return whether orchestration ended in failure."""
 
-        return (
-            self.status
-            == JobStatus.FAILED
-        )
+        return self.status == JobStatus.FAILED
 
     @property
     def is_cancelled(self) -> bool:
         """Return whether orchestration was cancelled."""
 
-        return (
-            self.status
-            == JobStatus.CANCELLED
-        )
+        return self.status == JobStatus.CANCELLED
 
     @property
     def completed_stage_count(self) -> int:
         """Return number of uniquely completed workflow stages."""
 
-        return len(
-            self.completed_stages
-        )
+        return len(self.completed_stages)
 
     @property
     def has_warnings(self) -> bool:
         """Return whether orchestration produced warnings."""
 
-        return bool(
-            self.warnings
-        )
+        return bool(self.warnings)
 
     @property
     def has_errors(self) -> bool:
         """Return whether orchestration produced errors."""
 
-        return bool(
-            self.errors
-        )
+        return bool(self.errors)
 
     @property
     def diagnostic_summary(self) -> str:
@@ -296,16 +246,9 @@ class RenderOrchestrationResult(MissionBaseModel):
             else self.current_stage.value
         )
 
-        message = (
-            self.errors[-1]
-            if self.errors
-            else "Unknown orchestration failure."
-        )
+        message = self.errors[-1] if self.errors else "Unknown orchestration failure."
 
-        return (
-            "Render orchestration failed during "
-            f"{failed_stage}: {message}"
-        )
+        return "Render orchestration failed during " f"{failed_stage}: {message}"
 
     @classmethod
     def succeeded(
@@ -321,8 +264,7 @@ class RenderOrchestrationResult(MissionBaseModel):
 
         if job.render_result is None:
             raise ValueError(
-                "Successful orchestration factory "
-                "requires VideoJob.render_result."
+                "Successful orchestration factory " "requires VideoJob.render_result."
             )
 
         return cls(

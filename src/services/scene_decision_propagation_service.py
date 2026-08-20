@@ -32,14 +32,11 @@ class SceneDecisionPropagationService:
         """
 
         if start_scene_number < 1:
-            raise ValueError(
-                "Start scene number must be at least 1."
-            )
+            raise ValueError("Start scene number must be at least 1.")
 
         if decision == AssetUserDecision.IMAGE_TO_VIDEO:
             raise ValueError(
-                "Image-to-video is disabled in the active "
-                "visual workflow."
+                "Image-to-video is disabled in the active " "visual workflow."
             )
 
         if decision not in self.PROPAGATABLE_DECISIONS:
@@ -84,54 +81,30 @@ class SceneDecisionPropagationService:
             AssetUserDecision.MANUAL_UPLOAD,
         }:
             if state.manual_upload_module_enabled:
-                state.selected_source = (
-                    SceneSourceType.MANUAL_UPLOAD
-                )
+                state.selected_source = SceneSourceType.MANUAL_UPLOAD
                 state.manual_upload_requested = True
                 state.manual_upload_declined = False
-                state.status = (
-                    AssetWorkflowStatus
-                    .WAITING_FOR_MANUAL_UPLOAD
-                )
+                state.status = AssetWorkflowStatus.WAITING_FOR_MANUAL_UPLOAD
             elif state.stock_module_enabled:
-                state.selected_source = (
-                    SceneSourceType.STOCK_FOOTAGE
-                )
-                state.status = (
-                    AssetWorkflowStatus.SEARCHING_STOCK
-                )
+                state.selected_source = SceneSourceType.STOCK_FOOTAGE
+                state.status = AssetWorkflowStatus.SEARCHING_STOCK
             else:
                 state.selected_source = None
-                state.status = (
-                    AssetWorkflowStatus
-                    .WAITING_FOR_RECOVERY_DECISION
-                )
+                state.status = AssetWorkflowStatus.WAITING_FOR_RECOVERY_DECISION
 
             return
 
         if decision == AssetUserDecision.SEARCH_STOCK:
             if state.stock_module_enabled:
-                state.selected_source = (
-                    SceneSourceType.STOCK_FOOTAGE
-                )
-                state.status = (
-                    AssetWorkflowStatus.SEARCHING_STOCK
-                )
+                state.selected_source = SceneSourceType.STOCK_FOOTAGE
+                state.status = AssetWorkflowStatus.SEARCHING_STOCK
             elif state.manual_upload_module_enabled:
-                state.selected_source = (
-                    SceneSourceType.MANUAL_UPLOAD
-                )
+                state.selected_source = SceneSourceType.MANUAL_UPLOAD
                 state.manual_upload_requested = True
-                state.status = (
-                    AssetWorkflowStatus
-                    .WAITING_FOR_MANUAL_UPLOAD
-                )
+                state.status = AssetWorkflowStatus.WAITING_FOR_MANUAL_UPLOAD
             else:
                 state.selected_source = None
-                state.status = (
-                    AssetWorkflowStatus
-                    .WAITING_FOR_RECOVERY_DECISION
-                )
+                state.status = AssetWorkflowStatus.WAITING_FOR_RECOVERY_DECISION
 
             return
 
@@ -142,6 +115,4 @@ class SceneDecisionPropagationService:
             state.status = AssetWorkflowStatus.SKIPPED
             return
 
-        raise ValueError(
-            f"Unsupported propagated decision: {decision}"
-        )
+        raise ValueError(f"Unsupported propagated decision: {decision}")

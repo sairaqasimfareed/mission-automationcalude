@@ -42,9 +42,7 @@ class GeminiProviderAdapter(LLMProviderAdapter):
         normalized_api_key = api_key.strip()
 
         if not normalized_api_key:
-            raise ValueError(
-                "Gemini API key cannot be empty."
-            )
+            raise ValueError("Gemini API key cannot be empty.")
 
         self._client = client or genai.Client(
             api_key=normalized_api_key,
@@ -57,9 +55,7 @@ class GeminiProviderAdapter(LLMProviderAdapter):
         """Create a retry-compatible Gemini operation."""
 
         if request.provider != LLMProvider.GEMINI:
-            raise ValueError(
-                "GeminiProviderAdapter requires a Gemini request."
-            )
+            raise ValueError("GeminiProviderAdapter requires a Gemini request.")
 
         def operation() -> LLMProviderResponse:
             return self._execute(request)
@@ -89,18 +85,12 @@ class GeminiProviderAdapter(LLMProviderAdapter):
             None,
         )
 
-        response_id = (
-            str(raw_response_id)
-            if raw_response_id is not None
-            else ""
-        )
+        response_id = str(raw_response_id) if raw_response_id is not None else ""
 
         return LLMProviderResponse(
             content=content,
             usage=usage,
-            provider_request_id=(
-                response_id or None
-            ),
+            provider_request_id=(response_id or None),
             metadata={
                 "provider": "gemini",
                 "response_id": response_id,
@@ -119,24 +109,16 @@ class GeminiProviderAdapter(LLMProviderAdapter):
         }
 
         if request.system_prompt is not None:
-            config_arguments["system_instruction"] = (
-                request.system_prompt
-            )
+            config_arguments["system_instruction"] = request.system_prompt
 
         if request.max_output_tokens is not None:
-            config_arguments["max_output_tokens"] = (
-                request.max_output_tokens
-            )
+            config_arguments["max_output_tokens"] = request.max_output_tokens
 
         if request.expect_json:
-            config_arguments["response_mime_type"] = (
-                "application/json"
-            )
+            config_arguments["response_mime_type"] = "application/json"
 
             if request.response_schema is not None:
-                config_arguments["response_schema"] = (
-                    request.response_schema
-                )
+                config_arguments["response_schema"] = request.response_schema
 
         return types.GenerateContentConfig(
             **config_arguments,

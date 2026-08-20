@@ -50,9 +50,7 @@ def build_preset_reference(
         resolved_preset_id=preset_id,
         found_exact_match=not used_fallback,
         used_fallback=used_fallback,
-        implementation=dict(
-            implementation or {}
-        ),
+        implementation=dict(implementation or {}),
         metadata={},
     )
 
@@ -79,9 +77,7 @@ def transition_implementation(
         },
     }
 
-    return dict(
-        implementations[preset_id]
-    )
+    return dict(implementations[preset_id])
 
 
 def build_transition_instruction(
@@ -93,20 +89,12 @@ def build_transition_instruction(
 ) -> ResolvedTransitionInstruction:
     """Build one resolved transition instruction."""
 
-    implementation = (
-        transition_implementation(
-            preset_id
-        )
-    )
+    implementation = transition_implementation(preset_id)
 
     resolved_duration = (
         float(duration_seconds)
         if duration_seconds is not None
-        else float(
-            implementation[
-                "default_duration_seconds"
-            ]
-        )
+        else float(implementation["default_duration_seconds"])
     )
 
     return ResolvedTransitionInstruction(
@@ -153,30 +141,18 @@ def build_blueprint(
         ),
         transition_in=(
             build_transition_instruction(
-                directive_path=(
-                    "transition_in.preset_id"
-                ),
+                directive_path=("transition_in.preset_id"),
                 preset_id=transition_in_id,
-                duration_seconds=(
-                    transition_in_duration
-                ),
-                used_fallback=(
-                    transition_in_fallback
-                ),
+                duration_seconds=(transition_in_duration),
+                used_fallback=(transition_in_fallback),
             )
         ),
         transition_out=(
             build_transition_instruction(
-                directive_path=(
-                    "transition_out.preset_id"
-                ),
+                directive_path=("transition_out.preset_id"),
                 preset_id=transition_out_id,
-                duration_seconds=(
-                    transition_out_duration
-                ),
-                used_fallback=(
-                    transition_out_fallback
-                ),
+                duration_seconds=(transition_out_duration),
+                used_fallback=(transition_out_fallback),
             )
         ),
         visual_effects=[],
@@ -199,9 +175,7 @@ def build_blueprint(
         sound_effects=[],
         subtitles=ResolvedSubtitleInstruction(
             preset=build_preset_reference(
-                directive_path=(
-                    "subtitles.preset_id"
-                ),
+                directive_path=("subtitles.preset_id"),
                 preset_id="subtitle.default",
                 implementation={
                     "style": "default",
@@ -212,13 +186,8 @@ def build_blueprint(
             burn_into_video=False,
             maximum_words_per_line=8,
         ),
-        status=(
-            BlueprintResolutionStatus.RESOLVED
-        ),
-        fallback_count=(
-            int(transition_in_fallback)
-            + int(transition_out_fallback)
-        ),
+        status=(BlueprintResolutionStatus.RESOLVED),
+        fallback_count=(int(transition_in_fallback) + int(transition_out_fallback)),
         exact_match_count=6,
         warnings=[],
         metadata={},
@@ -234,19 +203,12 @@ def build_clip(
 
     return VideoClip(
         scene_number=scene_number,
-        source_type=(
-            SceneSourceType.MANUAL_UPLOAD
-        ),
+        source_type=(SceneSourceType.MANUAL_UPLOAD),
         duration_seconds=duration_seconds,
         prompt=f"Scene {scene_number}",
         provider="Manual Upload",
-        local_file=(
-            "assets/videos/manual/"
-            f"scene_{scene_number:03}.mp4"
-        ),
-        source_status=(
-            SceneSourceStatus.READY
-        ),
+        local_file=("assets/videos/manual/" f"scene_{scene_number:03}.mp4"),
+        source_status=(SceneSourceStatus.READY),
         status=VideoClipStatus.READY,
     )
 
@@ -256,9 +218,7 @@ def build_item(
     scene_number: int,
     start_time_seconds: float,
     duration_seconds: int,
-    blueprint: (
-        ResolvedSceneEditingBlueprint | None
-    ),
+    blueprint: ResolvedSceneEditingBlueprint | None,
     track_index: int = 0,
 ) -> VideoTimelineItem:
     """Build one explicit video timeline item."""
@@ -271,13 +231,8 @@ def build_item(
     return VideoTimelineItem(
         clip=clip,
         scene_number=scene_number,
-        start_time_seconds=(
-            start_time_seconds
-        ),
-        end_time_seconds=(
-            start_time_seconds
-            + float(duration_seconds)
-        ),
+        start_time_seconds=(start_time_seconds),
+        end_time_seconds=(start_time_seconds + float(duration_seconds)),
         track_index=track_index,
         layer_index=0,
         enabled=True,
@@ -287,27 +242,17 @@ def build_item(
 
 def build_two_scene_timeline(
     *,
-    scene_1_blueprint: (
-        ResolvedSceneEditingBlueprint | None
-    ) = None,
-    scene_2_blueprint: (
-        ResolvedSceneEditingBlueprint | None
-    ) = None,
+    scene_1_blueprint: ResolvedSceneEditingBlueprint | None = None,
+    scene_2_blueprint: ResolvedSceneEditingBlueprint | None = None,
 ) -> VideoTimeline:
     """Build a contiguous two-scene timeline."""
 
-    blueprint_1 = (
-        scene_1_blueprint
-        or build_blueprint(
-            scene_number=1,
-        )
+    blueprint_1 = scene_1_blueprint or build_blueprint(
+        scene_number=1,
     )
 
-    blueprint_2 = (
-        scene_2_blueprint
-        or build_blueprint(
-            scene_number=2,
-        )
+    blueprint_2 = scene_2_blueprint or build_blueprint(
+        scene_number=2,
     )
 
     item_1 = build_item(
@@ -382,15 +327,9 @@ timeline_in = cut_plan.executions[0]
 between_cut = cut_plan.executions[1]
 timeline_out = cut_plan.executions[2]
 
-assert (
-    timeline_in.placement
-    == TransitionPlacement.TIMELINE_IN
-)
+assert timeline_in.placement == TransitionPlacement.TIMELINE_IN
 
-assert (
-    timeline_in.direction
-    == TransitionDirection.IN
-)
+assert timeline_in.direction == TransitionDirection.IN
 
 assert timeline_in.source_scene_number is None
 assert timeline_in.target_scene_number == 1
@@ -400,15 +339,9 @@ assert timeline_in.duration_seconds == 0.0
 assert timeline_in.is_cut is True
 assert timeline_in.is_ready is True
 
-assert (
-    between_cut.placement
-    == TransitionPlacement.BETWEEN_SCENES
-)
+assert between_cut.placement == TransitionPlacement.BETWEEN_SCENES
 
-assert (
-    between_cut.direction
-    == TransitionDirection.BETWEEN
-)
+assert between_cut.direction == TransitionDirection.BETWEEN
 
 assert between_cut.source_scene_number == 1
 assert between_cut.target_scene_number == 2
@@ -417,15 +350,9 @@ assert between_cut.end_time_seconds == 8.0
 assert between_cut.duration_seconds == 0.0
 assert between_cut.requires_overlap is False
 
-assert (
-    timeline_out.placement
-    == TransitionPlacement.TIMELINE_OUT
-)
+assert timeline_out.placement == TransitionPlacement.TIMELINE_OUT
 
-assert (
-    timeline_out.direction
-    == TransitionDirection.OUT
-)
+assert timeline_out.direction == TransitionDirection.OUT
 
 assert timeline_out.source_scene_number == 2
 assert timeline_out.target_scene_number is None
@@ -445,10 +372,7 @@ boundary_only_plan = service.build_plan(
 
 assert boundary_only_plan.transition_count == 1
 
-assert (
-    boundary_only_plan.executions[0].placement
-    == TransitionPlacement.BETWEEN_SCENES
-)
+assert boundary_only_plan.executions[0].placement == TransitionPlacement.BETWEEN_SCENES
 
 
 # --------------------------------------------------
@@ -458,17 +382,13 @@ assert (
 cross_scene_1 = build_blueprint(
     scene_number=1,
     transition_in_id="transition.cut",
-    transition_out_id=(
-        "transition.cross_dissolve"
-    ),
+    transition_out_id=("transition.cross_dissolve"),
     transition_out_duration=0.6,
 )
 
 cross_scene_2 = build_blueprint(
     scene_number=2,
-    transition_in_id=(
-        "transition.cross_dissolve"
-    ),
+    transition_in_id=("transition.cross_dissolve"),
     transition_out_id="transition.cut",
     transition_in_duration=0.6,
 )
@@ -485,44 +405,23 @@ cross_plan = service.build_plan(
 cross_execution = next(
     execution
     for execution in cross_plan.executions
-    if (
-        execution.placement
-        == TransitionPlacement.BETWEEN_SCENES
-    )
+    if (execution.placement == TransitionPlacement.BETWEEN_SCENES)
 )
 
-assert (
-    cross_execution.preset_id
-    == "transition.cross_dissolve"
-)
+assert cross_execution.preset_id == "transition.cross_dissolve"
 
-assert (
-    cross_execution.transition_type
-    == "cross_dissolve"
-)
+assert cross_execution.transition_type == "cross_dissolve"
 
 assert cross_execution.duration_seconds == 0.6
 assert cross_execution.requires_overlap is True
 
-assert abs(
-    cross_execution.start_time_seconds
-    - 7.4
-) < 0.001
+assert abs(cross_execution.start_time_seconds - 7.4) < 0.001
 
 assert cross_execution.end_time_seconds == 8.0
 
-assert abs(
-    (
-        cross_execution.overlap_start_seconds
-        or 0.0
-    )
-    - 7.4
-) < 0.001
+assert abs((cross_execution.overlap_start_seconds or 0.0) - 7.4) < 0.001
 
-assert (
-    cross_execution.overlap_end_seconds
-    == 8.0
-)
+assert cross_execution.overlap_end_seconds == 8.0
 
 assert cross_plan.overlap_transition_count == 1
 assert cross_plan.timed_transition_count == 1
@@ -535,9 +434,7 @@ assert cross_plan.is_render_ready is True
 
 fade_scene_1 = build_blueprint(
     scene_number=1,
-    transition_in_id=(
-        "transition.fade_black"
-    ),
+    transition_in_id=("transition.fade_black"),
     transition_out_id="transition.cut",
     transition_in_duration=0.8,
 )
@@ -545,9 +442,7 @@ fade_scene_1 = build_blueprint(
 fade_scene_2 = build_blueprint(
     scene_number=2,
     transition_in_id="transition.cut",
-    transition_out_id=(
-        "transition.fade_black"
-    ),
+    transition_out_id=("transition.fade_black"),
     transition_out_duration=1.0,
 )
 
@@ -563,35 +458,23 @@ fade_plan = service.build_plan(
 fade_in_execution = next(
     execution
     for execution in fade_plan.executions
-    if (
-        execution.placement
-        == TransitionPlacement.TIMELINE_IN
-    )
+    if (execution.placement == TransitionPlacement.TIMELINE_IN)
 )
 
 fade_out_execution = next(
     execution
     for execution in fade_plan.executions
-    if (
-        execution.placement
-        == TransitionPlacement.TIMELINE_OUT
-    )
+    if (execution.placement == TransitionPlacement.TIMELINE_OUT)
 )
 
-assert (
-    fade_in_execution.preset_id
-    == "transition.fade_black"
-)
+assert fade_in_execution.preset_id == "transition.fade_black"
 
 assert fade_in_execution.start_time_seconds == 0.0
 assert fade_in_execution.end_time_seconds == 0.8
 assert fade_in_execution.duration_seconds == 0.8
 assert fade_in_execution.requires_overlap is False
 
-assert (
-    fade_out_execution.preset_id
-    == "transition.fade_black"
-)
+assert fade_out_execution.preset_id == "transition.fade_black"
 
 assert fade_out_execution.start_time_seconds == 14.0
 assert fade_out_execution.end_time_seconds == 15.0
@@ -609,21 +492,13 @@ cut_source_blueprint = build_blueprint(
 
 fade_target_blueprint = build_blueprint(
     scene_number=2,
-    transition_in_id=(
-        "transition.fade_black"
-    ),
+    transition_in_id=("transition.fade_black"),
     transition_in_duration=0.8,
 )
 
-cut_vs_fade_timeline = (
-    build_two_scene_timeline(
-        scene_1_blueprint=(
-            cut_source_blueprint
-        ),
-        scene_2_blueprint=(
-            fade_target_blueprint
-        ),
-    )
+cut_vs_fade_timeline = build_two_scene_timeline(
+    scene_1_blueprint=(cut_source_blueprint),
+    scene_2_blueprint=(fade_target_blueprint),
 )
 
 cut_vs_fade_plan = service.build_plan(
@@ -632,23 +507,13 @@ cut_vs_fade_plan = service.build_plan(
 
 cut_vs_fade_boundary = next(
     execution
-    for execution
-    in cut_vs_fade_plan.executions
-    if (
-        execution.placement
-        == TransitionPlacement.BETWEEN_SCENES
-    )
+    for execution in cut_vs_fade_plan.executions
+    if (execution.placement == TransitionPlacement.BETWEEN_SCENES)
 )
 
-assert (
-    cut_vs_fade_boundary.preset_id
-    == "transition.fade_black"
-)
+assert cut_vs_fade_boundary.preset_id == "transition.fade_black"
 
-assert (
-    cut_vs_fade_boundary.duration_seconds
-    == 0.8
-)
+assert cut_vs_fade_boundary.duration_seconds == 0.8
 
 
 # --------------------------------------------------
@@ -657,17 +522,13 @@ assert (
 
 conflict_scene_1 = build_blueprint(
     scene_number=1,
-    transition_out_id=(
-        "transition.fade_black"
-    ),
+    transition_out_id=("transition.fade_black"),
     transition_out_duration=0.8,
 )
 
 conflict_scene_2 = build_blueprint(
     scene_number=2,
-    transition_in_id=(
-        "transition.cross_dissolve"
-    ),
+    transition_in_id=("transition.cross_dissolve"),
     transition_in_duration=0.6,
 )
 
@@ -683,22 +544,15 @@ conflict_plan = service.build_plan(
 conflict_boundary = next(
     execution
     for execution in conflict_plan.executions
-    if (
-        execution.placement
-        == TransitionPlacement.BETWEEN_SCENES
-    )
+    if (execution.placement == TransitionPlacement.BETWEEN_SCENES)
 )
 
-assert (
-    conflict_boundary.preset_id
-    == "transition.cross_dissolve"
-)
+assert conflict_boundary.preset_id == "transition.cross_dissolve"
 
 assert conflict_boundary.warnings
 
 assert any(
-    "conflicting transition instructions"
-    in warning.lower()
+    "conflicting transition instructions" in warning.lower()
     for warning in conflict_boundary.warnings
 )
 
@@ -709,19 +563,13 @@ assert any(
 
 fallback_scene_1 = build_blueprint(
     scene_number=1,
-    transition_in_id=(
-        "transition.fade_black"
-    ),
+    transition_in_id=("transition.fade_black"),
     transition_in_duration=0.8,
     transition_in_fallback=True,
 )
 
-fallback_timeline = (
-    build_two_scene_timeline(
-        scene_1_blueprint=(
-            fallback_scene_1
-        ),
-    )
+fallback_timeline = build_two_scene_timeline(
+    scene_1_blueprint=(fallback_scene_1),
 )
 
 fallback_plan = service.build_plan(
@@ -730,21 +578,13 @@ fallback_plan = service.build_plan(
 
 fallback_in = next(
     execution
-    for execution
-    in fallback_plan.executions
-    if (
-        execution.placement
-        == TransitionPlacement.TIMELINE_IN
-    )
+    for execution in fallback_plan.executions
+    if (execution.placement == TransitionPlacement.TIMELINE_IN)
 )
 
 assert fallback_in.warnings
 
-assert any(
-    "fallback preset"
-    in warning.lower()
-    for warning in fallback_in.warnings
-)
+assert any("fallback preset" in warning.lower() for warning in fallback_in.warnings)
 
 
 # --------------------------------------------------
@@ -773,15 +613,9 @@ try:
         validate_timeline=False,
     )
 except ValueError:
-    print(
-        "Missing editing blueprint "
-        "successfully blocked."
-    )
+    print("Missing editing blueprint " "successfully blocked.")
 else:
-    raise AssertionError(
-        "Missing editing blueprint "
-        "should fail."
-    )
+    raise AssertionError("Missing editing blueprint " "should fail.")
 
 
 # --------------------------------------------------
@@ -823,15 +657,9 @@ try:
         validate_timeline=False,
     )
 except ValueError:
-    print(
-        "Non-contiguous transition boundary "
-        "successfully blocked."
-    )
+    print("Non-contiguous transition boundary " "successfully blocked.")
 else:
-    raise AssertionError(
-        "Non-contiguous timeline "
-        "should fail."
-    )
+    raise AssertionError("Non-contiguous timeline " "should fail.")
 
 
 # --------------------------------------------------
@@ -840,9 +668,7 @@ else:
 
 excessive_blueprint = build_blueprint(
     scene_number=1,
-    transition_in_id=(
-        "transition.fade_black"
-    ),
+    transition_in_id=("transition.fade_black"),
     transition_in_duration=10.0,
 )
 
@@ -858,15 +684,9 @@ try:
         item=excessive_item,
     )
 except ValueError:
-    print(
-        "Excessive transition duration "
-        "successfully blocked."
-    )
+    print("Excessive transition duration " "successfully blocked.")
 else:
-    raise AssertionError(
-        "Excessive transition duration "
-        "should fail."
-    )
+    raise AssertionError("Excessive transition duration " "should fail.")
 
 
 # --------------------------------------------------
@@ -879,14 +699,9 @@ try:
         track_index=-1,
     )
 except ValueError:
-    print(
-        "Negative transition track index "
-        "successfully blocked."
-    )
+    print("Negative transition track index " "successfully blocked.")
 else:
-    raise AssertionError(
-        "Negative track index should fail."
-    )
+    raise AssertionError("Negative track index should fail.")
 
 
 # --------------------------------------------------
@@ -899,45 +714,24 @@ try:
         validate_timeline=False,
     )
 except ValueError:
-    print(
-        "Empty transition timeline "
-        "successfully blocked."
-    )
+    print("Empty transition timeline " "successfully blocked.")
 else:
-    raise AssertionError(
-        "Empty transition timeline "
-        "should fail."
-    )
+    raise AssertionError("Empty transition timeline " "should fail.")
 
 
 # --------------------------------------------------
 # Summary generation
 # --------------------------------------------------
 
-cross_summary = service.summary(
-    cross_plan
-)
+cross_summary = service.summary(cross_plan)
 
-assert (
-    cross_summary["transition_count"]
-    == 3
-)
+assert cross_summary["transition_count"] == 3
 
-assert (
-    cross_summary[
-        "overlap_transition_count"
-    ]
-    == 1
-)
+assert cross_summary["overlap_transition_count"] == 1
 
-assert (
-    cross_summary["is_render_ready"]
-    is True
-)
+assert cross_summary["is_render_ready"] is True
 
-assert len(
-    cross_summary["executions"]
-) == 3
+assert len(cross_summary["executions"]) == 3
 
 
 # --------------------------------------------------
@@ -948,49 +742,34 @@ application_plan = service.build_plan(
     cross_timeline,
 )
 
-first_execution = (
-    application_plan.executions[0]
-)
+first_execution = application_plan.executions[0]
 
 applied_execution = service.mark_applied(
     application_plan,
-    execution_id=str(
-        first_execution.id
-    ),
+    execution_id=str(first_execution.id),
     renderer="ffmpeg",
     renderer_metadata={
         "filter": "fade",
     },
 )
 
-assert (
-    applied_execution.status
-    == TransitionExecutionStatus.APPLIED
-)
+assert applied_execution.status == TransitionExecutionStatus.APPLIED
 
-assert (
-    applied_execution.metadata["renderer"]
-    == "ffmpeg"
-)
+assert applied_execution.metadata["renderer"] == "ffmpeg"
 
 assert application_plan.applied_count == 1
 
-remaining_applied = (
-    service.mark_all_applied(
-        application_plan,
-        renderer="ffmpeg",
-        renderer_metadata={
-            "mode": "dry-run",
-        },
-    )
+remaining_applied = service.mark_all_applied(
+    application_plan,
+    renderer="ffmpeg",
+    renderer_metadata={
+        "mode": "dry-run",
+    },
 )
 
 assert len(remaining_applied) == 3
 
-assert (
-    application_plan.applied_count
-    == application_plan.transition_count
-)
+assert application_plan.applied_count == application_plan.transition_count
 
 assert application_plan.is_render_ready is True
 
@@ -1003,58 +782,37 @@ failure_plan = service.build_plan(
     cut_timeline,
 )
 
-failure_execution = (
-    failure_plan.executions[1]
-)
+failure_execution = failure_plan.executions[1]
 
 failed_execution = service.mark_failed(
     failure_plan,
-    execution_id=str(
-        failure_execution.id
-    ),
-    error_message=(
-        "Simulated transition renderer failure."
-    ),
+    execution_id=str(failure_execution.id),
+    error_message=("Simulated transition renderer failure."),
     failure_metadata={
         "renderer": "ffmpeg",
         "stage": "transition",
     },
 )
 
-assert (
-    failed_execution.status
-    == TransitionExecutionStatus.FAILED
-)
+assert failed_execution.status == TransitionExecutionStatus.FAILED
 
 assert failure_plan.is_valid is False
 assert failure_plan.is_render_ready is False
 assert failure_plan.failed_count == 1
 
-assert (
-    failed_execution.metadata[
-        "failure_details"
-    ]["stage"]
-    == "transition"
-)
+assert failed_execution.metadata["failure_details"]["stage"] == "transition"
 
 
 try:
     service.mark_failed(
         failure_plan,
-        execution_id=str(
-            failure_plan.executions[0].id
-        ),
+        execution_id=str(failure_plan.executions[0].id),
         error_message="   ",
     )
 except ValueError:
-    print(
-        "Empty transition failure message "
-        "successfully blocked."
-    )
+    print("Empty transition failure message " "successfully blocked.")
 else:
-    raise AssertionError(
-        "Empty failure message should fail."
-    )
+    raise AssertionError("Empty failure message should fail.")
 
 
 # --------------------------------------------------
@@ -1068,14 +826,9 @@ try:
         renderer="ffmpeg",
     )
 except KeyError:
-    print(
-        "Unknown transition execution "
-        "successfully blocked."
-    )
+    print("Unknown transition execution " "successfully blocked.")
 else:
-    raise AssertionError(
-        "Unknown execution ID should fail."
-    )
+    raise AssertionError("Unknown execution ID should fail.")
 
 
 # --------------------------------------------------
@@ -1085,41 +838,24 @@ else:
 try:
     service.mark_applied(
         cut_plan,
-        execution_id=str(
-            cut_plan.executions[0].id
-        ),
+        execution_id=str(cut_plan.executions[0].id),
         renderer="   ",
     )
 except ValueError:
-    print(
-        "Empty transition renderer "
-        "successfully blocked."
-    )
+    print("Empty transition renderer " "successfully blocked.")
 else:
-    raise AssertionError(
-        "Empty renderer should fail."
-    )
+    raise AssertionError("Empty renderer should fail.")
 
 
 # --------------------------------------------------
 # Serialization
 # --------------------------------------------------
 
-serialized_plan = (
-    cross_plan.model_dump_json()
-)
+serialized_plan = cross_plan.model_dump_json()
 
-restored_plan = (
-    TransitionExecutionPlan
-    .model_validate_json(
-        serialized_plan
-    )
-)
+restored_plan = TransitionExecutionPlan.model_validate_json(serialized_plan)
 
 assert restored_plan == cross_plan
 
 
-print(
-    "Transition Execution Service tests "
-    "completed successfully."
-)
+print("Transition Execution Service tests " "completed successfully.")

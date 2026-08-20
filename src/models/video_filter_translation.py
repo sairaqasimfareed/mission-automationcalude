@@ -55,10 +55,7 @@ class VideoFilterTranslation(MissionBaseModel):
         cleaned = value.strip().strip("[]")
 
         if not cleaned:
-            raise ValueError(
-                "Video filter translation text "
-                "cannot be empty."
-            )
+            raise ValueError("Video filter translation text " "cannot be empty.")
 
         return cleaned
 
@@ -71,18 +68,10 @@ class VideoFilterTranslation(MissionBaseModel):
         cleaned: list[str] = []
 
         for value in values:
-            normalized = (
-                value.strip()
-                .strip("[]")
-            )
+            normalized = value.strip().strip("[]")
 
-            if (
-                normalized
-                and normalized not in cleaned
-            ):
-                cleaned.append(
-                    normalized
-                )
+            if normalized and normalized not in cleaned:
+                cleaned.append(normalized)
 
         return cleaned
 
@@ -97,13 +86,8 @@ class VideoFilterTranslation(MissionBaseModel):
         for value in values:
             normalized = value.strip()
 
-            if (
-                normalized
-                and normalized not in cleaned
-            ):
-                cleaned.append(
-                    normalized
-                )
+            if normalized and normalized not in cleaned:
+                cleaned.append(normalized)
 
         return cleaned
 
@@ -112,18 +96,11 @@ class VideoFilterTranslation(MissionBaseModel):
         self,
     ) -> VideoFilterTranslation:
         if self.skipped and self.filters:
-            raise ValueError(
-                "Skipped video translations "
-                "cannot contain filters."
-            )
+            raise ValueError("Skipped video translations " "cannot contain filters.")
 
-        if (
-            not self.skipped
-            and not self.filters
-        ):
+        if not self.skipped and not self.filters:
             raise ValueError(
-                "Active video translations "
-                "require at least one filter."
+                "Active video translations " "require at least one filter."
             )
 
         return self
@@ -132,6 +109,4 @@ class VideoFilterTranslation(MissionBaseModel):
     def filter_count(self) -> int:
         """Return translated FFmpeg filter count."""
 
-        return len(
-            self.filters
-        )
+        return len(self.filters)

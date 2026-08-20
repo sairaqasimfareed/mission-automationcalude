@@ -60,10 +60,7 @@ class AssetSearchService:
         self,
         stock_search_service: StockSearchService | None = None,
     ) -> None:
-        self.stock_search_service = (
-            stock_search_service
-            or StockSearchService()
-        )
+        self.stock_search_service = stock_search_service or StockSearchService()
 
     def search(
         self,
@@ -77,14 +74,10 @@ class AssetSearchService:
         normalized_query = query.strip()
 
         if not normalized_query:
-            raise ValueError(
-                "Asset search query cannot be empty."
-            )
+            raise ValueError("Asset search query cannot be empty.")
 
         if limit < 1:
-            raise ValueError(
-                "Asset search limit must be at least 1."
-            )
+            raise ValueError("Asset search limit must be at least 1.")
 
         if asset_type == AssetType.VIDEO:
             return self._search_stock_videos(
@@ -113,23 +106,15 @@ class AssetSearchService:
             AssetSearchResult(
                 asset_type=AssetType.VIDEO,
                 provider=result.provider,
-                provider_asset_id=(
-                    result.provider_asset_id
-                ),
+                provider_asset_id=(result.provider_asset_id),
                 title=result.title,
                 page_url=result.page_url,
                 file_url=result.file_url,
                 thumbnail_url=result.thumbnail_url,
                 license_type=result.license_type,
-                attribution_required=(
-                    result.attribution_required
-                ),
-                attribution_text=(
-                    result.attribution_text
-                ),
-                duration_seconds=(
-                    result.duration_seconds
-                ),
+                attribution_required=(result.attribution_required),
+                attribution_text=(result.attribution_text),
+                duration_seconds=(result.duration_seconds),
                 resolution=result.resolution,
                 aspect_ratio=result.aspect_ratio,
                 width=result.width,

@@ -86,28 +86,18 @@ class VideoFilterTranslationService:
             frame_rate=frame_rate,
         )
 
-        source_label = self._clean_label(
-            input_label
-        )
+        source_label = self._clean_label(input_label)
 
-        target_label = self._clean_label(
-            output_label
-        )
+        target_label = self._clean_label(output_label)
 
-        if (
-            render_node.node_type
-            not in self.SUPPORTED_SCENE_NODE_TYPES
-        ):
+        if render_node.node_type not in self.SUPPORTED_SCENE_NODE_TYPES:
             raise ValueError(
                 "Render node is not a supported "
                 "scene video operation: "
                 f"{render_node.node_type.value}."
             )
 
-        if (
-            render_node.node_type
-            == RenderNodeType.CAMERA
-        ):
+        if render_node.node_type == RenderNodeType.CAMERA:
             return self._translate_camera(
                 render_node=render_node,
                 input_label=source_label,
@@ -118,10 +108,7 @@ class VideoFilterTranslationService:
                 capabilities=capabilities,
             )
 
-        if (
-            render_node.node_type
-            == RenderNodeType.VISUAL_EFFECT
-        ):
+        if render_node.node_type == RenderNodeType.VISUAL_EFFECT:
             return self._translate_effect(
                 render_node=render_node,
                 input_label=source_label,
@@ -129,10 +116,7 @@ class VideoFilterTranslationService:
                 capabilities=capabilities,
             )
 
-        if (
-            render_node.node_type
-            == RenderNodeType.ANIMATION
-        ):
+        if render_node.node_type == RenderNodeType.ANIMATION:
             return self._translate_animation(
                 render_node=render_node,
                 input_label=source_label,
@@ -167,38 +151,21 @@ class VideoFilterTranslationService:
         xfade offset is relative to the composed source stream.
         """
 
-        if (
-            render_node.node_type
-            != RenderNodeType.TRANSITION
-        ):
+        if render_node.node_type != RenderNodeType.TRANSITION:
             raise ValueError(
-                "Transition translation requires "
-                "a transition render node."
+                "Transition translation requires " "a transition render node."
             )
 
         if offset_seconds < 0.0:
-            raise ValueError(
-                "FFmpeg transition offset "
-                "cannot be negative."
-            )
+            raise ValueError("FFmpeg transition offset " "cannot be negative.")
 
-        execution = (
-            TransitionExecution.model_validate(
-                render_node.payload
-            )
-        )
+        execution = TransitionExecution.model_validate(render_node.payload)
 
-        source = self._clean_label(
-            source_label
-        )
+        source = self._clean_label(source_label)
 
-        target = self._clean_label(
-            target_label
-        )
+        target = self._clean_label(target_label)
 
-        output = self._clean_label(
-            output_label
-        )
+        output = self._clean_label(output_label)
 
         if execution.is_cut:
             self._require_filter(
@@ -207,58 +174,39 @@ class VideoFilterTranslationService:
             )
 
             filter_node = FilterNode(
-                media_type=(
-                    FilterMediaType.VIDEO
-                ),
+                media_type=(FilterMediaType.VIDEO),
                 filter_name="concat",
                 input_labels=[
                     source,
                     target,
                 ],
-                output_labels=[
-                    output
-                ],
+                output_labels=[output],
                 options={
                     "n": "2",
                     "v": "1",
                     "a": "0",
                 },
-                source_render_node_id=str(
-                    render_node.id
-                ),
+                source_render_node_id=str(render_node.id),
             )
 
             return VideoFilterTranslation(
-                source_render_node_id=str(
-                    render_node.id
-                ),
-                render_node_type=(
-                    render_node.node_type
-                ),
+                source_render_node_id=str(render_node.id),
+                render_node_type=(render_node.node_type),
                 input_labels=[
                     source,
                     target,
                 ],
                 output_label=output,
-                filters=[
-                    filter_node
-                ],
+                filters=[filter_node],
                 metadata={
                     "transition_type": "cut",
                 },
             )
 
         if execution.duration_seconds <= 0.0:
-            raise ValueError(
-                "Timed FFmpeg transition requires "
-                "positive duration."
-            )
+            raise ValueError("Timed FFmpeg transition requires " "positive duration.")
 
-        transition_name = (
-            self._xfade_transition_name(
-                execution.transition_type
-            )
-        )
+        transition_name = self._xfade_transition_name(execution.transition_type)
 
         self._require_filter(
             capabilities,
@@ -266,53 +214,33 @@ class VideoFilterTranslationService:
         )
 
         filter_node = FilterNode(
-            media_type=(
-                FilterMediaType.VIDEO
-            ),
+            media_type=(FilterMediaType.VIDEO),
             filter_name="xfade",
             input_labels=[
                 source,
                 target,
             ],
-            output_labels=[
-                output
-            ],
+            output_labels=[output],
             options={
                 "transition": transition_name,
-                "duration": self._number(
-                    execution.duration_seconds
-                ),
-                "offset": self._number(
-                    offset_seconds
-                ),
+                "duration": self._number(execution.duration_seconds),
+                "offset": self._number(offset_seconds),
             },
-            source_render_node_id=str(
-                render_node.id
-            ),
+            source_render_node_id=str(render_node.id),
         )
 
         return VideoFilterTranslation(
-            source_render_node_id=str(
-                render_node.id
-            ),
-            render_node_type=(
-                render_node.node_type
-            ),
+            source_render_node_id=str(render_node.id),
+            render_node_type=(render_node.node_type),
             input_labels=[
                 source,
                 target,
             ],
             output_label=output,
-            filters=[
-                filter_node
-            ],
+            filters=[filter_node],
             metadata={
-                "transition_type": (
-                    execution.transition_type
-                ),
-                "xfade_transition": (
-                    transition_name
-                ),
+                "transition_type": (execution.transition_type),
+                "xfade_transition": (transition_name),
             },
         )
 
@@ -338,20 +266,12 @@ class VideoFilterTranslationService:
         never asked to be told is unsupported here.
         """
 
-        if (
-            render_node.node_type
-            != RenderNodeType.TRANSITION
-        ):
+        if render_node.node_type != RenderNodeType.TRANSITION:
             raise ValueError(
-                "Timeline fade translation requires "
-                "a transition render node."
+                "Timeline fade translation requires " "a transition render node."
             )
 
-        execution = (
-            TransitionExecution.model_validate(
-                render_node.payload
-            )
-        )
+        execution = TransitionExecution.model_validate(render_node.payload)
 
         if execution.placement not in (
             TransitionPlacement.TIMELINE_IN,
@@ -364,29 +284,18 @@ class VideoFilterTranslationService:
 
         if execution.duration_seconds <= 0.0:
             raise ValueError(
-                "Timed FFmpeg timeline fade requires "
-                "positive duration."
+                "Timed FFmpeg timeline fade requires " "positive duration."
             )
 
         if fade_start_seconds < 0.0:
-            raise ValueError(
-                "FFmpeg timeline fade start cannot "
-                "be negative."
-            )
+            raise ValueError("FFmpeg timeline fade start cannot " "be negative.")
 
-        source = self._clean_label(
-            input_label
-        )
+        source = self._clean_label(input_label)
 
-        output = self._clean_label(
-            output_label
-        )
+        output = self._clean_label(output_label)
 
         fade_type = (
-            "in"
-            if execution.placement
-            == TransitionPlacement.TIMELINE_IN
-            else "out"
+            "in" if execution.placement == TransitionPlacement.TIMELINE_IN else "out"
         )
 
         self._require_filter(
@@ -395,57 +304,32 @@ class VideoFilterTranslationService:
         )
 
         filter_node = FilterNode(
-            media_type=(
-                FilterMediaType.VIDEO
-            ),
+            media_type=(FilterMediaType.VIDEO),
             filter_name="fade",
-            input_labels=[
-                source
-            ],
-            output_labels=[
-                output
-            ],
+            input_labels=[source],
+            output_labels=[output],
             options={
                 "t": fade_type,
-                "st": self._number(
-                    fade_start_seconds
-                ),
-                "d": self._number(
-                    execution.duration_seconds
-                ),
+                "st": self._number(fade_start_seconds),
+                "d": self._number(execution.duration_seconds),
                 "color": "black",
             },
-            source_render_node_id=str(
-                render_node.id
-            ),
+            source_render_node_id=str(render_node.id),
         )
 
         translation = VideoFilterTranslation(
-            source_render_node_id=str(
-                render_node.id
-            ),
-            render_node_type=(
-                render_node.node_type
-            ),
-            input_labels=[
-                source
-            ],
+            source_render_node_id=str(render_node.id),
+            render_node_type=(render_node.node_type),
+            input_labels=[source],
             output_label=output,
-            filters=[
-                filter_node
-            ],
+            filters=[filter_node],
             metadata={
-                "transition_type": (
-                    execution.transition_type
-                ),
+                "transition_type": (execution.transition_type),
                 "ffmpeg_filter": "fade",
             },
         )
 
-        if (
-            execution.transition_type
-            == "cross_dissolve"
-        ):
+        if execution.transition_type == "cross_dissolve":
             translation.warnings.append(
                 "cross_dissolve has no second stream at a "
                 "timeline boundary; degraded to a black fade."
@@ -464,30 +348,19 @@ class VideoFilterTranslationService:
         frame_rate: float,
         capabilities: FFmpegCapabilities,
     ) -> VideoFilterTranslation:
-        execution = (
-            CameraExecution.model_validate(
-                render_node.payload
-            )
-        )
+        execution = CameraExecution.model_validate(render_node.payload)
 
         if execution.is_static:
             return self._skipped(
                 render_node=render_node,
                 input_label=input_label,
-                reason=(
-                    "Static camera execution requires "
-                    "no FFmpeg motion filter."
-                ),
+                reason=("Static camera execution requires " "no FFmpeg motion filter."),
             )
 
         if execution.is_zoom:
-            if (
-                execution.zoom_start is None
-                or execution.zoom_end is None
-            ):
+            if execution.zoom_start is None or execution.zoom_end is None:
                 raise ValueError(
-                    "FFmpeg zoom translation requires "
-                    "resolved zoom values."
+                    "FFmpeg zoom translation requires " "resolved zoom values."
                 )
 
             self._require_filter(
@@ -497,29 +370,18 @@ class VideoFilterTranslationService:
 
             start_frame = max(
                 0,
-                round(
-                    execution
-                    .local_start_offset_seconds
-                    * frame_rate
-                ),
+                round(execution.local_start_offset_seconds * frame_rate),
             )
 
             end_frame = max(
                 start_frame + 1,
-                round(
-                    execution
-                    .local_end_offset_seconds
-                    * frame_rate
-                ),
+                round(execution.local_end_offset_seconds * frame_rate),
             )
 
             zoom_start = execution.zoom_start
             zoom_end = execution.zoom_end
 
-            difference = (
-                zoom_end
-                - zoom_start
-            )
+            difference = zoom_end - zoom_start
 
             zoom_expression = (
                 "'if("
@@ -537,42 +399,26 @@ class VideoFilterTranslationService:
             )
 
             filter_node = FilterNode(
-                media_type=(
-                    FilterMediaType.VIDEO
-                ),
+                media_type=(FilterMediaType.VIDEO),
                 filter_name="zoompan",
-                input_labels=[
-                    input_label
-                ],
-                output_labels=[
-                    output_label
-                ],
+                input_labels=[input_label],
+                output_labels=[output_label],
                 options={
                     "z": zoom_expression,
-                    "x": (
-                        "'iw/2-(iw/zoom/2)'"
-                    ),
-                    "y": (
-                        "'ih/2-(ih/zoom/2)'"
-                    ),
+                    "x": ("'iw/2-(iw/zoom/2)'"),
+                    "y": ("'ih/2-(ih/zoom/2)'"),
                     "d": "1",
                     "s": f"{width}x{height}",
-                    "fps": self._number(
-                        frame_rate
-                    ),
+                    "fps": self._number(frame_rate),
                 },
-                source_render_node_id=str(
-                    render_node.id
-                ),
+                source_render_node_id=str(render_node.id),
             )
 
             return self._active(
                 render_node=render_node,
                 input_label=input_label,
                 output_label=output_label,
-                filters=[
-                    filter_node
-                ],
+                filters=[filter_node],
             )
 
         if execution.motion_type == "pan":
@@ -583,20 +429,12 @@ class VideoFilterTranslationService:
 
             start_frame = max(
                 0,
-                round(
-                    execution
-                    .local_start_offset_seconds
-                    * frame_rate
-                ),
+                round(execution.local_start_offset_seconds * frame_rate),
             )
 
             end_frame = max(
                 start_frame + 1,
-                round(
-                    execution
-                    .local_end_offset_seconds
-                    * frame_rate
-                ),
+                round(execution.local_end_offset_seconds * frame_rate),
             )
 
             total_frames = end_frame - start_frame
@@ -607,9 +445,7 @@ class VideoFilterTranslationService:
             # zoom margin to pan across.
             pan_zoom = "1.15"
 
-            progress = (
-                f"((on-{start_frame})/{total_frames})"
-            )
+            progress = f"((on-{start_frame})/{total_frames})"
 
             direction = execution.direction or "left"
 
@@ -627,8 +463,7 @@ class VideoFilterTranslationService:
                 y_expression = f"'(ih-ih/zoom)*{progress}'"
             else:
                 raise ValueError(
-                    "Unsupported FFmpeg camera pan direction: "
-                    f"{direction}."
+                    "Unsupported FFmpeg camera pan direction: " f"{direction}."
                 )
 
             filter_node = FilterNode(
@@ -655,8 +490,7 @@ class VideoFilterTranslationService:
             )
 
         raise ValueError(
-            "Unsupported FFmpeg camera motion: "
-            f"{execution.motion_type}."
+            "Unsupported FFmpeg camera motion: " f"{execution.motion_type}."
         )
 
     def _translate_effect(
@@ -667,19 +501,13 @@ class VideoFilterTranslationService:
         output_label: str,
         capabilities: FFmpegCapabilities,
     ) -> VideoFilterTranslation:
-        execution = (
-            EffectExecution.model_validate(
-                render_node.payload
-            )
-        )
+        execution = EffectExecution.model_validate(render_node.payload)
 
         if execution.preset_id == "visual.none":
             return self._skipped(
                 render_node=render_node,
                 input_label=input_label,
-                reason=(
-                    "No visual effect requested."
-                ),
+                reason=("No visual effect requested."),
             )
 
         enable = self._enable_expression(
@@ -687,10 +515,7 @@ class VideoFilterTranslationService:
             execution.end_offset_seconds,
         )
 
-        if (
-            execution.preset_id
-            == "visual.horror_dark_grade"
-        ):
+        if execution.preset_id == "visual.horror_dark_grade":
             self._require_filter(
                 capabilities,
                 "eq",
@@ -711,45 +536,27 @@ class VideoFilterTranslationService:
                 "saturation",
             )
 
-            eq_output = (
-                f"{output_label}_eq"
-            )
+            eq_output = f"{output_label}_eq"
 
             filters = [
                 FilterNode(
-                    media_type=(
-                        FilterMediaType.VIDEO
-                    ),
+                    media_type=(FilterMediaType.VIDEO),
                     filter_name="eq",
-                    input_labels=[
-                        input_label
-                    ],
-                    output_labels=[
-                        eq_output
-                    ],
+                    input_labels=[input_label],
+                    output_labels=[eq_output],
                     options={
-                        "brightness": self._number(
-                            brightness
-                        ),
-                        "contrast": self._number(
-                            contrast
-                        ),
-                        "saturation": self._number(
-                            saturation
-                        ),
+                        "brightness": self._number(brightness),
+                        "contrast": self._number(contrast),
+                        "saturation": self._number(saturation),
                         "enable": enable,
                     },
-                    source_render_node_id=str(
-                        render_node.id
-                    ),
+                    source_render_node_id=str(render_node.id),
                 )
             ]
 
-            temperature = (
-                self._optional_string(
-                    execution.implementation,
-                    "temperature",
-                )
+            temperature = self._optional_string(
+                execution.implementation,
+                "temperature",
             )
 
             warnings: list[str] = []
@@ -762,26 +569,16 @@ class VideoFilterTranslationService:
 
                 filters.append(
                     FilterNode(
-                        media_type=(
-                            FilterMediaType.VIDEO
-                        ),
-                        filter_name=(
-                            "colorbalance"
-                        ),
-                        input_labels=[
-                            eq_output
-                        ],
-                        output_labels=[
-                            output_label
-                        ],
+                        media_type=(FilterMediaType.VIDEO),
+                        filter_name=("colorbalance"),
+                        input_labels=[eq_output],
+                        output_labels=[output_label],
                         options={
                             "bs": "0.06",
                             "rs": "-0.03",
                             "enable": enable,
                         },
-                        source_render_node_id=str(
-                            render_node.id
-                        ),
+                        source_render_node_id=str(render_node.id),
                     )
                 )
 
@@ -789,22 +586,15 @@ class VideoFilterTranslationService:
                 filters.append(
                     self._null_filter(
                         input_label=eq_output,
-                        output_label=(
-                            output_label
-                        ),
-                        source_render_node_id=str(
-                            render_node.id
-                        ),
-                        capabilities=(
-                            capabilities
-                        ),
+                        output_label=(output_label),
+                        source_render_node_id=str(render_node.id),
+                        capabilities=(capabilities),
                     )
                 )
 
                 if temperature is not None:
                     warnings.append(
-                        "Unknown color temperature "
-                        f"'{temperature}' was not altered."
+                        "Unknown color temperature " f"'{temperature}' was not altered."
                     )
 
             translation = self._active(
@@ -818,10 +608,7 @@ class VideoFilterTranslationService:
 
             return translation
 
-        if (
-            execution.preset_id
-            == "visual.vignette_soft"
-        ):
+        if execution.preset_id == "visual.vignette_soft":
             self._require_filter(
                 capabilities,
                 "vignette",
@@ -833,31 +620,19 @@ class VideoFilterTranslationService:
             )
 
             filter_node = FilterNode(
-                media_type=(
-                    FilterMediaType.VIDEO
-                ),
+                media_type=(FilterMediaType.VIDEO),
                 filter_name="vignette",
-                input_labels=[
-                    input_label
-                ],
-                output_labels=[
-                    output_label
-                ],
+                input_labels=[input_label],
+                output_labels=[output_label],
                 options={
                     "angle": "PI/4",
                     "eval": "frame",
                     "enable": enable,
                 },
-                source_render_node_id=str(
-                    render_node.id
-                ),
+                source_render_node_id=str(render_node.id),
                 metadata={
-                    "semantic_strength": (
-                        strength
-                    ),
-                    "ffmpeg_mapping": (
-                        "soft_vignette"
-                    ),
+                    "semantic_strength": (strength),
+                    "ffmpeg_mapping": ("soft_vignette"),
                 },
             )
 
@@ -865,9 +640,7 @@ class VideoFilterTranslationService:
                 render_node=render_node,
                 input_label=input_label,
                 output_label=output_label,
-                filters=[
-                    filter_node
-                ],
+                filters=[filter_node],
             )
 
         if execution.preset_id == "visual.sepia_tone":
@@ -929,9 +702,7 @@ class VideoFilterTranslationService:
                 filters=[filter_node],
             )
 
-        grade_params = self._PARAMETRIC_GRADE_PRESETS.get(
-            execution.preset_id
-        )
+        grade_params = self._PARAMETRIC_GRADE_PRESETS.get(execution.preset_id)
 
         if grade_params is not None:
             filters = self._parametric_grade_filters(
@@ -953,10 +724,7 @@ class VideoFilterTranslationService:
                 filters=filters,
             )
 
-        raise ValueError(
-            "Unsupported FFmpeg visual preset: "
-            f"{execution.preset_id}."
-        )
+        raise ValueError("Unsupported FFmpeg visual preset: " f"{execution.preset_id}.")
 
     # Simple single-pass color-grade presets (grayscale, punch,
     # cool grades, and the parametric "LUT" presets - this codebase
@@ -1047,15 +815,9 @@ class VideoFilterTranslationService:
                 input_labels=[input_label],
                 output_labels=[eq_output],
                 options={
-                    "brightness": self._number(
-                        float(brightness)
-                    ),
-                    "contrast": self._number(
-                        float(contrast)
-                    ),
-                    "saturation": self._number(
-                        float(saturation)
-                    ),
+                    "brightness": self._number(float(brightness)),
+                    "contrast": self._number(float(contrast)),
+                    "saturation": self._number(float(saturation)),
                     "enable": enable,
                 },
                 source_render_node_id=str(render_node.id),
@@ -1104,19 +866,13 @@ class VideoFilterTranslationService:
         frame_rate: float,
         capabilities: FFmpegCapabilities,
     ) -> VideoFilterTranslation:
-        execution = (
-            AnimationExecution.model_validate(
-                render_node.payload
-            )
-        )
+        execution = AnimationExecution.model_validate(render_node.payload)
 
         if execution.is_none:
             return self._skipped(
                 render_node=render_node,
                 input_label=input_label,
-                reason=(
-                    "No animation requested."
-                ),
+                reason=("No animation requested."),
             )
 
         if execution.target == "subtitle":
@@ -1124,18 +880,13 @@ class VideoFilterTranslationService:
                 render_node=render_node,
                 input_label=input_label,
                 reason=(
-                    "Subtitle-targeted animation is "
-                    "handled by subtitle rendering."
+                    "Subtitle-targeted animation is " "handled by subtitle rendering."
                 ),
             )
 
-        if (
-            execution.preset_id
-            not in self._SUPPORTED_ANIMATION_PRESETS
-        ):
+        if execution.preset_id not in self._SUPPORTED_ANIMATION_PRESETS:
             raise ValueError(
-                "Unsupported FFmpeg animation preset: "
-                f"{execution.preset_id}."
+                "Unsupported FFmpeg animation preset: " f"{execution.preset_id}."
             )
 
         self._require_filter(
@@ -1145,80 +896,37 @@ class VideoFilterTranslationService:
 
         total_frames = max(
             1,
-            round(
-                execution.duration_seconds
-                * frame_rate
-            ),
+            round(execution.duration_seconds * frame_rate),
         )
 
         if execution.preset_id == "animation.slow_parallax":
-            zoom_expression = (
-                "'min("
-                "1.03,"
-                "1+0.03*on/"
-                f"{total_frames}"
-                ")'"
-            )
-            x_expression = (
-                "'(iw-iw/zoom)"
-                "*on/"
-                f"{total_frames}'"
-            )
+            zoom_expression = "'min(" "1.03," "1+0.03*on/" f"{total_frames}" ")'"
+            x_expression = "'(iw-iw/zoom)" "*on/" f"{total_frames}'"
             y_expression = "'(ih-ih/zoom)/2'"
             warning = (
-                "Slow parallax uses an FFmpeg "
-                "single-layer pan/zoom approximation."
+                "Slow parallax uses an FFmpeg " "single-layer pan/zoom approximation."
             )
 
-        elif (
-            execution.preset_id
-            == "animation.slow_parallax_reverse"
-        ):
-            zoom_expression = (
-                "'min("
-                "1.03,"
-                "1+0.03*on/"
-                f"{total_frames}"
-                ")'"
-            )
-            x_expression = (
-                "'(iw-iw/zoom)*(1-on/"
-                f"{total_frames})'"
-            )
+        elif execution.preset_id == "animation.slow_parallax_reverse":
+            zoom_expression = "'min(" "1.03," "1+0.03*on/" f"{total_frames}" ")'"
+            x_expression = "'(iw-iw/zoom)*(1-on/" f"{total_frames})'"
             y_expression = "'(ih-ih/zoom)/2'"
             warning = (
                 "Slow parallax reverse uses an FFmpeg "
                 "single-layer pan/zoom approximation."
             )
 
-        elif (
-            execution.preset_id
-            == "animation.slow_pan_vertical"
-        ):
-            zoom_expression = (
-                "'min("
-                "1.03,"
-                "1+0.03*on/"
-                f"{total_frames}"
-                ")'"
-            )
+        elif execution.preset_id == "animation.slow_pan_vertical":
+            zoom_expression = "'min(" "1.03," "1+0.03*on/" f"{total_frames}" ")'"
             x_expression = "'(iw-iw/zoom)/2'"
-            y_expression = (
-                "'(ih-ih/zoom)"
-                "*on/"
-                f"{total_frames}'"
-            )
+            y_expression = "'(ih-ih/zoom)" "*on/" f"{total_frames}'"
             warning = (
                 "Slow vertical pan uses an FFmpeg "
                 "single-layer pan/zoom approximation."
             )
 
         else:
-            zoom_expression = (
-                "'1+0.015*(1+sin(2*PI*on/"
-                f"{total_frames}"
-                "))'"
-            )
+            zoom_expression = "'1+0.015*(1+sin(2*PI*on/" f"{total_frames}" "))'"
             x_expression = "'iw/2-(iw/zoom/2)'"
             y_expression = "'ih/2-(ih/zoom/2)'"
             warning = (
@@ -1227,43 +935,29 @@ class VideoFilterTranslationService:
             )
 
         filter_node = FilterNode(
-            media_type=(
-                FilterMediaType.VIDEO
-            ),
+            media_type=(FilterMediaType.VIDEO),
             filter_name="zoompan",
-            input_labels=[
-                input_label
-            ],
-            output_labels=[
-                output_label
-            ],
+            input_labels=[input_label],
+            output_labels=[output_label],
             options={
                 "z": zoom_expression,
                 "x": x_expression,
                 "y": y_expression,
                 "d": "1",
                 "s": f"{width}x{height}",
-                "fps": self._number(
-                    frame_rate
-                ),
+                "fps": self._number(frame_rate),
             },
-            source_render_node_id=str(
-                render_node.id
-            ),
+            source_render_node_id=str(render_node.id),
         )
 
         translation = self._active(
             render_node=render_node,
             input_label=input_label,
             output_label=output_label,
-            filters=[
-                filter_node
-            ],
+            filters=[filter_node],
         )
 
-        translation.warnings.append(
-            warning
-        )
+        translation.warnings.append(warning)
 
         return translation
 
@@ -1275,19 +969,13 @@ class VideoFilterTranslationService:
         output_label: str,
         capabilities: FFmpegCapabilities,
     ) -> VideoFilterTranslation:
-        execution = (
-            SubtitleExecution.model_validate(
-                render_node.payload
-            )
-        )
+        execution = SubtitleExecution.model_validate(render_node.payload)
 
         if not execution.burn_into_video:
             return self._skipped(
                 render_node=render_node,
                 input_label=input_label,
-                reason=(
-                    "Subtitle burn-in is disabled."
-                ),
+                reason=("Subtitle burn-in is disabled."),
             )
 
         self._require_filter(
@@ -1295,29 +983,15 @@ class VideoFilterTranslationService:
             "drawtext",
         )
 
-        local_start = (
-            execution
-            .local_start_offset_seconds
-        )
+        local_start = execution.local_start_offset_seconds
 
-        local_end = (
-            execution
-            .local_end_offset_seconds
-        )
+        local_end = execution.local_end_offset_seconds
 
-        options = self._subtitle_style(
-            execution.preset_id
-        )
+        options = self._subtitle_style(execution.preset_id)
 
         options.update(
             {
-                "text": (
-                    "'"
-                    + self._escape_drawtext(
-                        execution.text
-                    )
-                    + "'"
-                ),
+                "text": ("'" + self._escape_drawtext(execution.text) + "'"),
                 "enable": (
                     self._enable_expression(
                         local_start,
@@ -1328,33 +1002,16 @@ class VideoFilterTranslationService:
         )
 
         filter_node = FilterNode(
-            media_type=(
-                FilterMediaType.VIDEO
-            ),
+            media_type=(FilterMediaType.VIDEO),
             filter_name="drawtext",
-            input_labels=[
-                input_label
-            ],
-            output_labels=[
-                output_label
-            ],
+            input_labels=[input_label],
+            output_labels=[output_label],
             options=options,
-            source_render_node_id=str(
-                render_node.id
-            ),
+            source_render_node_id=str(render_node.id),
             metadata={
-                "segment_index": (
-                    execution.segment_index
-                ),
-                "timing_source": (
-                    execution
-                    .timing_source
-                    .value
-                ),
-                "animation_preset_id": (
-                    execution
-                    .animation_preset_id
-                ),
+                "segment_index": (execution.segment_index),
+                "timing_source": (execution.timing_source.value),
+                "animation_preset_id": (execution.animation_preset_id),
             },
         )
 
@@ -1362,15 +1019,10 @@ class VideoFilterTranslationService:
             render_node=render_node,
             input_label=input_label,
             output_label=output_label,
-            filters=[
-                filter_node
-            ],
+            filters=[filter_node],
         )
 
-        if (
-            execution.animation_preset_id
-            == "animation.subtitle_fade"
-        ):
+        if execution.animation_preset_id == "animation.subtitle_fade":
             translation.warnings.append(
                 "Subtitle fade animation metadata is "
                 "preserved; alpha-keyframe translation "
@@ -1445,10 +1097,7 @@ class VideoFilterTranslationService:
                 "y": "h-text_h-90",
             }
         else:
-            raise ValueError(
-                "Unsupported FFmpeg subtitle preset: "
-                f"{preset_id}."
-            )
+            raise ValueError("Unsupported FFmpeg subtitle preset: " f"{preset_id}.")
 
         font_file = cls._resolve_subtitle_font_file()
 
@@ -1471,14 +1120,11 @@ class VideoFilterTranslationService:
             "pixelize": "pixelize",
         }
 
-        result = mapping.get(
-            transition_type
-        )
+        result = mapping.get(transition_type)
 
         if result is None:
             raise ValueError(
-                "Unsupported FFmpeg transition type: "
-                f"{transition_type}."
+                "Unsupported FFmpeg transition type: " f"{transition_type}."
             )
 
         return result
@@ -1488,12 +1134,9 @@ class VideoFilterTranslationService:
         capabilities: FFmpegCapabilities,
         filter_name: str,
     ) -> None:
-        if not capabilities.has_filter(
-            filter_name
-        ):
+        if not capabilities.has_filter(filter_name):
             raise RuntimeError(
-                "Required FFmpeg filter is "
-                f"unavailable: {filter_name}."
+                "Required FFmpeg filter is " f"unavailable: {filter_name}."
             )
 
     def _null_filter(
@@ -1510,19 +1153,11 @@ class VideoFilterTranslationService:
         )
 
         return FilterNode(
-            media_type=(
-                FilterMediaType.VIDEO
-            ),
+            media_type=(FilterMediaType.VIDEO),
             filter_name="null",
-            input_labels=[
-                input_label
-            ],
-            output_labels=[
-                output_label
-            ],
-            source_render_node_id=(
-                source_render_node_id
-            ),
+            input_labels=[input_label],
+            output_labels=[output_label],
+            source_render_node_id=(source_render_node_id),
         )
 
     @staticmethod
@@ -1534,15 +1169,9 @@ class VideoFilterTranslationService:
         filters: list[FilterNode],
     ) -> VideoFilterTranslation:
         return VideoFilterTranslation(
-            source_render_node_id=str(
-                render_node.id
-            ),
-            render_node_type=(
-                render_node.node_type
-            ),
-            input_labels=[
-                input_label
-            ],
+            source_render_node_id=str(render_node.id),
+            render_node_type=(render_node.node_type),
+            input_labels=[input_label],
             output_label=output_label,
             filters=filters,
             skipped=False,
@@ -1556,23 +1185,13 @@ class VideoFilterTranslationService:
         reason: str,
     ) -> VideoFilterTranslation:
         return VideoFilterTranslation(
-            source_render_node_id=str(
-                render_node.id
-            ),
-            render_node_type=(
-                render_node.node_type
-            ),
-            input_labels=[
-                input_label
-            ],
-            output_label=(
-                input_label
-            ),
+            source_render_node_id=str(render_node.id),
+            render_node_type=(render_node.node_type),
+            input_labels=[input_label],
+            output_label=(input_label),
             filters=[],
             skipped=True,
-            warnings=[
-                reason
-            ],
+            warnings=[reason],
         )
 
     @staticmethod
@@ -1592,37 +1211,25 @@ class VideoFilterTranslationService:
         values: dict[str, object],
         key: str,
     ) -> float:
-        value = values.get(
-            key
-        )
+        value = values.get(key)
 
-        if (
-            isinstance(
-                value,
-                bool,
-            )
-            or not isinstance(
-                value,
-                (int, float),
-            )
+        if isinstance(
+            value,
+            bool,
+        ) or not isinstance(
+            value,
+            (int, float),
         ):
-            raise ValueError(
-                "FFmpeg implementation field "
-                f"'{key}' must be numeric."
-            )
+            raise ValueError("FFmpeg implementation field " f"'{key}' must be numeric.")
 
-        return float(
-            value
-        )
+        return float(value)
 
     @staticmethod
     def _optional_string(
         values: dict[str, object],
         key: str,
     ) -> str | None:
-        value = values.get(
-            key
-        )
+        value = values.get(key)
 
         if value is None:
             return None
@@ -1631,20 +1238,11 @@ class VideoFilterTranslationService:
             value,
             str,
         ):
-            raise ValueError(
-                "FFmpeg implementation field "
-                f"'{key}' must be text."
-            )
+            raise ValueError("FFmpeg implementation field " f"'{key}' must be text.")
 
-        cleaned = (
-            value.strip()
-            .lower()
-        )
+        cleaned = value.strip().lower()
 
-        return (
-            cleaned
-            or None
-        )
+        return cleaned or None
 
     @staticmethod
     def _escape_drawtext(
@@ -1655,8 +1253,7 @@ class VideoFilterTranslationService:
         """
 
         return (
-            value
-            .replace(
+            value.replace(
                 "\\",
                 "\\\\",
             )
@@ -1690,16 +1287,10 @@ class VideoFilterTranslationService:
     def _clean_label(
         value: str,
     ) -> str:
-        cleaned = (
-            value.strip()
-            .strip("[]")
-        )
+        cleaned = value.strip().strip("[]")
 
         if not cleaned:
-            raise ValueError(
-                "FFmpeg stream label "
-                "cannot be empty."
-            )
+            raise ValueError("FFmpeg stream label " "cannot be empty.")
 
         return cleaned
 
@@ -1710,34 +1301,17 @@ class VideoFilterTranslationService:
         height: int,
         frame_rate: float,
     ) -> None:
-        if (
-            width <= 0
-            or height <= 0
-        ):
-            raise ValueError(
-                "FFmpeg translation dimensions "
-                "must be positive."
-            )
+        if width <= 0 or height <= 0:
+            raise ValueError("FFmpeg translation dimensions " "must be positive.")
 
         if frame_rate <= 0.0:
-            raise ValueError(
-                "FFmpeg translation frame rate "
-                "must be positive."
-            )
+            raise ValueError("FFmpeg translation frame rate " "must be positive.")
 
     @staticmethod
     def _number(
         value: float,
     ) -> str:
         if value.is_integer():
-            return str(
-                int(
-                    value
-                )
-            )
+            return str(int(value))
 
-        return (
-            f"{value:.6f}"
-            .rstrip("0")
-            .rstrip(".")
-        )
+        return f"{value:.6f}".rstrip("0").rstrip(".")

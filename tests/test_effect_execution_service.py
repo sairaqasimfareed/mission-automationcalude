@@ -50,9 +50,7 @@ def build_reference(
         resolved_preset_id=preset_id,
         found_exact_match=not used_fallback,
         used_fallback=used_fallback,
-        implementation=dict(
-            implementation or {}
-        ),
+        implementation=dict(implementation or {}),
         metadata={},
     )
 
@@ -63,9 +61,7 @@ def build_visual_effect(
     timing_mode: DirectiveTimingMode,
     start_offset_seconds: float = 0.0,
     duration_seconds: float | None = None,
-    relative_position_percent: (
-        float | None
-    ) = None,
+    relative_position_percent: float | None = None,
     enabled: bool = True,
     used_fallback: bool = False,
 ) -> ResolvedVisualEffectInstruction:
@@ -76,9 +72,7 @@ def build_visual_effect(
             "effect": "vignette",
             "strength": 0.25,
         }
-    elif preset_id == (
-        "visual.horror_dark_grade"
-    ):
+    elif preset_id == ("visual.horror_dark_grade"):
         implementation = {
             "brightness": -0.08,
             "contrast": 1.12,
@@ -97,24 +91,16 @@ def build_visual_effect(
 
     return ResolvedVisualEffectInstruction(
         preset=build_reference(
-            directive_path=(
-                "visual_effects.preset_id"
-            ),
+            directive_path=("visual_effects.preset_id"),
             preset_id=preset_id,
             implementation=implementation,
             used_fallback=used_fallback,
         ),
         intensity=DirectiveIntensity.MEDIUM,
         timing_mode=timing_mode,
-        start_offset_seconds=(
-            start_offset_seconds
-        ),
-        duration_seconds=(
-            duration_seconds
-        ),
-        relative_position_percent=(
-            relative_position_percent
-        ),
+        start_offset_seconds=(start_offset_seconds),
+        duration_seconds=(duration_seconds),
+        relative_position_percent=(relative_position_percent),
         enabled=enabled,
     )
 
@@ -122,9 +108,7 @@ def build_visual_effect(
 def build_blueprint(
     *,
     scene_number: int,
-    visual_effects: list[
-        ResolvedVisualEffectInstruction
-    ],
+    visual_effects: list[ResolvedVisualEffectInstruction],
 ) -> ResolvedSceneEditingBlueprint:
     return ResolvedSceneEditingBlueprint(
         scene_number=scene_number,
@@ -144,9 +128,7 @@ def build_blueprint(
         transition_in=(
             ResolvedTransitionInstruction(
                 preset=build_reference(
-                    directive_path=(
-                        "transition_in.preset_id"
-                    ),
+                    directive_path=("transition_in.preset_id"),
                     preset_id="transition.cut",
                     implementation={
                         "type": "cut",
@@ -158,9 +140,7 @@ def build_blueprint(
         transition_out=(
             ResolvedTransitionInstruction(
                 preset=build_reference(
-                    directive_path=(
-                        "transition_out.preset_id"
-                    ),
+                    directive_path=("transition_out.preset_id"),
                     preset_id="transition.cut",
                     implementation={
                         "type": "cut",
@@ -181,17 +161,13 @@ def build_blueprint(
         sound_effects=[],
         subtitles=ResolvedSubtitleInstruction(
             preset=build_reference(
-                directive_path=(
-                    "subtitles.preset_id"
-                ),
+                directive_path=("subtitles.preset_id"),
                 preset_id="subtitle.default",
             ),
             enabled=False,
             burn_into_video=False,
         ),
-        status=(
-            BlueprintResolutionStatus.RESOLVED
-        ),
+        status=(BlueprintResolutionStatus.RESOLVED),
     )
 
 
@@ -200,38 +176,24 @@ def build_item(
     scene_number: int,
     start_time_seconds: float,
     duration_seconds: int,
-    effects: list[
-        ResolvedVisualEffectInstruction
-    ],
+    effects: list[ResolvedVisualEffectInstruction],
 ) -> VideoTimelineItem:
     clip = VideoClip(
         scene_number=scene_number,
-        source_type=(
-            SceneSourceType.MANUAL_UPLOAD
-        ),
+        source_type=(SceneSourceType.MANUAL_UPLOAD),
         duration_seconds=duration_seconds,
         prompt=f"Scene {scene_number}",
         provider="Manual Upload",
-        local_file=(
-            "assets/videos/manual/"
-            f"scene_{scene_number:03}.mp4"
-        ),
-        source_status=(
-            SceneSourceStatus.READY
-        ),
+        local_file=("assets/videos/manual/" f"scene_{scene_number:03}.mp4"),
+        source_status=(SceneSourceStatus.READY),
         status=VideoClipStatus.READY,
     )
 
     return VideoTimelineItem(
         clip=clip,
         scene_number=scene_number,
-        start_time_seconds=(
-            start_time_seconds
-        ),
-        end_time_seconds=(
-            start_time_seconds
-            + duration_seconds
-        ),
+        start_time_seconds=(start_time_seconds),
+        end_time_seconds=(start_time_seconds + duration_seconds),
         editing_blueprint=(
             build_blueprint(
                 scene_number=scene_number,
@@ -246,25 +208,19 @@ service = EffectExecutionService()
 
 full_scene_effect = build_visual_effect(
     preset_id="visual.vignette_soft",
-    timing_mode=(
-        DirectiveTimingMode.FULL_SCENE
-    ),
+    timing_mode=(DirectiveTimingMode.FULL_SCENE),
 )
 
 absolute_effect = build_visual_effect(
     preset_id="visual.horror_dark_grade",
-    timing_mode=(
-        DirectiveTimingMode.ABSOLUTE_SECONDS
-    ),
+    timing_mode=(DirectiveTimingMode.ABSOLUTE_SECONDS),
     start_offset_seconds=2.0,
     duration_seconds=3.0,
 )
 
 relative_effect = build_visual_effect(
     preset_id="visual.vignette_soft",
-    timing_mode=(
-        DirectiveTimingMode.RELATIVE_PERCENT
-    ),
+    timing_mode=(DirectiveTimingMode.RELATIVE_PERCENT),
     relative_position_percent=50.0,
     duration_seconds=2.0,
 )
@@ -328,36 +284,26 @@ assert plan.is_render_ready is True
 
 
 scene_1_effects = [
-    execution
-    for execution in plan.executions
-    if execution.scene_number == 1
+    execution for execution in plan.executions if execution.scene_number == 1
 ]
 
 assert len(scene_1_effects) == 2
 
 
 full_execution = next(
-    execution
-    for execution in scene_1_effects
-    if execution.is_full_scene
+    execution for execution in scene_1_effects if execution.is_full_scene
 )
 
 assert full_execution.start_time_seconds == 0.0
 assert full_execution.end_time_seconds == 8.0
 assert full_execution.duration_seconds == 8.0
-assert (
-    full_execution.local_start_offset_seconds
-    == 0.0
-)
+assert full_execution.local_start_offset_seconds == 0.0
 
 
 absolute_execution = next(
     execution
     for execution in scene_1_effects
-    if (
-        execution.timing_mode
-        == DirectiveTimingMode.ABSOLUTE_SECONDS
-    )
+    if (execution.timing_mode == DirectiveTimingMode.ABSOLUTE_SECONDS)
 )
 
 assert absolute_execution.start_time_seconds == 2.0
@@ -366,24 +312,17 @@ assert absolute_execution.duration_seconds == 3.0
 
 
 relative_execution = next(
-    execution
-    for execution in plan.executions
-    if execution.scene_number == 2
+    execution for execution in plan.executions if execution.scene_number == 2
 )
 
 assert relative_execution.start_time_seconds == 12.0
 assert relative_execution.end_time_seconds == 14.0
-assert (
-    relative_execution.relative_position_percent
-    == 50.0
-)
+assert relative_execution.relative_position_percent == 50.0
 
 
 disabled_effect = build_visual_effect(
     preset_id="visual.vignette_soft",
-    timing_mode=(
-        DirectiveTimingMode.FULL_SCENE
-    ),
+    timing_mode=(DirectiveTimingMode.FULL_SCENE),
     enabled=False,
 )
 
@@ -414,9 +353,7 @@ assert disabled_plan.is_render_ready is True
 
 fallback_effect = build_visual_effect(
     preset_id="visual.vignette_soft",
-    timing_mode=(
-        DirectiveTimingMode.FULL_SCENE
-    ),
+    timing_mode=(DirectiveTimingMode.FULL_SCENE),
     used_fallback=True,
 )
 
@@ -442,17 +379,12 @@ fallback_plan = service.build_plan(
 
 assert fallback_plan.warnings
 
-assert any(
-    "fallback preset" in warning.lower()
-    for warning in fallback_plan.warnings
-)
+assert any("fallback preset" in warning.lower() for warning in fallback_plan.warnings)
 
 
 invalid_duration_effect = build_visual_effect(
     preset_id="visual.vignette_soft",
-    timing_mode=(
-        DirectiveTimingMode.ABSOLUTE_SECONDS
-    ),
+    timing_mode=(DirectiveTimingMode.ABSOLUTE_SECONDS),
     start_offset_seconds=7.0,
     duration_seconds=2.0,
 )
@@ -478,57 +410,37 @@ try:
         ),
     )
 except ValueError:
-    print(
-        "Out-of-scene visual effect "
-        "successfully blocked."
-    )
+    print("Out-of-scene visual effect " "successfully blocked.")
 else:
-    raise AssertionError(
-        "Effect extending beyond scene "
-        "should fail."
-    )
+    raise AssertionError("Effect extending beyond scene " "should fail.")
 
 
-summary = service.summary(
-    plan
-)
+summary = service.summary(plan)
 
 assert summary["effect_count"] == 3
 assert summary["scene_count"] == 2
 assert summary["is_render_ready"] is True
-assert len(
-    summary["executions"]
-) == 3
+assert len(summary["executions"]) == 3
 
 
 application_plan = service.build_plan(
     timeline,
 )
 
-first_execution = (
-    application_plan.executions[0]
-)
+first_execution = application_plan.executions[0]
 
 applied = service.mark_applied(
     application_plan,
-    execution_id=str(
-        first_execution.id
-    ),
+    execution_id=str(first_execution.id),
     renderer="ffmpeg",
     renderer_metadata={
         "filter": "vignette",
     },
 )
 
-assert (
-    applied.status
-    == EffectExecutionStatus.APPLIED
-)
+assert applied.status == EffectExecutionStatus.APPLIED
 
-assert (
-    applied.metadata["renderer"]
-    == "ffmpeg"
-)
+assert applied.metadata["renderer"] == "ffmpeg"
 
 assert application_plan.applied_count == 1
 
@@ -538,10 +450,7 @@ service.mark_all_applied(
     renderer="ffmpeg",
 )
 
-assert (
-    application_plan.applied_count
-    == application_plan.effect_count
-)
+assert application_plan.applied_count == application_plan.effect_count
 
 
 failure_plan = service.build_plan(
@@ -550,21 +459,14 @@ failure_plan = service.build_plan(
 
 failed_execution = service.mark_failed(
     failure_plan,
-    execution_id=str(
-        failure_plan.executions[0].id
-    ),
-    error_message=(
-        "Simulated visual-effect failure."
-    ),
+    execution_id=str(failure_plan.executions[0].id),
+    error_message=("Simulated visual-effect failure."),
     failure_metadata={
         "renderer": "ffmpeg",
     },
 )
 
-assert (
-    failed_execution.status
-    == EffectExecutionStatus.FAILED
-)
+assert failed_execution.status == EffectExecutionStatus.FAILED
 
 assert failure_plan.failed_count == 1
 assert failure_plan.is_valid is False
@@ -578,31 +480,16 @@ try:
         renderer="ffmpeg",
     )
 except KeyError:
-    print(
-        "Unknown visual-effect execution "
-        "successfully blocked."
-    )
+    print("Unknown visual-effect execution " "successfully blocked.")
 else:
-    raise AssertionError(
-        "Unknown effect execution should fail."
-    )
+    raise AssertionError("Unknown effect execution should fail.")
 
 
-serialized = (
-    plan.model_dump_json()
-)
+serialized = plan.model_dump_json()
 
-restored = (
-    EffectExecutionPlan
-    .model_validate_json(
-        serialized
-    )
-)
+restored = EffectExecutionPlan.model_validate_json(serialized)
 
 assert restored == plan
 
 
-print(
-    "Effect Execution Service tests "
-    "completed successfully."
-)
+print("Effect Execution Service tests " "completed successfully.")

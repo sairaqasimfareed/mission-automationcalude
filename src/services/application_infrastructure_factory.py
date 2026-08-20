@@ -83,10 +83,7 @@ class ApplicationInfrastructureFactory:
     def build(
         self,
         *,
-        provider_profiles: (
-            list[ProviderProfile]
-            | None
-        ) = None,
+        provider_profiles: list[ProviderProfile] | None = None,
         llm_gateway: LLMGateway | None = None,
     ) -> ApplicationInfrastructure:
         """
@@ -116,11 +113,7 @@ class ApplicationInfrastructureFactory:
             registry=registry,
         )
 
-        gateway = (
-            llm_gateway
-            if llm_gateway is not None
-            else LLMGateway()
-        )
+        gateway = llm_gateway if llm_gateway is not None else LLMGateway()
 
         llm_service = LLMService(
             registry=registry,

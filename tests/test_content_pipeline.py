@@ -121,10 +121,7 @@ assert len(result.scenes) > 0
 
 assert result.research.status == ResearchStatus.APPROVED
 assert result.script.status == ScriptStatus.APPROVED
-assert (
-    result.script.claude_review_status
-    == ScriptReviewStatus.APPROVED
-)
+assert result.script.claude_review_status == ScriptReviewStatus.APPROVED
 
 assert result.current_stage == WorkflowStage.QUALITY_CHECK
 

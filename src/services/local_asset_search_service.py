@@ -55,15 +55,11 @@ class LocalAssetSearchService:
         """Return ranked local video candidates for one scene."""
 
         if maximum_results < 1:
-            raise ValueError(
-                "Maximum local results must be at least 1."
-            )
+            raise ValueError("Maximum local results must be at least 1.")
 
         search_terms = self._build_search_terms(scene)
 
-        scored_assets: list[
-            tuple[float, IndexedAsset]
-        ] = []
+        scored_assets: list[tuple[float, IndexedAsset]] = []
 
         for asset in self._video_assets():
             score = self._calculate_score(
@@ -92,9 +88,7 @@ class LocalAssetSearchService:
                 asset,
                 score,
             )
-            for score, asset in scored_assets[
-                :maximum_results
-            ]
+            for score, asset in scored_assets[:maximum_results]
         ]
 
     def _video_assets(
@@ -141,8 +135,7 @@ class LocalAssetSearchService:
         return {
             word.strip()
             for word in normalized_text.split()
-            if len(word.strip()) >= 3
-            and word.strip() not in cls.STOP_WORDS
+            if len(word.strip()) >= 3 and word.strip() not in cls.STOP_WORDS
         }
 
     @staticmethod
@@ -161,41 +154,23 @@ class LocalAssetSearchService:
             *asset.keywords,
         ]
 
-        searchable_text = " ".join(
-            value.lower()
-            for value in searchable_values
-        )
+        searchable_text = " ".join(value.lower() for value in searchable_values)
 
-        matched_terms = {
-            term
-            for term in search_terms
-            if term in searchable_text
-        }
+        matched_terms = {term for term in search_terms if term in searchable_text}
 
         if not matched_terms:
             return 0.0
 
-        base_score = (
-            len(matched_terms)
-            / len(search_terms)
-        )
+        base_score = len(matched_terms) / len(search_terms)
 
-        title_matches = sum(
-            1
-            for term in matched_terms
-            if term in asset.title.lower()
-        )
+        title_matches = sum(1 for term in matched_terms if term in asset.title.lower())
 
         title_bonus = min(
             title_matches * 0.03,
             0.12,
         )
 
-        resolution_bonus = (
-            0.05
-            if asset.resolution
-            else 0.0
-        )
+        resolution_bonus = 0.05 if asset.resolution else 0.0
 
         reuse_bonus = min(
             asset.usage_count * 0.01,
@@ -204,10 +179,7 @@ class LocalAssetSearchService:
 
         return round(
             min(
-                base_score
-                + title_bonus
-                + resolution_bonus
-                + reuse_bonus,
+                base_score + title_bonus + resolution_bonus + reuse_bonus,
                 1.0,
             ),
             4,
@@ -225,27 +197,15 @@ class LocalAssetSearchService:
         }
 
         if asset.content_hash is not None:
-            metadata["content_hash"] = (
-                asset.content_hash
-            )
+            metadata["content_hash"] = asset.content_hash
 
         return AssetCandidate(
             title=asset.title,
-            source_type=(
-                SceneSourceType.LOCAL_LIBRARY
-            ),
+            source_type=(SceneSourceType.LOCAL_LIBRARY),
             file_path=asset.file_path,
-            provider=(
-                asset.provider
-                or "Local Library"
-            ),
-            license_type=(
-                asset.license_type
-                or "owned"
-            ),
-            duration_seconds=(
-                asset.duration_seconds
-            ),
+            provider=(asset.provider or "Local Library"),
+            license_type=(asset.license_type or "owned"),
+            duration_seconds=(asset.duration_seconds),
             resolution=asset.resolution,
             aspect_ratio=asset.aspect_ratio,
             last_used_at=asset.last_used_at,

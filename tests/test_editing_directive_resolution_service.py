@@ -20,11 +20,7 @@ from src.services.effect_registry_service import (
     EffectRegistryService,
 )
 
-
-registry = (
-    EffectRegistryService
-    .with_default_presets()
-)
+registry = EffectRegistryService.with_default_presets()
 
 service = EditingDirectiveResolutionService(
     effect_registry=registry,
@@ -45,16 +41,12 @@ directives = SceneEditingDirectives(
         duration_seconds=0.8,
     ),
     transition_out=TransitionDirective(
-        preset_id=(
-            "transition.cross_dissolve"
-        ),
+        preset_id=("transition.cross_dissolve"),
         duration_seconds=0.6,
     ),
     visual_effects=[
         VisualEffectDirective(
-            preset_id=(
-                "visual.horror_dark_grade"
-            ),
+            preset_id=("visual.horror_dark_grade"),
         ),
         VisualEffectDirective(
             preset_id="visual.vignette_soft",
@@ -62,9 +54,7 @@ directives = SceneEditingDirectives(
     ],
     animations=[
         AnimationDirective(
-            preset_id=(
-                "animation.slow_parallax"
-            ),
+            preset_id=("animation.slow_parallax"),
             duration_seconds=8.0,
         ),
     ],
@@ -80,9 +70,7 @@ directives = SceneEditingDirectives(
     ],
     subtitles=SubtitleDirective(
         preset_id="subtitle.cinematic",
-        animation_preset_id=(
-            "animation.subtitle_fade"
-        ),
+        animation_preset_id=("animation.subtitle_fade"),
     ),
 )
 
@@ -102,57 +90,28 @@ print(
 )
 
 assert blueprint.is_resolved is True
-assert (
-    blueprint.status
-    == BlueprintResolutionStatus.RESOLVED
-)
+assert blueprint.status == BlueprintResolutionStatus.RESOLVED
 assert blueprint.uses_fallbacks is False
 assert blueprint.fallback_count == 0
 
-assert (
-    blueprint.genre_preset
-    .resolved_preset_id
-    == "genre.horror"
-)
+assert blueprint.genre_preset.resolved_preset_id == "genre.horror"
 
-assert (
-    blueprint.camera.preset
-    .resolved_preset_id
-    == "camera.slow_zoom_in"
-)
+assert blueprint.camera.preset.resolved_preset_id == "camera.slow_zoom_in"
 
-assert (
-    blueprint.camera.preset
-    .implementation["motion"]
-    == "zoom"
-)
+assert blueprint.camera.preset.implementation["motion"] == "zoom"
 
-assert (
-    blueprint.transition_in.preset
-    .resolved_preset_id
-    == "transition.fade_black"
-)
+assert blueprint.transition_in.preset.resolved_preset_id == "transition.fade_black"
 
 assert len(blueprint.visual_effects) == 2
 assert len(blueprint.animations) == 1
 assert len(blueprint.sound_effects) == 1
 
-assert (
-    blueprint.music.preset
-    .resolved_preset_id
-    == "music.horror_low_drone"
-)
+assert blueprint.music.preset.resolved_preset_id == "music.horror_low_drone"
+
+assert blueprint.subtitles.animation_preset is not None
 
 assert (
-    blueprint.subtitles.animation_preset
-    is not None
-)
-
-assert (
-    blueprint.subtitles
-    .animation_preset
-    .resolved_preset_id
-    == "animation.subtitle_fade"
+    blueprint.subtitles.animation_preset.resolved_preset_id == "animation.subtitle_fade"
 )
 
 
@@ -185,32 +144,16 @@ print(
 
 assert fallback_blueprint.is_resolved is True
 
-assert (
-    fallback_blueprint.status
-    == BlueprintResolutionStatus
-    .RESOLVED_WITH_FALLBACKS
-)
+assert fallback_blueprint.status == BlueprintResolutionStatus.RESOLVED_WITH_FALLBACKS
 
 assert fallback_blueprint.uses_fallbacks is True
 assert fallback_blueprint.fallback_count == 3
 
-assert (
-    fallback_blueprint.camera.preset
-    .resolved_preset_id
-    == "camera.none"
-)
+assert fallback_blueprint.camera.preset.resolved_preset_id == "camera.none"
 
-assert (
-    fallback_blueprint.visual_effects[0]
-    .preset.resolved_preset_id
-    == "visual.none"
-)
+assert fallback_blueprint.visual_effects[0].preset.resolved_preset_id == "visual.none"
 
-assert (
-    fallback_blueprint.sound_effects[0]
-    .preset.resolved_preset_id
-    == "sfx.none"
-)
+assert fallback_blueprint.sound_effects[0].preset.resolved_preset_id == "sfx.none"
 
 assert len(fallback_blueprint.warnings) == 3
 
@@ -229,17 +172,9 @@ try:
         scene_duration_seconds=8.0,
     )
 except ValueError:
-    print(
-        "Invalid directive blueprint "
-        "successfully blocked."
-    )
+    print("Invalid directive blueprint " "successfully blocked.")
 else:
-    raise AssertionError(
-        "Invalid directive timing should fail."
-    )
+    raise AssertionError("Invalid directive timing should fail.")
 
 
-print(
-    "Editing Directive Resolution Service "
-    "tests completed successfully."
-)
+print("Editing Directive Resolution Service " "tests completed successfully.")

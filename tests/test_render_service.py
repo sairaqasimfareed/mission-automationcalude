@@ -10,7 +10,6 @@ from src.models.video_clip import (
 from src.models.video_timeline import VideoTimeline
 from src.services.render_service import RenderService
 
-
 timeline = VideoTimeline(
     clips=[
         VideoClip(
@@ -19,10 +18,7 @@ timeline = VideoTimeline(
             duration_seconds=8,
             prompt="Scene 1",
             provider="Manual Upload",
-            local_file=(
-                "assets/videos/manual/"
-                "scene_001.mp4"
-            ),
+            local_file=("assets/videos/manual/" "scene_001.mp4"),
             source_status=SceneSourceStatus.READY,
             status=VideoClipStatus.READY,
         ),
@@ -32,10 +28,7 @@ timeline = VideoTimeline(
             duration_seconds=8,
             prompt="Scene 2",
             provider="Pexels",
-            source_url=(
-                "https://example.com/"
-                "scene_002.mp4"
-            ),
+            source_url=("https://example.com/" "scene_002.mp4"),
             source_status=SceneSourceStatus.READY,
             status=VideoClipStatus.READY,
         ),
@@ -45,10 +38,7 @@ timeline = VideoTimeline(
             duration_seconds=10,
             prompt="Scene 3",
             provider="Local Library",
-            local_file=(
-                "assets/videos/local/"
-                "scene_003.mp4"
-            ),
+            local_file=("assets/videos/local/" "scene_003.mp4"),
             source_status=SceneSourceStatus.READY,
             status=VideoClipStatus.READY,
         ),
@@ -69,6 +59,4 @@ assert result.success is True
 assert result.status == RenderStatus.COMPLETED
 assert result.duration_seconds == 26
 
-print(
-    "Render Service tests completed successfully."
-)
+print("Render Service tests completed successfully.")

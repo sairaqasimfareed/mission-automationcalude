@@ -97,28 +97,20 @@ class LocalAssetLibrary:
     ) -> Path:
         """Register one directory for recursive asset scanning."""
 
-        normalized_directory = (
-            Path(directory)
-            .expanduser()
-            .resolve()
-        )
+        normalized_directory = Path(directory).expanduser().resolve()
 
         if not normalized_directory.exists():
             raise FileNotFoundError(
-                "Local asset directory does not exist: "
-                f"{normalized_directory}"
+                "Local asset directory does not exist: " f"{normalized_directory}"
             )
 
         if not normalized_directory.is_dir():
             raise NotADirectoryError(
-                "Local asset path is not a directory: "
-                f"{normalized_directory}"
+                "Local asset path is not a directory: " f"{normalized_directory}"
             )
 
         if normalized_directory not in self._directories:
-            self._directories.append(
-                normalized_directory
-            )
+            self._directories.append(normalized_directory)
 
         return normalized_directory
 
@@ -128,18 +120,12 @@ class LocalAssetLibrary:
     ) -> bool:
         """Remove one registered directory."""
 
-        normalized_directory = (
-            Path(directory)
-            .expanduser()
-            .resolve()
-        )
+        normalized_directory = Path(directory).expanduser().resolve()
 
         if normalized_directory not in self._directories:
             return False
 
-        self._directories.remove(
-            normalized_directory
-        )
+        self._directories.remove(normalized_directory)
 
         return True
 
@@ -155,28 +141,18 @@ class LocalAssetLibrary:
         seen_paths: set[str] = set()
 
         for directory in self._directories:
-            for file_path in self._iter_supported_files(
-                directory
-            ):
-                normalized_path = str(
-                    file_path.resolve()
-                )
+            for file_path in self._iter_supported_files(directory):
+                normalized_path = str(file_path.resolve())
 
                 if normalized_path in seen_paths:
                     continue
 
-                seen_paths.add(
-                    normalized_path
-                )
+                seen_paths.add(normalized_path)
 
-                asset = self._build_indexed_asset(
-                    file_path
-                )
+                asset = self._build_indexed_asset(file_path)
 
                 if asset is not None:
-                    rebuilt_index.add(
-                        asset
-                    )
+                    rebuilt_index.add(asset)
 
         self._index = rebuilt_index
 
@@ -192,15 +168,9 @@ class LocalAssetLibrary:
         """Search indexed local assets."""
 
         if limit is not None and limit < 1:
-            raise ValueError(
-                "Local asset search limit must be at least 1."
-            )
+            raise ValueError("Local asset search limit must be at least 1.")
 
-        normalized_query = (
-            query.strip()
-            if query is not None
-            else None
-        )
+        normalized_query = query.strip() if query is not None else None
 
         results = self._index.search(
             asset_type=asset_type,
@@ -223,11 +193,7 @@ class LocalAssetLibrary:
     ) -> IndexedAsset | None:
         """Return one indexed asset by absolute file path."""
 
-        normalized_path = str(
-            Path(file_path)
-            .expanduser()
-            .resolve()
-        )
+        normalized_path = str(Path(file_path).expanduser().resolve())
 
         for asset in self._index.assets:
             if asset.file_path == normalized_path:
@@ -245,48 +211,28 @@ class LocalAssetLibrary:
         total_file_size_bytes = 0
 
         for asset in self._index.assets:
-            total_file_size_bytes += (
-                asset.file_size_bytes
-            )
+            total_file_size_bytes += asset.file_size_bytes
 
-            if (
-                asset.asset_type
-                == IndexedAssetType.VIDEO
-            ):
+            if asset.asset_type == IndexedAssetType.VIDEO:
                 video_count += 1
 
-            elif (
-                asset.asset_type
-                == IndexedAssetType.IMAGE
-            ):
+            elif asset.asset_type == IndexedAssetType.IMAGE:
                 image_count += 1
 
-            elif (
-                asset.asset_type
-                == IndexedAssetType.MUSIC
-            ):
+            elif asset.asset_type == IndexedAssetType.MUSIC:
                 music_count += 1
 
-            elif (
-                asset.asset_type
-                == IndexedAssetType.SOUND_EFFECT
-            ):
+            elif asset.asset_type == IndexedAssetType.SOUND_EFFECT:
                 sound_effect_count += 1
 
         return AssetLibraryStatistics(
-            registered_directories=(
-                len(self._directories)
-            ),
-            indexed_assets=(
-                len(self._index.assets)
-            ),
+            registered_directories=(len(self._directories)),
+            indexed_assets=(len(self._index.assets)),
             videos=video_count,
             images=image_count,
             music=music_count,
             sound_effects=sound_effect_count,
-            total_file_size_bytes=(
-                total_file_size_bytes
-            ),
+            total_file_size_bytes=(total_file_size_bytes),
         )
 
     def _iter_supported_files(
@@ -302,9 +248,7 @@ class LocalAssetLibrary:
                 continue
 
             if self._detect_asset_type(path) is not None:
-                files.append(
-                    path
-                )
+                files.append(path)
 
         return sorted(
             files,
@@ -317,47 +261,31 @@ class LocalAssetLibrary:
     ) -> IndexedAsset | None:
         """Build one IndexedAsset from a local file."""
 
-        asset_type = self._detect_asset_type(
-            file_path
-        )
+        asset_type = self._detect_asset_type(file_path)
 
         if asset_type is None:
             return None
 
         stat = file_path.stat()
 
-        title = self._build_title(
-            file_path
-        )
+        title = self._build_title(file_path)
 
-        tags = self._build_tags(
-            file_path
-        )
+        tags = self._build_tags(file_path)
 
         keywords = list(tags)
 
         return IndexedAsset(
             asset_type=asset_type,
-            source=(
-                IndexedAssetSource.LOCAL_LIBRARY
-            ),
-            file_path=str(
-                file_path.resolve()
-            ),
+            source=(IndexedAssetSource.LOCAL_LIBRARY),
+            file_path=str(file_path.resolve()),
             title=title,
             file_size_bytes=stat.st_size,
             tags=tags,
             keywords=keywords,
             metadata={
-                "extension": (
-                    file_path.suffix.lower()
-                ),
-                "parent_directory": (
-                    file_path.parent.name
-                ),
-                "modified_timestamp": str(
-                    int(stat.st_mtime)
-                ),
+                "extension": (file_path.suffix.lower()),
+                "parent_directory": (file_path.parent.name),
+                "modified_timestamp": str(int(stat.st_mtime)),
             },
         )
 
@@ -378,30 +306,18 @@ class LocalAssetLibrary:
             return IndexedAssetType.IMAGE
 
         if extension in cls.MUSIC_EXTENSIONS:
-            parent_parts = {
-                part.lower()
-                for part in file_path.parent.parts
-            }
+            parent_parts = {part.lower() for part in file_path.parent.parts}
 
             is_named_sound_effect = any(
-                lower_name.endswith(suffix)
-                for suffix in (
-                    cls.SOUND_EFFECT_EXTENSIONS
-                )
+                lower_name.endswith(suffix) for suffix in (cls.SOUND_EFFECT_EXTENSIONS)
             )
 
             is_in_sound_effect_folder = bool(
-                parent_parts
-                & cls.SOUND_EFFECT_FOLDER_NAMES
+                parent_parts & cls.SOUND_EFFECT_FOLDER_NAMES
             )
 
-            if (
-                is_named_sound_effect
-                or is_in_sound_effect_folder
-            ):
-                return (
-                    IndexedAssetType.SOUND_EFFECT
-                )
+            if is_named_sound_effect or is_in_sound_effect_folder:
+                return IndexedAssetType.SOUND_EFFECT
 
             return IndexedAssetType.MUSIC
 
@@ -413,12 +329,7 @@ class LocalAssetLibrary:
     ) -> str:
         """Create a readable title from a filename."""
 
-        return (
-            file_path.stem
-            .replace("_", " ")
-            .replace("-", " ")
-            .strip()
-        )
+        return file_path.stem.replace("_", " ").replace("-", " ").strip()
 
     @staticmethod
     def _build_tags(
@@ -428,34 +339,19 @@ class LocalAssetLibrary:
 
         raw_values = [
             file_path.stem,
-            *[
-                part
-                for part in (
-                    file_path.parent.parts[-3:]
-                )
-            ],
+            *[part for part in (file_path.parent.parts[-3:])],
         ]
 
         tags: list[str] = []
 
         for raw_value in raw_values:
-            normalized_value = (
-                raw_value
-                .replace("_", " ")
-                .replace("-", " ")
-                .lower()
-            )
+            normalized_value = raw_value.replace("_", " ").replace("-", " ").lower()
 
             for token in normalized_value.split():
                 cleaned_token = token.strip()
 
-                if (
-                    cleaned_token
-                    and cleaned_token not in tags
-                ):
-                    tags.append(
-                        cleaned_token
-                    )
+                if cleaned_token and cleaned_token not in tags:
+                    tags.append(cleaned_token)
 
         return tags
 
@@ -476,43 +372,22 @@ class LocalAssetLibrary:
                 ),
             )
 
-        query_tokens = {
-            token
-            for token in query.lower().split()
-            if token
-        }
+        query_tokens = {token for token in query.lower().split() if token}
 
         def score(
             asset: IndexedAsset,
         ) -> tuple[int, int, str]:
             searchable_values = {
                 asset.title.lower(),
-                *[
-                    tag.lower()
-                    for tag in asset.tags
-                ],
-                *[
-                    keyword.lower()
-                    for keyword in (
-                        asset.keywords
-                    )
-                ],
+                *[tag.lower() for tag in asset.tags],
+                *[keyword.lower() for keyword in (asset.keywords)],
             }
 
-            searchable_text = " ".join(
-                searchable_values
-            )
+            searchable_text = " ".join(searchable_values)
 
-            token_matches = sum(
-                1
-                for token in query_tokens
-                if token in searchable_text
-            )
+            token_matches = sum(1 for token in query_tokens if token in searchable_text)
 
-            exact_title_match = int(
-                query.lower()
-                in asset.title.lower()
-            )
+            exact_title_match = int(query.lower() in asset.title.lower())
 
             return (
                 exact_title_match,

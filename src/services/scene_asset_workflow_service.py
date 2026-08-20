@@ -51,15 +51,13 @@ class SceneAssetWorkflowService:
         *,
         asset_manager: AssetManager,
         decision_service: AssetDecisionService,
-                asset_search_service: AssetSearchService,
+        asset_search_service: AssetSearchService,
         manual_upload_service: ManualUploadService | None = None,
         visual_asset_router: VisualAssetRouter | None = None,
         maximum_stock_results: int = 15,
     ) -> None:
         if maximum_stock_results < 1:
-            raise ValueError(
-                "Maximum stock results must be at least 1."
-            )
+            raise ValueError("Maximum stock results must be at least 1.")
 
         self.asset_manager = asset_manager
         self.decision_service = decision_service
@@ -82,25 +80,17 @@ class SceneAssetWorkflowService:
         before allowing stock search.
         """
 
-        state = self.asset_manager.search_local_assets(
-            scene
-        )
+        state = self.asset_manager.search_local_assets(scene)
 
         if state.local_candidates:
-            state.status = (
-                AssetWorkflowStatus.LOCAL_RESULTS_AVAILABLE
-            )
+            state.status = AssetWorkflowStatus.LOCAL_RESULTS_AVAILABLE
             state.user_decision = None
             state.manual_upload_requested = False
 
             return state
 
-        state.status = (
-            AssetWorkflowStatus.WAITING_FOR_MANUAL_UPLOAD
-        )
-        state.selected_source = (
-            SceneSourceType.MANUAL_UPLOAD
-        )
+        state.status = AssetWorkflowStatus.WAITING_FOR_MANUAL_UPLOAD
+        state.selected_source = SceneSourceType.MANUAL_UPLOAD
         state.manual_upload_requested = True
         state.manual_upload_declined = False
 
@@ -147,19 +137,12 @@ class SceneAssetWorkflowService:
         updated_state = self.decision_service.apply_decision(
             state=state,
             decision=decision,
-            selected_candidate_index=(
-                selected_candidate_index
-            ),
+            selected_candidate_index=(selected_candidate_index),
             manual_upload_path=manual_upload_path,
-            apply_to_remaining_scenes=(
-                apply_to_remaining_scenes
-            ),
+            apply_to_remaining_scenes=(apply_to_remaining_scenes),
         )
 
-        if (
-            updated_state.status
-            == AssetWorkflowStatus.SEARCHING_STOCK
-        ):
+        if updated_state.status == AssetWorkflowStatus.SEARCHING_STOCK:
             return self.search_stock(
                 scene=scene,
                 state=updated_state,
@@ -167,8 +150,7 @@ class SceneAssetWorkflowService:
 
         if (
             decision == AssetUserDecision.USE_STOCK
-            and updated_state.selected_source
-            == SceneSourceType.STOCK_FOOTAGE
+            and updated_state.selected_source == SceneSourceType.STOCK_FOOTAGE
             and updated_state.selected_candidate is not None
             and updated_state.selected_candidate.file_path is None
         ):
@@ -192,6 +174,7 @@ class SceneAssetWorkflowService:
             )
 
         return updated_state
+
     def acquire_selected_stock(
         self,
         *,
@@ -212,10 +195,7 @@ class SceneAssetWorkflowService:
             configuration_failure = AssetModuleFailure(
                 module_name="stock_acquisition",
                 reason=AssetFailureReason.MODULE_DISABLED,
-                message=(
-                    "Stock acquisition is not configured "
-                    "for this workflow."
-                ),
+                message=("Stock acquisition is not configured " "for this workflow."),
                 recoverable=True,
                 requires_user_decision=True,
                 recovery_options=[
@@ -225,9 +205,7 @@ class SceneAssetWorkflowService:
                 ],
             )
 
-            state.record_failure(
-                configuration_failure
-            )
+            state.record_failure(configuration_failure)
 
             return None
 
@@ -238,8 +216,7 @@ class SceneAssetWorkflowService:
                 module_name="stock_acquisition",
                 reason=AssetFailureReason.UNKNOWN,
                 message=(
-                    "A project ID is required to acquire "
-                    "the selected stock footage."
+                    "A project ID is required to acquire " "the selected stock footage."
                 ),
                 recoverable=True,
                 requires_user_decision=True,
@@ -250,9 +227,7 @@ class SceneAssetWorkflowService:
                 ],
             )
 
-            state.record_failure(
-                project_failure
-            )
+            state.record_failure(project_failure)
 
             return None
 
@@ -263,8 +238,7 @@ class SceneAssetWorkflowService:
                 module_name="stock_acquisition",
                 reason=AssetFailureReason.UNKNOWN,
                 message=(
-                    "No selected stock candidate is "
-                    "available for acquisition."
+                    "No selected stock candidate is " "available for acquisition."
                 ),
                 recoverable=True,
                 requires_user_decision=True,
@@ -275,23 +249,15 @@ class SceneAssetWorkflowService:
                 ],
             )
 
-            state.record_failure(
-                candidate_failure
-            )
+            state.record_failure(candidate_failure)
 
             return None
 
-        if (
-            candidate.source_type
-            != SceneSourceType.STOCK_FOOTAGE
-        ):
+        if candidate.source_type != SceneSourceType.STOCK_FOOTAGE:
             source_failure = AssetModuleFailure(
                 module_name="stock_acquisition",
                 reason=AssetFailureReason.INVALID_FILE_TYPE,
-                message=(
-                    "The selected asset is not "
-                    "stock footage."
-                ),
+                message=("The selected asset is not " "stock footage."),
                 recoverable=True,
                 requires_user_decision=True,
                 recovery_options=[
@@ -301,9 +267,7 @@ class SceneAssetWorkflowService:
                 ],
             )
 
-            state.record_failure(
-                source_failure
-            )
+            state.record_failure(source_failure)
 
             return None
 
@@ -311,10 +275,7 @@ class SceneAssetWorkflowService:
             approval_failure = AssetModuleFailure(
                 module_name="stock_acquisition",
                 reason=AssetFailureReason.UNKNOWN,
-                message=(
-                    "Stock footage must be approved "
-                    "before acquisition."
-                ),
+                message=("Stock footage must be approved " "before acquisition."),
                 recoverable=True,
                 requires_user_decision=True,
                 recovery_options=[
@@ -324,9 +285,7 @@ class SceneAssetWorkflowService:
                 ],
             )
 
-            state.record_failure(
-                approval_failure
-            )
+            state.record_failure(approval_failure)
 
             return None
 
@@ -339,18 +298,13 @@ class SceneAssetWorkflowService:
         state.status = AssetWorkflowStatus.ACQUIRING
 
         try:
-            clip = router.acquire_selected_stock(
-                request
-            )
+            clip = router.acquire_selected_stock(request)
 
         except (ValueError, RuntimeError) as error:
             acquisition_failure = AssetModuleFailure(
                 module_name="stock_acquisition",
                 reason=AssetFailureReason.UNKNOWN,
-                message=(
-                    "The selected stock footage could "
-                    "not be acquired."
-                ),
+                message=("The selected stock footage could " "not be acquired."),
                 recoverable=True,
                 requires_user_decision=True,
                 recovery_options=[
@@ -365,9 +319,7 @@ class SceneAssetWorkflowService:
                 },
             )
 
-            state.record_failure(
-                acquisition_failure
-            )
+            state.record_failure(acquisition_failure)
 
             return None
 
@@ -376,8 +328,7 @@ class SceneAssetWorkflowService:
                 module_name="stock_acquisition",
                 reason=AssetFailureReason.FILE_NOT_FOUND,
                 message=(
-                    "Stock acquisition completed without "
-                    "a usable local video file."
+                    "Stock acquisition completed without " "a usable local video file."
                 ),
                 recoverable=True,
                 requires_user_decision=True,
@@ -388,9 +339,7 @@ class SceneAssetWorkflowService:
                 ],
             )
 
-            state.record_failure(
-                local_file_failure
-            )
+            state.record_failure(local_file_failure)
 
             return None
 
@@ -407,9 +356,7 @@ class SceneAssetWorkflowService:
 
         state.clear_active_failure()
         state.selected_candidate = stored_candidate
-        state.selected_source = (
-            SceneSourceType.STOCK_FOOTAGE
-        )
+        state.selected_source = SceneSourceType.STOCK_FOOTAGE
         state.status = AssetWorkflowStatus.READY
 
         scene.selected_asset_path = clip.local_file
@@ -450,10 +397,7 @@ class SceneAssetWorkflowService:
             disabled_failure = AssetModuleFailure(
                 module_name="manual_upload",
                 reason=AssetFailureReason.MODULE_DISABLED,
-                message=(
-                    "Manual upload module is disabled "
-                    "for this scene."
-                ),
+                message=("Manual upload module is disabled " "for this scene."),
                 recoverable=True,
                 requires_user_decision=True,
                 recovery_options=[
@@ -467,21 +411,14 @@ class SceneAssetWorkflowService:
             return state
 
         normalized_upload_path = (
-            manual_upload_path.strip()
-            if manual_upload_path is not None
-            else ""
+            manual_upload_path.strip() if manual_upload_path is not None else ""
         )
 
         if not normalized_upload_path:
             missing_upload_failure = AssetModuleFailure(
                 module_name="manual_upload",
-                reason=(
-                    AssetFailureReason
-                    .MANUAL_UPLOAD_NOT_PROVIDED
-                ),
-                message=(
-                    "A manual upload file was not provided."
-                ),
+                reason=(AssetFailureReason.MANUAL_UPLOAD_NOT_PROVIDED),
+                message=("A manual upload file was not provided."),
                 recoverable=True,
                 requires_user_decision=True,
                 recovery_options=[
@@ -491,28 +428,16 @@ class SceneAssetWorkflowService:
                 ],
             )
 
-            state.record_failure(
-                missing_upload_failure
-            )
+            state.record_failure(missing_upload_failure)
             return state
 
-        normalized_project_id = (
-            project_id.strip()
-            if project_id is not None
-            else ""
-        )
+        normalized_project_id = project_id.strip() if project_id is not None else ""
 
         if not normalized_project_id:
             missing_project_failure = AssetModuleFailure(
                 module_name="manual_upload",
-                reason=(
-                    AssetFailureReason
-                    .INVALID_MANUAL_UPLOAD
-                ),
-                message=(
-                    "A project ID is required to store "
-                    "the manual upload."
-                ),
+                reason=(AssetFailureReason.INVALID_MANUAL_UPLOAD),
+                message=("A project ID is required to store " "the manual upload."),
                 recoverable=True,
                 requires_user_decision=True,
                 recovery_options=[
@@ -522,53 +447,36 @@ class SceneAssetWorkflowService:
                 ],
             )
 
-            state.record_failure(
-                missing_project_failure
-            )
+            state.record_failure(missing_project_failure)
             return state
 
         upload_service = self.manual_upload_service
 
         if upload_service is None:
-            raise RuntimeError(
-                "Manual upload service is not configured."
-            )
+            raise RuntimeError("Manual upload service is not configured.")
 
-        state.status = (
-            AssetWorkflowStatus.VALIDATING_MANUAL_UPLOAD
+        state.status = AssetWorkflowStatus.VALIDATING_MANUAL_UPLOAD
+
+        upload_result = upload_service.process_video_upload(
+            file_path=normalized_upload_path,
+            project_id=normalized_project_id,
+            scene_number=scene.scene_number,
+            title=scene.title,
+            tags=self._build_scene_tags(scene),
         )
 
-        upload_result = (
-            upload_service.process_video_upload(
-                file_path=normalized_upload_path,
-                project_id=normalized_project_id,
-                scene_number=scene.scene_number,
-                title=scene.title,
-                tags=self._build_scene_tags(scene),
-            )
-        )
-
-        if (
-            not upload_result.success
-            or upload_result.candidate is None
-        ):
+        if not upload_result.success or upload_result.candidate is None:
             if upload_result.failure is not None:
                 upload_failure = upload_result.failure
             else:
                 upload_failure = AssetModuleFailure(
                     module_name="manual_upload",
-                    reason=(
-                        AssetFailureReason
-                        .INVALID_MANUAL_UPLOAD
-                    ),
-                    message=(
-                        "Manual upload processing failed."
-                    ),
+                    reason=(AssetFailureReason.INVALID_MANUAL_UPLOAD),
+                    message=("Manual upload processing failed."),
                     recoverable=True,
                     requires_user_decision=True,
                     recovery_options=[
-                        AssetRecoveryAction
-                        .RETRY_MANUAL_UPLOAD,
+                        AssetRecoveryAction.RETRY_MANUAL_UPLOAD,
                         AssetRecoveryAction.SEARCH_STOCK,
                         AssetRecoveryAction.SKIP_SCENE,
                     ],
@@ -585,21 +493,13 @@ class SceneAssetWorkflowService:
 
         state.clear_active_failure()
 
-        state.user_decision = (
-            AssetUserDecision.MANUAL_UPLOAD
-        )
+        state.user_decision = AssetUserDecision.MANUAL_UPLOAD
         state.manual_upload_requested = False
         state.manual_upload_declined = False
 
-        state.manual_upload_path = (
-            upload_result.candidate.file_path
-        )
-        state.selected_source = (
-            SceneSourceType.MANUAL_UPLOAD
-        )
-        state.selected_candidate = (
-            upload_result.candidate
-        )
+        state.manual_upload_path = upload_result.candidate.file_path
+        state.selected_source = SceneSourceType.MANUAL_UPLOAD
+        state.selected_candidate = upload_result.candidate
 
         state.status = AssetWorkflowStatus.READY
         state.skipped = False
@@ -607,8 +507,7 @@ class SceneAssetWorkflowService:
 
         if upload_result.reused_existing:
             reuse_warning = (
-                "An identical manual upload already "
-                "existed and was reused."
+                "An identical manual upload already " "existed and was reused."
             )
 
             if reuse_warning not in state.warnings:
@@ -641,21 +540,16 @@ class SceneAssetWorkflowService:
                     "because the stock module is disabled."
                 ),
                 recovery_options=[
-                    AssetRecoveryAction
-                    .REQUEST_MANUAL_UPLOAD,
+                    AssetRecoveryAction.REQUEST_MANUAL_UPLOAD,
                     AssetRecoveryAction.USE_PLACEHOLDER,
                     AssetRecoveryAction.SKIP_SCENE,
                 ],
             )
 
-        state.status = (
-            AssetWorkflowStatus.SEARCHING_STOCK
-        )
+        state.status = AssetWorkflowStatus.SEARCHING_STOCK
 
         state.stock_search_query = (
-            scene.stock_query
-            or scene.visual_prompt
-            or scene.title
+            scene.stock_query or scene.visual_prompt or scene.title
         ).strip()
 
         try:
@@ -668,17 +562,11 @@ class SceneAssetWorkflowService:
         except TimeoutError as error:
             return self._record_stock_failure(
                 state=state,
-                reason=(
-                    AssetFailureReason.STOCK_API_TIMEOUT
-                ),
-                message=(
-                    "Stock footage search timed out."
-                ),
+                reason=(AssetFailureReason.STOCK_API_TIMEOUT),
+                message=("Stock footage search timed out."),
                 recovery_options=[
-                    AssetRecoveryAction
-                    .RETRY_STOCK_SEARCH,
-                    AssetRecoveryAction
-                    .REQUEST_MANUAL_UPLOAD,
+                    AssetRecoveryAction.RETRY_STOCK_SEARCH,
+                    AssetRecoveryAction.REQUEST_MANUAL_UPLOAD,
                     AssetRecoveryAction.SKIP_SCENE,
                 ],
                 error=error,
@@ -687,17 +575,10 @@ class SceneAssetWorkflowService:
         except PermissionError as error:
             return self._record_stock_failure(
                 state=state,
-                reason=(
-                    AssetFailureReason
-                    .STOCK_API_AUTHENTICATION_FAILED
-                ),
-                message=(
-                    "Stock footage provider "
-                    "authentication failed."
-                ),
+                reason=(AssetFailureReason.STOCK_API_AUTHENTICATION_FAILED),
+                message=("Stock footage provider " "authentication failed."),
                 recovery_options=[
-                    AssetRecoveryAction
-                    .REQUEST_MANUAL_UPLOAD,
+                    AssetRecoveryAction.REQUEST_MANUAL_UPLOAD,
                     AssetRecoveryAction.DISABLE_MODULE,
                     AssetRecoveryAction.SKIP_SCENE,
                 ],
@@ -707,19 +588,11 @@ class SceneAssetWorkflowService:
         except ConnectionError as error:
             return self._record_stock_failure(
                 state=state,
-                reason=(
-                    AssetFailureReason
-                    .STOCK_API_UNAVAILABLE
-                ),
-                message=(
-                    "Stock footage provider "
-                    "is currently unavailable."
-                ),
+                reason=(AssetFailureReason.STOCK_API_UNAVAILABLE),
+                message=("Stock footage provider " "is currently unavailable."),
                 recovery_options=[
-                    AssetRecoveryAction
-                    .RETRY_STOCK_SEARCH,
-                    AssetRecoveryAction
-                    .REQUEST_MANUAL_UPLOAD,
+                    AssetRecoveryAction.RETRY_STOCK_SEARCH,
+                    AssetRecoveryAction.REQUEST_MANUAL_UPLOAD,
                     AssetRecoveryAction.SKIP_SCENE,
                 ],
                 error=error,
@@ -729,15 +602,10 @@ class SceneAssetWorkflowService:
             return self._record_stock_failure(
                 state=state,
                 reason=AssetFailureReason.UNKNOWN,
-                message=(
-                    "Stock footage search failed "
-                    "unexpectedly."
-                ),
+                message=("Stock footage search failed " "unexpectedly."),
                 recovery_options=[
-                    AssetRecoveryAction
-                    .RETRY_STOCK_SEARCH,
-                    AssetRecoveryAction
-                    .REQUEST_MANUAL_UPLOAD,
+                    AssetRecoveryAction.RETRY_STOCK_SEARCH,
+                    AssetRecoveryAction.REQUEST_MANUAL_UPLOAD,
                     AssetRecoveryAction.DISABLE_MODULE,
                     AssetRecoveryAction.SKIP_SCENE,
                 ],
@@ -745,25 +613,17 @@ class SceneAssetWorkflowService:
             )
 
         state.stock_candidates = [
-            self._to_stock_candidate(result)
-            for result in results
+            self._to_stock_candidate(result) for result in results
         ]
 
         if not state.stock_candidates:
             return self._record_stock_failure(
                 state=state,
-                reason=(
-                    AssetFailureReason.STOCK_NO_RESULTS
-                ),
-                message=(
-                    "No matching stock footage "
-                    "was found for this scene."
-                ),
+                reason=(AssetFailureReason.STOCK_NO_RESULTS),
+                message=("No matching stock footage " "was found for this scene."),
                 recovery_options=[
-                    AssetRecoveryAction
-                    .RETRY_STOCK_SEARCH,
-                    AssetRecoveryAction
-                    .REQUEST_MANUAL_UPLOAD,
+                    AssetRecoveryAction.RETRY_STOCK_SEARCH,
+                    AssetRecoveryAction.REQUEST_MANUAL_UPLOAD,
                     AssetRecoveryAction.USE_PLACEHOLDER,
                     AssetRecoveryAction.SKIP_SCENE,
                 ],
@@ -772,13 +632,8 @@ class SceneAssetWorkflowService:
         state.active_failure = None
         state.errors.clear()
 
-        state.status = (
-            AssetWorkflowStatus
-            .STOCK_RESULTS_AVAILABLE
-        )
-        state.selected_source = (
-            SceneSourceType.STOCK_FOOTAGE
-        )
+        state.status = AssetWorkflowStatus.STOCK_RESULTS_AVAILABLE
+        state.selected_source = SceneSourceType.STOCK_FOOTAGE
         state.selected_candidate = None
 
         return state
@@ -791,26 +646,18 @@ class SceneAssetWorkflowService:
     ) -> SceneAssetState:
         """Retry the currently failed asset stage."""
 
-        updated_state = (
-            self.decision_service.apply_decision(
-                state=state,
-                decision=AssetUserDecision.RETRY,
-            )
+        updated_state = self.decision_service.apply_decision(
+            state=state,
+            decision=AssetUserDecision.RETRY,
         )
 
-        if (
-            updated_state.status
-            == AssetWorkflowStatus.SEARCHING_STOCK
-        ):
+        if updated_state.status == AssetWorkflowStatus.SEARCHING_STOCK:
             return self.search_stock(
                 scene=scene,
                 state=updated_state,
             )
 
-        if (
-            updated_state.status
-            == AssetWorkflowStatus.SEARCHING_LOCAL
-        ):
+        if updated_state.status == AssetWorkflowStatus.SEARCHING_LOCAL:
             return self.start(scene)
 
         return updated_state
@@ -842,10 +689,7 @@ class SceneAssetWorkflowService:
         for token in normalized_text.split():
             cleaned_token = token.strip()
 
-            if (
-                len(cleaned_token) >= 3
-                and cleaned_token not in tags
-            ):
+            if len(cleaned_token) >= 3 and cleaned_token not in tags:
                 tags.append(cleaned_token)
 
         return tags
@@ -891,9 +735,7 @@ class SceneAssetWorkflowService:
 
         return AssetCandidate(
             title=title,
-            source_type=(
-                SceneSourceType.STOCK_FOOTAGE
-            ),
+            source_type=(SceneSourceType.STOCK_FOOTAGE),
             source_url=getattr(
                 result,
                 "file_url",
@@ -977,9 +819,7 @@ class SceneAssetWorkflowService:
         state: SceneAssetState,
         reason: AssetFailureReason,
         message: str,
-        recovery_options: list[
-            AssetRecoveryAction
-        ],
+        recovery_options: list[AssetRecoveryAction],
         error: Exception | None = None,
     ) -> SceneAssetState:
         """Record a normalized stock-search failure."""
@@ -987,9 +827,7 @@ class SceneAssetWorkflowService:
         metadata: dict[str, str] = {}
 
         if state.stock_search_query:
-            metadata["query"] = (
-                state.stock_search_query
-            )
+            metadata["query"] = state.stock_search_query
 
         stock_failure = AssetModuleFailure(
             module_name="stock",
@@ -998,11 +836,7 @@ class SceneAssetWorkflowService:
             recoverable=True,
             requires_user_decision=True,
             recovery_options=recovery_options,
-            error_type=(
-                type(error).__name__
-                if error is not None
-                else None
-            ),
+            error_type=(type(error).__name__ if error is not None else None),
             metadata=metadata,
         )
 

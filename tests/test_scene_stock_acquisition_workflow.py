@@ -62,10 +62,7 @@ class DummyStockSearch(AssetSearchService):
                 asset_type=AssetType.VIDEO,
                 provider="Pexels",
                 title=query,
-                file_url=(
-                    "https://example.com/"
-                    "roman-soldiers.mp4"
-                ),
+                file_url=("https://example.com/" "roman-soldiers.mp4"),
                 license_type="royalty_free",
                 duration_seconds=8,
                 resolution="1920x1080",
@@ -82,9 +79,7 @@ class FakeDownloadStream(BytesIO):
 
         self.headers = {
             "Content-Type": "video/mp4",
-            "Content-Length": str(
-                len(content)
-            ),
+            "Content-Length": str(len(content)),
         }
 
 
@@ -95,18 +90,13 @@ def successful_opener(
     assert source_url.endswith(".mp4")
     assert timeout_seconds > 0
 
-    return FakeDownloadStream(
-        b"scene-stock-acquisition-video"
-    )
+    return FakeDownloadStream(b"scene-stock-acquisition-video")
 
 
 scene = Scene(
     scene_number=1,
     title="Roman Soldiers",
-    narration=(
-        "Roman soldiers march through "
-        "the ancient city."
-    ),
+    narration=("Roman soldiers march through " "the ancient city."),
     visual_prompt="Roman soldiers marching",
     stock_query="Roman soldiers marching",
     estimated_duration_seconds=8,
@@ -123,24 +113,18 @@ with TemporaryDirectory() as temporary_directory:
 
     stock_acquisition_service = StockAcquisitionService(
         download_service=StockDownloadService(
-            temporary_directory=(
-                root / "downloads"
-            ),
+            temporary_directory=(root / "downloads"),
             opener=successful_opener,
         ),
         storage_service=StockAssetStorageService(
-            storage_root=(
-                root / "storage"
-            ),
+            storage_root=(root / "storage"),
             asset_index=asset_index,
         ),
     )
 
     stock_provider = StockFootageProvider(
         asset_search_service=DummyStockSearch(),
-        stock_acquisition_service=(
-            stock_acquisition_service
-        ),
+        stock_acquisition_service=(stock_acquisition_service),
     )
 
     router = VisualAssetRouter(
@@ -150,11 +134,7 @@ with TemporaryDirectory() as temporary_directory:
     )
 
     workflow = SceneAssetWorkflowService(
-        asset_manager=AssetManager(
-            LocalAssetSearchService(
-                AssetIndex()
-            )
-        ),
+        asset_manager=AssetManager(LocalAssetSearchService(AssetIndex())),
         decision_service=AssetDecisionService(),
         asset_search_service=DummyStockSearch(),
         visual_asset_router=router,
@@ -163,10 +143,7 @@ with TemporaryDirectory() as temporary_directory:
     candidate = AssetCandidate(
         title="Roman Soldiers Marching",
         source_type=SceneSourceType.STOCK_FOOTAGE,
-        source_url=(
-            "https://example.com/"
-            "roman-soldiers.mp4"
-        ),
+        source_url=("https://example.com/" "roman-soldiers.mp4"),
         provider="Pexels",
         provider_asset_id="pexels-001",
         license_type="royalty_free",
@@ -203,27 +180,17 @@ with TemporaryDirectory() as temporary_directory:
     assert state.status == AssetWorkflowStatus.READY
     assert state.selected_candidate is not None
 
-    assert (
-        scene.source_status
-        == SceneSourceStatus.READY
-    )
+    assert scene.source_status == SceneSourceStatus.READY
 
     assert scene.source_locked is True
 
-    assert (
-        scene.selected_asset_path
-        == clip.local_file
-    )
+    assert scene.selected_asset_path == clip.local_file
 
     assert len(asset_index.assets) == 1
 
 
 unconfigured_workflow = SceneAssetWorkflowService(
-    asset_manager=AssetManager(
-        LocalAssetSearchService(
-            AssetIndex()
-        )
-    ),
+    asset_manager=AssetManager(LocalAssetSearchService(AssetIndex())),
     decision_service=AssetDecisionService(),
     asset_search_service=DummyStockSearch(),
 )
@@ -236,33 +203,21 @@ unconfigured_state = SceneAssetState(
     selected_candidate=AssetCandidate(
         title="Approved Stock",
         source_type=SceneSourceType.STOCK_FOOTAGE,
-        source_url=(
-            "https://example.com/"
-            "approved-stock.mp4"
-        ),
+        source_url=("https://example.com/" "approved-stock.mp4"),
         approved=True,
     ),
 )
 
-missing_router_clip = (
-    unconfigured_workflow.acquire_selected_stock(
-        scene=scene,
-        state=unconfigured_state,
-        project_id="history-project",
-    )
+missing_router_clip = unconfigured_workflow.acquire_selected_stock(
+    scene=scene,
+    state=unconfigured_state,
+    project_id="history-project",
 )
 
 assert missing_router_clip is None
 assert unconfigured_state.active_failure is not None
 
-assert (
-    unconfigured_state.status
-    == AssetWorkflowStatus
-    .WAITING_FOR_RECOVERY_DECISION
-)
+assert unconfigured_state.status == AssetWorkflowStatus.WAITING_FOR_RECOVERY_DECISION
 
 
-print(
-    "Scene Stock Acquisition Workflow tests "
-    "completed successfully."
-)
+print("Scene Stock Acquisition Workflow tests " "completed successfully.")

@@ -12,16 +12,13 @@ from src.models.ffmpeg_execution_result import (
 from src.models.ffmpeg_input import FFmpegInputPlan
 from src.models.render_progress import (
     RenderProgress,
-    RenderProgressStatus,
 )
 from src.services.ffmpeg_execution_service import (
     FFmpegExecutionService,
 )
 
 
-class ScriptedExecutionService(
-    FFmpegExecutionService
-):
+class ScriptedExecutionService(FFmpegExecutionService):
     """Execute deterministic Python subprocess scripts for tests."""
 
     _active_script: str = ""
@@ -34,12 +31,8 @@ class ScriptedExecutionService(
         terminate_grace_seconds: float = 0.5,
     ) -> None:
         super().__init__(
-            default_timeout_seconds=(
-                default_timeout_seconds
-            ),
-            terminate_grace_seconds=(
-                terminate_grace_seconds
-            ),
+            default_timeout_seconds=(default_timeout_seconds),
+            terminate_grace_seconds=(terminate_grace_seconds),
         )
 
         type(self)._active_script = script
@@ -64,11 +57,7 @@ def build_command_plan(
 ) -> FFmpegCommandPlan:
     """Build a minimal command plan for execution diagnostics."""
 
-    resolved_executable = (
-        executable
-        if executable is not None
-        else sys.executable
-    )
+    resolved_executable = executable if executable is not None else sys.executable
 
     return FFmpegCommandPlan(
         executable=resolved_executable,
@@ -78,10 +67,7 @@ def build_command_plan(
             video_input_count=0,
             audio_input_count=0,
         ),
-        filter_complex=(
-            "[0:v]null[video_final];"
-            "[1:a]anull[audio_final]"
-        ),
+        filter_complex=("[0:v]null[video_final];" "[1:a]anull[audio_final]"),
         video_output_label="video_final",
         audio_output_label="audio_final",
         output_file=output_file.as_posix(),
@@ -125,19 +111,11 @@ def test_success_diagnostic_summary() -> None:
 
     assert result.has_stderr is True
 
-    assert (
-        "succeeded"
-        in result.diagnostic_summary.lower()
-    )
+    assert "succeeded" in result.diagnostic_summary.lower()
 
-    assert (
-        "output.mp4"
-        in result.diagnostic_summary
-    )
+    assert "output.mp4" in result.diagnostic_summary
 
-    print(
-        "Success diagnostic-summary test passed."
-    )
+    print("Success diagnostic-summary test passed.")
 
 
 def test_failure_stage_property() -> None:
@@ -168,24 +146,13 @@ def test_failure_stage_property() -> None:
         },
     )
 
-    assert (
-        result.failure_stage
-        == "ffmpeg_exit"
-    )
+    assert result.failure_stage == "ffmpeg_exit"
 
-    assert (
-        "ffmpeg_exit"
-        in result.diagnostic_summary
-    )
+    assert "ffmpeg_exit" in result.diagnostic_summary
 
-    assert (
-        "Synthetic render failure."
-        in result.diagnostic_summary
-    )
+    assert "Synthetic render failure." in result.diagnostic_summary
 
-    print(
-        "Failure-stage property test passed."
-    )
+    print("Failure-stage property test passed.")
 
 
 def test_invalid_failure_stage_metadata() -> None:
@@ -218,14 +185,9 @@ def test_invalid_failure_stage_metadata() -> None:
 
     assert result.failure_stage is None
 
-    assert (
-        "unknown"
-        in result.diagnostic_summary.lower()
-    )
+    assert "unknown" in result.diagnostic_summary.lower()
 
-    print(
-        "Invalid failure-stage metadata test passed."
-    )
+    print("Invalid failure-stage metadata test passed.")
 
 
 def test_stderr_tail() -> None:
@@ -256,9 +218,7 @@ def test_stderr_tail() -> None:
         exit_code=1,
         elapsed_seconds=1.0,
         stdout="",
-        stderr="\n".join(
-            stderr_lines
-        ),
+        stderr="\n".join(stderr_lines),
         error_message="Synthetic failure.",
         progress=progress,
         metadata={
@@ -266,32 +226,19 @@ def test_stderr_tail() -> None:
         },
     )
 
-    tail_lines = (
-        result.stderr_tail.splitlines()
-    )
+    tail_lines = result.stderr_tail.splitlines()
 
     assert len(tail_lines) == 20
 
-    assert (
-        tail_lines[0]
-        == "line-11"
-    )
+    assert tail_lines[0] == "line-11"
 
-    assert (
-        tail_lines[-1]
-        == "line-30"
-    )
+    assert tail_lines[-1] == "line-30"
 
-    assert (
-        "line-1"
-        not in tail_lines
-    )
+    assert "line-1" not in tail_lines
 
     assert result.has_stderr is True
 
-    print(
-        "stderr-tail test passed."
-    )
+    print("stderr-tail test passed.")
 
 
 def test_empty_stderr_diagnostics() -> None:
@@ -325,9 +272,7 @@ def test_empty_stderr_diagnostics() -> None:
     assert result.has_stderr is False
     assert result.stderr_tail == ""
 
-    print(
-        "Empty-stderr diagnostic test passed."
-    )
+    print("Empty-stderr diagnostic test passed.")
 
 
 def test_process_start_failure_stage(
@@ -335,46 +280,29 @@ def test_process_start_failure_stage(
 ) -> None:
     """Process-start failures must carry structured diagnostic metadata."""
 
-    output_file = (
-        root
-        / "process_start.mp4"
-    )
+    output_file = root / "process_start.mp4"
 
     service = FFmpegExecutionService()
 
     result = service.execute(
         build_command_plan(
             output_file,
-            executable=(
-                "definitely_missing_ffmpeg_"
-                "binary_987654321"
-            ),
+            executable=("definitely_missing_ffmpeg_" "binary_987654321"),
         ),
         total_duration_seconds=1.0,
     )
 
     assert result.success is False
 
-    assert (
-        result.status
-        == FFmpegExecutionStatus.FAILED
-    )
+    assert result.status == FFmpegExecutionStatus.FAILED
 
-    assert (
-        result.failure_stage
-        == "process_start"
-    )
+    assert result.failure_stage == "process_start"
 
     assert result.exit_code is None
 
-    assert (
-        "process_start"
-        in result.diagnostic_summary
-    )
+    assert "process_start" in result.diagnostic_summary
 
-    print(
-        "Process-start diagnostics test passed."
-    )
+    print("Process-start diagnostics test passed.")
 
 
 def test_non_zero_exit_diagnostics(
@@ -382,10 +310,7 @@ def test_non_zero_exit_diagnostics(
 ) -> None:
     """FFmpeg non-zero exit must expose ffmpeg_exit diagnostics."""
 
-    output_file = (
-        root
-        / "ffmpeg_exit.mp4"
-    )
+    output_file = root / "ffmpeg_exit.mp4"
 
     script = (
         "import sys;"
@@ -396,46 +321,28 @@ def test_non_zero_exit_diagnostics(
         "sys.exit(9)"
     )
 
-    service = ScriptedExecutionService(
-        script
-    )
+    service = ScriptedExecutionService(script)
 
     result = service.execute(
-        build_command_plan(
-            output_file
-        ),
+        build_command_plan(output_file),
         total_duration_seconds=1.0,
     )
 
     assert result.success is False
 
-    assert (
-        result.status
-        == FFmpegExecutionStatus.FAILED
-    )
+    assert result.status == FFmpegExecutionStatus.FAILED
 
     assert result.exit_code == 9
 
-    assert (
-        result.failure_stage
-        == "ffmpeg_exit"
-    )
+    assert result.failure_stage == "ffmpeg_exit"
 
     assert result.has_stderr is True
 
-    assert (
-        "synthetic ffmpeg diagnostic failure"
-        in result.stderr_tail
-    )
+    assert "synthetic ffmpeg diagnostic failure" in result.stderr_tail
 
-    assert (
-        "ffmpeg_exit"
-        in result.diagnostic_summary
-    )
+    assert "ffmpeg_exit" in result.diagnostic_summary
 
-    print(
-        "FFmpeg-exit diagnostics test passed."
-    )
+    print("FFmpeg-exit diagnostics test passed.")
 
 
 def test_timeout_diagnostics(
@@ -443,10 +350,7 @@ def test_timeout_diagnostics(
 ) -> None:
     """Timeout results must expose timeout-specific diagnostics."""
 
-    output_file = (
-        root
-        / "timeout.mp4"
-    )
+    output_file = root / "timeout.mp4"
 
     script = (
         "import time;"
@@ -462,36 +366,23 @@ def test_timeout_diagnostics(
     )
 
     result = service.execute(
-        build_command_plan(
-            output_file
-        ),
+        build_command_plan(output_file),
         total_duration_seconds=10.0,
         timeout_seconds=0.2,
     )
 
     assert result.success is False
 
-    assert (
-        result.status
-        == FFmpegExecutionStatus.TIMED_OUT
-    )
+    assert result.status == FFmpegExecutionStatus.TIMED_OUT
 
     assert result.is_timeout is True
     assert result.is_cancelled is False
 
-    assert (
-        result.failure_stage
-        == "timeout"
-    )
+    assert result.failure_stage == "timeout"
 
-    assert (
-        "timeout"
-        in result.diagnostic_summary.lower()
-    )
+    assert "timeout" in result.diagnostic_summary.lower()
 
-    print(
-        "Timeout diagnostics test passed."
-    )
+    print("Timeout diagnostics test passed.")
 
 
 def test_cancellation_diagnostics(
@@ -499,10 +390,7 @@ def test_cancellation_diagnostics(
 ) -> None:
     """Cancelled renders must expose cancellation diagnostics."""
 
-    output_file = (
-        root
-        / "cancelled.mp4"
-    )
+    output_file = root / "cancelled.mp4"
 
     script = (
         "import time;"
@@ -526,38 +414,23 @@ def test_cancellation_diagnostics(
     )
 
     result = service.execute(
-        build_command_plan(
-            output_file
-        ),
+        build_command_plan(output_file),
         total_duration_seconds=10.0,
-        cancellation_check=(
-            cancellation_check
-        ),
+        cancellation_check=(cancellation_check),
     )
 
     assert result.success is False
 
-    assert (
-        result.status
-        == FFmpegExecutionStatus.CANCELLED
-    )
+    assert result.status == FFmpegExecutionStatus.CANCELLED
 
     assert result.is_cancelled is True
     assert result.is_timeout is False
 
-    assert (
-        result.failure_stage
-        == "cancelled"
-    )
+    assert result.failure_stage == "cancelled"
 
-    assert (
-        "cancelled"
-        in result.diagnostic_summary.lower()
-    )
+    assert "cancelled" in result.diagnostic_summary.lower()
 
-    print(
-        "Cancellation diagnostics test passed."
-    )
+    print("Cancellation diagnostics test passed.")
 
 
 def test_missing_output_diagnostics(
@@ -565,10 +438,7 @@ def test_missing_output_diagnostics(
 ) -> None:
     """Successful process exit without output must identify output_presence."""
 
-    output_file = (
-        root
-        / "missing_output.mp4"
-    )
+    output_file = root / "missing_output.mp4"
 
     script = (
         "import sys;"
@@ -577,14 +447,10 @@ def test_missing_output_diagnostics(
         "sys.exit(0)"
     )
 
-    service = ScriptedExecutionService(
-        script
-    )
+    service = ScriptedExecutionService(script)
 
     result = service.execute(
-        build_command_plan(
-            output_file
-        ),
+        build_command_plan(output_file),
         total_duration_seconds=1.0,
     )
 
@@ -592,19 +458,11 @@ def test_missing_output_diagnostics(
 
     assert result.exit_code == 0
 
-    assert (
-        result.failure_stage
-        == "output_presence"
-    )
+    assert result.failure_stage == "output_presence"
 
-    assert (
-        "output_presence"
-        in result.diagnostic_summary
-    )
+    assert "output_presence" in result.diagnostic_summary
 
-    print(
-        "Missing-output diagnostics test passed."
-    )
+    print("Missing-output diagnostics test passed.")
 
 
 def test_empty_output_diagnostics(
@@ -612,10 +470,7 @@ def test_empty_output_diagnostics(
 ) -> None:
     """Zero-byte output must identify output_size validation."""
 
-    output_file = (
-        root
-        / "empty_output.mp4"
-    )
+    output_file = root / "empty_output.mp4"
 
     script = (
         "import pathlib,sys;"
@@ -626,41 +481,27 @@ def test_empty_output_diagnostics(
         "sys.exit(0)"
     )
 
-    service = ScriptedExecutionService(
-        script
-    )
+    service = ScriptedExecutionService(script)
 
     result = service.execute(
-        build_command_plan(
-            output_file
-        ),
+        build_command_plan(output_file),
         total_duration_seconds=1.0,
     )
 
     assert result.success is False
 
-    assert (
-        result.failure_stage
-        == "output_size"
-    )
+    assert result.failure_stage == "output_size"
 
-    assert (
-        "output_size"
-        in result.diagnostic_summary
-    )
+    assert "output_size" in result.diagnostic_summary
 
-    print(
-        "Empty-output diagnostics test passed."
-    )
+    print("Empty-output diagnostics test passed.")
 
 
 def main() -> None:
     """Run Sprint 18.7C diagnostics regression tests."""
 
     print()
-    print(
-        "Running FFmpeg Execution Diagnostics tests..."
-    )
+    print("Running FFmpeg Execution Diagnostics tests...")
     print()
 
     test_success_diagnostic_summary()
@@ -672,39 +513,22 @@ def main() -> None:
     with tempfile.TemporaryDirectory(
         prefix="mission_ffmpeg_diagnostics_"
     ) as temporary_directory:
-        root = Path(
-            temporary_directory
-        )
+        root = Path(temporary_directory)
 
-        test_process_start_failure_stage(
-            root
-        )
+        test_process_start_failure_stage(root)
 
-        test_non_zero_exit_diagnostics(
-            root
-        )
+        test_non_zero_exit_diagnostics(root)
 
-        test_timeout_diagnostics(
-            root
-        )
+        test_timeout_diagnostics(root)
 
-        test_cancellation_diagnostics(
-            root
-        )
+        test_cancellation_diagnostics(root)
 
-        test_missing_output_diagnostics(
-            root
-        )
+        test_missing_output_diagnostics(root)
 
-        test_empty_output_diagnostics(
-            root
-        )
+        test_empty_output_diagnostics(root)
 
     print()
-    print(
-        "FFmpeg Execution Diagnostics test suite "
-        "completed successfully."
-    )
+    print("FFmpeg Execution Diagnostics test suite " "completed successfully.")
 
 
 if __name__ == "__main__":

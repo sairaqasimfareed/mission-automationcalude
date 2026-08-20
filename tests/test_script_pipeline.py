@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from src.agents.script_agent.agent import ScriptAgent
 from src.models.research import (
     ResearchResult,
     ResearchStatus,
@@ -45,30 +44,17 @@ class FakeScriptAgent:
 research = ResearchResult(
     topic="Top 10 Hidden Underground Cities",
     research_summary=(
-        "Underground cities were built for protection, "
-        "survival and trade."
+        "Underground cities were built for protection, " "survival and trade."
     ),
     key_facts=[
-        (
-            "Several underground cities contained homes "
-            "and storage rooms."
-        ),
-        (
-            "Many were designed to protect communities "
-            "from invasion."
-        ),
+        ("Several underground cities contained homes " "and storage rooms."),
+        ("Many were designed to protect communities " "from invasion."),
         (
             "Ventilation systems allowed people to remain "
             "underground for extended periods."
         ),
-        (
-            "Some complexes included wells and places "
-            "of worship."
-        ),
-        (
-            "Defensive stone doors protected important "
-            "passageways."
-        ),
+        ("Some complexes included wells and places " "of worship."),
+        ("Defensive stone doors protected important " "passageways."),
     ],
     prompt_version="research_prompt_v2.0.0",
     status=ResearchStatus.APPROVED,
@@ -88,25 +74,16 @@ print("Claude review:", script.claude_review_status)
 print("Review notes:", script.claude_review_notes)
 print("Revision count:", script.revision_count)
 
-assert script.title == (
-    "Top 10 Hidden Underground Cities"
-)
+assert script.title == ("Top 10 Hidden Underground Cities")
 
 assert script.status == ScriptStatus.APPROVED
 
-assert (
-    script.claude_review_status
-    == ScriptReviewStatus.APPROVED
-)
+assert script.claude_review_status == ScriptReviewStatus.APPROVED
 
 assert len(script.claude_review_notes) > 0
 
 assert script.word_count > 0
 
-assert script.prompt_version == (
-    "script_prompt_v2.0.0"
-)
+assert script.prompt_version == ("script_prompt_v2.0.0")
 
-print(
-    "Script pipeline test completed successfully."
-)
+print("Script pipeline test completed successfully.")

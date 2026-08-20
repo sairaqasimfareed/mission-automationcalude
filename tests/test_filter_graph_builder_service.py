@@ -18,7 +18,6 @@ from src.services.filter_graph_builder_service import (
     FilterGraphBuilderService,
 )
 
-
 capabilities = FFmpegCapabilities(
     ffmpeg_available=True,
     ffprobe_available=True,
@@ -102,9 +101,7 @@ camera = RenderNode(
         "scene_number": 1,
         "track_index": 0,
         "layer_index": 0,
-        "preset_id": (
-            "camera.slow_zoom_in"
-        ),
+        "preset_id": ("camera.slow_zoom_in"),
         "motion_type": "zoom",
         "direction": "in",
         "intensity": "medium",
@@ -129,9 +126,7 @@ camera = RenderNode(
 
 
 effect = RenderNode(
-    node_type=(
-        RenderNodeType.VISUAL_EFFECT
-    ),
+    node_type=(RenderNodeType.VISUAL_EFFECT),
     status=RenderNodeStatus.READY,
     scene_number=1,
     track_index=0,
@@ -144,9 +139,7 @@ effect = RenderNode(
         "scene_number": 1,
         "track_index": 0,
         "layer_index": 0,
-        "preset_id": (
-            "visual.horror_dark_grade"
-        ),
+        "preset_id": ("visual.horror_dark_grade"),
         "effect_type": "color_grade",
         "timing_mode": "full_scene",
         "intensity": "medium",
@@ -179,12 +172,8 @@ subtitle = RenderNode(
         "status": "ready",
         "scene_number": 1,
         "segment_index": 0,
-        "text": (
-            "The bunker door opened."
-        ),
-        "preset_id": (
-            "subtitle.cinematic"
-        ),
+        "text": ("The bunker door opened."),
+        "preset_id": ("subtitle.cinematic"),
         "animation_preset_id": None,
         "burn_into_video": True,
         "timing_source": "estimated",
@@ -214,9 +203,7 @@ animation = RenderNode(
         "scene_number": 2,
         "track_index": 0,
         "layer_index": 0,
-        "preset_id": (
-            "animation.slow_parallax"
-        ),
+        "preset_id": ("animation.slow_parallax"),
         "animation_type": "parallax",
         "target": None,
         "intensity": "medium",
@@ -246,12 +233,8 @@ transition = RenderNode(
         "status": "ready",
         "placement": "between_scenes",
         "direction": "between",
-        "preset_id": (
-            "transition.cross_dissolve"
-        ),
-        "transition_type": (
-            "cross_dissolve"
-        ),
+        "preset_id": ("transition.cross_dissolve"),
+        "transition_type": ("cross_dissolve"),
         "source_scene_number": 1,
         "target_scene_number": 2,
         "source_track_index": 0,
@@ -264,9 +247,7 @@ transition = RenderNode(
         "intensity": "medium",
         "requires_overlap": True,
         "implementation": {
-            "type": (
-                "cross_dissolve"
-            ),
+            "type": ("cross_dissolve"),
             "default_duration_seconds": 0.6,
         },
     },
@@ -288,9 +269,7 @@ audio = RenderNode(
 
 
 video_composition = RenderNode(
-    node_type=(
-        RenderNodeType.VIDEO_COMPOSITION
-    ),
+    node_type=(RenderNodeType.VIDEO_COMPOSITION),
     status=RenderNodeStatus.READY,
     start_time_seconds=0.0,
     end_time_seconds=15.0,
@@ -303,9 +282,7 @@ video_composition = RenderNode(
 
 
 audio_mix = RenderNode(
-    node_type=(
-        RenderNodeType.AUDIO_MIX
-    ),
+    node_type=(RenderNodeType.AUDIO_MIX),
     status=RenderNodeStatus.READY,
     start_time_seconds=0.0,
     end_time_seconds=15.0,
@@ -347,15 +324,11 @@ graph = RenderGraph(
     failed_node_count=0,
     is_valid=True,
     is_render_ready=True,
-    output_node_id=str(
-        output.id
-    ),
+    output_node_id=str(output.id),
 )
 
 
-service = (
-    FilterGraphBuilderService()
-)
+service = FilterGraphBuilderService()
 
 filter_graph = service.build(
     render_graph=graph,
@@ -370,21 +343,12 @@ assert isinstance(
 
 assert filter_graph.is_valid is True
 
-assert (
-    filter_graph.video_output_label
-    == "video_final"
-)
+assert filter_graph.video_output_label == "video_final"
 
-assert (
-    filter_graph.audio_output_label
-    == "audio_final"
-)
+assert filter_graph.audio_output_label == "audio_final"
 
 
-filter_complex = (
-    filter_graph
-    .render_filter_complex()
-)
+filter_complex = filter_graph.render_filter_complex()
 
 print(
     "Filter count:",
@@ -416,44 +380,24 @@ assert "drawtext" in filter_complex
 
 assert "xfade" in filter_complex
 
-assert "transition=fade" in (
-    filter_complex
-)
+assert "transition=fade" in (filter_complex)
 
-assert "duration=0.6" in (
-    filter_complex
-)
+assert "duration=0.6" in (filter_complex)
 
-assert "offset=7.4" in (
-    filter_complex
-)
+assert "offset=7.4" in (filter_complex)
 
 assert "asetpts" in filter_complex
 assert "volume" in filter_complex
 assert "amix" in filter_complex
 
-assert "[video_final]" in (
-    filter_complex
-)
+assert "[video_final]" in (filter_complex)
 
-assert "[audio_final]" in (
-    filter_complex
-)
+assert "[audio_final]" in (filter_complex)
 
 
-assert (
-    filter_graph.metadata[
-        "translated_scene_operation_count"
-    ]
-    == 4
-)
+assert filter_graph.metadata["translated_scene_operation_count"] == 4
 
-assert (
-    filter_graph.metadata[
-        "translated_transition_count"
-    ]
-    == 1
-)
+assert filter_graph.metadata["translated_transition_count"] == 1
 
 
 deferred_warning = (
@@ -463,72 +407,37 @@ deferred_warning = (
     "translation stage."
 )
 
-assert (
-    deferred_warning
-    not in filter_graph.warnings
-)
+assert deferred_warning not in filter_graph.warnings
 
 
-for chain in (
-    filter_graph.video_chains
-):
-    assert (
-        chain.media_type
-        == FilterMediaType.VIDEO
-    )
+for chain in filter_graph.video_chains:
+    assert chain.media_type == FilterMediaType.VIDEO
 
 
-for chain in (
-    filter_graph.audio_chains
-):
-    assert (
-        chain.media_type
-        == FilterMediaType.AUDIO
-    )
+for chain in filter_graph.audio_chains:
+    assert chain.media_type == FilterMediaType.AUDIO
 
 
-serialized = (
-    filter_graph.model_dump_json()
-)
+serialized = filter_graph.model_dump_json()
 
-restored = (
-    FilterGraph.model_validate_json(
-        serialized
-    )
-)
+restored = FilterGraph.model_validate_json(serialized)
 
 assert restored == filter_graph
 
 
-invalid_graph = (
-    graph.model_copy(
-        deep=True
-    )
-)
+invalid_graph = graph.model_copy(deep=True)
 
 invalid_graph.is_render_ready = False
 
 try:
     service.build(
         render_graph=invalid_graph,
-        resolved_config=(
-            resolved_config
-        ),
+        resolved_config=(resolved_config),
     )
 except ValueError:
-    print(
-        "Non-ready render graph "
-        "successfully blocked."
-    )
+    print("Non-ready render graph " "successfully blocked.")
 else:
-    raise AssertionError(
-        "Non-ready render graph "
-        "should fail."
-    )
+    raise AssertionError("Non-ready render graph " "should fail.")
 
 
-print(
-    "Filter Graph Builder Service "
-    "integration tests completed "
-    "successfully."
-)
+print("Filter Graph Builder Service " "integration tests completed " "successfully.")

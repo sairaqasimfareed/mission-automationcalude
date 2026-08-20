@@ -38,10 +38,7 @@ class VisualAssetRouter:
             if provider.supports(scene):
                 return provider.acquire(scene)
 
-        raise ValueError(
-            "No visual provider found for "
-            f"{scene.source_type.value}."
-        )
+        raise ValueError("No visual provider found for " f"{scene.source_type.value}.")
 
     def acquire_selected_stock(
         self,
@@ -61,18 +58,13 @@ class VisualAssetRouter:
             ):
                 continue
 
-            if not provider.supports(
-                request.scene
-            ):
+            if not provider.supports(request.scene):
                 continue
 
-            return provider.acquire_selected(
-                request
-            )
+            return provider.acquire_selected(request)
 
         raise ValueError(
-            "No stock footage provider is configured "
-            "for approved stock acquisition."
+            "No stock footage provider is configured " "for approved stock acquisition."
         )
 
     def available_sources(
@@ -111,10 +103,7 @@ class VisualAssetRouter:
     ) -> bool:
         """Return whether any registered provider supports a source."""
 
-        return (
-            source_type
-            in self.available_sources()
-        )
+        return source_type in self.available_sources()
 
     @property
     def provider_count(self) -> int:

@@ -27,17 +27,11 @@ class StageContext(MissionBaseModel):
 
     dry_run: bool = True
 
-    services: dict[str, Any] = Field(
-        default_factory=dict
-    )
+    services: dict[str, Any] = Field(default_factory=dict)
 
-    temporary_data: dict[str, Any] = Field(
-        default_factory=dict
-    )
+    temporary_data: dict[str, Any] = Field(default_factory=dict)
 
-    user_input: dict[str, Any] = Field(
-        default_factory=dict
-    )
+    user_input: dict[str, Any] = Field(default_factory=dict)
 
     def add_service(
         self,
@@ -55,10 +49,7 @@ class StageContext(MissionBaseModel):
         """Return a registered execution-scoped service."""
 
         if name not in self.services:
-            raise KeyError(
-                "Service is not available in "
-                f"stage context: {name}"
-            )
+            raise KeyError("Service is not available in " f"stage context: {name}")
 
         return self.services[name]
 

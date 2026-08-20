@@ -58,11 +58,7 @@ class StockAssetStorageService:
         storage_root: str | Path,
         asset_index: AssetIndex,
     ) -> None:
-        self.storage_root = (
-            Path(storage_root)
-            .expanduser()
-            .resolve()
-        )
+        self.storage_root = Path(storage_root).expanduser().resolve()
 
         self.asset_index = asset_index
 
@@ -90,44 +86,29 @@ class StockAssetStorageService:
     ) -> StockAssetStorageResult:
         """Store or reuse one successfully downloaded stock video."""
 
-        normalized_project_id = self._sanitize_identifier(
-            project_id
-        )
+        normalized_project_id = self._sanitize_identifier(project_id)
 
         if scene_number < 1:
-            raise ValueError(
-                "Scene number must be at least 1."
-            )
+            raise ValueError("Scene number must be at least 1.")
 
         normalized_title = title.strip()
 
         if not normalized_title:
-            raise ValueError(
-                "Stock asset title cannot be empty."
-            )
+            raise ValueError("Stock asset title cannot be empty.")
 
-        normalized_provider_name = (
-            provider_name.strip()
-        )
+        normalized_provider_name = provider_name.strip()
 
         if not normalized_provider_name:
-            raise ValueError(
-                "Stock provider name cannot be empty."
-            )
+            raise ValueError("Stock provider name cannot be empty.")
 
         if not download_result.success:
             return StockAssetStorageResult(
                 success=False,
                 message=(
-                    download_result.message
-                    or "Stock download was not successful."
+                    download_result.message or "Stock download was not successful."
                 ),
-                warnings=list(
-                    download_result.warnings
-                ),
-                metadata=dict(
-                    download_result.metadata
-                ),
+                warnings=list(download_result.warnings),
+                metadata=dict(download_result.metadata),
             )
 
         if not download_result.temporary_file_path:
@@ -149,88 +130,54 @@ class StockAssetStorageService:
             )
 
         temporary_file = (
-            Path(
-                download_result.temporary_file_path
-            )
-            .expanduser()
-            .resolve()
+            Path(download_result.temporary_file_path).expanduser().resolve()
         )
 
         if not temporary_file.exists():
             return StockAssetStorageResult(
                 success=False,
-                message=(
-                    "Downloaded stock temporary file "
-                    "does not exist."
-                ),
+                message=("Downloaded stock temporary file " "does not exist."),
                 metadata={
-                    "temporary_file_path": str(
-                        temporary_file
-                    ),
+                    "temporary_file_path": str(temporary_file),
                 },
             )
 
         if not temporary_file.is_file():
             return StockAssetStorageResult(
                 success=False,
-                message=(
-                    "Downloaded stock temporary path "
-                    "is not a file."
-                ),
+                message=("Downloaded stock temporary path " "is not a file."),
                 metadata={
-                    "temporary_file_path": str(
-                        temporary_file
-                    ),
+                    "temporary_file_path": str(temporary_file),
                 },
             )
 
-        existing_asset = self._find_by_hash(
-            download_result.content_hash
-        )
+        existing_asset = self._find_by_hash(download_result.content_hash)
 
         if existing_asset is not None:
-            self._delete_temporary_file(
-                temporary_file
-            )
+            self._delete_temporary_file(temporary_file)
 
             return StockAssetStorageResult(
                 success=True,
                 asset=existing_asset,
                 reused_existing=True,
                 moved_new_file=False,
-                message=(
-                    "An identical stock asset already "
-                    "exists and was reused."
-                ),
-                warnings=list(
-                    download_result.warnings
-                ),
+                message=("An identical stock asset already " "exists and was reused."),
+                warnings=list(download_result.warnings),
                 metadata={
-                    "content_hash": (
-                        download_result.content_hash
-                    ),
+                    "content_hash": (download_result.content_hash),
                 },
             )
 
-        project_directory = (
-            self.storage_root
-            / normalized_project_id
-            / "stock"
-        )
+        project_directory = self.storage_root / normalized_project_id / "stock"
 
         project_directory.mkdir(
             parents=True,
             exist_ok=True,
         )
 
-        safe_title = self._sanitize_filename(
-            normalized_title
-        )
+        safe_title = self._sanitize_filename(normalized_title)
 
-        extension = (
-            temporary_file.suffix.lower()
-            or ".mp4"
-        )
+        extension = temporary_file.suffix.lower() or ".mp4"
 
         destination_name = (
             f"scene_{scene_number:03}_"
@@ -239,10 +186,7 @@ class StockAssetStorageService:
             f"{extension}"
         )
 
-        destination = (
-            project_directory
-            / destination_name
-        )
+        destination = project_directory / destination_name
 
         try:
             shutil.move(
@@ -253,100 +197,64 @@ class StockAssetStorageService:
             return StockAssetStorageResult(
                 success=False,
                 message=(
-                    "Downloaded stock asset could not be "
-                    "moved into project storage."
+                    "Downloaded stock asset could not be " "moved into project storage."
                 ),
-                warnings=list(
-                    download_result.warnings
-                ),
+                warnings=list(download_result.warnings),
                 metadata={
-                    "temporary_file_path": str(
-                        temporary_file
-                    ),
-                    "destination_path": str(
-                        destination
-                    ),
+                    "temporary_file_path": str(temporary_file),
+                    "destination_path": str(destination),
                     "error_type": type(error).__name__,
                 },
             )
 
-        cleaned_tags = self._clean_tags(
-            tags or []
-        )
+        cleaned_tags = self._clean_tags(tags or [])
 
         asset_metadata: dict[str, Any] = {
             "project_id": normalized_project_id,
             "scene_number": scene_number,
-            "provider_name": (
-                normalized_provider_name
-            ),
+            "provider_name": (normalized_provider_name),
             "extension": extension,
         }
 
         if provider_asset_id:
-            asset_metadata["provider_asset_id"] = (
-                provider_asset_id.strip()
-            )
+            asset_metadata["provider_asset_id"] = provider_asset_id.strip()
 
         if source_url:
-            asset_metadata["source_url"] = (
-                source_url.strip()
-            )
+            asset_metadata["source_url"] = source_url.strip()
 
-        asset_metadata.update(
-            download_result.metadata
-        )
+        asset_metadata.update(download_result.metadata)
 
-        asset_metadata.update(
-            metadata or {}
-        )
+        asset_metadata.update(metadata or {})
 
         stored_asset = IndexedAsset(
             asset_type=IndexedAssetType.VIDEO,
             source=IndexedAssetSource.STOCK,
-            file_path=str(
-                destination.resolve()
-            ),
+            file_path=str(destination.resolve()),
             title=normalized_title,
             provider=normalized_provider_name,
             license_type=license_type,
             duration_seconds=duration_seconds,
             resolution=resolution,
             aspect_ratio=aspect_ratio,
-            file_size_bytes=(
-                destination.stat().st_size
-            ),
-            content_hash=(
-                download_result.content_hash
-            ),
+            file_size_bytes=(destination.stat().st_size),
+            content_hash=(download_result.content_hash),
             tags=cleaned_tags,
             keywords=list(cleaned_tags),
             metadata=asset_metadata,
         )
 
-        self.asset_index.add(
-            stored_asset
-        )
+        self.asset_index.add(stored_asset)
 
         return StockAssetStorageResult(
             success=True,
             asset=stored_asset,
             reused_existing=False,
             moved_new_file=True,
-            message=(
-                "Downloaded stock asset was stored "
-                "successfully."
-            ),
-            warnings=list(
-                download_result.warnings
-            ),
+            message=("Downloaded stock asset was stored " "successfully."),
+            warnings=list(download_result.warnings),
             metadata={
-                "content_hash": (
-                    download_result.content_hash
-                ),
-                "destination_path": str(
-                    destination.resolve()
-                ),
+                "content_hash": (download_result.content_hash),
+                "destination_path": str(destination.resolve()),
             },
         )
 
@@ -369,9 +277,7 @@ class StockAssetStorageService:
         """Delete an unused temporary download safely."""
 
         try:
-            file_path.unlink(
-                missing_ok=True
-            )
+            file_path.unlink(missing_ok=True)
         except OSError:
             pass
 
@@ -384,24 +290,14 @@ class StockAssetStorageService:
         normalized = value.strip()
 
         if not normalized:
-            raise ValueError(
-                "Project ID cannot be empty."
-            )
+            raise ValueError("Project ID cannot be empty.")
 
         safe_value = "".join(
-            character
-            if (
-                character.isalnum()
-                or character in {"-", "_"}
-            )
-            else "_"
+            character if (character.isalnum() or character in {"-", "_"}) else "_"
             for character in normalized
         )
 
-        return (
-            safe_value.strip("_")
-            or "project"
-        )
+        return safe_value.strip("_") or "project"
 
     @staticmethod
     def _sanitize_filename(
@@ -410,19 +306,11 @@ class StockAssetStorageService:
         """Create a safe filename stem."""
 
         safe_value = "".join(
-            character
-            if (
-                character.isalnum()
-                or character in {"-", "_"}
-            )
-            else "_"
+            character if (character.isalnum() or character in {"-", "_"}) else "_"
             for character in value.strip()
         )
 
-        return (
-            safe_value.strip("_")
-            or "stock_asset"
-        )
+        return safe_value.strip("_") or "stock_asset"
 
     @staticmethod
     def _clean_tags(
@@ -435,12 +323,7 @@ class StockAssetStorageService:
         for value in values:
             normalized = value.strip().lower()
 
-            if (
-                normalized
-                and normalized not in cleaned
-            ):
-                cleaned.append(
-                    normalized
-                )
+            if normalized and normalized not in cleaned:
+                cleaned.append(normalized)
 
         return cleaned

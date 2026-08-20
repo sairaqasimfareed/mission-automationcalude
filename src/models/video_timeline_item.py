@@ -52,9 +52,7 @@ class VideoTimelineItem(MissionBaseModel):
     transition_in: str | None = None
     transition_out: str | None = None
 
-    editing_blueprint: (
-        ResolvedSceneEditingBlueprint | None
-    ) = None
+    editing_blueprint: ResolvedSceneEditingBlueprint | None = None
 
     metadata: dict[str, Any] = Field(
         default_factory=dict,
@@ -66,45 +64,25 @@ class VideoTimelineItem(MissionBaseModel):
     ) -> VideoTimelineItem:
         if self.scene_number != self.clip.scene_number:
             raise ValueError(
-                "Timeline item scene number must match "
-                "the video clip scene number."
+                "Timeline item scene number must match " "the video clip scene number."
             )
 
-        if (
-            self.end_time_seconds
-            <= self.start_time_seconds
-        ):
+        if self.end_time_seconds <= self.start_time_seconds:
             raise ValueError(
-                "Timeline item end time must be greater "
-                "than its start time."
+                "Timeline item end time must be greater " "than its start time."
             )
 
-        expected_duration = float(
-            self.clip.duration_seconds
-        )
+        expected_duration = float(self.clip.duration_seconds)
 
-        actual_duration = (
-            self.end_time_seconds
-            - self.start_time_seconds
-        )
+        actual_duration = self.end_time_seconds - self.start_time_seconds
 
-        if (
-            abs(
-                actual_duration
-                - expected_duration
-            )
-            > 0.001
-        ):
+        if abs(actual_duration - expected_duration) > 0.001:
             raise ValueError(
-                "Timeline item duration must match "
-                "the video clip duration."
+                "Timeline item duration must match " "the video clip duration."
             )
 
         if self.editing_blueprint is not None:
-            if (
-                self.editing_blueprint.scene_number
-                != self.scene_number
-            ):
+            if self.editing_blueprint.scene_number != self.scene_number:
                 raise ValueError(
                     "Editing blueprint scene number must "
                     "match the timeline item scene number."
@@ -112,8 +90,7 @@ class VideoTimelineItem(MissionBaseModel):
 
             if not self.editing_blueprint.is_resolved:
                 raise ValueError(
-                    "Timeline items require a resolved "
-                    "editing blueprint."
+                    "Timeline items require a resolved " "editing blueprint."
                 )
 
         return self
@@ -122,10 +99,7 @@ class VideoTimelineItem(MissionBaseModel):
     def duration_seconds(self) -> float:
         """Return the timeline duration of this item."""
 
-        return (
-            self.end_time_seconds
-            - self.start_time_seconds
-        )
+        return self.end_time_seconds - self.start_time_seconds
 
     @property
     def has_editing_blueprint(self) -> bool:

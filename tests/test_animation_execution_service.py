@@ -40,22 +40,16 @@ def reference(
     *,
     preset_id: str,
     directive_path: str,
-    implementation: (
-        dict[str, Any] | None
-    ) = None,
+    implementation: dict[str, Any] | None = None,
     used_fallback: bool = False,
 ) -> ResolvedPresetReference:
     return ResolvedPresetReference(
         directive_path=directive_path,
         requested_preset_id=preset_id,
         resolved_preset_id=preset_id,
-        found_exact_match=(
-            not used_fallback
-        ),
+        found_exact_match=(not used_fallback),
         used_fallback=used_fallback,
-        implementation=dict(
-            implementation or {}
-        ),
+        implementation=dict(implementation or {}),
     )
 
 
@@ -71,19 +65,13 @@ def animation(
     return ResolvedAnimationInstruction(
         preset=reference(
             preset_id=preset_id,
-            directive_path=(
-                "animations.preset_id"
-            ),
+            directive_path=("animations.preset_id"),
             implementation=implementation,
             used_fallback=used_fallback,
         ),
         intensity=DirectiveIntensity.MEDIUM,
-        start_offset_seconds=(
-            start_offset_seconds
-        ),
-        duration_seconds=(
-            duration_seconds
-        ),
+        start_offset_seconds=(start_offset_seconds),
+        duration_seconds=(duration_seconds),
         enabled=enabled,
     )
 
@@ -91,9 +79,7 @@ def animation(
 def blueprint(
     *,
     scene_number: int,
-    animations: list[
-        ResolvedAnimationInstruction
-    ],
+    animations: list[ResolvedAnimationInstruction],
 ) -> ResolvedSceneEditingBlueprint:
     return ResolvedSceneEditingBlueprint(
         scene_number=scene_number,
@@ -114,9 +100,7 @@ def blueprint(
             ResolvedTransitionInstruction(
                 preset=reference(
                     preset_id="transition.cut",
-                    directive_path=(
-                        "transition_in.preset_id"
-                    ),
+                    directive_path=("transition_in.preset_id"),
                     implementation={
                         "type": "cut",
                     },
@@ -128,9 +112,7 @@ def blueprint(
             ResolvedTransitionInstruction(
                 preset=reference(
                     preset_id="transition.cut",
-                    directive_path=(
-                        "transition_out.preset_id"
-                    ),
+                    directive_path=("transition_out.preset_id"),
                     implementation={
                         "type": "cut",
                     },
@@ -151,16 +133,12 @@ def blueprint(
         subtitles=ResolvedSubtitleInstruction(
             preset=reference(
                 preset_id="subtitle.default",
-                directive_path=(
-                    "subtitles.preset_id"
-                ),
+                directive_path=("subtitles.preset_id"),
             ),
             enabled=False,
             burn_into_video=False,
         ),
-        status=(
-            BlueprintResolutionStatus.RESOLVED
-        ),
+        status=(BlueprintResolutionStatus.RESOLVED),
     )
 
 
@@ -169,37 +147,23 @@ def item(
     scene_number: int,
     start_time_seconds: float,
     duration_seconds: int,
-    animations: list[
-        ResolvedAnimationInstruction
-    ],
+    animations: list[ResolvedAnimationInstruction],
 ) -> VideoTimelineItem:
     clip = VideoClip(
         scene_number=scene_number,
-        source_type=(
-            SceneSourceType.MANUAL_UPLOAD
-        ),
+        source_type=(SceneSourceType.MANUAL_UPLOAD),
         duration_seconds=duration_seconds,
         prompt=f"Scene {scene_number}",
-        local_file=(
-            "assets/videos/"
-            f"scene_{scene_number:03}.mp4"
-        ),
-        source_status=(
-            SceneSourceStatus.READY
-        ),
+        local_file=("assets/videos/" f"scene_{scene_number:03}.mp4"),
+        source_status=(SceneSourceStatus.READY),
         status=VideoClipStatus.READY,
     )
 
     return VideoTimelineItem(
         clip=clip,
         scene_number=scene_number,
-        start_time_seconds=(
-            start_time_seconds
-        ),
-        end_time_seconds=(
-            start_time_seconds
-            + duration_seconds
-        ),
+        start_time_seconds=(start_time_seconds),
+        end_time_seconds=(start_time_seconds + duration_seconds),
         editing_blueprint=blueprint(
             scene_number=scene_number,
             animations=animations,
@@ -285,55 +249,30 @@ assert plan.is_render_ready is True
 
 
 parallax_execution = next(
-    execution
-    for execution in plan.executions
-    if execution.scene_number == 1
+    execution for execution in plan.executions if execution.scene_number == 1
 )
 
-assert (
-    parallax_execution.animation_type
-    == "parallax"
-)
+assert parallax_execution.animation_type == "parallax"
 
-assert (
-    parallax_execution.start_time_seconds
-    == 0.0
-)
+assert parallax_execution.start_time_seconds == 0.0
 
-assert (
-    parallax_execution.end_time_seconds
-    == 8.0
-)
+assert parallax_execution.end_time_seconds == 8.0
 
-assert (
-    parallax_execution.duration_seconds
-    == 8.0
-)
+assert parallax_execution.duration_seconds == 8.0
 
 
 fade_execution = next(
-    execution
-    for execution in plan.executions
-    if execution.scene_number == 2
+    execution for execution in plan.executions if execution.scene_number == 2
 )
 
 assert fade_execution.animation_type == "fade"
 assert fade_execution.target == "subtitle"
 
-assert (
-    fade_execution.start_time_seconds
-    == 10.0
-)
+assert fade_execution.start_time_seconds == 10.0
 
-assert (
-    fade_execution.end_time_seconds
-    == 13.0
-)
+assert fade_execution.end_time_seconds == 13.0
 
-assert (
-    fade_execution.duration_seconds
-    == 3.0
-)
+assert fade_execution.duration_seconds == 3.0
 
 
 disabled = animation(
@@ -399,11 +338,7 @@ fallback_plan = service.build_plan(
 
 assert fallback_plan.warnings
 
-assert any(
-    "fallback preset"
-    in warning.lower()
-    for warning in fallback_plan.warnings
-)
+assert any("fallback preset" in warning.lower() for warning in fallback_plan.warnings)
 
 
 invalid_animation = animation(
@@ -436,19 +371,12 @@ try:
         ),
     )
 except ValueError:
-    print(
-        "Out-of-scene animation "
-        "successfully blocked."
-    )
+    print("Out-of-scene animation " "successfully blocked.")
 else:
-    raise AssertionError(
-        "Animation beyond scene should fail."
-    )
+    raise AssertionError("Animation beyond scene should fail.")
 
 
-summary = service.summary(
-    plan
-)
+summary = service.summary(plan)
 
 assert summary["execution_count"] == 2
 assert summary["active_execution_count"] == 2
@@ -461,16 +389,11 @@ application_plan = service.build_plan(
 
 applied = service.mark_applied(
     application_plan,
-    execution_id=str(
-        application_plan.executions[0].id
-    ),
+    execution_id=str(application_plan.executions[0].id),
     renderer="ffmpeg",
 )
 
-assert (
-    applied.status
-    == AnimationExecutionStatus.APPLIED
-)
+assert applied.status == AnimationExecutionStatus.APPLIED
 
 assert application_plan.applied_count == 1
 
@@ -480,10 +403,7 @@ service.mark_all_applied(
     renderer="ffmpeg",
 )
 
-assert (
-    application_plan.applied_count
-    == application_plan.execution_count
-)
+assert application_plan.applied_count == application_plan.execution_count
 
 
 failure_plan = service.build_plan(
@@ -492,39 +412,22 @@ failure_plan = service.build_plan(
 
 failed = service.mark_failed(
     failure_plan,
-    execution_id=str(
-        failure_plan.executions[0].id
-    ),
-    error_message=(
-        "Simulated animation failure."
-    ),
+    execution_id=str(failure_plan.executions[0].id),
+    error_message=("Simulated animation failure."),
 )
 
-assert (
-    failed.status
-    == AnimationExecutionStatus.FAILED
-)
+assert failed.status == AnimationExecutionStatus.FAILED
 
 assert failure_plan.failed_count == 1
 assert failure_plan.is_valid is False
 assert failure_plan.is_render_ready is False
 
 
-serialized = (
-    plan.model_dump_json()
-)
+serialized = plan.model_dump_json()
 
-restored = (
-    AnimationExecutionPlan
-    .model_validate_json(
-        serialized
-    )
-)
+restored = AnimationExecutionPlan.model_validate_json(serialized)
 
 assert restored == plan
 
 
-print(
-    "Animation Execution Service tests "
-    "completed successfully."
-)
+print("Animation Execution Service tests " "completed successfully.")

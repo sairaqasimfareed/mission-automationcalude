@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+from src.models.audio_timeline import AudioTimeline
 from src.models.enums import (
     JobStatus,
     WorkflowStage,
+)
+from src.models.media_strategy import (
+    SceneSourceStatus,
+    SceneSourceType,
 )
 from src.models.render_orchestration_result import (
     RenderOrchestrationResult,
@@ -11,23 +16,18 @@ from src.models.render_result import (
     RenderResult,
     RenderStatus,
 )
-from src.models.video_job import VideoJob
 from src.models.research import (
     ResearchResult,
     ResearchStatus,
 )
 from src.models.scene import Scene, SceneStatus
 from src.models.script import Script, ScriptStatus
-from src.models.audio_timeline import AudioTimeline
-from src.models.video_timeline import VideoTimeline
-from src.models.media_strategy import (
-    SceneSourceStatus,
-    SceneSourceType,
-)
 from src.models.video_clip import (
     VideoClip,
     VideoClipStatus,
 )
+from src.models.video_job import VideoJob
+from src.models.video_timeline import VideoTimeline
 
 
 def build_job(
@@ -70,20 +70,11 @@ def test_failed_result() -> None:
     assert result.is_terminal is True
     assert result.has_errors is True
 
-    assert (
-        result.failed_stage
-        == WorkflowStage.RENDER
-    )
+    assert result.failed_stage == WorkflowStage.RENDER
 
-    assert (
-        result.completed_stage_count
-        == 3
-    )
+    assert result.completed_stage_count == 3
 
-    assert (
-        "Synthetic render failure."
-        in result.diagnostic_summary
-    )
+    assert "Synthetic render failure." in result.diagnostic_summary
 
 
 def test_cancelled_result() -> None:
@@ -106,10 +97,7 @@ def test_cancelled_result() -> None:
     assert result.is_terminal is True
     assert result.failed_stage is None
 
-    assert (
-        "cancelled"
-        in result.diagnostic_summary.lower()
-    )
+    assert "cancelled" in result.diagnostic_summary.lower()
 
 
 def test_success_result() -> None:
@@ -134,14 +122,10 @@ def test_success_result() -> None:
     scene = Scene(
         scene_number=1,
         title="Synthetic Scene",
-        narration=(
-            "Synthetic narration for orchestration testing."
-        ),
+        narration=("Synthetic narration for orchestration testing."),
         visual_prompt="Synthetic visual prompt.",
         estimated_duration_seconds=30,
-        manual_file_path=(
-            "assets/videos/manual/test_scene.mp4"
-        ),
+        manual_file_path=("assets/videos/manual/test_scene.mp4"),
         source_status=SceneSourceStatus.READY,
         status=SceneStatus.READY,
     )
@@ -164,9 +148,7 @@ def test_success_result() -> None:
         scene,
     ]
 
-    job.voice_file = (
-        "assets/audio/test_voice.wav"
-    )
+    job.voice_file = "assets/audio/test_voice.wav"
 
     job.video_clips = [
         clip,
@@ -217,10 +199,8 @@ def test_success_result() -> None:
 
     assert result.completed_stage_count == 8
 
-    assert (
-        "completed successfully"
-        in result.diagnostic_summary.lower()
-    )
+    assert "completed successfully" in result.diagnostic_summary.lower()
+
 
 def test_duplicate_stages_are_removed() -> None:
     job = build_job(
@@ -305,21 +285,14 @@ def test_serialization_round_trip() -> None:
 
     serialized = result.model_dump_json()
 
-    restored = (
-        RenderOrchestrationResult
-        .model_validate_json(
-            serialized
-        )
-    )
+    restored = RenderOrchestrationResult.model_validate_json(serialized)
 
     assert restored == result
 
 
 def main() -> None:
     print()
-    print(
-        "Running Render Orchestration Result tests..."
-    )
+    print("Running Render Orchestration Result tests...")
     print()
 
     test_failed_result()
@@ -329,10 +302,7 @@ def main() -> None:
     test_messages_are_normalized()
     test_serialization_round_trip()
 
-    print(
-        "Render Orchestration Result tests "
-        "completed successfully."
-    )
+    print("Render Orchestration Result tests " "completed successfully.")
 
 
 if __name__ == "__main__":

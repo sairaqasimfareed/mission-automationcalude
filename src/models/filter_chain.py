@@ -37,20 +37,13 @@ class FilterChain(MissionBaseModel):
         self,
     ) -> FilterChain:
         for node in self.nodes:
-            if (
-                node.media_type
-                != self.media_type
-            ):
+            if node.media_type != self.media_type:
                 raise ValueError(
-                    "Filter-chain media type must "
-                    "match every filter node."
+                    "Filter-chain media type must " "match every filter node."
                 )
 
         if self.nodes and not self.output_label:
-            raise ValueError(
-                "Non-empty filter chain requires "
-                "an output label."
-            )
+            raise ValueError("Non-empty filter chain requires " "an output label.")
 
         return self
 
@@ -59,16 +52,10 @@ class FilterChain(MissionBaseModel):
     ) -> list[str]:
         """Return enabled filter expressions in order."""
 
-        return [
-            node.render_expression()
-            for node in self.nodes
-            if node.enabled
-        ]
+        return [node.render_expression() for node in self.nodes if node.enabled]
 
     @property
     def node_count(self) -> int:
         """Return total chain node count."""
 
-        return len(
-            self.nodes
-        )
+        return len(self.nodes)

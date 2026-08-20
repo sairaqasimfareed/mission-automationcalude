@@ -73,9 +73,7 @@ class EditingDirectiveValidationResult(MissionBaseModel):
         default_factory=list,
     )
 
-    resolved_directives: list[
-        ResolvedDirectiveReference
-    ] = Field(
+    resolved_directives: list[ResolvedDirectiveReference] = Field(
         default_factory=list,
     )
 

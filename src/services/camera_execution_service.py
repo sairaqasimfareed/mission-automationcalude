@@ -33,13 +33,10 @@ class CameraExecutionService:
     def __init__(
         self,
         *,
-        timeline_validation_service: (
-            TimelineValidationService | None
-        ) = None,
+        timeline_validation_service: TimelineValidationService | None = None,
     ) -> None:
         self.timeline_validation_service = (
-            timeline_validation_service
-            or TimelineValidationService()
+            timeline_validation_service or TimelineValidationService()
         )
 
     def build_plan(
@@ -53,43 +50,28 @@ class CameraExecutionService:
     ) -> CameraExecutionPlan:
         """Build camera executions for enabled timeline scenes."""
 
-        if (
-            track_index is not None
-            and track_index < 0
-        ):
-            raise ValueError(
-                "Camera plan track index "
-                "cannot be negative."
-            )
+        if track_index is not None and track_index < 0:
+            raise ValueError("Camera plan track index " "cannot be negative.")
 
         if validate_timeline:
-            validation_result = (
-                self.timeline_validation_service.validate(
-                    timeline,
-                    require_gap_free_primary_track=True,
-                    require_editing_blueprints=True,
-                    warn_on_blueprint_fallbacks=True,
-                )
+            validation_result = self.timeline_validation_service.validate(
+                timeline,
+                require_gap_free_primary_track=True,
+                require_editing_blueprints=True,
+                warn_on_blueprint_fallbacks=True,
             )
 
             if not validation_result.is_valid:
                 raise ValueError(
                     "Video timeline is not valid for "
                     "camera execution planning. "
-                    + " ".join(
-                        issue.message
-                        for issue
-                        in validation_result.errors
-                    )
+                    + " ".join(issue.message for issue in validation_result.errors)
                 )
 
         items = [
             item
             for item in timeline.ordered_items()
-            if (
-                track_index is None
-                or item.track_index == track_index
-            )
+            if (track_index is None or item.track_index == track_index)
         ]
 
         if not items:
@@ -98,9 +80,7 @@ class CameraExecutionService:
                 "at least one enabled timeline item."
             )
 
-        executions: list[
-            CameraExecution
-        ] = []
+        executions: list[CameraExecution] = []
 
         warnings: list[str] = []
 
@@ -109,19 +89,12 @@ class CameraExecutionService:
                 item=item,
             )
 
-            if (
-                execution.is_static
-                and not include_static
-            ):
+            if execution.is_static and not include_static:
                 continue
 
-            executions.append(
-                execution
-            )
+            executions.append(execution)
 
-            warnings.extend(
-                execution.warnings
-            )
+            warnings.extend(execution.warnings)
 
         plan = self._create_plan(
             timeline=timeline,
@@ -130,20 +103,14 @@ class CameraExecutionService:
             metadata={
                 "track_index": track_index,
                 "include_static": include_static,
-                "timeline_validation_performed": (
-                    validate_timeline
-                ),
+                "timeline_validation_performed": (validate_timeline),
             },
         )
 
-        self.validate_plan(
-            plan
-        )
+        self.validate_plan(plan)
 
         if mark_ready:
-            self.mark_ready(
-                plan
-            )
+            self.mark_ready(plan)
 
         return plan
 
@@ -158,23 +125,17 @@ class CameraExecutionService:
 
         if blueprint is None:
             raise ValueError(
-                "Camera execution planning requires "
-                "an editing blueprint."
+                "Camera execution planning requires " "an editing blueprint."
             )
 
         if not blueprint.is_resolved:
             raise ValueError(
-                "Camera execution planning requires "
-                "a resolved editing blueprint."
+                "Camera execution planning requires " "a resolved editing blueprint."
             )
 
-        if (
-            blueprint.scene_number
-            != item.scene_number
-        ):
+        if blueprint.scene_number != item.scene_number:
             raise ValueError(
-                "Editing blueprint scene number "
-                "does not match timeline item."
+                "Editing blueprint scene number " "does not match timeline item."
             )
 
         instruction = blueprint.camera
@@ -193,71 +154,42 @@ class CameraExecutionService:
         errors: list[str] = []
 
         for execution in plan.executions:
-            execution_errors = (
-                self._execution_errors(
-                    execution=execution,
-                    timeline_duration_seconds=(
-                        plan.timeline_duration_seconds
-                    ),
-                )
+            execution_errors = self._execution_errors(
+                execution=execution,
+                timeline_duration_seconds=(plan.timeline_duration_seconds),
             )
 
             if execution_errors:
-                execution.status = (
-                    CameraExecutionStatus.FAILED
-                )
+                execution.status = CameraExecutionStatus.FAILED
 
                 for message in execution_errors:
-                    if (
-                        message
-                        not in execution.warnings
-                    ):
-                        execution.warnings.append(
-                            message
-                        )
+                    if message not in execution.warnings:
+                        execution.warnings.append(message)
 
-                    errors.append(
-                        message
-                    )
+                    errors.append(message)
 
-            elif (
-                execution.status
-                == CameraExecutionStatus.PLANNED
-            ):
-                execution.status = (
-                    CameraExecutionStatus.VALIDATED
-                )
+            elif execution.status == CameraExecutionStatus.PLANNED:
+                execution.status = CameraExecutionStatus.VALIDATED
 
         plan.warnings = self._unique_text(
             [
                 *plan.warnings,
                 *[
                     warning
-                    for execution
-                    in plan.executions
-                    for warning
-                    in execution.warnings
+                    for execution in plan.executions
+                    for warning in execution.warnings
                 ],
             ]
         )
 
-        plan.metadata[
-            "validation_errors"
-        ] = self._unique_text(
-            errors
-        )
+        plan.metadata["validation_errors"] = self._unique_text(errors)
 
         plan.refresh_summary()
 
-        plan.is_valid = (
-            len(errors) == 0
-            and plan.failed_count == 0
-        )
+        plan.is_valid = len(errors) == 0 and plan.failed_count == 0
 
         plan.is_render_ready = (
-            plan.is_valid
-            and plan.ready_execution_count
-            == plan.execution_count
+            plan.is_valid and plan.ready_execution_count == plan.execution_count
         )
 
         return plan
@@ -268,24 +200,14 @@ class CameraExecutionService:
     ) -> CameraExecutionPlan:
         """Mark validated camera executions as ready."""
 
-        self.validate_plan(
-            plan
-        )
+        self.validate_plan(plan)
 
         if not plan.is_valid:
-            raise ValueError(
-                "Invalid camera execution plan "
-                "cannot be marked ready."
-            )
+            raise ValueError("Invalid camera execution plan " "cannot be marked ready.")
 
         for execution in plan.executions:
-            if (
-                execution.status
-                == CameraExecutionStatus.VALIDATED
-            ):
-                execution.status = (
-                    CameraExecutionStatus.READY
-                )
+            if execution.status == CameraExecutionStatus.VALIDATED:
+                execution.status = CameraExecutionStatus.READY
 
         plan.refresh_summary()
 
@@ -297,21 +219,14 @@ class CameraExecutionService:
         *,
         execution_id: str,
         renderer: str,
-        renderer_metadata: (
-            dict[str, Any] | None
-        ) = None,
+        renderer_metadata: dict[str, Any] | None = None,
     ) -> CameraExecution:
         """Mark one ready camera execution as applied."""
 
-        cleaned_renderer = (
-            renderer.strip()
-        )
+        cleaned_renderer = renderer.strip()
 
         if not cleaned_renderer:
-            raise ValueError(
-                "Applied camera execution requires "
-                "a renderer name."
-            )
+            raise ValueError("Applied camera execution requires " "a renderer name.")
 
         execution = self._find_execution(
             plan=plan,
@@ -322,24 +237,13 @@ class CameraExecutionService:
             CameraExecutionStatus.READY,
             CameraExecutionStatus.APPLIED,
         }:
-            raise ValueError(
-                "Only ready camera executions "
-                "can be marked applied."
-            )
+            raise ValueError("Only ready camera executions " "can be marked applied.")
 
-        execution.metadata[
-            "renderer"
-        ] = cleaned_renderer
+        execution.metadata["renderer"] = cleaned_renderer
 
-        execution.metadata[
-            "renderer_metadata"
-        ] = dict(
-            renderer_metadata or {}
-        )
+        execution.metadata["renderer_metadata"] = dict(renderer_metadata or {})
 
-        execution.status = (
-            CameraExecutionStatus.APPLIED
-        )
+        execution.status = CameraExecutionStatus.APPLIED
 
         plan.refresh_summary()
 
@@ -350,43 +254,29 @@ class CameraExecutionService:
         plan: CameraExecutionPlan,
         *,
         renderer: str,
-        renderer_metadata: (
-            dict[str, Any] | None
-        ) = None,
+        renderer_metadata: dict[str, Any] | None = None,
     ) -> list[CameraExecution]:
         """Mark every ready camera execution as applied."""
 
-        cleaned_renderer = (
-            renderer.strip()
-        )
+        cleaned_renderer = renderer.strip()
 
         if not cleaned_renderer:
-            raise ValueError(
-                "Applied camera executions require "
-                "a renderer name."
-            )
+            raise ValueError("Applied camera executions require " "a renderer name.")
 
         if not plan.is_render_ready:
             raise ValueError(
-                "Camera execution plan must be "
-                "render-ready before application."
+                "Camera execution plan must be " "render-ready before application."
             )
 
-        applied: list[
-            CameraExecution
-        ] = []
+        applied: list[CameraExecution] = []
 
         for execution in plan.executions:
             applied.append(
                 self.mark_applied(
                     plan,
-                    execution_id=str(
-                        execution.id
-                    ),
+                    execution_id=str(execution.id),
                     renderer=cleaned_renderer,
-                    renderer_metadata=(
-                        renderer_metadata
-                    ),
+                    renderer_metadata=(renderer_metadata),
                 )
             )
 
@@ -398,50 +288,30 @@ class CameraExecutionService:
         *,
         execution_id: str,
         error_message: str,
-        failure_metadata: (
-            dict[str, Any] | None
-        ) = None,
+        failure_metadata: dict[str, Any] | None = None,
     ) -> CameraExecution:
         """Mark one camera execution as failed."""
 
-        cleaned_message = (
-            error_message.strip()
-        )
+        cleaned_message = error_message.strip()
 
         if not cleaned_message:
-            raise ValueError(
-                "Camera execution failure message "
-                "cannot be empty."
-            )
+            raise ValueError("Camera execution failure message " "cannot be empty.")
 
         execution = self._find_execution(
             plan=plan,
             execution_id=execution_id,
         )
 
-        execution.status = (
-            CameraExecutionStatus.FAILED
-        )
+        execution.status = CameraExecutionStatus.FAILED
 
-        execution.metadata[
-            "failure_message"
-        ] = cleaned_message
+        execution.metadata["failure_message"] = cleaned_message
 
-        execution.metadata[
-            "failure_details"
-        ] = dict(
-            failure_metadata or {}
-        )
+        execution.metadata["failure_details"] = dict(failure_metadata or {})
 
-        warning = (
-            "Camera execution failed: "
-            f"{cleaned_message}"
-        )
+        warning = "Camera execution failed: " f"{cleaned_message}"
 
         if warning not in execution.warnings:
-            execution.warnings.append(
-                warning
-            )
+            execution.warnings.append(warning)
 
         plan.warnings = self._unique_text(
             [
@@ -467,45 +337,19 @@ class CameraExecutionService:
 
         return {
             "plan_id": str(plan.id),
-            "schema_version": (
-                plan.schema_version
-            ),
-            "timeline_duration_seconds": (
-                plan.timeline_duration_seconds
-            ),
-            "scene_count": (
-                plan.scene_count
-            ),
-            "execution_count": (
-                plan.execution_count
-            ),
-            "static_execution_count": (
-                plan.static_execution_count
-            ),
-            "motion_execution_count": (
-                plan.motion_execution_count
-            ),
-            "ready_execution_count": (
-                plan.ready_execution_count
-            ),
-            "applied_count": (
-                plan.applied_count
-            ),
-            "failed_count": (
-                plan.failed_count
-            ),
-            "is_valid": (
-                plan.is_valid
-            ),
-            "is_render_ready": (
-                plan.is_render_ready
-            ),
-            "warnings": list(
-                plan.warnings
-            ),
-            "metadata": dict(
-                plan.metadata
-            ),
+            "schema_version": (plan.schema_version),
+            "timeline_duration_seconds": (plan.timeline_duration_seconds),
+            "scene_count": (plan.scene_count),
+            "execution_count": (plan.execution_count),
+            "static_execution_count": (plan.static_execution_count),
+            "motion_execution_count": (plan.motion_execution_count),
+            "ready_execution_count": (plan.ready_execution_count),
+            "applied_count": (plan.applied_count),
+            "failed_count": (plan.failed_count),
+            "is_valid": (plan.is_valid),
+            "is_render_ready": (plan.is_render_ready),
+            "warnings": list(plan.warnings),
+            "metadata": dict(plan.metadata),
         }
 
     def _build_from_instruction(
@@ -518,131 +362,61 @@ class CameraExecutionService:
 
         preset = instruction.preset
 
-        preset_id = (
-            preset.resolved_preset_id
+        preset_id = preset.resolved_preset_id
+
+        if not preset_id.startswith("camera."):
+            raise ValueError("Camera execution requires " "a camera preset.")
+
+        implementation = dict(preset.implementation)
+
+        motion_type = self._motion_type(
+            preset_id=preset_id,
+            implementation=implementation,
         )
 
-        if not preset_id.startswith(
-            "camera."
-        ):
-            raise ValueError(
-                "Camera execution requires "
-                "a camera preset."
-            )
+        direction = self._optional_text(implementation.get("direction"))
 
-        implementation = dict(
-            preset.implementation
-        )
+        scene_duration = item.duration_seconds
 
-        motion_type = (
-            self._motion_type(
-                preset_id=preset_id,
-                implementation=implementation,
-            )
-        )
+        local_start = float(instruction.start_offset_seconds)
 
-        direction = (
-            self._optional_text(
-                implementation.get(
-                    "direction"
-                )
-            )
-        )
-
-        scene_duration = (
-            item.duration_seconds
-        )
-
-        local_start = float(
-            instruction.start_offset_seconds
-        )
-
-        if (
-            local_start
-            >= scene_duration
-        ):
-            raise ValueError(
-                "Camera start offset must occur "
-                "before scene end."
-            )
+        if local_start >= scene_duration:
+            raise ValueError("Camera start offset must occur " "before scene end.")
 
         local_end = (
-            float(
-                instruction.end_offset_seconds
-            )
-            if (
-                instruction.end_offset_seconds
-                is not None
-            )
+            float(instruction.end_offset_seconds)
+            if (instruction.end_offset_seconds is not None)
             else scene_duration
         )
 
-        if (
-            local_end
-            <= local_start
-        ):
-            raise ValueError(
-                "Camera end offset must be greater "
-                "than start offset."
-            )
+        if local_end <= local_start:
+            raise ValueError("Camera end offset must be greater " "than start offset.")
 
-        if (
-            local_end
-            > scene_duration
-            + self.TIME_TOLERANCE_SECONDS
-        ):
-            raise ValueError(
-                "Camera execution extends "
-                "beyond scene duration."
-            )
+        if local_end > scene_duration + self.TIME_TOLERANCE_SECONDS:
+            raise ValueError("Camera execution extends " "beyond scene duration.")
 
-        duration = (
-            local_end - local_start
-        )
+        duration = local_end - local_start
 
-        zoom_start = (
-            instruction.zoom_start
-        )
+        zoom_start = instruction.zoom_start
 
-        zoom_end = (
-            instruction.zoom_end
-        )
+        zoom_end = instruction.zoom_end
 
         if motion_type == "zoom":
             if zoom_start is None:
-                zoom_start = (
-                    self._optional_float(
-                        implementation.get(
-                            "default_start_scale"
-                        )
-                    )
+                zoom_start = self._optional_float(
+                    implementation.get("default_start_scale")
                 )
 
             if zoom_end is None:
-                zoom_end = (
-                    self._optional_float(
-                        implementation.get(
-                            "default_end_scale"
-                        )
-                    )
-                )
+                zoom_end = self._optional_float(implementation.get("default_end_scale"))
 
-            if (
-                zoom_start is None
-                or zoom_end is None
-            ):
-                raise ValueError(
-                    "Zoom camera preset requires "
-                    "start and end scales."
-                )
+            if zoom_start is None or zoom_end is None:
+                raise ValueError("Zoom camera preset requires " "start and end scales.")
 
         warnings: list[str] = []
 
         if preset.used_fallback:
-            warnings.append(
-                "Camera execution uses "
-                "a fallback preset."
-            )
+            warnings.append("Camera execution uses " "a fallback preset.")
 
         return CameraExecution(
             status=CameraExecutionStatus.PLANNED,
@@ -653,47 +427,23 @@ class CameraExecutionService:
             motion_type=motion_type,
             direction=direction,
             intensity=instruction.intensity,
-            start_time_seconds=(
-                item.start_time_seconds
-                + local_start
-            ),
-            end_time_seconds=(
-                item.start_time_seconds
-                + local_end
-            ),
+            start_time_seconds=(item.start_time_seconds + local_start),
+            end_time_seconds=(item.start_time_seconds + local_end),
             duration_seconds=duration,
-            scene_start_time_seconds=(
-                item.start_time_seconds
-            ),
-            scene_end_time_seconds=(
-                item.end_time_seconds
-            ),
-            scene_duration_seconds=(
-                scene_duration
-            ),
-            local_start_offset_seconds=(
-                local_start
-            ),
-            local_end_offset_seconds=(
-                local_end
-            ),
+            scene_start_time_seconds=(item.start_time_seconds),
+            scene_end_time_seconds=(item.end_time_seconds),
+            scene_duration_seconds=(scene_duration),
+            local_start_offset_seconds=(local_start),
+            local_end_offset_seconds=(local_end),
             zoom_start=zoom_start,
             zoom_end=zoom_end,
             implementation=implementation,
             warnings=warnings,
             metadata={
-                "timeline_item_id": str(
-                    item.id
-                ),
-                "directive_path": (
-                    preset.directive_path
-                ),
-                "found_exact_match": (
-                    preset.found_exact_match
-                ),
-                "used_fallback": (
-                    preset.used_fallback
-                ),
+                "timeline_item_id": str(item.id),
+                "directive_path": (preset.directive_path),
+                "found_exact_match": (preset.found_exact_match),
+                "used_fallback": (preset.used_fallback),
             },
         )
 
@@ -705,17 +455,13 @@ class CameraExecutionService:
     ) -> str:
         """Resolve normalized camera motion type."""
 
-        motion = implementation.get(
-            "motion"
-        )
+        motion = implementation.get("motion")
 
         if isinstance(
             motion,
             str,
         ):
-            cleaned = (
-                motion.strip().lower()
-            )
+            cleaned = motion.strip().lower()
 
             if cleaned:
                 return cleaned
@@ -724,8 +470,7 @@ class CameraExecutionService:
             return "none"
 
         return (
-            preset_id
-            .split(
+            preset_id.split(
                 ".",
                 maxsplit=1,
             )[-1]
@@ -743,9 +488,7 @@ class CameraExecutionService:
         ):
             return None
 
-        cleaned = (
-            value.strip().lower()
-        )
+        cleaned = value.strip().lower()
 
         return cleaned or None
 
@@ -763,9 +506,7 @@ class CameraExecutionService:
             value,
             (int, float),
         ):
-            return float(
-                value
-            )
+            return float(value)
 
         return None
 
@@ -779,47 +520,19 @@ class CameraExecutionService:
 
         errors: list[str] = []
 
-        if (
-            execution.start_time_seconds
-            < execution.scene_start_time_seconds
-            - 0.001
-        ):
-            errors.append(
-                "Camera execution begins "
-                "before its scene."
-            )
+        if execution.start_time_seconds < execution.scene_start_time_seconds - 0.001:
+            errors.append("Camera execution begins " "before its scene.")
 
-        if (
-            execution.end_time_seconds
-            > execution.scene_end_time_seconds
-            + 0.001
-        ):
-            errors.append(
-                "Camera execution ends "
-                "after its scene."
-            )
+        if execution.end_time_seconds > execution.scene_end_time_seconds + 0.001:
+            errors.append("Camera execution ends " "after its scene.")
 
-        if (
-            execution.end_time_seconds
-            > timeline_duration_seconds
-            + 0.001
-        ):
-            errors.append(
-                "Camera execution ends "
-                "after video timeline."
-            )
+        if execution.end_time_seconds > timeline_duration_seconds + 0.001:
+            errors.append("Camera execution ends " "after video timeline.")
 
-        if (
-            execution.is_zoom
-            and (
-                execution.zoom_start is None
-                or execution.zoom_end is None
-            )
+        if execution.is_zoom and (
+            execution.zoom_start is None or execution.zoom_end is None
         ):
-            errors.append(
-                "Zoom camera execution lacks "
-                "zoom scale values."
-            )
+            errors.append("Zoom camera execution lacks " "zoom scale values.")
 
         return errors
 
@@ -827,9 +540,7 @@ class CameraExecutionService:
     def _create_plan(
         *,
         timeline: VideoTimeline,
-        executions: list[
-            CameraExecution
-        ],
+        executions: list[CameraExecution],
         warnings: list[str],
         metadata: dict[str, Any],
     ) -> CameraExecutionPlan:
@@ -845,59 +556,24 @@ class CameraExecutionService:
             ),
         )
 
-        execution_count = len(
-            ordered
-        )
+        execution_count = len(ordered)
 
-        static_count = sum(
-            1
-            for execution in ordered
-            if execution.is_static
-        )
+        static_count = sum(1 for execution in ordered if execution.is_static)
 
-        ready_count = sum(
-            1
-            for execution in ordered
-            if execution.is_ready
-        )
+        ready_count = sum(1 for execution in ordered if execution.is_ready)
 
         return CameraExecutionPlan(
             executions=ordered,
-            timeline_duration_seconds=(
-                timeline.calculate_duration()
-            ),
-            scene_count=len(
-                {
-                    execution.scene_number
-                    for execution in ordered
-                }
-            ),
-            execution_count=(
-                execution_count
-            ),
-            static_execution_count=(
-                static_count
-            ),
-            motion_execution_count=(
-                execution_count - static_count
-            ),
-            ready_execution_count=(
-                ready_count
-            ),
+            timeline_duration_seconds=(timeline.calculate_duration()),
+            scene_count=len({execution.scene_number for execution in ordered}),
+            execution_count=(execution_count),
+            static_execution_count=(static_count),
+            motion_execution_count=(execution_count - static_count),
+            ready_execution_count=(ready_count),
             is_valid=True,
-            is_render_ready=(
-                ready_count
-                == execution_count
-            ),
-            warnings=(
-                CameraExecutionService
-                ._unique_text(
-                    warnings
-                )
-            ),
-            metadata=dict(
-                metadata
-            ),
+            is_render_ready=(ready_count == execution_count),
+            warnings=(CameraExecutionService._unique_text(warnings)),
+            metadata=dict(metadata),
         )
 
     @staticmethod
@@ -908,33 +584,20 @@ class CameraExecutionService:
     ) -> CameraExecution:
         """Return one camera execution by ID."""
 
-        cleaned = (
-            execution_id.strip()
-        )
+        cleaned = execution_id.strip()
 
         if not cleaned:
-            raise ValueError(
-                "Camera execution ID "
-                "cannot be empty."
-            )
+            raise ValueError("Camera execution ID " "cannot be empty.")
 
         matches = [
-            execution
-            for execution in plan.executions
-            if str(execution.id) == cleaned
+            execution for execution in plan.executions if str(execution.id) == cleaned
         ]
 
         if not matches:
-            raise KeyError(
-                "Camera execution was not found: "
-                f"{cleaned}"
-            )
+            raise KeyError("Camera execution was not found: " f"{cleaned}")
 
         if len(matches) > 1:
-            raise ValueError(
-                "Multiple camera executions "
-                "share the same ID."
-            )
+            raise ValueError("Multiple camera executions " "share the same ID.")
 
         return matches[0]
 
@@ -947,16 +610,9 @@ class CameraExecutionService:
         cleaned: list[str] = []
 
         for value in values:
-            normalized = (
-                value.strip()
-            )
+            normalized = value.strip()
 
-            if (
-                normalized
-                and normalized not in cleaned
-            ):
-                cleaned.append(
-                    normalized
-                )
+            if normalized and normalized not in cleaned:
+                cleaned.append(normalized)
 
         return cleaned

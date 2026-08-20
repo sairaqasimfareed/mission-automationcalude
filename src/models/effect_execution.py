@@ -33,9 +33,7 @@ class EffectExecution(MissionBaseModel):
 
     schema_version: str = "1.0"
 
-    status: EffectExecutionStatus = (
-        EffectExecutionStatus.PLANNED
-    )
+    status: EffectExecutionStatus = EffectExecutionStatus.PLANNED
 
     scene_number: int = Field(
         ge=1,
@@ -57,9 +55,7 @@ class EffectExecution(MissionBaseModel):
 
     timing_mode: DirectiveTimingMode
 
-    intensity: DirectiveIntensity = (
-        DirectiveIntensity.MEDIUM
-    )
+    intensity: DirectiveIntensity = DirectiveIntensity.MEDIUM
 
     start_time_seconds: float = Field(
         ge=0.0,
@@ -120,9 +116,7 @@ class EffectExecution(MissionBaseModel):
         cleaned = value.strip().lower()
 
         if not cleaned:
-            raise ValueError(
-                "Effect execution text cannot be empty."
-            )
+            raise ValueError("Effect execution text cannot be empty.")
 
         return cleaned
 
@@ -132,14 +126,8 @@ class EffectExecution(MissionBaseModel):
         cls,
         value: str,
     ) -> str:
-        if (
-            not value.startswith("visual.")
-            or value == "visual."
-        ):
-            raise ValueError(
-                "Visual effect preset ID must start "
-                "with 'visual.'."
-            )
+        if not value.startswith("visual.") or value == "visual.":
+            raise ValueError("Visual effect preset ID must start " "with 'visual.'.")
 
         return value
 
@@ -154,10 +142,7 @@ class EffectExecution(MissionBaseModel):
         for value in values:
             warning = value.strip()
 
-            if (
-                warning
-                and warning not in cleaned
-            ):
+            if warning and warning not in cleaned:
                 cleaned.append(warning)
 
         return cleaned
@@ -166,111 +151,59 @@ class EffectExecution(MissionBaseModel):
     def validate_execution(
         self,
     ) -> EffectExecution:
-        if (
-            self.scene_end_time_seconds
-            <= self.scene_start_time_seconds
-        ):
+        if self.scene_end_time_seconds <= self.scene_start_time_seconds:
             raise ValueError(
                 "Effect execution scene end time must "
                 "be greater than scene start time."
             )
 
         calculated_scene_duration = (
-            self.scene_end_time_seconds
-            - self.scene_start_time_seconds
+            self.scene_end_time_seconds - self.scene_start_time_seconds
         )
 
-        if (
-            abs(
-                calculated_scene_duration
-                - self.scene_duration_seconds
-            )
-            > 0.001
-        ):
+        if abs(calculated_scene_duration - self.scene_duration_seconds) > 0.001:
             raise ValueError(
-                "Effect execution scene duration does "
-                "not match scene timing."
+                "Effect execution scene duration does " "not match scene timing."
             )
 
-        if (
-            self.end_time_seconds
-            <= self.start_time_seconds
-        ):
+        if self.end_time_seconds <= self.start_time_seconds:
             raise ValueError(
-                "Effect execution end time must be "
-                "greater than start time."
+                "Effect execution end time must be " "greater than start time."
             )
 
-        calculated_duration = (
-            self.end_time_seconds
-            - self.start_time_seconds
-        )
+        calculated_duration = self.end_time_seconds - self.start_time_seconds
 
-        if (
-            abs(
-                calculated_duration
-                - self.duration_seconds
-            )
-            > 0.001
-        ):
+        if abs(calculated_duration - self.duration_seconds) > 0.001:
             raise ValueError(
-                "Effect execution duration does not "
-                "match execution timing."
+                "Effect execution duration does not " "match execution timing."
             )
 
-        if (
-            self.start_time_seconds
-            < self.scene_start_time_seconds - 0.001
-        ):
+        if self.start_time_seconds < self.scene_start_time_seconds - 0.001:
+            raise ValueError("Effect execution cannot begin before " "its scene.")
+
+        if self.end_time_seconds > self.scene_end_time_seconds + 0.001:
+            raise ValueError("Effect execution cannot end after " "its scene.")
+
+        expected_local_offset = self.start_time_seconds - self.scene_start_time_seconds
+
+        if abs(expected_local_offset - self.local_start_offset_seconds) > 0.001:
             raise ValueError(
-                "Effect execution cannot begin before "
-                "its scene."
+                "Effect local start offset does not " "match global timing."
             )
 
         if (
-            self.end_time_seconds
-            > self.scene_end_time_seconds + 0.001
-        ):
-            raise ValueError(
-                "Effect execution cannot end after "
-                "its scene."
-            )
-
-        expected_local_offset = (
-            self.start_time_seconds
-            - self.scene_start_time_seconds
-        )
-
-        if (
-            abs(
-                expected_local_offset
-                - self.local_start_offset_seconds
-            )
-            > 0.001
-        ):
-            raise ValueError(
-                "Effect local start offset does not "
-                "match global timing."
-            )
-
-        if (
-            self.timing_mode
-            == DirectiveTimingMode.RELATIVE_PERCENT
+            self.timing_mode == DirectiveTimingMode.RELATIVE_PERCENT
             and self.relative_position_percent is None
         ):
             raise ValueError(
-                "Relative-percent effect execution "
-                "requires a relative position."
+                "Relative-percent effect execution " "requires a relative position."
             )
 
-        if (
-            self.status
-            == EffectExecutionStatus.APPLIED
-            and not self.metadata.get("renderer")
+        if self.status == EffectExecutionStatus.APPLIED and not self.metadata.get(
+            "renderer"
         ):
             raise ValueError(
-                "Applied visual-effect execution "
-                "requires renderer metadata."
+                "Applied visual-effect execution " "requires renderer metadata."
             )
 
         return self
@@ -289,19 +222,13 @@ class EffectExecution(MissionBaseModel):
     def is_full_scene(self) -> bool:
         """Return whether the effect covers the full scene."""
 
-        return (
-            self.timing_mode
-            == DirectiveTimingMode.FULL_SCENE
-        )
+        return self.timing_mode == DirectiveTimingMode.FULL_SCENE
 
     @property
     def end_offset_seconds(self) -> float:
         """Return effect end offset relative to scene start."""
 
-        return (
-            self.end_time_seconds
-            - self.scene_start_time_seconds
-        )
+        return self.end_time_seconds - self.scene_start_time_seconds
 
 
 class EffectExecutionPlan(MissionBaseModel):
@@ -314,9 +241,7 @@ class EffectExecutionPlan(MissionBaseModel):
 
     schema_version: str = "1.0"
 
-    executions: list[
-        EffectExecution
-    ] = Field(
+    executions: list[EffectExecution] = Field(
         default_factory=list,
     )
 
@@ -366,48 +291,28 @@ class EffectExecutionPlan(MissionBaseModel):
     def validate_plan(
         self,
     ) -> EffectExecutionPlan:
-        if self.effect_count != len(
-            self.executions
-        ):
+        if self.effect_count != len(self.executions):
             raise ValueError(
-                "Effect plan count must match "
-                "its execution collection."
+                "Effect plan count must match " "its execution collection."
             )
 
         if self.full_scene_effect_count > self.effect_count:
             raise ValueError(
-                "Full-scene effect count cannot exceed "
-                "total effect count."
+                "Full-scene effect count cannot exceed " "total effect count."
             )
 
         if self.timed_effect_count > self.effect_count:
-            raise ValueError(
-                "Timed effect count cannot exceed "
-                "total effect count."
-            )
+            raise ValueError("Timed effect count cannot exceed " "total effect count.")
 
         if self.ready_execution_count > self.effect_count:
-            raise ValueError(
-                "Ready effect count cannot exceed "
-                "total effect count."
-            )
+            raise ValueError("Ready effect count cannot exceed " "total effect count.")
 
-        if (
-            self.is_render_ready
-            and not self.is_valid
-        ):
-            raise ValueError(
-                "Render-ready effect plans must be valid."
-            )
+        if self.is_render_ready and not self.is_valid:
+            raise ValueError("Render-ready effect plans must be valid.")
 
-        if (
-            self.is_render_ready
-            and self.ready_execution_count
-            != self.effect_count
-        ):
+        if self.is_render_ready and self.ready_execution_count != self.effect_count:
             raise ValueError(
-                "Render-ready effect plans require "
-                "all executions to be ready."
+                "Render-ready effect plans require " "all executions to be ready."
             )
 
         return self
@@ -426,53 +331,36 @@ class EffectExecutionPlan(MissionBaseModel):
             ),
         )
 
-        self.effect_count = len(
-            self.executions
-        )
+        self.effect_count = len(self.executions)
 
         self.full_scene_effect_count = sum(
-            1
-            for execution in self.executions
-            if execution.is_full_scene
+            1 for execution in self.executions if execution.is_full_scene
         )
 
-        self.timed_effect_count = (
-            self.effect_count
-            - self.full_scene_effect_count
-        )
+        self.timed_effect_count = self.effect_count - self.full_scene_effect_count
 
         self.ready_execution_count = sum(
-            1
-            for execution in self.executions
-            if execution.is_ready
+            1 for execution in self.executions if execution.is_ready
         )
 
         self.scene_count = len(
-            {
-                execution.scene_number
-                for execution in self.executions
-            }
+            {execution.scene_number for execution in self.executions}
         )
 
         self.is_valid = all(
-            execution.status
-            != EffectExecutionStatus.FAILED
+            execution.status != EffectExecutionStatus.FAILED
             for execution in self.executions
         )
 
         self.is_render_ready = (
-            self.is_valid
-            and self.ready_execution_count
-            == self.effect_count
+            self.is_valid and self.ready_execution_count == self.effect_count
         )
 
     @property
     def has_effects(self) -> bool:
         """Return whether the plan contains visual effects."""
 
-        return bool(
-            self.executions
-        )
+        return bool(self.executions)
 
     @property
     def applied_count(self) -> int:
@@ -481,10 +369,7 @@ class EffectExecutionPlan(MissionBaseModel):
         return sum(
             1
             for execution in self.executions
-            if (
-                execution.status
-                == EffectExecutionStatus.APPLIED
-            )
+            if (execution.status == EffectExecutionStatus.APPLIED)
         )
 
     @property
@@ -494,8 +379,5 @@ class EffectExecutionPlan(MissionBaseModel):
         return sum(
             1
             for execution in self.executions
-            if (
-                execution.status
-                == EffectExecutionStatus.FAILED
-            )
+            if (execution.status == EffectExecutionStatus.FAILED)
         )

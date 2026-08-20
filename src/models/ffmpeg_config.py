@@ -63,25 +63,15 @@ class FFmpegConfig(MissionBaseModel):
     ffmpeg_path: str = "ffmpeg"
     ffprobe_path: str = "ffprobe"
 
-    video_codec: FFmpegVideoCodec = (
-        FFmpegVideoCodec.AUTO
-    )
+    video_codec: FFmpegVideoCodec = FFmpegVideoCodec.AUTO
 
-    audio_codec: FFmpegAudioCodec = (
-        FFmpegAudioCodec.AAC
-    )
+    audio_codec: FFmpegAudioCodec = FFmpegAudioCodec.AAC
 
-    hardware_acceleration: FFmpegHardwareAcceleration = (
-        FFmpegHardwareAcceleration.AUTO
-    )
+    hardware_acceleration: FFmpegHardwareAcceleration = FFmpegHardwareAcceleration.AUTO
 
-    pixel_format: FFmpegPixelFormat = (
-        FFmpegPixelFormat.YUV420P
-    )
+    pixel_format: FFmpegPixelFormat = FFmpegPixelFormat.YUV420P
 
-    container: FFmpegContainer = (
-        FFmpegContainer.MP4
-    )
+    container: FFmpegContainer = FFmpegContainer.MP4
 
     crf: int = Field(
         default=20,
@@ -135,10 +125,7 @@ class FFmpegConfig(MissionBaseModel):
         cleaned = value.strip()
 
         if not cleaned:
-            raise ValueError(
-                "FFmpeg configuration text "
-                "cannot be empty."
-            )
+            raise ValueError("FFmpeg configuration text " "cannot be empty.")
 
         return cleaned
 
@@ -158,9 +145,7 @@ class FFmpegConfig(MissionBaseModel):
             normalized = value.strip()
 
             if normalized:
-                cleaned.append(
-                    normalized
-                )
+                cleaned.append(normalized)
 
         return cleaned
 
@@ -174,8 +159,7 @@ class FFmpegConfig(MissionBaseModel):
                 FFmpegVideoCodec.H264_NVENC,
                 FFmpegVideoCodec.HEVC_NVENC,
             }
-            and self.hardware_acceleration
-            == FFmpegHardwareAcceleration.NONE
+            and self.hardware_acceleration == FFmpegHardwareAcceleration.NONE
         ):
             raise ValueError(
                 "NVENC video codecs cannot be used "
@@ -223,10 +207,7 @@ class FFmpegCapabilities(MissionBaseModel):
     def ready(self) -> bool:
         """Return whether both required binaries are available."""
 
-        return (
-            self.ffmpeg_available
-            and self.ffprobe_available
-        )
+        return self.ffmpeg_available and self.ffprobe_available
 
     def has_encoder(
         self,
@@ -234,10 +215,7 @@ class FFmpegCapabilities(MissionBaseModel):
     ) -> bool:
         """Return whether one encoder is available."""
 
-        return (
-            name.strip().lower()
-            in self.encoders
-        )
+        return name.strip().lower() in self.encoders
 
     def has_filter(
         self,
@@ -245,10 +223,7 @@ class FFmpegCapabilities(MissionBaseModel):
     ) -> bool:
         """Return whether one filter is available."""
 
-        return (
-            name.strip().lower()
-            in self.filters
-        )
+        return name.strip().lower() in self.filters
 
     def has_hardware_accelerator(
         self,
@@ -256,10 +231,7 @@ class FFmpegCapabilities(MissionBaseModel):
     ) -> bool:
         """Return whether one hardware accelerator exists."""
 
-        return (
-            name.strip().lower()
-            in self.hardware_accelerators
-        )
+        return name.strip().lower() in self.hardware_accelerators
 
 
 class FFmpegResolvedConfig(MissionBaseModel):
@@ -293,17 +265,13 @@ class FFmpegResolvedConfig(MissionBaseModel):
                 "available FFmpeg and ffprobe binaries."
             )
 
-        if not self.capabilities.has_encoder(
-            self.selected_video_codec
-        ):
+        if not self.capabilities.has_encoder(self.selected_video_codec):
             raise ValueError(
                 "Selected video codec is not available: "
                 f"{self.selected_video_codec}."
             )
 
-        if not self.capabilities.has_encoder(
-            self.selected_audio_codec
-        ):
+        if not self.capabilities.has_encoder(self.selected_audio_codec):
             raise ValueError(
                 "Selected audio codec is not available: "
                 f"{self.selected_audio_codec}."

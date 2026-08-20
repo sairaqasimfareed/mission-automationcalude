@@ -65,9 +65,7 @@ class RenderNode(MissionBaseModel):
 
     node_type: RenderNodeType
 
-    status: RenderNodeStatus = (
-        RenderNodeStatus.PLANNED
-    )
+    status: RenderNodeStatus = RenderNodeStatus.PLANNED
 
     scene_number: int | None = Field(
         default=None,
@@ -130,13 +128,8 @@ class RenderNode(MissionBaseModel):
         for value in values:
             normalized = value.strip()
 
-            if (
-                normalized
-                and normalized not in cleaned
-            ):
-                cleaned.append(
-                    normalized
-                )
+            if normalized and normalized not in cleaned:
+                cleaned.append(normalized)
 
         return cleaned
 
@@ -164,13 +157,8 @@ class RenderNode(MissionBaseModel):
         for value in values:
             warning = value.strip()
 
-            if (
-                warning
-                and warning not in cleaned
-            ):
-                cleaned.append(
-                    warning
-                )
+            if warning and warning not in cleaned:
+                cleaned.append(warning)
 
         return cleaned
 
@@ -180,50 +168,25 @@ class RenderNode(MissionBaseModel):
     ) -> RenderNode:
         """Validate node timing and lifecycle consistency."""
 
-        if (
-            self.end_time_seconds
-            < self.start_time_seconds
-        ):
+        if self.end_time_seconds < self.start_time_seconds:
+            raise ValueError("Render node end time cannot be " "before start time.")
+
+        calculated_duration = self.end_time_seconds - self.start_time_seconds
+
+        if abs(calculated_duration - self.duration_seconds) > 0.001:
             raise ValueError(
-                "Render node end time cannot be "
-                "before start time."
+                "Render node duration does not match " "its start and end timing."
             )
 
-        calculated_duration = (
-            self.end_time_seconds
-            - self.start_time_seconds
-        )
-
-        if (
-            abs(
-                calculated_duration
-                - self.duration_seconds
-            )
-            > 0.001
-        ):
-            raise ValueError(
-                "Render node duration does not match "
-                "its start and end timing."
-            )
-
-        node_id = str(
-            self.id
-        )
+        node_id = str(self.id)
 
         if node_id in self.dependency_ids:
-            raise ValueError(
-                "Render node cannot depend on itself."
-            )
+            raise ValueError("Render node cannot depend on itself.")
 
-        if (
-            self.status
-            == RenderNodeStatus.EXECUTED
-            and not self.metadata.get("renderer")
+        if self.status == RenderNodeStatus.EXECUTED and not self.metadata.get(
+            "renderer"
         ):
-            raise ValueError(
-                "Executed render node requires "
-                "renderer metadata."
-            )
+            raise ValueError("Executed render node requires " "renderer metadata.")
 
         return self
 
@@ -256,9 +219,7 @@ class RenderEdge(MissionBaseModel):
 
     target_node_id: str
 
-    edge_type: RenderEdgeType = (
-        RenderEdgeType.DEPENDS_ON
-    )
+    edge_type: RenderEdgeType = RenderEdgeType.DEPENDS_ON
 
     metadata: dict[str, Any] = Field(
         default_factory=dict,
@@ -276,9 +237,7 @@ class RenderEdge(MissionBaseModel):
         cleaned = value.strip()
 
         if not cleaned:
-            raise ValueError(
-                "Render edge node ID cannot be empty."
-            )
+            raise ValueError("Render edge node ID cannot be empty.")
 
         return cleaned
 
@@ -286,14 +245,8 @@ class RenderEdge(MissionBaseModel):
     def validate_edge(
         self,
     ) -> RenderEdge:
-        if (
-            self.source_node_id
-            == self.target_node_id
-        ):
-            raise ValueError(
-                "Render edge cannot connect "
-                "a node to itself."
-            )
+        if self.source_node_id == self.target_node_id:
+            raise ValueError("Render edge cannot connect " "a node to itself.")
 
         return self
 
@@ -308,19 +261,13 @@ class RenderGraph(MissionBaseModel):
 
     schema_version: str = "1.0"
 
-    status: RenderGraphStatus = (
-        RenderGraphStatus.DRAFT
-    )
+    status: RenderGraphStatus = RenderGraphStatus.DRAFT
 
-    nodes: list[
-        RenderNode
-    ] = Field(
+    nodes: list[RenderNode] = Field(
         default_factory=list,
     )
 
-    edges: list[
-        RenderEdge
-    ] = Field(
+    edges: list[RenderEdge] = Field(
         default_factory=list,
     )
 
@@ -379,53 +326,33 @@ class RenderGraph(MissionBaseModel):
     ) -> RenderGraph:
         """Validate graph summary consistency."""
 
-        if self.node_count != len(
-            self.nodes
-        ):
+        if self.node_count != len(self.nodes):
             raise ValueError(
-                "Render graph node count must match "
-                "the node collection."
+                "Render graph node count must match " "the node collection."
             )
 
-        if self.edge_count != len(
-            self.edges
-        ):
+        if self.edge_count != len(self.edges):
             raise ValueError(
-                "Render graph edge count must match "
-                "the edge collection."
+                "Render graph edge count must match " "the edge collection."
             )
 
         if self.ready_node_count > self.node_count:
             raise ValueError(
-                "Ready render-node count cannot exceed "
-                "total node count."
+                "Ready render-node count cannot exceed " "total node count."
             )
 
-        if (
-            self.executed_node_count
-            > self.node_count
-        ):
+        if self.executed_node_count > self.node_count:
             raise ValueError(
-                "Executed render-node count cannot exceed "
-                "total node count."
+                "Executed render-node count cannot exceed " "total node count."
             )
 
-        if (
-            self.failed_node_count
-            > self.node_count
-        ):
+        if self.failed_node_count > self.node_count:
             raise ValueError(
-                "Failed render-node count cannot exceed "
-                "total node count."
+                "Failed render-node count cannot exceed " "total node count."
             )
 
-        if (
-            self.is_render_ready
-            and not self.is_valid
-        ):
-            raise ValueError(
-                "Render-ready graph must be valid."
-            )
+        if self.is_render_ready and not self.is_valid:
+            raise ValueError("Render-ready graph must be valid.")
 
         return self
 
@@ -437,69 +364,37 @@ class RenderGraph(MissionBaseModel):
             key=lambda node: (
                 node.start_time_seconds,
                 node.node_type.value,
-                node.track_index
-                if node.track_index is not None
-                else -1,
-                node.layer_index
-                if node.layer_index is not None
-                else -1,
-                node.scene_number
-                if node.scene_number is not None
-                else 0,
+                node.track_index if node.track_index is not None else -1,
+                node.layer_index if node.layer_index is not None else -1,
+                node.scene_number if node.scene_number is not None else 0,
                 str(node.id),
             ),
         )
 
-        self.node_count = len(
-            self.nodes
-        )
+        self.node_count = len(self.nodes)
 
-        self.edge_count = len(
-            self.edges
-        )
+        self.edge_count = len(self.edges)
 
-        self.ready_node_count = sum(
-            1
-            for node in self.nodes
-            if node.is_ready
-        )
+        self.ready_node_count = sum(1 for node in self.nodes if node.is_ready)
 
         self.executed_node_count = sum(
-            1
-            for node in self.nodes
-            if (
-                node.status
-                == RenderNodeStatus.EXECUTED
-            )
+            1 for node in self.nodes if (node.status == RenderNodeStatus.EXECUTED)
         )
 
         self.failed_node_count = sum(
-            1
-            for node in self.nodes
-            if (
-                node.status
-                == RenderNodeStatus.FAILED
-            )
+            1 for node in self.nodes if (node.status == RenderNodeStatus.FAILED)
         )
 
         self.scene_count = len(
-            {
-                node.scene_number
-                for node in self.nodes
-                if node.scene_number
-                is not None
-            }
+            {node.scene_number for node in self.nodes if node.scene_number is not None}
         )
 
-        self.is_valid = (
-            self.failed_node_count == 0
-        )
+        self.is_valid = self.failed_node_count == 0
 
         self.is_render_ready = (
             self.is_valid
             and self.node_count > 0
-            and self.ready_node_count
-            == self.node_count
+            and self.ready_node_count == self.node_count
         )
 
     @property
@@ -512,10 +407,7 @@ class RenderGraph(MissionBaseModel):
             return None
 
         for node in self.nodes:
-            if (
-                str(node.id)
-                == self.output_node_id
-            ):
+            if str(node.id) == self.output_node_id:
                 return node
 
         return None
@@ -528,7 +420,8 @@ class RenderGraph(MissionBaseModel):
             return False
 
         return all(
-            node.status in {
+            node.status
+            in {
                 RenderNodeStatus.EXECUTED,
                 RenderNodeStatus.SKIPPED,
             }

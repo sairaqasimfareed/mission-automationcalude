@@ -16,13 +16,10 @@ from src.models.voice_directives import (
     VoiceProviderPreferences,
 )
 
-
 directives = SceneVoiceDirectives(
     scene_number=1,
     voice_profile_id="voice.horror_whisper",
-    fallback_voice_profile_id=(
-        "voice.neutral_narrator"
-    ),
+    fallback_voice_profile_id=("voice.neutral_narrator"),
     language="English",
     language_code="en-US",
     emotion=VoiceEmotion.SUSPENSEFUL,
@@ -30,9 +27,7 @@ directives = SceneVoiceDirectives(
     energy=VoiceEnergy.LOW,
     pitch_style=VoicePitchStyle.DEEP,
     pause_style=VoicePauseStyle.DRAMATIC,
-    emphasis_style=(
-        VoiceEmphasisStyle.SELECTIVE
-    ),
+    emphasis_style=(VoiceEmphasisStyle.SELECTIVE),
     speed=0.9,
     pitch_adjustment=-2.0,
     volume_gain_db=1.0,
@@ -45,17 +40,13 @@ directives = SceneVoiceDirectives(
     pronunciation_directives=[
         PronunciationDirective(
             text="Derinkuyu",
-            pronunciation=(
-                "de-rin-ku-yu"
-            ),
+            pronunciation=("de-rin-ku-yu"),
             alphabet="phonetic",
         ),
     ],
     pause_directives=[
         VoicePauseDirective(
-            after_text=(
-                "The door slowly opened."
-            ),
+            after_text=("The door slowly opened."),
             duration_seconds=1.2,
         ),
     ],
@@ -67,15 +58,9 @@ directives = SceneVoiceDirectives(
     ],
     provider_preferences=(
         VoiceProviderPreferences(
-            preferred_provider=(
-                "ElevenLabs"
-            ),
-            preferred_model=(
-                "eleven_multilingual_v2"
-            ),
-            preferred_voice_id=(
-                "horror-narrator-001"
-            ),
+            preferred_provider=("ElevenLabs"),
+            preferred_model=("eleven_multilingual_v2"),
+            preferred_voice_id=("horror-narrator-001"),
             preferred_output_format="mp3",
             fallback_providers=[
                 "OpenAI",
@@ -84,9 +69,7 @@ directives = SceneVoiceDirectives(
             ],
         )
     ),
-    source=(
-        VoiceDirectiveSource.GENRE_PROFILE
-    ),
+    source=(VoiceDirectiveSource.GENRE_PROFILE),
     status=VoiceDirectiveStatus.DRAFT,
     metadata={
         "genre_id": "genre.horror",
@@ -110,90 +93,47 @@ print(
 
 assert directives.scene_number == 1
 
-assert (
-    directives.voice_profile_id
-    == "voice.horror_whisper"
-)
+assert directives.voice_profile_id == "voice.horror_whisper"
 
-assert (
-    directives.fallback_voice_profile_id
-    == "voice.neutral_narrator"
-)
+assert directives.fallback_voice_profile_id == "voice.neutral_narrator"
 
-assert (
-    directives.emotion
-    == VoiceEmotion.SUSPENSEFUL
-)
+assert directives.emotion == VoiceEmotion.SUSPENSEFUL
 
 assert directives.speed == 0.9
 
-assert (
-    directives.explicit_instruction_count
-    == 3
-)
+assert directives.explicit_instruction_count == 3
 
-assert (
-    directives.provider_preferences
-    .preferred_provider
-    == "ElevenLabs"
-)
+assert directives.provider_preferences.preferred_provider == "ElevenLabs"
 
-assert (
-    directives.provider_preferences
-    .fallback_providers
-    == [
-        "OpenAI",
-        "Google TTS",
-    ]
-)
+assert directives.provider_preferences.fallback_providers == [
+    "OpenAI",
+    "Google TTS",
+]
 
 
-default_directives = (
-    SceneVoiceDirectives(
-        scene_number=2,
-    )
+default_directives = SceneVoiceDirectives(
+    scene_number=2,
 )
 
-assert (
-    default_directives.voice_profile_id
-    == "voice.neutral_narrator"
-)
+assert default_directives.voice_profile_id == "voice.neutral_narrator"
 
-assert (
-    default_directives.emotion
-    == VoiceEmotion.NEUTRAL
-)
+assert default_directives.emotion == VoiceEmotion.NEUTRAL
 
-assert (
-    default_directives.pace
-    == VoicePace.MODERATE
-)
+assert default_directives.pace == VoicePace.MODERATE
 
 # Same fallback as primary is removed safely.
-assert (
-    default_directives
-    .fallback_voice_profile_id
-    is None
-)
+assert default_directives.fallback_voice_profile_id is None
 
 
 try:
     SceneVoiceDirectives(
         scene_number=3,
-        voice_profile_id=(
-            "horror_whisper"
-        ),
+        voice_profile_id=("horror_whisper"),
     )
 except ValueError:
-    print(
-        "Invalid voice profile ID "
-        "successfully blocked."
-    )
+    print("Invalid voice profile ID " "successfully blocked.")
 else:
-    raise AssertionError(
-        "Voice profile without prefix "
-        "should fail."
-    )
+    raise AssertionError("Voice profile without prefix " "should fail.")
 
 
 try:
@@ -202,15 +142,9 @@ try:
         speed=2.5,
     )
 except ValueError:
-    print(
-        "Invalid voice speed "
-        "successfully blocked."
-    )
+    print("Invalid voice speed " "successfully blocked.")
 else:
-    raise AssertionError(
-        "Voice speed above limit "
-        "should fail."
-    )
+    raise AssertionError("Voice speed above limit " "should fail.")
 
 
 try:
@@ -218,14 +152,9 @@ try:
         duration_seconds=1.0,
     )
 except ValueError:
-    print(
-        "Pause without location "
-        "successfully blocked."
-    )
+    print("Pause without location " "successfully blocked.")
 else:
-    raise AssertionError(
-        "Pause requires a location."
-    )
+    raise AssertionError("Pause requires a location.")
 
 
 try:
@@ -243,15 +172,9 @@ try:
         ],
     )
 except ValueError:
-    print(
-        "Duplicate pronunciation "
-        "successfully blocked."
-    )
+    print("Duplicate pronunciation " "successfully blocked.")
 else:
-    raise AssertionError(
-        "Duplicate pronunciation "
-        "directives should fail."
-    )
+    raise AssertionError("Duplicate pronunciation " "directives should fail.")
 
 
 try:
@@ -259,32 +182,18 @@ try:
         preferred_output_format="exe",
     )
 except ValueError:
-    print(
-        "Invalid voice format "
-        "successfully blocked."
-    )
+    print("Invalid voice format " "successfully blocked.")
 else:
-    raise AssertionError(
-        "Unsupported audio format "
-        "should fail."
-    )
+    raise AssertionError("Unsupported audio format " "should fail.")
 
 
 serialized = directives.model_dump_json()
 
-restored = (
-    SceneVoiceDirectives
-    .model_validate_json(
-        serialized
-    )
-)
+restored = SceneVoiceDirectives.model_validate_json(serialized)
 
 assert restored == directives
 
 assert restored.schema_version == "1.0"
 
 
-print(
-    "Voice Directive model tests "
-    "completed successfully."
-)
+print("Voice Directive model tests " "completed successfully.")

@@ -29,16 +29,10 @@ def create_provider_adapter(
     if settings.MISSION_AUTOMATION_DRY_RUN:
         return DryRunProviderAdapter()
 
-    normalized_api_key = (
-        api_key.strip()
-        if api_key is not None
-        else ""
-    )
+    normalized_api_key = api_key.strip() if api_key is not None else ""
 
     if not normalized_api_key:
-        raise ValueError(
-            f"{provider.value} provider requires an API key."
-        )
+        raise ValueError(f"{provider.value} provider requires an API key.")
 
     if provider == LLMProvider.OPENAI:
         return OpenAIProviderAdapter(
@@ -55,6 +49,4 @@ def create_provider_adapter(
             api_key=normalized_api_key,
         )
 
-    raise ValueError(
-        f"Unsupported LLM provider: {provider}"
-    )
+    raise ValueError(f"Unsupported LLM provider: {provider}")

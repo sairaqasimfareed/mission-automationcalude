@@ -5,7 +5,10 @@ import pytest
 from src.models.advanced_settings import AdvancedSettings
 from src.models.audience_settings import AudienceSettings
 from src.models.budget_settings import BudgetSettings
-from src.models.duration_config import DurationConfig
+from src.models.duration_config import (
+    DurationConfig,
+    DurationMode,
+)
 from src.models.enums import (
     JobStatus,
     Platform,
@@ -13,10 +16,6 @@ from src.models.enums import (
     WorkflowStage,
 )
 from src.models.general_settings import GeneralSettings
-from src.models.duration_config import (
-    DurationConfig,
-    DurationMode,
-)
 from src.models.media_strategy import (
     SceneSourceType,
     VisualStrategy,
@@ -29,7 +28,11 @@ from src.models.project_specification import ProjectSpecification
 from src.models.provider_preferences import ProviderPreferences
 from src.models.specification_enums import (
     QualityMode,
+)
+from src.models.specification_enums import (
     VisualStrategy as SpecificationVisualStrategy,
+)
+from src.models.specification_enums import (
     VoiceStrategy as SpecificationVoiceStrategy,
 )
 from src.models.upload_settings import (
@@ -49,9 +52,7 @@ def build_specification(
     *,
     platform: UploadPlatform = UploadPlatform.YOUTUBE,
     quality_mode: QualityMode = QualityMode.PREMIUM,
-    visual_strategy: SpecificationVisualStrategy = (
-        SpecificationVisualStrategy.HYBRID
-    ),
+    visual_strategy: SpecificationVisualStrategy = (SpecificationVisualStrategy.HYBRID),
     voice_strategy: SpecificationVoiceStrategy = (
         SpecificationVoiceStrategy.MANUAL_UPLOAD
     ),
@@ -69,7 +70,10 @@ def build_specification(
                 "mystery",
             ],
         ),
-        duration=DurationConfig(mode=DurationMode.EXACT,target_duration_seconds=300,),
+        duration=DurationConfig(
+            mode=DurationMode.EXACT,
+            target_duration_seconds=300,
+        ),
         audience=AudienceSettings(
             language="English",
             target_country="United Kingdom",
@@ -84,16 +88,13 @@ def build_specification(
             allow_manual_upload=True,
             allow_image_to_video=True,
             allow_ai_video_generation=(
-                visual_strategy
-                == SpecificationVisualStrategy.AI_VIDEO
+                visual_strategy == SpecificationVisualStrategy.AI_VIDEO
             ),
         ),
         voice=VoiceSettings(
             strategy=voice_strategy,
             manual_voice_file=manual_voice_file,
-            preferred_provider_profile_id=(
-                preferred_voice_provider_profile_id
-            ),
+            preferred_provider_profile_id=(preferred_voice_provider_profile_id),
         ),
         music=MusicSettings(),
         providers=ProviderPreferences(),
@@ -286,9 +287,7 @@ def test_rejects_ai_video_until_runtime_support_exists() -> None:
     mapper = ProjectSpecificationJobMapper()
 
     specification = build_specification(
-        visual_strategy=(
-            SpecificationVisualStrategy.AI_VIDEO
-        ),
+        visual_strategy=(SpecificationVisualStrategy.AI_VIDEO),
     )
 
     with pytest.raises(
@@ -306,9 +305,7 @@ def test_maps_manual_voice_without_file_to_waiting() -> None:
 
     job = mapper.map(
         build_specification(
-            voice_strategy=(
-                SpecificationVoiceStrategy.MANUAL_UPLOAD
-            ),
+            voice_strategy=(SpecificationVoiceStrategy.MANUAL_UPLOAD),
             manual_voice_file=None,
         ),
         niche="Automation",
@@ -325,22 +322,15 @@ def test_maps_manual_voice_with_file_to_ready() -> None:
 
     job = mapper.map(
         build_specification(
-            voice_strategy=(
-                SpecificationVoiceStrategy.MANUAL_UPLOAD
-            ),
-            manual_voice_file=(
-                "assets/audio/manual_voice.wav"
-            ),
+            voice_strategy=(SpecificationVoiceStrategy.MANUAL_UPLOAD),
+            manual_voice_file=("assets/audio/manual_voice.wav"),
         ),
         niche="Automation",
     )
 
     assert job.voice_strategy == VoiceStrategy.MANUAL_UPLOAD
     assert job.voice_status == VoiceStatus.READY
-    assert (
-        job.voice_file
-        == "assets/audio/manual_voice.wav"
-    )
+    assert job.voice_file == "assets/audio/manual_voice.wav"
 
 
 def test_maps_auto_generated_voice_to_pending() -> None:
@@ -348,12 +338,8 @@ def test_maps_auto_generated_voice_to_pending() -> None:
 
     job = mapper.map(
         build_specification(
-            voice_strategy=(
-                SpecificationVoiceStrategy.AUTO_GENERATE
-            ),
-            preferred_voice_provider_profile_id=(
-                "voice-provider-profile"
-            ),
+            voice_strategy=(SpecificationVoiceStrategy.AUTO_GENERATE),
+            preferred_voice_provider_profile_id=("voice-provider-profile"),
         ),
         niche="Automation",
     )
@@ -405,26 +391,17 @@ def test_result_survives_json_round_trip() -> None:
         build_specification(
             platform=UploadPlatform.FACEBOOK,
             quality_mode=QualityMode.PREMIUM,
-            visual_strategy=(
-                SpecificationVisualStrategy.STOCK_FOOTAGE
-            ),
-            voice_strategy=(
-                SpecificationVoiceStrategy.MANUAL_UPLOAD
-            ),
+            visual_strategy=(SpecificationVisualStrategy.STOCK_FOOTAGE),
+            voice_strategy=(SpecificationVoiceStrategy.MANUAL_UPLOAD),
         ),
         niche="Documentary",
     )
 
     serialized = job.model_dump_json()
 
-    restored = type(job).model_validate_json(
-        serialized
-    )
+    restored = type(job).model_validate_json(serialized)
 
     assert restored == job
     assert restored.platform == Platform.FACEBOOK
     assert restored.visual_strategy == VisualStrategy.ALL_STOCK
-    assert (
-        restored.default_visual_source
-        == SceneSourceType.STOCK_FOOTAGE
-    )
+    assert restored.default_visual_source == SceneSourceType.STOCK_FOOTAGE

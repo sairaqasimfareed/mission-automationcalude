@@ -49,10 +49,7 @@ class DummyStockSearch(
                 asset_type=AssetType.VIDEO,
                 provider="Pexels",
                 title=query,
-                file_url=(
-                    "https://example.com/"
-                    "legacy-video.mp4"
-                ),
+                file_url=("https://example.com/" "legacy-video.mp4"),
                 license_type="royalty_free",
                 duration_seconds=8,
                 resolution="1920x1080",
@@ -69,9 +66,7 @@ class FakeDownloadStream(BytesIO):
 
         self.headers = {
             "Content-Type": "video/mp4",
-            "Content-Length": str(
-                len(content)
-            ),
+            "Content-Length": str(len(content)),
         }
 
 
@@ -82,24 +77,17 @@ def successful_opener(
     assert source_url.endswith(".mp4")
     assert timeout_seconds > 0
 
-    return FakeDownloadStream(
-        b"approved-stock-video"
-    )
+    return FakeDownloadStream(b"approved-stock-video")
 
 
 scene = Scene(
     scene_number=1,
     title="Roman Soldiers",
-    narration=(
-        "Roman soldiers march through "
-        "the ancient city."
-    ),
+    narration=("Roman soldiers march through " "the ancient city."),
     visual_prompt="Roman soldiers marching",
     stock_query="Roman soldiers marching",
     estimated_duration_seconds=8,
-    source_type=(
-        SceneSourceType.STOCK_FOOTAGE
-    ),
+    source_type=(SceneSourceType.STOCK_FOOTAGE),
     status=SceneStatus.READY,
 )
 
@@ -109,14 +97,9 @@ legacy_provider = StockFootageProvider(
     DummyStockSearch(),
 )
 
-legacy_clip = legacy_provider.acquire(
-    scene
-)
+legacy_clip = legacy_provider.acquire(scene)
 
-assert (
-    legacy_clip.status
-    == VideoClipStatus.READY
-)
+assert legacy_clip.status == VideoClipStatus.READY
 assert legacy_clip.source_url is not None
 assert legacy_clip.local_file is None
 assert len(legacy_clip.warnings) == 1
@@ -127,45 +110,30 @@ with TemporaryDirectory() as temporary_directory:
 
     asset_index = AssetIndex()
 
-    acquisition_service = (
-        StockAcquisitionService(
-            download_service=(
-                StockDownloadService(
-                    temporary_directory=(
-                        root / "downloads"
-                    ),
-                    opener=successful_opener,
-                )
-            ),
-            storage_service=(
-                StockAssetStorageService(
-                    storage_root=(
-                        root / "storage"
-                    ),
-                    asset_index=asset_index,
-                )
-            ),
-        )
+    acquisition_service = StockAcquisitionService(
+        download_service=(
+            StockDownloadService(
+                temporary_directory=(root / "downloads"),
+                opener=successful_opener,
+            )
+        ),
+        storage_service=(
+            StockAssetStorageService(
+                storage_root=(root / "storage"),
+                asset_index=asset_index,
+            )
+        ),
     )
 
     provider = StockFootageProvider(
-        asset_search_service=(
-            DummyStockSearch()
-        ),
-        stock_acquisition_service=(
-            acquisition_service
-        ),
+        asset_search_service=(DummyStockSearch()),
+        stock_acquisition_service=(acquisition_service),
     )
 
     candidate = AssetCandidate(
         title="Roman Soldiers Marching",
-        source_type=(
-            SceneSourceType.STOCK_FOOTAGE
-        ),
-        source_url=(
-            "https://example.com/"
-            "roman-soldiers.mp4"
-        ),
+        source_type=(SceneSourceType.STOCK_FOOTAGE),
+        source_url=("https://example.com/" "roman-soldiers.mp4"),
         provider="Pexels",
         provider_asset_id="pexels-001",
         license_type="royalty_free",
@@ -181,9 +149,7 @@ with TemporaryDirectory() as temporary_directory:
         candidate=candidate,
     )
 
-    selected_clip = provider.acquire_selected(
-        request
-    )
+    selected_clip = provider.acquire_selected(request)
 
     print(
         "Selected provider:",
@@ -195,53 +161,31 @@ with TemporaryDirectory() as temporary_directory:
         selected_clip.local_file,
     )
 
-    assert (
-        selected_clip.status
-        == VideoClipStatus.READY
-    )
+    assert selected_clip.status == VideoClipStatus.READY
 
     assert selected_clip.local_file is not None
-    assert Path(
-        selected_clip.local_file
-    ).exists()
+    assert Path(selected_clip.local_file).exists()
 
     assert len(asset_index.assets) == 1
 
 
 try:
-    StockFootageProvider(
-        DummyStockSearch()
-    ).acquire_selected(
+    StockFootageProvider(DummyStockSearch()).acquire_selected(
         StockAcquisitionRequest(
             project_id="history-project",
             scene=scene,
             candidate=AssetCandidate(
                 title="Approved Candidate",
-                source_type=(
-                    SceneSourceType
-                    .STOCK_FOOTAGE
-                ),
-                source_url=(
-                    "https://example.com/"
-                    "candidate.mp4"
-                ),
+                source_type=(SceneSourceType.STOCK_FOOTAGE),
+                source_url=("https://example.com/" "candidate.mp4"),
                 approved=True,
             ),
         )
     )
 except RuntimeError:
-    print(
-        "Missing acquisition service "
-        "successfully blocked."
-    )
+    print("Missing acquisition service " "successfully blocked.")
 else:
-    raise AssertionError(
-        "Provider without acquisition service "
-        "should fail."
-    )
+    raise AssertionError("Provider without acquisition service " "should fail.")
 
 
-print(
-    "Stock Footage Provider Integration "
-    "tests completed successfully."
-)
+print("Stock Footage Provider Integration " "tests completed successfully.")

@@ -18,7 +18,6 @@ from src.models.render_progress import (
 )
 from src.shared.logger import logger
 
-
 ProgressCallback = Callable[
     [RenderProgress],
     None,
@@ -57,32 +56,18 @@ class FFmpegExecutionService:
     def __init__(
         self,
         *,
-        default_timeout_seconds: float = (
-            DEFAULT_TIMEOUT_SECONDS
-        ),
-        terminate_grace_seconds: float = (
-            TERMINATE_GRACE_SECONDS
-        ),
+        default_timeout_seconds: float = (DEFAULT_TIMEOUT_SECONDS),
+        terminate_grace_seconds: float = (TERMINATE_GRACE_SECONDS),
     ) -> None:
         if default_timeout_seconds <= 0.0:
-            raise ValueError(
-                "FFmpeg execution timeout "
-                "must be positive."
-            )
+            raise ValueError("FFmpeg execution timeout " "must be positive.")
 
         if terminate_grace_seconds <= 0.0:
-            raise ValueError(
-                "FFmpeg termination grace period "
-                "must be positive."
-            )
+            raise ValueError("FFmpeg termination grace period " "must be positive.")
 
-        self._default_timeout_seconds = (
-            default_timeout_seconds
-        )
+        self._default_timeout_seconds = default_timeout_seconds
 
-        self._terminate_grace_seconds = (
-            terminate_grace_seconds
-        )
+        self._terminate_grace_seconds = terminate_grace_seconds
 
     def execute(
         self,
@@ -90,12 +75,8 @@ class FFmpegExecutionService:
         *,
         total_duration_seconds: float,
         timeout_seconds: float | None = None,
-        progress_callback: (
-            ProgressCallback | None
-        ) = None,
-        cancellation_check: (
-            CancellationCheck | None
-        ) = None,
+        progress_callback: ProgressCallback | None = None,
+        cancellation_check: CancellationCheck | None = None,
     ) -> FFmpegExecutionResult:
         """
         Execute FFmpeg and return its normalized result.
@@ -106,10 +87,7 @@ class FFmpegExecutionService:
         """
 
         if total_duration_seconds <= 0.0:
-            raise ValueError(
-                "FFmpeg execution requires "
-                "positive total duration."
-            )
+            raise ValueError("FFmpeg execution requires " "positive total duration.")
 
         effective_timeout = (
             self._default_timeout_seconds
@@ -118,31 +96,17 @@ class FFmpegExecutionService:
         )
 
         if effective_timeout <= 0.0:
-            raise ValueError(
-                "FFmpeg execution timeout "
-                "must be positive."
-            )
+            raise ValueError("FFmpeg execution timeout " "must be positive.")
 
-        execution_command = (
-            self._build_execution_command(
-                command_plan
-            )
-        )
+        execution_command = self._build_execution_command(command_plan)
 
-        output_path = Path(
-            command_plan.output_file
-        )
+        output_path = Path(command_plan.output_file)
 
-        self._prepare_output_directory(
-            output_path
-        )
+        self._prepare_output_directory(output_path)
 
         self._cleanup_stale_output(
             output_path=output_path,
-            overwrite_output=(
-                "-y"
-                in command_plan.arguments
-            ),
+            overwrite_output=("-y" in command_plan.arguments),
         )
 
         start_time = time.perf_counter()
@@ -158,21 +122,13 @@ class FFmpegExecutionService:
         progress_lock = threading.Lock()
 
         latest_progress = RenderProgress(
-            status=(
-                RenderProgressStatus.STARTING
-            ),
+            status=(RenderProgressStatus.STARTING),
             progress_percent=0.0,
             elapsed_seconds=0.0,
             processed_duration_seconds=0.0,
-            total_duration_seconds=(
-                total_duration_seconds
-            ),
-            remaining_seconds=(
-                total_duration_seconds
-            ),
-            message=(
-                "Starting FFmpeg render."
-            ),
+            total_duration_seconds=(total_duration_seconds),
+            remaining_seconds=(total_duration_seconds),
+            message=("Starting FFmpeg render."),
         )
 
         self._emit_progress(
@@ -188,35 +144,21 @@ class FFmpegExecutionService:
         process: subprocess.Popen[str]
 
         try:
-            process = self._start_process(
-                execution_command
-            )
+            process = self._start_process(execution_command)
         except OSError as error:
-            elapsed = (
-                time.perf_counter()
-                - start_time
-            )
+            elapsed = time.perf_counter() - start_time
 
-            message = (
-                "Could not start FFmpeg process: "
-                f"{error}"
-            )
+            message = "Could not start FFmpeg process: " f"{error}"
 
-            failed_progress = (
-                RenderProgress.failed(
-                    elapsed_seconds=elapsed,
-                    progress_percent=0.0,
-                    processed_duration_seconds=0.0,
-                    total_duration_seconds=(
-                        total_duration_seconds
-                    ),
-                    message=message,
-                    metadata={
-                        "failure_stage": (
-                            "process_start"
-                        ),
-                    },
-                )
+            failed_progress = RenderProgress.failed(
+                elapsed_seconds=elapsed,
+                progress_percent=0.0,
+                processed_duration_seconds=0.0,
+                total_duration_seconds=(total_duration_seconds),
+                message=message,
+                metadata={
+                    "failure_stage": ("process_start"),
+                },
             )
 
             self._emit_progress(
@@ -230,9 +172,7 @@ class FFmpegExecutionService:
             )
 
             return FFmpegExecutionResult.failed(
-                status=(
-                    FFmpegExecutionStatus.FAILED
-                ),
+                status=(FFmpegExecutionStatus.FAILED),
                 command=execution_command,
                 exit_code=None,
                 elapsed_seconds=elapsed,
@@ -241,64 +181,39 @@ class FFmpegExecutionService:
                 error_message=message,
                 progress=failed_progress,
                 metadata={
-                    "failure_stage": (
-                        "process_start"
-                    ),
+                    "failure_stage": ("process_start"),
                 },
             )
 
-        if (
-            process.stdout is None
-            or process.stderr is None
-        ):
-            self._terminate_process(
-                process
-            )
+        if process.stdout is None or process.stderr is None:
+            self._terminate_process(process)
 
-            elapsed = (
-                time.perf_counter()
-                - start_time
-            )
+            elapsed = time.perf_counter() - start_time
 
-            message = (
-                "FFmpeg process did not expose "
-                "required output streams."
-            )
+            message = "FFmpeg process did not expose " "required output streams."
 
-            failed_progress = (
-                RenderProgress.failed(
-                    elapsed_seconds=elapsed,
-                    progress_percent=0.0,
-                    processed_duration_seconds=0.0,
-                    total_duration_seconds=(
-                        total_duration_seconds
-                    ),
-                    message=message,
-                    metadata={
-                        "failure_stage": (
-                            "stream_setup"
-                        ),
-                    },
-                )
+            failed_progress = RenderProgress.failed(
+                elapsed_seconds=elapsed,
+                progress_percent=0.0,
+                processed_duration_seconds=0.0,
+                total_duration_seconds=(total_duration_seconds),
+                message=message,
+                metadata={
+                    "failure_stage": ("stream_setup"),
+                },
             )
 
             return FFmpegExecutionResult.failed(
-                status=(
-                    FFmpegExecutionStatus.FAILED
-                ),
+                status=(FFmpegExecutionStatus.FAILED),
                 command=execution_command,
-                exit_code=(
-                    process.poll()
-                ),
+                exit_code=(process.poll()),
                 elapsed_seconds=elapsed,
                 stdout="",
                 stderr="",
                 error_message=message,
                 progress=failed_progress,
                 metadata={
-                    "failure_stage": (
-                        "stream_setup"
-                    ),
+                    "failure_stage": ("stream_setup"),
                 },
             )
 
@@ -307,19 +222,11 @@ class FFmpegExecutionService:
             kwargs={
                 "stream": process.stdout,
                 "lines": stdout_lines,
-                "progress_values": (
-                    progress_values
-                ),
-                "progress_lock": (
-                    progress_lock
-                ),
-                "total_duration_seconds": (
-                    total_duration_seconds
-                ),
+                "progress_values": (progress_values),
+                "progress_lock": (progress_lock),
+                "total_duration_seconds": (total_duration_seconds),
                 "start_time": start_time,
-                "progress_callback": (
-                    progress_callback
-                ),
+                "progress_callback": (progress_callback),
             },
             name="ffmpeg-progress-reader",
             daemon=True,
@@ -338,57 +245,35 @@ class FFmpegExecutionService:
         stdout_thread.start()
         stderr_thread.start()
 
-        termination_status: (
-            FFmpegExecutionStatus | None
-        ) = None
+        termination_status: FFmpegExecutionStatus | None = None
 
         termination_message: str | None = None
 
         try:
             while True:
-                return_code = (
-                    process.poll()
-                )
+                return_code = process.poll()
 
                 if return_code is not None:
                     break
 
-                elapsed = (
-                    time.perf_counter()
-                    - start_time
-                )
+                elapsed = time.perf_counter() - start_time
 
-                if (
-                    cancellation_check
-                    is not None
-                    and cancellation_check()
-                ):
-                    termination_status = (
-                        FFmpegExecutionStatus
-                        .CANCELLED
-                    )
+                if cancellation_check is not None and cancellation_check():
+                    termination_status = FFmpegExecutionStatus.CANCELLED
 
-                    termination_message = (
-                        "FFmpeg render was "
-                        "cancelled."
-                    )
+                    termination_message = "FFmpeg render was " "cancelled."
 
                     logger.warning(
                         "%s",
                         termination_message,
                     )
 
-                    self._terminate_process(
-                        process
-                    )
+                    self._terminate_process(process)
 
                     break
 
                 if elapsed >= effective_timeout:
-                    termination_status = (
-                        FFmpegExecutionStatus
-                        .TIMED_OUT
-                    )
+                    termination_status = FFmpegExecutionStatus.TIMED_OUT
 
                     termination_message = (
                         "FFmpeg render exceeded "
@@ -402,120 +287,58 @@ class FFmpegExecutionService:
                         termination_message,
                     )
 
-                    self._terminate_process(
-                        process
-                    )
+                    self._terminate_process(process)
 
                     break
 
-                time.sleep(
-                    self.POLL_INTERVAL_SECONDS
-                )
+                time.sleep(self.POLL_INTERVAL_SECONDS)
 
         except BaseException:
-            self._terminate_process(
-                process
-            )
+            self._terminate_process(process)
 
             raise
 
         finally:
-            stdout_thread.join(
-                timeout=(
-                    self._terminate_grace_seconds
-                )
-            )
+            stdout_thread.join(timeout=(self._terminate_grace_seconds))
 
-            stderr_thread.join(
-                timeout=(
-                    self._terminate_grace_seconds
-                )
-            )
+            stderr_thread.join(timeout=(self._terminate_grace_seconds))
 
-        elapsed = (
-            time.perf_counter()
-            - start_time
-        )
+        elapsed = time.perf_counter() - start_time
 
-        stdout_text = "\n".join(
-            stdout_lines
-        ).strip()
+        stdout_text = "\n".join(stdout_lines).strip()
 
-        stderr_text = "\n".join(
-            stderr_lines
-        ).strip()
+        stderr_text = "\n".join(stderr_lines).strip()
 
         exit_code = process.poll()
 
         with progress_lock:
-            progress_snapshot = dict(
-                progress_values
-            )
+            progress_snapshot = dict(progress_values)
 
-        processed_seconds = (
-            self._extract_processed_seconds(
-                progress_snapshot
-            )
+        processed_seconds = self._extract_processed_seconds(progress_snapshot)
+
+        frame = self._parse_optional_int(progress_snapshot.get("frame"))
+
+        fps = self._parse_optional_float(progress_snapshot.get("fps"))
+
+        speed = self._parse_speed(progress_snapshot.get("speed"))
+
+        bitrate_kbps = self._parse_bitrate_kbps(progress_snapshot.get("bitrate"))
+
+        output_size_bytes = self._parse_optional_int(
+            progress_snapshot.get("total_size")
         )
 
-        frame = self._parse_optional_int(
-            progress_snapshot.get(
-                "frame"
-            )
-        )
-
-        fps = self._parse_optional_float(
-            progress_snapshot.get(
-                "fps"
-            )
-        )
-
-        speed = self._parse_speed(
-            progress_snapshot.get(
-                "speed"
-            )
-        )
-
-        bitrate_kbps = (
-            self._parse_bitrate_kbps(
-                progress_snapshot.get(
-                    "bitrate"
-                )
-            )
-        )
-
-        output_size_bytes = (
-            self._parse_optional_int(
-                progress_snapshot.get(
-                    "total_size"
-                )
-            )
-        )
-
-        progress_percent = (
-            self._progress_percent(
-                processed_seconds=(
-                    processed_seconds
-                ),
-                total_duration_seconds=(
-                    total_duration_seconds
-                ),
-            )
+        progress_percent = self._progress_percent(
+            processed_seconds=(processed_seconds),
+            total_duration_seconds=(total_duration_seconds),
         )
 
         if termination_status is not None:
             failed_progress = RenderProgress(
                 status=(
                     RenderProgressStatus.CANCELLED
-                    if (
-                        termination_status
-                        == FFmpegExecutionStatus
-                        .CANCELLED
-                    )
-                    else (
-                        RenderProgressStatus
-                        .TIMED_OUT
-                    )
+                    if (termination_status == FFmpegExecutionStatus.CANCELLED)
+                    else (RenderProgressStatus.TIMED_OUT)
                 ),
                 progress_percent=min(
                     progress_percent,
@@ -524,43 +347,26 @@ class FFmpegExecutionService:
                 elapsed_seconds=elapsed,
                 processed_duration_seconds=min(
                     processed_seconds,
-                    (
-                        total_duration_seconds
-                        + 0.5
-                    ),
+                    (total_duration_seconds + 0.5),
                 ),
-                total_duration_seconds=(
-                    total_duration_seconds
-                ),
+                total_duration_seconds=(total_duration_seconds),
                 remaining_seconds=max(
                     0.0,
-                    total_duration_seconds
-                    - processed_seconds,
+                    total_duration_seconds - processed_seconds,
                 ),
                 speed=speed,
                 frame=frame,
                 fps=fps,
-                bitrate_kbps=(
-                    bitrate_kbps
-                ),
-                output_size_bytes=(
-                    output_size_bytes
-                ),
-                message=(
-                    termination_message
-                ),
+                bitrate_kbps=(bitrate_kbps),
+                output_size_bytes=(output_size_bytes),
+                message=(termination_message),
                 metadata={
                     "failure_stage": (
                         "cancelled"
-                        if (
-                            termination_status
-                            == FFmpegExecutionStatus.CANCELLED
-                        )
+                        if (termination_status == FFmpegExecutionStatus.CANCELLED)
                         else "timeout"
                     ),
-                    "progress": (
-                        progress_snapshot
-                    ),
+                    "progress": (progress_snapshot),
                 },
             )
 
@@ -577,65 +383,39 @@ class FFmpegExecutionService:
                 stdout=stdout_text,
                 stderr=stderr_text,
                 error_message=(
-                    termination_message
-                    or (
-                        "FFmpeg execution "
-                        "was interrupted."
-                    )
+                    termination_message or ("FFmpeg execution " "was interrupted.")
                 ),
                 progress=failed_progress,
                 metadata={
                     "failure_stage": (
                         "cancelled"
-                        if (
-                            termination_status
-                            == FFmpegExecutionStatus.CANCELLED
-                        )
+                        if (termination_status == FFmpegExecutionStatus.CANCELLED)
                         else "timeout"
                     ),
-                    "progress": (
-                        progress_snapshot
-                    ),
-                    "timeout_seconds": (
-                        effective_timeout
-                    ),
+                    "progress": (progress_snapshot),
+                    "timeout_seconds": (effective_timeout),
                 },
             )
 
         if exit_code != 0:
-            error_message = (
-                self._execution_error_message(
-                    exit_code=exit_code,
-                    stderr=stderr_text,
-                )
+            error_message = self._execution_error_message(
+                exit_code=exit_code,
+                stderr=stderr_text,
             )
 
-            failed_progress = (
-                RenderProgress.failed(
-                    elapsed_seconds=elapsed,
-                    progress_percent=(
-                        progress_percent
-                    ),
-                    processed_duration_seconds=min(
-                        processed_seconds,
-                        (
-                            total_duration_seconds
-                            + 0.5
-                        ),
-                    ),
-                    total_duration_seconds=(
-                        total_duration_seconds
-                    ),
-                    message=error_message,
-                    metadata={
-                        "failure_stage": (
-                            "ffmpeg_exit"
-                        ),
-                        "progress": (
-                            progress_snapshot
-                        ),
-                    },
-                )
+            failed_progress = RenderProgress.failed(
+                elapsed_seconds=elapsed,
+                progress_percent=(progress_percent),
+                processed_duration_seconds=min(
+                    processed_seconds,
+                    (total_duration_seconds + 0.5),
+                ),
+                total_duration_seconds=(total_duration_seconds),
+                message=error_message,
+                metadata={
+                    "failure_stage": ("ffmpeg_exit"),
+                    "progress": (progress_snapshot),
+                },
             )
 
             self._emit_progress(
@@ -644,31 +424,22 @@ class FFmpegExecutionService:
             )
 
             logger.error(
-                "FFmpeg render failed with "
-                "exit code %s.",
+                "FFmpeg render failed with " "exit code %s.",
                 exit_code,
             )
 
             return FFmpegExecutionResult.failed(
-                status=(
-                    FFmpegExecutionStatus.FAILED
-                ),
+                status=(FFmpegExecutionStatus.FAILED),
                 command=execution_command,
                 exit_code=exit_code,
                 elapsed_seconds=elapsed,
                 stdout=stdout_text,
                 stderr=stderr_text,
-                error_message=(
-                    error_message
-                ),
+                error_message=(error_message),
                 progress=failed_progress,
                 metadata={
-                    "failure_stage": (
-                        "ffmpeg_exit"
-                    ),
-                    "progress": (
-                        progress_snapshot
-                    ),
+                    "failure_stage": ("ffmpeg_exit"),
+                    "progress": (progress_snapshot),
                 },
             )
 
@@ -680,33 +451,22 @@ class FFmpegExecutionService:
                 f"{output_path.as_posix()}."
             )
 
-            failed_progress = (
-                RenderProgress.failed(
-                    elapsed_seconds=elapsed,
-                    progress_percent=min(
-                        progress_percent,
-                        99.999,
-                    ),
-                    processed_duration_seconds=min(
-                        processed_seconds,
-                        (
-                            total_duration_seconds
-                            + 0.5
-                        ),
-                    ),
-                    total_duration_seconds=(
-                        total_duration_seconds
-                    ),
-                    message=error_message,
-                    metadata={
-                        "failure_stage": (
-                            "output_presence"
-                        ),
-                        "progress": (
-                            progress_snapshot
-                        ),
-                    },
-                )
+            failed_progress = RenderProgress.failed(
+                elapsed_seconds=elapsed,
+                progress_percent=min(
+                    progress_percent,
+                    99.999,
+                ),
+                processed_duration_seconds=min(
+                    processed_seconds,
+                    (total_duration_seconds + 0.5),
+                ),
+                total_duration_seconds=(total_duration_seconds),
+                message=error_message,
+                metadata={
+                    "failure_stage": ("output_presence"),
+                    "progress": (progress_snapshot),
+                },
             )
 
             self._emit_progress(
@@ -715,25 +475,17 @@ class FFmpegExecutionService:
             )
 
             return FFmpegExecutionResult.failed(
-                status=(
-                    FFmpegExecutionStatus.FAILED
-                ),
+                status=(FFmpegExecutionStatus.FAILED),
                 command=execution_command,
                 exit_code=exit_code,
                 elapsed_seconds=elapsed,
                 stdout=stdout_text,
                 stderr=stderr_text,
-                error_message=(
-                    error_message
-                ),
+                error_message=(error_message),
                 progress=failed_progress,
                 metadata={
-                    "failure_stage": (
-                        "output_presence"
-                    ),
-                    "progress": (
-                        progress_snapshot
-                    ),
+                    "failure_stage": ("output_presence"),
+                    "progress": (progress_snapshot),
                 },
             )
 
@@ -744,133 +496,87 @@ class FFmpegExecutionService:
                 f"{output_path.as_posix()}."
             )
 
-            failed_progress = (
-                RenderProgress.failed(
-                    elapsed_seconds=elapsed,
-                    progress_percent=min(
-                        progress_percent,
-                        99.999,
-                    ),
-                    processed_duration_seconds=min(
-                        processed_seconds,
-                        (
-                            total_duration_seconds
-                            + 0.5
-                        ),
-                    ),
-                    total_duration_seconds=(
-                        total_duration_seconds
-                    ),
-                    message=error_message,
-                    metadata={
-                        "failure_stage": (
-                            "output_type"
-                        ),
-                    },
-                )
+            failed_progress = RenderProgress.failed(
+                elapsed_seconds=elapsed,
+                progress_percent=min(
+                    progress_percent,
+                    99.999,
+                ),
+                processed_duration_seconds=min(
+                    processed_seconds,
+                    (total_duration_seconds + 0.5),
+                ),
+                total_duration_seconds=(total_duration_seconds),
+                message=error_message,
+                metadata={
+                    "failure_stage": ("output_type"),
+                },
             )
 
             return FFmpegExecutionResult.failed(
-                status=(
-                    FFmpegExecutionStatus.FAILED
-                ),
+                status=(FFmpegExecutionStatus.FAILED),
                 command=execution_command,
                 exit_code=exit_code,
                 elapsed_seconds=elapsed,
                 stdout=stdout_text,
                 stderr=stderr_text,
-                error_message=(
-                    error_message
-                ),
+                error_message=(error_message),
                 progress=failed_progress,
                 metadata={
-                    "failure_stage": (
-                        "output_type"
-                    ),
+                    "failure_stage": ("output_type"),
                 },
             )
 
-        actual_output_size = (
-            output_path.stat().st_size
-        )
+        actual_output_size = output_path.stat().st_size
 
         if actual_output_size <= 0:
             error_message = (
-                "FFmpeg produced an empty "
-                "output file: "
-                f"{output_path.as_posix()}."
+                "FFmpeg produced an empty " "output file: " f"{output_path.as_posix()}."
             )
 
-            failed_progress = (
-                RenderProgress.failed(
-                    elapsed_seconds=elapsed,
-                    progress_percent=min(
-                        progress_percent,
-                        99.999,
-                    ),
-                    processed_duration_seconds=min(
-                        processed_seconds,
-                        (
-                            total_duration_seconds
-                            + 0.5
-                        ),
-                    ),
-                    total_duration_seconds=(
-                        total_duration_seconds
-                    ),
-                    message=error_message,
-                    metadata={
-                        "failure_stage": (
-                            "output_size"
-                        ),
-                    },
-                )
+            failed_progress = RenderProgress.failed(
+                elapsed_seconds=elapsed,
+                progress_percent=min(
+                    progress_percent,
+                    99.999,
+                ),
+                processed_duration_seconds=min(
+                    processed_seconds,
+                    (total_duration_seconds + 0.5),
+                ),
+                total_duration_seconds=(total_duration_seconds),
+                message=error_message,
+                metadata={
+                    "failure_stage": ("output_size"),
+                },
             )
 
             return FFmpegExecutionResult.failed(
-                status=(
-                    FFmpegExecutionStatus.FAILED
-                ),
+                status=(FFmpegExecutionStatus.FAILED),
                 command=execution_command,
                 exit_code=exit_code,
                 elapsed_seconds=elapsed,
                 stdout=stdout_text,
                 stderr=stderr_text,
-                error_message=(
-                    error_message
-                ),
+                error_message=(error_message),
                 progress=failed_progress,
                 metadata={
-                    "failure_stage": (
-                        "output_size"
-                    ),
+                    "failure_stage": ("output_size"),
                 },
             )
 
-        completed_progress = (
-            RenderProgress.completed(
-                elapsed_seconds=elapsed,
-                processed_duration_seconds=(
-                    total_duration_seconds
-                ),
-                total_duration_seconds=(
-                    total_duration_seconds
-                ),
-                frame=frame,
-                fps=fps,
-                output_size_bytes=(
-                    actual_output_size
-                ),
-                metadata={
-                    "progress": (
-                        progress_snapshot
-                    ),
-                    "speed": speed,
-                    "bitrate_kbps": (
-                        bitrate_kbps
-                    ),
-                },
-            )
+        completed_progress = RenderProgress.completed(
+            elapsed_seconds=elapsed,
+            processed_duration_seconds=(total_duration_seconds),
+            total_duration_seconds=(total_duration_seconds),
+            frame=frame,
+            fps=fps,
+            output_size_bytes=(actual_output_size),
+            metadata={
+                "progress": (progress_snapshot),
+                "speed": speed,
+                "bitrate_kbps": (bitrate_kbps),
+            },
         )
 
         self._emit_progress(
@@ -879,36 +585,23 @@ class FFmpegExecutionService:
         )
 
         logger.info(
-            "FFmpeg render completed in "
-            "%.3f seconds: %s",
+            "FFmpeg render completed in " "%.3f seconds: %s",
             elapsed,
             output_path.as_posix(),
         )
 
         return FFmpegExecutionResult.succeeded(
             command=execution_command,
-            output_file=(
-                output_path.as_posix()
-            ),
-            output_size_bytes=(
-                actual_output_size
-            ),
-            duration_seconds=(
-                total_duration_seconds
-            ),
+            output_file=(output_path.as_posix()),
+            output_size_bytes=(actual_output_size),
+            duration_seconds=(total_duration_seconds),
             elapsed_seconds=elapsed,
             stdout=stdout_text,
             stderr=stderr_text,
-            progress=(
-                completed_progress
-            ),
+            progress=(completed_progress),
             metadata={
-                "progress": (
-                    progress_snapshot
-                ),
-                "reported_output_size_bytes": (
-                    output_size_bytes
-                ),
+                "progress": (progress_snapshot),
+                "reported_output_size_bytes": (output_size_bytes),
             },
         )
 
@@ -923,14 +616,10 @@ class FFmpegExecutionService:
         output path, so progress options are inserted directly before it.
         """
 
-        command = list(
-            command_plan.command
-        )
+        command = list(command_plan.command)
 
         if len(command) < 2:
-            raise ValueError(
-                "FFmpeg command plan is incomplete."
-            )
+            raise ValueError("FFmpeg command plan is incomplete.")
 
         output_argument = command[-1]
 
@@ -956,15 +645,9 @@ class FFmpegExecutionService:
         """
 
         if not output_path.name:
-            raise ValueError(
-                "FFmpeg output path must contain "
-                "a filename."
-            )
+            raise ValueError("FFmpeg output path must contain " "a filename.")
 
-        if (
-            output_path.exists()
-            and output_path.is_dir()
-        ):
+        if output_path.exists() and output_path.is_dir():
             raise ValueError(
                 "FFmpeg output path points to "
                 "an existing directory: "
@@ -973,10 +656,7 @@ class FFmpegExecutionService:
 
         parent = output_path.parent
 
-        if (
-            not str(parent)
-            or str(parent) == "."
-        ):
+        if not str(parent) or str(parent) == ".":
             return
 
         if parent.exists():
@@ -1070,9 +750,7 @@ class FFmpegExecutionService:
         progress_lock: threading.Lock,
         total_duration_seconds: float,
         start_time: float,
-        progress_callback: (
-            ProgressCallback | None
-        ),
+        progress_callback: ProgressCallback | None,
     ) -> None:
         """Consume FFmpeg `-progress pipe:1` records."""
 
@@ -1082,9 +760,7 @@ class FFmpegExecutionService:
             if not line:
                 continue
 
-            lines.append(
-                line
-            )
+            lines.append(line)
 
             if "=" not in line:
                 continue
@@ -1101,25 +777,17 @@ class FFmpegExecutionService:
                 continue
 
             with progress_lock:
-                progress_values[
-                    key
-                ] = value
+                progress_values[key] = value
 
-                snapshot = dict(
-                    progress_values
-                )
+                snapshot = dict(progress_values)
 
             if key != "progress":
                 continue
 
-            progress = (
-                self._progress_from_snapshot(
-                    snapshot=snapshot,
-                    total_duration_seconds=(
-                        total_duration_seconds
-                    ),
-                    start_time=start_time,
-                )
+            progress = self._progress_from_snapshot(
+                snapshot=snapshot,
+                total_duration_seconds=(total_duration_seconds),
+                start_time=start_time,
             )
 
             self._emit_progress(
@@ -1136,14 +804,10 @@ class FFmpegExecutionService:
         """Consume a regular FFmpeg text stream."""
 
         for raw_line in stream:
-            line = raw_line.rstrip(
-                "\r\n"
-            )
+            line = raw_line.rstrip("\r\n")
 
             if line:
-                lines.append(
-                    line
-                )
+                lines.append(line)
 
     def _progress_from_snapshot(
         self,
@@ -1154,25 +818,16 @@ class FFmpegExecutionService:
     ) -> RenderProgress:
         """Convert raw FFmpeg progress values into typed progress."""
 
-        processed_seconds = (
-            self._extract_processed_seconds(
-                snapshot
-            )
-        )
+        processed_seconds = self._extract_processed_seconds(snapshot)
 
         percent = self._progress_percent(
-            processed_seconds=(
-                processed_seconds
-            ),
-            total_duration_seconds=(
-                total_duration_seconds
-            ),
+            processed_seconds=(processed_seconds),
+            total_duration_seconds=(total_duration_seconds),
         )
 
         elapsed = max(
             0.0,
-            time.perf_counter()
-            - start_time,
+            time.perf_counter() - start_time,
         )
 
         raw_progress = (
@@ -1184,9 +839,7 @@ class FFmpegExecutionService:
             .lower()
         )
 
-        status = (
-            RenderProgressStatus.RUNNING
-        )
+        status = RenderProgressStatus.RUNNING
 
         if raw_progress == "end":
             percent = min(
@@ -1196,8 +849,7 @@ class FFmpegExecutionService:
 
         remaining = max(
             0.0,
-            total_duration_seconds
-            - processed_seconds,
+            total_duration_seconds - processed_seconds,
         )
 
         return RenderProgress(
@@ -1209,49 +861,18 @@ class FFmpegExecutionService:
             elapsed_seconds=elapsed,
             processed_duration_seconds=min(
                 processed_seconds,
-                total_duration_seconds
-                + 0.5,
+                total_duration_seconds + 0.5,
             ),
-            total_duration_seconds=(
-                total_duration_seconds
-            ),
+            total_duration_seconds=(total_duration_seconds),
             remaining_seconds=remaining,
-            speed=self._parse_speed(
-                snapshot.get(
-                    "speed"
-                )
-            ),
-            frame=self._parse_optional_int(
-                snapshot.get(
-                    "frame"
-                )
-            ),
-            fps=self._parse_optional_float(
-                snapshot.get(
-                    "fps"
-                )
-            ),
-            bitrate_kbps=(
-                self._parse_bitrate_kbps(
-                    snapshot.get(
-                        "bitrate"
-                    )
-                )
-            ),
-            output_size_bytes=(
-                self._parse_optional_int(
-                    snapshot.get(
-                        "total_size"
-                    )
-                )
-            ),
-            message=(
-                "FFmpeg render is running."
-            ),
+            speed=self._parse_speed(snapshot.get("speed")),
+            frame=self._parse_optional_int(snapshot.get("frame")),
+            fps=self._parse_optional_float(snapshot.get("fps")),
+            bitrate_kbps=(self._parse_bitrate_kbps(snapshot.get("bitrate"))),
+            output_size_bytes=(self._parse_optional_int(snapshot.get("total_size"))),
+            message=("FFmpeg render is running."),
             metadata={
-                "progress_state": (
-                    raw_progress
-                ),
+                "progress_state": (raw_progress),
             },
         )
 
@@ -1266,29 +887,18 @@ class FFmpegExecutionService:
         older builds can expose out_time_ms or formatted out_time.
         """
 
-        out_time_us = (
-            FFmpegExecutionService
-            ._parse_optional_int(
-                values.get(
-                    "out_time_us"
-                )
-            )
+        out_time_us = FFmpegExecutionService._parse_optional_int(
+            values.get("out_time_us")
         )
 
         if out_time_us is not None:
             return max(
                 0.0,
-                out_time_us
-                / 1_000_000.0,
+                out_time_us / 1_000_000.0,
             )
 
-        out_time_ms = (
-            FFmpegExecutionService
-            ._parse_optional_int(
-                values.get(
-                    "out_time_ms"
-                )
-            )
+        out_time_ms = FFmpegExecutionService._parse_optional_int(
+            values.get("out_time_ms")
         )
 
         if out_time_ms is not None:
@@ -1296,21 +906,13 @@ class FFmpegExecutionService:
             # while reporting microsecond-scale values.
             return max(
                 0.0,
-                out_time_ms
-                / 1_000_000.0,
+                out_time_ms / 1_000_000.0,
             )
 
-        out_time = values.get(
-            "out_time"
-        )
+        out_time = values.get("out_time")
 
         if out_time:
-            parsed = (
-                FFmpegExecutionService
-                ._parse_ffmpeg_timestamp(
-                    out_time
-                )
-            )
+            parsed = FFmpegExecutionService._parse_ffmpeg_timestamp(out_time)
 
             if parsed is not None:
                 return parsed
@@ -1325,40 +927,24 @@ class FFmpegExecutionService:
 
         cleaned = value.strip()
 
-        parts = cleaned.split(
-            ":"
-        )
+        parts = cleaned.split(":")
 
         if len(parts) != 3:
             return None
 
         try:
-            hours = float(
-                parts[0]
-            )
+            hours = float(parts[0])
 
-            minutes = float(
-                parts[1]
-            )
+            minutes = float(parts[1])
 
-            seconds = float(
-                parts[2]
-            )
+            seconds = float(parts[2])
         except ValueError:
             return None
 
-        if (
-            hours < 0.0
-            or minutes < 0.0
-            or seconds < 0.0
-        ):
+        if hours < 0.0 or minutes < 0.0 or seconds < 0.0:
             return None
 
-        return (
-            hours * 3600.0
-            + minutes * 60.0
-            + seconds
-        )
+        return hours * 3600.0 + minutes * 60.0 + seconds
 
     @staticmethod
     def _progress_percent(
@@ -1371,11 +957,7 @@ class FFmpegExecutionService:
         if total_duration_seconds <= 0.0:
             return 0.0
 
-        percent = (
-            processed_seconds
-            / total_duration_seconds
-            * 100.0
-        )
+        percent = processed_seconds / total_duration_seconds * 100.0
 
         return min(
             100.0,
@@ -1398,9 +980,7 @@ class FFmpegExecutionService:
             return None
 
         try:
-            return int(
-                cleaned
-            )
+            return int(cleaned)
         except ValueError:
             return None
 
@@ -1417,9 +997,7 @@ class FFmpegExecutionService:
             return None
 
         try:
-            result = float(
-                cleaned
-            )
+            result = float(cleaned)
         except ValueError:
             return None
 
@@ -1435,26 +1013,16 @@ class FFmpegExecutionService:
         if value is None:
             return None
 
-        cleaned = (
-            value.strip()
-            .lower()
-        )
+        cleaned = value.strip().lower()
 
-        if cleaned.endswith(
-            "x"
-        ):
+        if cleaned.endswith("x"):
             cleaned = cleaned[:-1]
 
-        if (
-            not cleaned
-            or cleaned == "n/a"
-        ):
+        if not cleaned or cleaned == "n/a":
             return None
 
         try:
-            result = float(
-                cleaned
-            )
+            result = float(cleaned)
         except ValueError:
             return None
 
@@ -1472,52 +1040,28 @@ class FFmpegExecutionService:
         if value is None:
             return None
 
-        cleaned = (
-            value.strip()
-            .lower()
-        )
+        cleaned = value.strip().lower()
 
-        if (
-            not cleaned
-            or cleaned == "n/a"
-        ):
+        if not cleaned or cleaned == "n/a":
             return None
 
         multiplier = 1.0
 
         if cleaned.endswith("kbits/s"):
-            cleaned = (
-                cleaned.removesuffix(
-                    "kbits/s"
-                )
-                .strip()
-            )
+            cleaned = cleaned.removesuffix("kbits/s").strip()
 
         elif cleaned.endswith("mbits/s"):
-            cleaned = (
-                cleaned.removesuffix(
-                    "mbits/s"
-                )
-                .strip()
-            )
+            cleaned = cleaned.removesuffix("mbits/s").strip()
 
             multiplier = 1000.0
 
         elif cleaned.endswith("bits/s"):
-            cleaned = (
-                cleaned.removesuffix(
-                    "bits/s"
-                )
-                .strip()
-            )
+            cleaned = cleaned.removesuffix("bits/s").strip()
 
             multiplier = 0.001
 
         try:
-            result = (
-                float(cleaned)
-                * multiplier
-            )
+            result = float(cleaned) * multiplier
         except ValueError:
             return None
 
@@ -1550,11 +1094,7 @@ class FFmpegExecutionService:
             )
 
         try:
-            process.wait(
-                timeout=(
-                    self._terminate_grace_seconds
-                )
-            )
+            process.wait(timeout=(self._terminate_grace_seconds))
         except subprocess.TimeoutExpired:
             logger.warning(
                 "FFmpeg did not terminate within %.3f seconds; "
@@ -1585,11 +1125,7 @@ class FFmpegExecutionService:
             )
 
         try:
-            process.wait(
-                timeout=(
-                    self._terminate_grace_seconds
-                )
-            )
+            process.wait(timeout=(self._terminate_grace_seconds))
         except subprocess.TimeoutExpired:
             logger.error(
                 "FFmpeg process remained alive %.3f seconds after kill.",
@@ -1604,9 +1140,7 @@ class FFmpegExecutionService:
         final_exit_code = process.poll()
 
         if final_exit_code is None:
-            logger.error(
-                "FFmpeg process could not be confirmed as terminated."
-            )
+            logger.error("FFmpeg process could not be confirmed as terminated.")
             return
 
         logger.debug(
@@ -1622,44 +1156,23 @@ class FFmpegExecutionService:
     ) -> str:
         """Build concise normalized FFmpeg failure text."""
 
-        code_text = (
-            "unknown"
-            if exit_code is None
-            else str(
-                exit_code
-            )
-        )
+        code_text = "unknown" if exit_code is None else str(exit_code)
 
         cleaned_stderr = stderr.strip()
 
         if not cleaned_stderr:
-            return (
-                "FFmpeg execution failed with "
-                f"exit code {code_text}."
-            )
+            return "FFmpeg execution failed with " f"exit code {code_text}."
 
         stderr_lines = [
-            line.strip()
-            for line
-            in cleaned_stderr.splitlines()
-            if line.strip()
+            line.strip() for line in cleaned_stderr.splitlines() if line.strip()
         ]
 
         if not stderr_lines:
-            return (
-                "FFmpeg execution failed with "
-                f"exit code {code_text}."
-            )
+            return "FFmpeg execution failed with " f"exit code {code_text}."
 
-        last_line = (
-            stderr_lines[-1]
-        )
+        last_line = stderr_lines[-1]
 
-        return (
-            "FFmpeg execution failed with "
-            f"exit code {code_text}: "
-            f"{last_line}"
-        )
+        return "FFmpeg execution failed with " f"exit code {code_text}: " f"{last_line}"
 
     @staticmethod
     def _emit_progress(
@@ -1672,11 +1185,6 @@ class FFmpegExecutionService:
             return
 
         try:
-            callback(
-                progress
-            )
+            callback(progress)
         except Exception:
-            logger.exception(
-                "FFmpeg progress callback "
-                "raised an exception."
-            )
+            logger.exception("FFmpeg progress callback " "raised an exception.")

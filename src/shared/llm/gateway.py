@@ -77,9 +77,7 @@ class LLMGateway:
                 status=LLMCallStatus.CIRCUIT_OPEN,
                 provider=provider,
                 model=model,
-                error_message=(
-                    f"{provider.value} circuit breaker is open."
-                ),
+                error_message=(f"{provider.value} circuit breaker is open."),
             )
             self._log_result(result)
             return result
@@ -128,13 +126,9 @@ class LLMGateway:
                     latency_seconds=time.perf_counter() - started_at,
                     retry_count=retry_count,
                     usage=provider_response.usage,
-                    provider_request_id=(
-                        provider_response.provider_request_id
-                    ),
+                    provider_request_id=(provider_response.provider_request_id),
                     metadata=provider_response.metadata,
-                    error_message=(
-                        f"Malformed JSON response: {error}"
-                    ),
+                    error_message=(f"Malformed JSON response: {error}"),
                 )
                 self._log_result(result)
                 return result
@@ -150,13 +144,10 @@ class LLMGateway:
                     latency_seconds=time.perf_counter() - started_at,
                     retry_count=retry_count,
                     usage=provider_response.usage,
-                    provider_request_id=(
-                        provider_response.provider_request_id
-                    ),
+                    provider_request_id=(provider_response.provider_request_id),
                     metadata=provider_response.metadata,
                     error_message=(
-                        "Expected a JSON object but received "
-                        "another JSON type."
+                        "Expected a JSON object but received " "another JSON type."
                     ),
                 )
                 self._log_result(result)
@@ -175,9 +166,7 @@ class LLMGateway:
             latency_seconds=time.perf_counter() - started_at,
             retry_count=retry_count,
             usage=provider_response.usage,
-            provider_request_id=(
-                provider_response.provider_request_id
-            ),
+            provider_request_id=(provider_response.provider_request_id),
             metadata=provider_response.metadata,
         )
 

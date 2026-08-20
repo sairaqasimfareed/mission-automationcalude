@@ -30,9 +30,7 @@ class RenderProgress(MissionBaseModel):
 
     schema_version: str = "1.0"
 
-    status: RenderProgressStatus = (
-        RenderProgressStatus.PENDING
-    )
+    status: RenderProgressStatus = RenderProgressStatus.PENDING
 
     progress_percent: float = Field(
         default=0.0,
@@ -109,16 +107,13 @@ class RenderProgress(MissionBaseModel):
         self,
     ) -> RenderProgress:
         if (
-            self.total_duration_seconds
-            is not None
-            and self.processed_duration_seconds
-            > self.total_duration_seconds
+            self.total_duration_seconds is not None
+            and self.processed_duration_seconds > self.total_duration_seconds
         ):
             tolerance_seconds = 0.5
 
             if (
-                self.processed_duration_seconds
-                - self.total_duration_seconds
+                self.processed_duration_seconds - self.total_duration_seconds
                 > tolerance_seconds
             ):
                 raise ValueError(
@@ -126,25 +121,16 @@ class RenderProgress(MissionBaseModel):
                     "materially exceed total duration."
                 )
 
-        if (
-            self.remaining_seconds is not None
-            and self.total_duration_seconds is None
-        ):
+        if self.remaining_seconds is not None and self.total_duration_seconds is None:
             raise ValueError(
-                "Remaining render time requires "
-                "a known total duration."
+                "Remaining render time requires " "a known total duration."
             )
 
         if (
-            self.status
-            == RenderProgressStatus.COMPLETED
-            and self.progress_percent
-            != 100.0
+            self.status == RenderProgressStatus.COMPLETED
+            and self.progress_percent != 100.0
         ):
-            raise ValueError(
-                "Completed render progress must "
-                "report 100 percent."
-            )
+            raise ValueError("Completed render progress must " "report 100 percent.")
 
         if (
             self.status
@@ -153,8 +139,7 @@ class RenderProgress(MissionBaseModel):
                 RenderProgressStatus.CANCELLED,
                 RenderProgressStatus.TIMED_OUT,
             }
-            and self.progress_percent
-            >= 100.0
+            and self.progress_percent >= 100.0
         ):
             raise ValueError(
                 "Failed, cancelled, or timed-out "
@@ -179,10 +164,7 @@ class RenderProgress(MissionBaseModel):
     def is_successful_terminal(self) -> bool:
         """Return whether rendering finished successfully."""
 
-        return (
-            self.status
-            == RenderProgressStatus.COMPLETED
-        )
+        return self.status == RenderProgressStatus.COMPLETED
 
     @classmethod
     def completed(
@@ -199,27 +181,16 @@ class RenderProgress(MissionBaseModel):
         """Build a completed render progress snapshot."""
 
         return cls(
-            status=(
-                RenderProgressStatus.COMPLETED
-            ),
+            status=(RenderProgressStatus.COMPLETED),
             progress_percent=100.0,
             elapsed_seconds=elapsed_seconds,
-            processed_duration_seconds=(
-                processed_duration_seconds
-            ),
-            total_duration_seconds=(
-                total_duration_seconds
-            ),
+            processed_duration_seconds=(processed_duration_seconds),
+            total_duration_seconds=(total_duration_seconds),
             remaining_seconds=0.0,
             frame=frame,
             fps=fps,
-            output_size_bytes=(
-                output_size_bytes
-            ),
-            metadata=(
-                metadata
-                or {}
-            ),
+            output_size_bytes=(output_size_bytes),
+            metadata=(metadata or {}),
         )
 
     @classmethod
@@ -235,38 +206,24 @@ class RenderProgress(MissionBaseModel):
     ) -> RenderProgress:
         """Build a failed render progress snapshot."""
 
-        remaining_seconds: (
-            float | None
-        ) = None
+        remaining_seconds: float | None = None
 
         if total_duration_seconds is not None:
             remaining_seconds = max(
                 0.0,
-                total_duration_seconds
-                - processed_duration_seconds,
+                total_duration_seconds - processed_duration_seconds,
             )
 
         return cls(
-            status=(
-                RenderProgressStatus.FAILED
-            ),
+            status=(RenderProgressStatus.FAILED),
             progress_percent=min(
                 progress_percent,
                 99.999,
             ),
             elapsed_seconds=elapsed_seconds,
-            processed_duration_seconds=(
-                processed_duration_seconds
-            ),
-            total_duration_seconds=(
-                total_duration_seconds
-            ),
-            remaining_seconds=(
-                remaining_seconds
-            ),
+            processed_duration_seconds=(processed_duration_seconds),
+            total_duration_seconds=(total_duration_seconds),
+            remaining_seconds=(remaining_seconds),
             message=message,
-            metadata=(
-                metadata
-                or {}
-            ),
+            metadata=(metadata or {}),
         )

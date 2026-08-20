@@ -31,31 +31,22 @@ def build_success_result(
 ) -> VoiceGenerationResult:
     track = AudioTrack(
         track_type=AudioTrackType.VOICEOVER,
-        source_file=(
-            "outputs/audio/"
-            f"{file_name}"
-        ),
-        start_time_seconds=(
-            start_time_seconds
-        ),
+        source_file=("outputs/audio/" f"{file_name}"),
+        start_time_seconds=(start_time_seconds),
         duration_seconds=duration_seconds,
         provider="Dummy Voice",
         license_type="generated",
         status=AudioTrackStatus.READY,
         metadata={
             "scene_number": scene_number,
-            "voice_profile_id": (
-                "voice.neutral_narrator"
-            ),
+            "voice_profile_id": ("voice.neutral_narrator"),
         },
     )
 
     return VoiceGenerationResult(
         success=True,
         scene_number=scene_number,
-        status=(
-            VoiceGenerationStatus.COMPLETED
-        ),
+        status=(VoiceGenerationStatus.COMPLETED),
         provider="Dummy Voice",
         output_file=track.source_file,
         audio_track=track,
@@ -87,31 +78,15 @@ attached_scene_1 = service.attach_result(
     result=scene_1_result,
 )
 
-assert (
-    attached_scene_1.track_type
-    == AudioTrackType.VOICEOVER
-)
+assert attached_scene_1.track_type == AudioTrackType.VOICEOVER
 
-assert (
-    attached_scene_1.metadata[
-        "scene_number"
-    ]
-    == 1
-)
+assert attached_scene_1.metadata["scene_number"] == 1
 
-assert (
-    attached_scene_1.metadata[
-        "timeline_attached"
-    ]
-    is True
-)
+assert attached_scene_1.metadata["timeline_attached"] is True
 
 assert len(timeline.tracks) == 1
 
-assert (
-    timeline.calculate_duration()
-    == 4.0
-)
+assert timeline.calculate_duration() == 4.0
 
 
 attached_scene_2 = service.attach_result(
@@ -121,20 +96,12 @@ attached_scene_2 = service.attach_result(
 
 assert len(timeline.tracks) == 2
 
-assert (
-    timeline.calculate_duration()
-    == 9.0
-)
+assert timeline.calculate_duration() == 9.0
 
-assert (
-    service.voice_scene_numbers(
-        timeline
-    )
-    == [
-        1,
-        2,
-    ]
-)
+assert service.voice_scene_numbers(timeline) == [
+    1,
+    2,
+]
 
 
 valid_result = service.validate(
@@ -166,10 +133,7 @@ assert valid_result.errors == []
 assert valid_result.voice_track_count == 2
 assert valid_result.unique_scene_count == 2
 assert valid_result.gap_duration_seconds == 0.0
-assert (
-    valid_result.overlap_duration_seconds
-    == 0.0
-)
+assert valid_result.overlap_duration_seconds == 0.0
 
 
 try:
@@ -178,14 +142,9 @@ try:
         result=scene_1_result,
     )
 except ValueError:
-    print(
-        "Duplicate voice scene "
-        "successfully blocked."
-    )
+    print("Duplicate voice scene " "successfully blocked.")
 else:
-    raise AssertionError(
-        "Duplicate voice scenes should fail."
-    )
+    raise AssertionError("Duplicate voice scenes should fail.")
 
 
 replacement_result = build_success_result(
@@ -200,13 +159,7 @@ replacement_track = service.replace_result(
     result=replacement_result,
 )
 
-assert (
-    replacement_track.source_file
-    == (
-        "outputs/audio/"
-        "scene_002_replacement.wav"
-    )
-)
+assert replacement_track.source_file == ("outputs/audio/" "scene_002_replacement.wav")
 
 assert len(timeline.tracks) == 2
 
@@ -218,10 +171,7 @@ assert (
     == 6.0
 )
 
-assert (
-    timeline.calculate_duration()
-    == 10.0
-)
+assert timeline.calculate_duration() == 10.0
 
 
 removed_track = service.remove_scene_voice(
@@ -229,27 +179,19 @@ removed_track = service.remove_scene_voice(
     scene_number=2,
 )
 
-assert (
-    removed_track.metadata[
-        "scene_number"
-    ]
-    == 2
-)
+assert removed_track.metadata["scene_number"] == 2
 
 assert len(timeline.tracks) == 1
 
-assert (
-    service.missing_voice_scenes(
-        timeline,
-        expected_scene_numbers=[
-            1,
-            2,
-        ],
-    )
-    == [
+assert service.missing_voice_scenes(
+    timeline,
+    expected_scene_numbers=[
+        1,
         2,
-    ]
-)
+    ],
+) == [
+    2,
+]
 
 
 missing_result = service.validate(
@@ -262,17 +204,12 @@ missing_result = service.validate(
 
 assert missing_result.is_valid is False
 
-assert (
-    missing_result.missing_scene_numbers
-    == [
-        2,
-    ]
-)
+assert missing_result.missing_scene_numbers == [
+    2,
+]
 
 assert any(
-    issue.code
-    == VoiceTimelineValidationCode
-    .MISSING_EXPECTED_SCENE
+    issue.code == VoiceTimelineValidationCode.MISSING_EXPECTED_SCENE
     for issue in missing_result.errors
 )
 
@@ -308,10 +245,7 @@ attached_many = service.attach_many(
 assert len(attached_many) == 3
 
 assert [
-    track.metadata["scene_number"]
-    for track in service.voice_tracks(
-        multi_timeline
-    )
+    track.metadata["scene_number"] for track in service.voice_tracks(multi_timeline)
 ] == [
     1,
     2,
@@ -329,10 +263,7 @@ multi_validation = service.validate(
 )
 
 assert multi_validation.is_valid is True
-assert (
-    multi_timeline.calculate_duration()
-    == 10.0
-)
+assert multi_timeline.calculate_duration() == 10.0
 
 
 gap_timeline = AudioTimeline()
@@ -361,15 +292,10 @@ gap_warning_result = service.validate(
 
 assert gap_warning_result.is_valid is True
 
-assert (
-    gap_warning_result
-    .gap_duration_seconds
-    == 2.0
-)
+assert gap_warning_result.gap_duration_seconds == 2.0
 
 assert any(
-    issue.code
-    == VoiceTimelineValidationCode.VOICE_GAP
+    issue.code == VoiceTimelineValidationCode.VOICE_GAP
     for issue in gap_warning_result.warnings
 )
 
@@ -382,8 +308,7 @@ gap_error_result = service.validate(
 assert gap_error_result.is_valid is False
 
 assert any(
-    issue.code
-    == VoiceTimelineValidationCode.VOICE_GAP
+    issue.code == VoiceTimelineValidationCode.VOICE_GAP
     for issue in gap_error_result.errors
 )
 
@@ -414,58 +339,37 @@ overlap_result = service.validate(
 
 assert overlap_result.is_valid is False
 
-assert (
-    overlap_result
-    .overlap_duration_seconds
-    == 1.0
-)
+assert overlap_result.overlap_duration_seconds == 1.0
 
 assert any(
-    issue.code
-    == VoiceTimelineValidationCode
-    .VOICE_OVERLAP
+    issue.code == VoiceTimelineValidationCode.VOICE_OVERLAP
     for issue in overlap_result.errors
 )
 
 
-allowed_overlap_result = (
-    service.validate(
-        overlap_timeline,
-        allow_voice_overlap=True,
-    )
+allowed_overlap_result = service.validate(
+    overlap_timeline,
+    allow_voice_overlap=True,
 )
 
 assert allowed_overlap_result.is_valid is True
 
 assert any(
-    issue.code
-    == VoiceTimelineValidationCode
-    .VOICE_OVERLAP
-    for issue in (
-        allowed_overlap_result.warnings
-    )
+    issue.code == VoiceTimelineValidationCode.VOICE_OVERLAP
+    for issue in (allowed_overlap_result.warnings)
 )
 
 
-failed_generation_result = (
-    VoiceGenerationResult(
-        success=False,
-        scene_number=10,
-        status=(
-            VoiceGenerationStatus.FAILED
-        ),
-        attempts=1,
-        failure=VoiceGenerationFailure(
-            reason=(
-                VoiceGenerationFailureReason
-                .PROVIDER_ERROR
-            ),
-            message=(
-                "Simulated voice generation failure."
-            ),
-            provider="Dummy Voice",
-        ),
-    )
+failed_generation_result = VoiceGenerationResult(
+    success=False,
+    scene_number=10,
+    status=(VoiceGenerationStatus.FAILED),
+    attempts=1,
+    failure=VoiceGenerationFailure(
+        reason=(VoiceGenerationFailureReason.PROVIDER_ERROR),
+        message=("Simulated voice generation failure."),
+        provider="Dummy Voice",
+    ),
 )
 
 try:
@@ -474,22 +378,14 @@ try:
         result=failed_generation_result,
     )
 except ValueError:
-    print(
-        "Failed voice generation result "
-        "successfully blocked."
-    )
+    print("Failed voice generation result " "successfully blocked.")
 else:
-    raise AssertionError(
-        "Failed generation results "
-        "should not be attached."
-    )
+    raise AssertionError("Failed generation results " "should not be attached.")
 
 
 mismatched_track = AudioTrack(
     track_type=AudioTrackType.VOICEOVER,
-    source_file=(
-        "outputs/audio/mismatch.wav"
-    ),
+    source_file=("outputs/audio/mismatch.wav"),
     duration_seconds=4.0,
     status=AudioTrackStatus.READY,
     metadata={
@@ -497,20 +393,14 @@ mismatched_track = AudioTrack(
     },
 )
 
-mismatched_result = (
-    VoiceGenerationResult(
-        success=True,
-        scene_number=11,
-        status=(
-            VoiceGenerationStatus.COMPLETED
-        ),
-        provider="Dummy Voice",
-        output_file=(
-            "outputs/audio/mismatch.wav"
-        ),
-        audio_track=mismatched_track,
-        attempts=1,
-    )
+mismatched_result = VoiceGenerationResult(
+    success=True,
+    scene_number=11,
+    status=(VoiceGenerationStatus.COMPLETED),
+    provider="Dummy Voice",
+    output_file=("outputs/audio/mismatch.wav"),
+    audio_track=mismatched_track,
+    attempts=1,
 )
 
 try:
@@ -519,32 +409,19 @@ try:
         result=mismatched_result,
     )
 except ValueError:
-    print(
-        "Mismatched voice scene metadata "
-        "successfully blocked."
-    )
+    print("Mismatched voice scene metadata " "successfully blocked.")
 else:
-    raise AssertionError(
-        "Mismatched scene metadata "
-        "should fail."
-    )
+    raise AssertionError("Mismatched scene metadata " "should fail.")
 
 
-empty_timeline_result = service.validate(
-    AudioTimeline()
-)
+empty_timeline_result = service.validate(AudioTimeline())
 
 assert empty_timeline_result.is_valid is False
 
 assert any(
-    issue.code
-    == VoiceTimelineValidationCode
-    .NO_VOICE_TRACKS
+    issue.code == VoiceTimelineValidationCode.NO_VOICE_TRACKS
     for issue in empty_timeline_result.errors
 )
 
 
-print(
-    "Voice Timeline Service tests "
-    "completed successfully."
-)
+print("Voice Timeline Service tests " "completed successfully.")

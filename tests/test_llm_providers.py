@@ -13,7 +13,6 @@ from src.shared.llm.providers import (
     LLMProviderResponse,
 )
 
-
 assert issubclass(
     OpenAIProviderAdapter,
     LLMProviderAdapter,
@@ -29,20 +28,11 @@ assert issubclass(
     LLMProviderAdapter,
 )
 
-assert (
-    OpenAIProviderAdapter.provider
-    == LLMProvider.OPENAI
-)
+assert OpenAIProviderAdapter.provider == LLMProvider.OPENAI
 
-assert (
-    GeminiProviderAdapter.provider
-    == LLMProvider.GEMINI
-)
+assert GeminiProviderAdapter.provider == LLMProvider.GEMINI
 
-assert (
-    AnthropicProviderAdapter.provider
-    == LLMProvider.ANTHROPIC
-)
+assert AnthropicProviderAdapter.provider == LLMProvider.ANTHROPIC
 
 
 response = LLMProviderResponse(
@@ -55,6 +45,4 @@ assert response.provider_request_id is None
 assert response.metadata == {}
 
 
-print(
-    "LLM Providers tests completed successfully."
-)
+print("LLM Providers tests completed successfully.")

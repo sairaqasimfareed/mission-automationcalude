@@ -62,31 +62,18 @@ class VoicePipelineStage(BasePipelineStage):
             )
 
         normalized_provider = (
-            provider_name.strip()
-            if provider_name is not None
-            else None
+            provider_name.strip() if provider_name is not None else None
         )
 
-        self._blueprints = list(
-            blueprints
-        )
+        self._blueprints = list(blueprints)
 
-        self._generation_service = (
-            generation_service
-        )
+        self._generation_service = generation_service
 
-        self._timeline_service = (
-            timeline_service
-        )
+        self._timeline_service = timeline_service
 
-        self._provider_name = (
-            normalized_provider
-            or None
-        )
+        self._provider_name = normalized_provider or None
 
-        self._validate_blueprints(
-            self._blueprints
-        )
+        self._validate_blueprints(self._blueprints)
 
     @property
     def stage_name(
@@ -107,36 +94,25 @@ class VoicePipelineStage(BasePipelineStage):
         outer RenderOrchestratorService can normalize them.
         """
 
-        started_at = (
-            time.perf_counter()
-        )
+        started_at = time.perf_counter()
 
         if not context.job.scenes:
             return self._failed_result(
                 started_at=started_at,
-                error_message=(
-                    "Voice stage requires "
-                    "planned scenes."
-                ),
+                error_message=("Voice stage requires " "planned scenes."),
             )
 
-        coverage_error = (
-            self._validate_scene_coverage(
-                context=context,
-            )
+        coverage_error = self._validate_scene_coverage(
+            context=context,
         )
 
         if coverage_error is not None:
             return self._failed_result(
                 started_at=started_at,
-                error_message=(
-                    coverage_error
-                ),
+                error_message=(coverage_error),
             )
 
-        results: list[
-            VoiceGenerationResult
-        ] = []
+        results: list[VoiceGenerationResult] = []
 
         warnings: list[str] = []
 
@@ -144,26 +120,15 @@ class VoicePipelineStage(BasePipelineStage):
 
         for blueprint in sorted(
             self._blueprints,
-            key=lambda value: (
-                value.scene_number
-            ),
+            key=lambda value: (value.scene_number),
         ):
-            result = (
-                self._generation_service
-                .generate(
-                    blueprint,
-                    start_time_seconds=(
-                        start_time_seconds
-                    ),
-                    provider_name=(
-                        self._provider_name
-                    ),
-                )
+            result = self._generation_service.generate(
+                blueprint,
+                start_time_seconds=(start_time_seconds),
+                provider_name=(self._provider_name),
             )
 
-            results.append(
-                result
-            )
+            results.append(result)
 
             self._extend_unique(
                 warnings,
@@ -174,28 +139,17 @@ class VoicePipelineStage(BasePipelineStage):
                 message = (
                     result.failure.message
                     if result.failure is not None
-                    else (
-                        "Voice generation failed "
-                        "without failure details."
-                    )
+                    else ("Voice generation failed " "without failure details.")
                 )
 
-                context.job.voice_status = (
-                    VoiceStatus.FAILED
-                )
+                context.job.voice_status = VoiceStatus.FAILED
 
                 context.job.voice_file = None
 
                 return StageResult(
                     stage=self.stage_name,
-                    status=(
-                        PipelineStageStatus
-                        .FAILED
-                    ),
-                    duration_seconds=(
-                        time.perf_counter()
-                        - started_at
-                    ),
+                    status=(PipelineStageStatus.FAILED),
+                    duration_seconds=(time.perf_counter() - started_at),
                     progress_percent=100,
                     warnings=warnings,
                     errors=[
@@ -210,29 +164,18 @@ class VoicePipelineStage(BasePipelineStage):
                 )
 
             if result.audio_track is None:
-                context.job.voice_status = (
-                    VoiceStatus.FAILED
-                )
+                context.job.voice_status = VoiceStatus.FAILED
 
                 context.job.voice_file = None
 
                 return StageResult(
                     stage=self.stage_name,
-                    status=(
-                        PipelineStageStatus
-                        .FAILED
-                    ),
-                    duration_seconds=(
-                        time.perf_counter()
-                        - started_at
-                    ),
+                    status=(PipelineStageStatus.FAILED),
+                    duration_seconds=(time.perf_counter() - started_at),
                     progress_percent=100,
                     warnings=warnings,
                     errors=[
-                        (
-                            "Successful voice generation "
-                            "result has no audio track."
-                        ),
+                        ("Successful voice generation " "result has no audio track."),
                     ],
                     metadata=(
                         self._build_metadata(
@@ -243,16 +186,11 @@ class VoicePipelineStage(BasePipelineStage):
                 )
 
             start_time_seconds = (
-                result.audio_track
-                .start_time_seconds
-                + result.audio_track
-                .duration_seconds
+                result.audio_track.start_time_seconds
+                + result.audio_track.duration_seconds
             )
 
-        audio_timeline = (
-            context.job.audio_timeline
-            or AudioTimeline()
-        )
+        audio_timeline = context.job.audio_timeline or AudioTimeline()
 
         self._timeline_service.attach_many(
             audio_timeline,
@@ -260,42 +198,22 @@ class VoicePipelineStage(BasePipelineStage):
             replace=False,
         )
 
-        context.job.audio_timeline = (
-            audio_timeline
-        )
+        context.job.audio_timeline = audio_timeline
 
-        last_result = (
-            results[-1]
-        )
+        last_result = results[-1]
 
-        first_result = (
-            results[0]
-        )
+        first_result = results[0]
 
-        context.job.voice_file = (
-            first_result.output_file
-        )
+        context.job.voice_file = first_result.output_file
 
-        context.job.voice_provider = (
-            self._single_provider(
-                results
-            )
-        )
+        context.job.voice_provider = self._single_provider(results)
 
-        context.job.voice_status = (
-            VoiceStatus.READY
-        )
+        context.job.voice_status = VoiceStatus.READY
 
         return StageResult(
             stage=self.stage_name,
-            status=(
-                PipelineStageStatus
-                .COMPLETED
-            ),
-            duration_seconds=(
-                time.perf_counter()
-                - started_at
-            ),
+            status=(PipelineStageStatus.COMPLETED),
+            duration_seconds=(time.perf_counter() - started_at),
             progress_percent=100,
             warnings=warnings,
             errors=[],
@@ -304,38 +222,23 @@ class VoicePipelineStage(BasePipelineStage):
                     results=results,
                     attached=True,
                 ),
-                "timeline_duration_seconds": (
-                    audio_timeline
-                    .calculate_duration()
-                ),
-                "voice_file": (
-                    first_result.output_file
-                ),
-                "last_output_file": (
-                    last_result.output_file
-                ),
+                "timeline_duration_seconds": (audio_timeline.calculate_duration()),
+                "voice_file": (first_result.output_file),
+                "last_output_file": (last_result.output_file),
             },
         )
 
     @staticmethod
     def _validate_blueprints(
-        blueprints: list[
-            ResolvedVoiceBlueprint
-        ],
+        blueprints: list[ResolvedVoiceBlueprint],
     ) -> None:
         """Reject duplicate scene mappings."""
 
-        scene_numbers = [
-            blueprint.scene_number
-            for blueprint in blueprints
-        ]
+        scene_numbers = [blueprint.scene_number for blueprint in blueprints]
 
-        if len(scene_numbers) != len(
-            set(scene_numbers)
-        ):
+        if len(scene_numbers) != len(set(scene_numbers)):
             raise ValueError(
-                "Voice pipeline stage cannot "
-                "contain duplicate scene blueprints."
+                "Voice pipeline stage cannot " "contain duplicate scene blueprints."
             )
 
     def _validate_scene_coverage(
@@ -347,36 +250,19 @@ class VoicePipelineStage(BasePipelineStage):
         Ensure the supplied blueprints map exactly to the planned scenes.
         """
 
-        expected = {
-            scene.scene_number
-            for scene in (
-                context.job.scenes
-            )
-        }
+        expected = {scene.scene_number for scene in (context.job.scenes)}
 
-        supplied = {
-            blueprint.scene_number
-            for blueprint in (
-                self._blueprints
-            )
-        }
+        supplied = {blueprint.scene_number for blueprint in (self._blueprints)}
 
-        missing = sorted(
-            expected - supplied
-        )
+        missing = sorted(expected - supplied)
 
-        unexpected = sorted(
-            supplied - expected
-        )
+        unexpected = sorted(supplied - expected)
 
         if missing:
             return (
                 "Voice stage is missing resolved "
                 "blueprints for scene(s): "
-                + ", ".join(
-                    str(value)
-                    for value in missing
-                )
+                + ", ".join(str(value) for value in missing)
                 + "."
             )
 
@@ -384,10 +270,7 @@ class VoicePipelineStage(BasePipelineStage):
             return (
                 "Voice stage received blueprints "
                 "for unknown scene(s): "
-                + ", ".join(
-                    str(value)
-                    for value in unexpected
-                )
+                + ", ".join(str(value) for value in unexpected)
                 + "."
             )
 
@@ -395,9 +278,7 @@ class VoicePipelineStage(BasePipelineStage):
 
     @staticmethod
     def _single_provider(
-        results: list[
-            VoiceGenerationResult
-        ],
+        results: list[VoiceGenerationResult],
     ) -> str | None:
         """
         Return the provider when all results used the same provider.
@@ -407,65 +288,36 @@ class VoicePipelineStage(BasePipelineStage):
         """
 
         providers = {
-            result.provider
-            for result in results
-            if result.provider is not None
+            result.provider for result in results if result.provider is not None
         }
 
         if len(providers) != 1:
             return None
 
-        return next(
-            iter(
-                providers
-            )
-        )
+        return next(iter(providers))
 
     @staticmethod
     def _build_metadata(
         *,
-        results: list[
-            VoiceGenerationResult
-        ],
+        results: list[VoiceGenerationResult],
         attached: bool,
     ) -> dict[str, object]:
         """Build deterministic voice-stage metadata."""
 
-        successful_count = sum(
-            1
-            for result in results
-            if result.success
-        )
+        successful_count = sum(1 for result in results if result.success)
 
-        failed_count = (
-            len(results)
-            - successful_count
-        )
+        failed_count = len(results) - successful_count
 
         providers = sorted(
-            {
-                result.provider
-                for result in results
-                if result.provider is not None
-            }
+            {result.provider for result in results if result.provider is not None}
         )
 
         return {
-            "result_count": len(
-                results
-            ),
-            "successful_count": (
-                successful_count
-            ),
-            "failed_count": (
-                failed_count
-            ),
-            "providers": (
-                providers
-            ),
-            "timeline_attached": (
-                attached
-            ),
+            "result_count": len(results),
+            "successful_count": (successful_count),
+            "failed_count": (failed_count),
+            "providers": (providers),
+            "timeline_attached": (attached),
         }
 
     @staticmethod
@@ -476,17 +328,10 @@ class VoicePipelineStage(BasePipelineStage):
         """Append normalized unique diagnostics."""
 
         for value in values:
-            cleaned = (
-                value.strip()
-            )
+            cleaned = value.strip()
 
-            if (
-                cleaned
-                and cleaned not in target
-            ):
-                target.append(
-                    cleaned
-                )
+            if cleaned and cleaned not in target:
+                target.append(cleaned)
 
     def _failed_result(
         self,
@@ -498,13 +343,8 @@ class VoicePipelineStage(BasePipelineStage):
 
         return StageResult(
             stage=self.stage_name,
-            status=(
-                PipelineStageStatus.FAILED
-            ),
-            duration_seconds=(
-                time.perf_counter()
-                - started_at
-            ),
+            status=(PipelineStageStatus.FAILED),
+            duration_seconds=(time.perf_counter() - started_at),
             progress_percent=100,
             errors=[
                 error_message,

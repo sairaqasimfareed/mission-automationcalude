@@ -51,9 +51,7 @@ from src.services.render_orchestrator_service import (
 )
 
 
-class SuccessfulVoiceStage(
-    BasePipelineStage
-):
+class SuccessfulVoiceStage(BasePipelineStage):
     """Synthetic voice stage used to verify resume skipping."""
 
     def __init__(
@@ -77,15 +75,11 @@ class SuccessfulVoiceStage(
 
         return StageResult(
             stage=self.stage_name,
-            status=(
-                PipelineStageStatus.COMPLETED
-            ),
+            status=(PipelineStageStatus.COMPLETED),
         )
 
 
-class FailingRenderStage(
-    BasePipelineStage
-):
+class FailingRenderStage(BasePipelineStage):
     """Synthetic render stage for the initial failed execution."""
 
     def __init__(
@@ -109,18 +103,14 @@ class FailingRenderStage(
 
         return StageResult(
             stage=self.stage_name,
-            status=(
-                PipelineStageStatus.FAILED
-            ),
+            status=(PipelineStageStatus.FAILED),
             errors=[
                 "Synthetic persisted render failure.",
             ],
         )
 
 
-class SuccessfulRenderStage(
-    BasePipelineStage
-):
+class SuccessfulRenderStage(BasePipelineStage):
     """Synthetic render stage used after checkpoint restoration."""
 
     def __init__(
@@ -140,31 +130,20 @@ class SuccessfulRenderStage(
     ) -> StageResult:
         self.execution_count += 1
 
-        prepare_render_ready_job(
-            context.job
-        )
+        prepare_render_ready_job(context.job)
 
-        context.job.render_result = (
-            RenderResult(
-                success=True,
-                output_file=(
-                    "outputs/"
-                    "resumed_final_video.mp4"
-                ),
-                render_engine="synthetic",
-                render_time_seconds=0.1,
-                duration_seconds=30,
-                status=(
-                    RenderStatus.COMPLETED
-                ),
-            )
+        context.job.render_result = RenderResult(
+            success=True,
+            output_file=("outputs/" "resumed_final_video.mp4"),
+            render_engine="synthetic",
+            render_time_seconds=0.1,
+            duration_seconds=30,
+            status=(RenderStatus.COMPLETED),
         )
 
         return StageResult(
             stage=self.stage_name,
-            status=(
-                PipelineStageStatus.COMPLETED
-            ),
+            status=(PipelineStageStatus.COMPLETED),
         )
 
 
@@ -172,14 +151,10 @@ def build_job() -> VideoJob:
     """Build the central VideoJob shared across the resume cycle."""
 
     return VideoJob(
-        project_name=(
-            "Persisted Resume Integration"
-        ),
+        project_name=("Persisted Resume Integration"),
         channel_name="Mission Channel",
         niche="automation",
-        topic=(
-            "Persisted checkpoint resume"
-        ),
+        topic=("Persisted checkpoint resume"),
         status=JobStatus.PENDING,
         current_stage=WorkflowStage.VOICE,
     )
@@ -209,13 +184,8 @@ def build_storage(
 ) -> PipelineCheckpointStorageService:
     """Build isolated checkpoint persistence."""
 
-    return (
-        PipelineCheckpointStorageService(
-            storage_root=(
-                root
-                / "checkpoints"
-            ),
-        )
+    return PipelineCheckpointStorageService(
+        storage_root=(root / "checkpoints"),
     )
 
 
@@ -229,22 +199,13 @@ def prepare_render_ready_job(
     This mirrors the already-established valid VideoJob dependency chain.
     """
 
-    research = (
-        ResearchResult.model_construct(
-            status=(
-                ResearchStatus.APPROVED
-            ),
-        )
+    research = ResearchResult.model_construct(
+        status=(ResearchStatus.APPROVED),
     )
 
     script = Script(
-        title=(
-            "Persisted resume integration script"
-        ),
-        content=(
-            "Synthetic narration for persisted "
-            "checkpoint resume testing."
-        ),
+        title=("Persisted resume integration script"),
+        content=("Synthetic narration for persisted " "checkpoint resume testing."),
         prompt_version="test-1.0",
         word_count=7,
         estimated_duration_seconds=30,
@@ -253,45 +214,23 @@ def prepare_render_ready_job(
 
     scene = Scene(
         scene_number=1,
-        title=(
-            "Persisted Resume Scene"
-        ),
-        narration=(
-            "Synthetic narration for persisted "
-            "checkpoint resume testing."
-        ),
-        visual_prompt=(
-            "Synthetic checkpoint resume visual."
-        ),
+        title=("Persisted Resume Scene"),
+        narration=("Synthetic narration for persisted " "checkpoint resume testing."),
+        visual_prompt=("Synthetic checkpoint resume visual."),
         estimated_duration_seconds=30,
-        manual_file_path=(
-            "assets/videos/manual/"
-            "checkpoint_resume_scene.mp4"
-        ),
-        source_status=(
-            SceneSourceStatus.READY
-        ),
+        manual_file_path=("assets/videos/manual/" "checkpoint_resume_scene.mp4"),
+        source_status=(SceneSourceStatus.READY),
         status=SceneStatus.READY,
     )
 
     clip = VideoClip(
         scene_number=1,
-        source_type=(
-            SceneSourceType.MANUAL_UPLOAD
-        ),
+        source_type=(SceneSourceType.MANUAL_UPLOAD),
         duration_seconds=30,
-        prompt=(
-            "Synthetic persisted checkpoint "
-            "resume test scene."
-        ),
+        prompt=("Synthetic persisted checkpoint " "resume test scene."),
         provider="Manual Upload",
-        local_file=(
-            "assets/videos/manual/"
-            "checkpoint_resume_scene.mp4"
-        ),
-        source_status=(
-            SceneSourceStatus.READY
-        ),
+        local_file=("assets/videos/manual/" "checkpoint_resume_scene.mp4"),
+        source_status=(SceneSourceStatus.READY),
         status=VideoClipStatus.READY,
     )
 
@@ -303,28 +242,21 @@ def prepare_render_ready_job(
         scene,
     ]
 
-    job.voice_file = (
-        "assets/audio/"
-        "checkpoint_resume_voice.wav"
-    )
+    job.voice_file = "assets/audio/" "checkpoint_resume_voice.wav"
 
     job.video_clips = [
         clip,
     ]
 
-    job.video_timeline = (
-        VideoTimeline(
-            clips=[
-                clip,
-            ],
-        )
+    job.video_timeline = VideoTimeline(
+        clips=[
+            clip,
+        ],
     )
 
     job.video_timeline.calculate_duration()
 
-    job.audio_timeline = (
-        AudioTimeline()
-    )
+    job.audio_timeline = AudioTimeline()
 
 
 def test_failed_run_persists_resumable_checkpoint(
@@ -332,99 +264,50 @@ def test_failed_run_persists_resumable_checkpoint(
 ) -> None:
     job = build_job()
 
-    storage = build_storage(
-        tmp_path
+    storage = build_storage(tmp_path)
+
+    voice_stage = SuccessfulVoiceStage()
+
+    render_stage = FailingRenderStage()
+
+    service = RenderOrchestratorService(
+        stages=[
+            voice_stage,
+            render_stage,
+        ],
+        advanced_settings=(build_settings()),
+        checkpoint_storage_service=(storage),
     )
 
-    voice_stage = (
-        SuccessfulVoiceStage()
-    )
-
-    render_stage = (
-        FailingRenderStage()
-    )
-
-    service = (
-        RenderOrchestratorService(
-            stages=[
-                voice_stage,
-                render_stage,
-            ],
-            advanced_settings=(
-                build_settings()
-            ),
-            checkpoint_storage_service=(
-                storage
-            ),
-        )
-    )
-
-    result = service.execute(
-        job
-    )
+    result = service.execute(job)
 
     assert result.success is False
 
-    assert (
-        job.status
-        == JobStatus.FAILED
+    assert job.status == JobStatus.FAILED
+
+    assert result.failed_stage == WorkflowStage.RENDER
+
+    assert voice_stage.execution_count == 1
+
+    assert render_stage.execution_count == 1
+
+    checkpoints = storage.list_for_job(
+        job_id=job.id,
     )
 
-    assert (
-        result.failed_stage
-        == WorkflowStage.RENDER
-    )
+    assert len(checkpoints) == 1
 
-    assert (
-        voice_stage.execution_count
-        == 1
-    )
+    checkpoint = checkpoints[0]
 
-    assert (
-        render_stage.execution_count
-        == 1
-    )
+    assert checkpoint.resumable is True
 
-    checkpoints = (
-        storage.list_for_job(
-            job_id=job.id,
-        )
-    )
+    assert checkpoint.failed_stage == PipelineStageName.RENDER
 
-    assert (
-        len(checkpoints)
-        == 1
-    )
+    assert checkpoint.completed_stages == [
+        PipelineStageName.VOICE,
+    ]
 
-    checkpoint = (
-        checkpoints[0]
-    )
-
-    assert (
-        checkpoint.resumable
-        is True
-    )
-
-    assert (
-        checkpoint.failed_stage
-        == PipelineStageName.RENDER
-    )
-
-    assert (
-        checkpoint.completed_stages
-        == [
-            PipelineStageName.VOICE,
-        ]
-    )
-
-    assert (
-        result.metadata[
-            "persisted_checkpoint_id"
-        ]
-        == str(
-            checkpoint.checkpoint_id
-        )
-    )
+    assert result.metadata["persisted_checkpoint_id"] == str(checkpoint.checkpoint_id)
 
 
 def test_new_orchestrator_resumes_latest_checkpoint(
@@ -432,154 +315,73 @@ def test_new_orchestrator_resumes_latest_checkpoint(
 ) -> None:
     job = build_job()
 
-    storage = build_storage(
-        tmp_path
+    storage = build_storage(tmp_path)
+
+    first_voice_stage = SuccessfulVoiceStage()
+
+    first_render_stage = FailingRenderStage()
+
+    first_service = RenderOrchestratorService(
+        stages=[
+            first_voice_stage,
+            first_render_stage,
+        ],
+        advanced_settings=(build_settings()),
+        checkpoint_storage_service=(storage),
     )
 
-    first_voice_stage = (
-        SuccessfulVoiceStage()
+    first_result = first_service.execute(job)
+
+    assert first_result.success is False
+
+    failed_checkpoint = storage.load_latest(
+        job_id=job.id,
     )
 
-    first_render_stage = (
-        FailingRenderStage()
-    )
+    assert failed_checkpoint is not None
 
-    first_service = (
-        RenderOrchestratorService(
-            stages=[
-                first_voice_stage,
-                first_render_stage,
-            ],
-            advanced_settings=(
-                build_settings()
-            ),
-            checkpoint_storage_service=(
-                storage
-            ),
-        )
-    )
+    assert failed_checkpoint.failed_stage == PipelineStageName.RENDER
 
-    first_result = (
-        first_service.execute(
-            job
-        )
-    )
+    second_voice_stage = SuccessfulVoiceStage()
 
-    assert (
-        first_result.success
-        is False
-    )
-
-    failed_checkpoint = (
-        storage.load_latest(
-            job_id=job.id,
-        )
-    )
-
-    assert (
-        failed_checkpoint
-        is not None
-    )
-
-    assert (
-        failed_checkpoint.failed_stage
-        == PipelineStageName.RENDER
-    )
-
-    second_voice_stage = (
-        SuccessfulVoiceStage()
-    )
-
-    second_render_stage = (
-        SuccessfulRenderStage()
-    )
+    second_render_stage = SuccessfulRenderStage()
 
     # A brand-new orchestrator instance simulates restart of the
     # orchestration runtime. The persisted PipelineCheckpoint is the
     # source of pipeline execution history.
-    second_service = (
-        RenderOrchestratorService(
-            stages=[
-                second_voice_stage,
-                second_render_stage,
-            ],
-            advanced_settings=(
-                build_settings()
-            ),
-            checkpoint_storage_service=(
-                storage
-            ),
-        )
+    second_service = RenderOrchestratorService(
+        stages=[
+            second_voice_stage,
+            second_render_stage,
+        ],
+        advanced_settings=(build_settings()),
+        checkpoint_storage_service=(storage),
     )
 
-    second_result = (
-        second_service.execute(
-            job
-        )
-    )
+    second_result = second_service.execute(job)
 
-    assert (
-        second_result.success
-        is True
-    )
+    assert second_result.success is True
 
     # VOICE completed before the checkpoint, so it must not execute in
     # the resumed orchestration.
-    assert (
-        second_voice_stage.execution_count
-        == 0
-    )
+    assert second_voice_stage.execution_count == 0
 
-    assert (
-        second_render_stage.execution_count
-        == 1
-    )
+    assert second_render_stage.execution_count == 1
 
-    assert (
-        job.status
-        == JobStatus.COMPLETED
-    )
+    assert job.status == JobStatus.COMPLETED
 
-    assert (
-        job.current_stage
-        == (
-            WorkflowStage
-            .READY_FOR_UPLOAD
-        )
-    )
+    assert job.current_stage == (WorkflowStage.READY_FOR_UPLOAD)
 
-    assert (
-        job.render_result
-        is not None
-    )
+    assert job.render_result is not None
 
-    assert (
-        job.render_result.success
-        is True
-    )
+    assert job.render_result.success is True
 
-    assert (
-        second_result.metadata[
-            "resumed"
-        ]
-        is True
-    )
+    assert second_result.metadata["resumed"] is True
 
-    assert (
-        second_result.metadata[
-            "resume_stage"
-        ]
-        == PipelineStageName.RENDER.value
-    )
+    assert second_result.metadata["resume_stage"] == PipelineStageName.RENDER.value
 
-    assert (
-        second_result.metadata[
-            "loaded_checkpoint_id"
-        ]
-        == str(
-            failed_checkpoint
-            .checkpoint_id
-        )
+    assert second_result.metadata["loaded_checkpoint_id"] == str(
+        failed_checkpoint.checkpoint_id
     )
 
 
@@ -598,350 +400,168 @@ def test_serialized_job_resumes_after_runtime_restart(
 
     job = build_job()
 
-    storage = build_storage(
-        tmp_path
+    storage = build_storage(tmp_path)
+
+    first_voice_stage = SuccessfulVoiceStage()
+
+    first_render_stage = FailingRenderStage()
+
+    first_service = RenderOrchestratorService(
+        stages=[
+            first_voice_stage,
+            first_render_stage,
+        ],
+        advanced_settings=(build_settings()),
+        checkpoint_storage_service=(storage),
     )
 
-    first_voice_stage = (
-        SuccessfulVoiceStage()
+    first_result = first_service.execute(job)
+
+    assert first_result.success is False
+
+    failed_checkpoint = storage.load_latest(
+        job_id=job.id,
     )
 
-    first_render_stage = (
-        FailingRenderStage()
+    assert failed_checkpoint is not None
+
+    assert failed_checkpoint.failed_stage == PipelineStageName.RENDER
+
+    assert failed_checkpoint.resumable is True
+
+    original_job_id = job.id
+
+    serialized_job = job.model_dump_json()
+
+    restarted_job = VideoJob.model_validate_json(serialized_job)
+
+    assert restarted_job is not job
+
+    assert restarted_job.id == original_job_id
+
+    assert restarted_job.status == JobStatus.FAILED
+
+    assert restarted_job.current_stage == WorkflowStage.RENDER
+
+    second_voice_stage = SuccessfulVoiceStage()
+
+    second_render_stage = SuccessfulRenderStage()
+
+    second_service = RenderOrchestratorService(
+        stages=[
+            second_voice_stage,
+            second_render_stage,
+        ],
+        advanced_settings=(build_settings()),
+        checkpoint_storage_service=(storage),
     )
 
-    first_service = (
-        RenderOrchestratorService(
-            stages=[
-                first_voice_stage,
-                first_render_stage,
-            ],
-            advanced_settings=(
-                build_settings()
-            ),
-            checkpoint_storage_service=(
-                storage
-            ),
-        )
+    second_result = second_service.execute(restarted_job)
+
+    assert second_result.success is True
+
+    assert second_voice_stage.execution_count == 0
+
+    assert second_render_stage.execution_count == 1
+
+    assert restarted_job.status == JobStatus.COMPLETED
+
+    assert restarted_job.current_stage == (WorkflowStage.READY_FOR_UPLOAD)
+
+    assert restarted_job.render_result is not None
+
+    assert restarted_job.render_result.success is True
+
+    assert second_result.metadata["resumed"] is True
+
+    assert second_result.metadata["resume_stage"] == PipelineStageName.RENDER.value
+
+    assert second_result.metadata["loaded_checkpoint_id"] == str(
+        failed_checkpoint.checkpoint_id
     )
 
-    first_result = (
-        first_service.execute(
-            job
-        )
+    checkpoints = storage.list_for_job(
+        job_id=(restarted_job.id),
     )
 
-    assert (
-        first_result.success
-        is False
+    assert len(checkpoints) == 2
+
+    latest_checkpoint = storage.load_latest(
+        job_id=(restarted_job.id),
     )
 
-    failed_checkpoint = (
-        storage.load_latest(
-            job_id=job.id,
-        )
-    )
+    assert latest_checkpoint is not None
 
-    assert (
-        failed_checkpoint
-        is not None
-    )
+    assert latest_checkpoint.resumable is False
 
-    assert (
-        failed_checkpoint.failed_stage
-        == PipelineStageName.RENDER
-    )
+    assert latest_checkpoint.checkpoint_id != failed_checkpoint.checkpoint_id
 
-    assert (
-        failed_checkpoint.resumable
-        is True
-    )
 
-    original_job_id = (
-        job.id
-    )
-
-    serialized_job = (
-        job.model_dump_json()
-    )
-
-    restarted_job = (
-        VideoJob.model_validate_json(
-            serialized_job
-        )
-    )
-
-    assert (
-        restarted_job
-        is not job
-    )
-
-    assert (
-        restarted_job.id
-        == original_job_id
-    )
-
-    assert (
-        restarted_job.status
-        == JobStatus.FAILED
-    )
-
-    assert (
-        restarted_job.current_stage
-        == WorkflowStage.RENDER
-    )
-
-    second_voice_stage = (
-        SuccessfulVoiceStage()
-    )
-
-    second_render_stage = (
-        SuccessfulRenderStage()
-    )
-
-    second_service = (
-        RenderOrchestratorService(
-            stages=[
-                second_voice_stage,
-                second_render_stage,
-            ],
-            advanced_settings=(
-                build_settings()
-            ),
-            checkpoint_storage_service=(
-                storage
-            ),
-        )
-    )
-
-    second_result = (
-        second_service.execute(
-            restarted_job
-        )
-    )
-
-    assert (
-        second_result.success
-        is True
-    )
-
-    assert (
-        second_voice_stage.execution_count
-        == 0
-    )
-
-    assert (
-        second_render_stage.execution_count
-        == 1
-    )
-
-    assert (
-        restarted_job.status
-        == JobStatus.COMPLETED
-    )
-
-    assert (
-        restarted_job.current_stage
-        == (
-            WorkflowStage
-            .READY_FOR_UPLOAD
-        )
-    )
-
-    assert (
-        restarted_job.render_result
-        is not None
-    )
-
-    assert (
-        restarted_job.render_result.success
-        is True
-    )
-
-    assert (
-        second_result.metadata[
-            "resumed"
-        ]
-        is True
-    )
-
-    assert (
-        second_result.metadata[
-            "resume_stage"
-        ]
-        == PipelineStageName.RENDER.value
-    )
-
-    assert (
-        second_result.metadata[
-            "loaded_checkpoint_id"
-        ]
-        == str(
-            failed_checkpoint
-            .checkpoint_id
-        )
-    )
-
-    checkpoints = (
-        storage.list_for_job(
-            job_id=(
-                restarted_job.id
-            ),
-        )
-    )
-
-    assert (
-        len(checkpoints)
-        == 2
-    )
-
-    latest_checkpoint = (
-        storage.load_latest(
-            job_id=(
-                restarted_job.id
-            ),
-        )
-    )
-
-    assert (
-        latest_checkpoint
-        is not None
-    )
-
-    assert (
-        latest_checkpoint.resumable
-        is False
-    )
-
-    assert (
-        latest_checkpoint.checkpoint_id
-        != failed_checkpoint.checkpoint_id
-    )
 def test_successful_resume_persists_new_checkpoint(
     tmp_path: Path,
 ) -> None:
     job = build_job()
 
-    storage = build_storage(
-        tmp_path
+    storage = build_storage(tmp_path)
+
+    first_service = RenderOrchestratorService(
+        stages=[
+            SuccessfulVoiceStage(),
+            FailingRenderStage(),
+        ],
+        advanced_settings=(build_settings()),
+        checkpoint_storage_service=(storage),
     )
 
-    first_service = (
-        RenderOrchestratorService(
-            stages=[
-                SuccessfulVoiceStage(),
-                FailingRenderStage(),
-            ],
-            advanced_settings=(
-                build_settings()
-            ),
-            checkpoint_storage_service=(
-                storage
-            ),
-        )
+    first_result = first_service.execute(job)
+
+    assert first_result.success is False
+
+    failed_checkpoint = storage.load_latest(
+        job_id=job.id,
     )
 
-    first_result = (
-        first_service.execute(
-            job
-        )
+    assert failed_checkpoint is not None
+
+    second_service = RenderOrchestratorService(
+        stages=[
+            SuccessfulVoiceStage(),
+            SuccessfulRenderStage(),
+        ],
+        advanced_settings=(build_settings()),
+        checkpoint_storage_service=(storage),
     )
 
-    assert (
-        first_result.success
-        is False
+    result = second_service.execute(job)
+
+    assert result.success is True
+
+    checkpoints = storage.list_for_job(
+        job_id=job.id,
     )
 
-    failed_checkpoint = (
-        storage.load_latest(
-            job_id=job.id,
-        )
-    )
+    assert len(checkpoints) == 2
 
-    assert (
-        failed_checkpoint
-        is not None
-    )
-
-    second_service = (
-        RenderOrchestratorService(
-            stages=[
-                SuccessfulVoiceStage(),
-                SuccessfulRenderStage(),
-            ],
-            advanced_settings=(
-                build_settings()
-            ),
-            checkpoint_storage_service=(
-                storage
-            ),
-        )
-    )
-
-    result = second_service.execute(
-        job
-    )
-
-    assert (
-        result.success
-        is True
-    )
-
-    checkpoints = (
-        storage.list_for_job(
-            job_id=job.id,
-        )
-    )
-
-    assert (
-        len(checkpoints)
-        == 2
-    )
-
-    latest = (
-        storage.load_latest(
-            job_id=job.id,
-        )
+    latest = storage.load_latest(
+        job_id=job.id,
     )
 
     assert latest is not None
 
-    assert (
-        latest.checkpoint_id
-        != failed_checkpoint.checkpoint_id
-    )
+    assert latest.checkpoint_id != failed_checkpoint.checkpoint_id
 
-    assert (
-        latest.resumable
-        is False
-    )
+    assert latest.resumable is False
 
-    assert (
-        latest.failed_stage
-        is None
-    )
+    assert latest.failed_stage is None
 
-    assert (
-        latest.waiting_stage
-        is None
-    )
+    assert latest.waiting_stage is None
 
-    assert (
-        latest.completed_stages
-        == [
-            PipelineStageName.VOICE,
-            PipelineStageName.RENDER,
-        ]
-    )
+    assert latest.completed_stages == [
+        PipelineStageName.VOICE,
+        PipelineStageName.RENDER,
+    ]
 
-    assert (
-        result.metadata[
-            "persisted_checkpoint_id"
-        ]
-        == str(
-            latest.checkpoint_id
-        )
-    )
+    assert result.metadata["persisted_checkpoint_id"] == str(latest.checkpoint_id)
 
 
 def test_resume_checkpoint_preserves_execution_history(
@@ -949,72 +569,42 @@ def test_resume_checkpoint_preserves_execution_history(
 ) -> None:
     job = build_job()
 
-    storage = build_storage(
-        tmp_path
+    storage = build_storage(tmp_path)
+
+    first_service = RenderOrchestratorService(
+        stages=[
+            SuccessfulVoiceStage(),
+            FailingRenderStage(),
+        ],
+        advanced_settings=(build_settings()),
+        checkpoint_storage_service=(storage),
     )
 
-    first_service = (
-        RenderOrchestratorService(
-            stages=[
-                SuccessfulVoiceStage(),
-                FailingRenderStage(),
-            ],
-            advanced_settings=(
-                build_settings()
-            ),
-            checkpoint_storage_service=(
-                storage
-            ),
-        )
+    first_service.execute(job)
+
+    first_checkpoint = storage.load_latest(
+        job_id=job.id,
     )
 
-    first_service.execute(
-        job
+    assert first_checkpoint is not None
+
+    first_history_count = len(first_checkpoint.stage_results)
+
+    second_service = RenderOrchestratorService(
+        stages=[
+            SuccessfulVoiceStage(),
+            SuccessfulRenderStage(),
+        ],
+        advanced_settings=(build_settings()),
+        checkpoint_storage_service=(storage),
     )
 
-    first_checkpoint = (
-        storage.load_latest(
-            job_id=job.id,
-        )
-    )
+    result = second_service.execute(job)
 
-    assert (
-        first_checkpoint
-        is not None
-    )
+    assert result.success is True
 
-    first_history_count = len(
-        first_checkpoint.stage_results
-    )
-
-    second_service = (
-        RenderOrchestratorService(
-            stages=[
-                SuccessfulVoiceStage(),
-                SuccessfulRenderStage(),
-            ],
-            advanced_settings=(
-                build_settings()
-            ),
-            checkpoint_storage_service=(
-                storage
-            ),
-        )
-    )
-
-    result = second_service.execute(
-        job
-    )
-
-    assert (
-        result.success
-        is True
-    )
-
-    latest = (
-        storage.load_latest(
-            job_id=job.id,
-        )
+    latest = storage.load_latest(
+        job_id=job.id,
     )
 
     assert latest is not None
@@ -1022,41 +612,22 @@ def test_resume_checkpoint_preserves_execution_history(
     # Current resumed run contributes:
     # - one synthetic VOICE SKIPPED result;
     # - one successful RENDER result.
-    assert (
-        len(
-            latest.stage_results
-        )
-        == first_history_count + 2
-    )
+    assert len(latest.stage_results) == first_history_count + 2
 
     render_results = [
         stage_result
-        for stage_result
-        in latest.stage_results
-        if (
-            stage_result.stage
-            == PipelineStageName.RENDER
-        )
+        for stage_result in latest.stage_results
+        if (stage_result.stage == PipelineStageName.RENDER)
     ]
 
-    assert [
-        stage_result.status
-        for stage_result
-        in render_results
-    ] == [
+    assert [stage_result.status for stage_result in render_results] == [
         PipelineStageStatus.FAILED,
         PipelineStageStatus.COMPLETED,
     ]
 
-    assert (
-        PipelineStageName.VOICE
-        in latest.completed_stages
-    )
+    assert PipelineStageName.VOICE in latest.completed_stages
 
-    assert (
-        PipelineStageName.VOICE
-        not in latest.skipped_stages
-    )
+    assert PipelineStageName.VOICE not in latest.skipped_stages
 
 
 def test_explicit_checkpoint_id_can_be_resumed(
@@ -1064,87 +635,50 @@ def test_explicit_checkpoint_id_can_be_resumed(
 ) -> None:
     job = build_job()
 
-    storage = build_storage(
-        tmp_path
+    storage = build_storage(tmp_path)
+
+    first_service = RenderOrchestratorService(
+        stages=[
+            SuccessfulVoiceStage(),
+            FailingRenderStage(),
+        ],
+        advanced_settings=(build_settings()),
+        checkpoint_storage_service=(storage),
     )
 
-    first_service = (
-        RenderOrchestratorService(
-            stages=[
-                SuccessfulVoiceStage(),
-                FailingRenderStage(),
-            ],
-            advanced_settings=(
-                build_settings()
-            ),
-            checkpoint_storage_service=(
-                storage
-            ),
-        )
-    )
+    first_service.execute(job)
 
-    first_service.execute(
-        job
-    )
-
-    checkpoint = (
-        storage.load_latest(
-            job_id=job.id,
-        )
+    checkpoint = storage.load_latest(
+        job_id=job.id,
     )
 
     assert checkpoint is not None
 
-    resumed_voice = (
-        SuccessfulVoiceStage()
-    )
+    resumed_voice = SuccessfulVoiceStage()
 
-    resumed_render = (
-        SuccessfulRenderStage()
-    )
+    resumed_render = SuccessfulRenderStage()
 
-    second_service = (
-        RenderOrchestratorService(
-            stages=[
-                resumed_voice,
-                resumed_render,
-            ],
-            advanced_settings=(
-                build_settings()
-            ),
-            checkpoint_storage_service=(
-                storage
-            ),
-        )
+    second_service = RenderOrchestratorService(
+        stages=[
+            resumed_voice,
+            resumed_render,
+        ],
+        advanced_settings=(build_settings()),
+        checkpoint_storage_service=(storage),
     )
 
     result = second_service.execute(
         job,
-        checkpoint_id=(
-            checkpoint.checkpoint_id
-        ),
+        checkpoint_id=(checkpoint.checkpoint_id),
     )
 
     assert result.success is True
 
-    assert (
-        resumed_voice.execution_count
-        == 0
-    )
+    assert resumed_voice.execution_count == 0
 
-    assert (
-        resumed_render.execution_count
-        == 1
-    )
+    assert resumed_render.execution_count == 1
 
-    assert (
-        result.metadata[
-            "loaded_checkpoint_id"
-        ]
-        == str(
-            checkpoint.checkpoint_id
-        )
-    )
+    assert result.metadata["loaded_checkpoint_id"] == str(checkpoint.checkpoint_id)
 
 
 def test_missing_explicit_checkpoint_fails_cleanly(
@@ -1154,23 +688,15 @@ def test_missing_explicit_checkpoint_fails_cleanly(
 
     job = build_job()
 
-    storage = build_storage(
-        tmp_path
-    )
+    storage = build_storage(tmp_path)
 
-    service = (
-        RenderOrchestratorService(
-            stages=[
-                SuccessfulVoiceStage(),
-                SuccessfulRenderStage(),
-            ],
-            advanced_settings=(
-                build_settings()
-            ),
-            checkpoint_storage_service=(
-                storage
-            ),
-        )
+    service = RenderOrchestratorService(
+        stages=[
+            SuccessfulVoiceStage(),
+            SuccessfulRenderStage(),
+        ],
+        advanced_settings=(build_settings()),
+        checkpoint_storage_service=(storage),
     )
 
     result = service.execute(
@@ -1178,27 +704,13 @@ def test_missing_explicit_checkpoint_fails_cleanly(
         checkpoint_id=uuid4(),
     )
 
-    assert (
-        result.success
-        is False
-    )
+    assert result.success is False
 
-    assert (
-        job.status
-        == JobStatus.FAILED
-    )
+    assert job.status == JobStatus.FAILED
 
-    assert (
-        "does not exist"
-        in result.errors[-1]
-    )
+    assert "does not exist" in result.errors[-1]
 
-    assert (
-        result.metadata[
-            "checkpoint_phase"
-        ]
-        == "resume_preparation"
-    )
+    assert result.metadata["checkpoint_phase"] == "resume_preparation"
 
 
 def test_save_pipeline_state_false_does_not_persist(
@@ -1206,9 +718,7 @@ def test_save_pipeline_state_false_does_not_persist(
 ) -> None:
     job = build_job()
 
-    storage = build_storage(
-        tmp_path
-    )
+    storage = build_storage(tmp_path)
 
     settings = AdvancedSettings(
         dry_run=True,
@@ -1220,27 +730,18 @@ def test_save_pipeline_state_false_does_not_persist(
         stop_on_stage_failure=True,
     )
 
-    service = (
-        RenderOrchestratorService(
-            stages=[
-                SuccessfulVoiceStage(),
-                FailingRenderStage(),
-            ],
-            advanced_settings=settings,
-            checkpoint_storage_service=(
-                storage
-            ),
-        )
+    service = RenderOrchestratorService(
+        stages=[
+            SuccessfulVoiceStage(),
+            FailingRenderStage(),
+        ],
+        advanced_settings=settings,
+        checkpoint_storage_service=(storage),
     )
 
-    result = service.execute(
-        job
-    )
+    result = service.execute(job)
 
-    assert (
-        result.success
-        is False
-    )
+    assert result.success is False
 
     assert (
         storage.list_for_job(
@@ -1249,26 +750,15 @@ def test_save_pipeline_state_false_does_not_persist(
         == []
     )
 
-    assert (
-        result.metadata.get(
-            "persisted_checkpoint_id"
-        )
-        is None
-    )
+    assert result.metadata.get("persisted_checkpoint_id") is None
 
 
 def main() -> None:
     print()
-    print(
-        "Running Render Orchestrator "
-        "Checkpoint Resume tests..."
-    )
+    print("Running Render Orchestrator " "Checkpoint Resume tests...")
     print()
 
-    print(
-        "Run this suite with pytest because "
-        "it uses the tmp_path fixture."
-    )
+    print("Run this suite with pytest because " "it uses the tmp_path fixture.")
 
 
 if __name__ == "__main__":

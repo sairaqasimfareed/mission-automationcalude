@@ -6,7 +6,6 @@ from src.services.stock_search_service import (
     StockSearchService,
 )
 
-
 request = StockSearchRequest(
     query=" cinematic ancient Rome ",
     page=1,
@@ -44,9 +43,7 @@ assert len(results) == 1
 asset = results[0]
 
 assert asset.provider == "Dry Run Stock"
-assert asset.provider_asset_id == (
-    "dry-run-video-001"
-)
+assert asset.provider_asset_id == ("dry-run-video-001")
 assert asset.title == "cinematic ancient Rome"
 assert asset.file_url.endswith(".mp4")
 assert asset.license_type == "royalty_free"
@@ -62,15 +59,9 @@ try:
         query=" ",
     )
 except ValidationError:
-    print(
-        "Empty stock query successfully blocked."
-    )
+    print("Empty stock query successfully blocked.")
 else:
-    raise AssertionError(
-        "Empty stock query should fail."
-    )
+    raise AssertionError("Empty stock query should fail.")
 
 
-print(
-    "Stock Search Service tests completed successfully."
-)
+print("Stock Search Service tests completed successfully.")

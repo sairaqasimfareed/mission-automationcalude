@@ -6,7 +6,6 @@ from src.models.asset_state import (
     SceneAssetState,
 )
 
-
 state = SceneAssetState(
     scene_id="scene-001",
     scene_number=1,
@@ -20,13 +19,8 @@ assert state.is_ready is False
 
 failure = AssetModuleFailure(
     module_name="Stock Footage",
-    reason=(
-        AssetFailureReason
-        .STOCK_API_QUOTA_EXHAUSTED
-    ),
-    message=(
-        "Stock footage API credits are exhausted."
-    ),
+    reason=(AssetFailureReason.STOCK_API_QUOTA_EXHAUSTED),
+    message=("Stock footage API credits are exhausted."),
     recoverable=True,
     requires_user_decision=True,
     recovery_options=[
@@ -47,20 +41,12 @@ print(
     state.active_failure.recovery_options,
 )
 
-assert (
-    state.status
-    == AssetWorkflowStatus
-    .WAITING_FOR_RECOVERY_DECISION
-)
+assert state.status == AssetWorkflowStatus.WAITING_FOR_RECOVERY_DECISION
 
 assert state.requires_user_decision is True
 assert state.active_failure is not None
 
-assert (
-    state.active_failure.reason
-    == AssetFailureReason
-    .STOCK_API_QUOTA_EXHAUSTED
-)
+assert state.active_failure.reason == AssetFailureReason.STOCK_API_QUOTA_EXHAUSTED
 
 assert len(state.recovery_history) == 1
 assert len(state.errors) == 1
@@ -79,6 +65,4 @@ assert state.is_terminal is True
 assert state.is_ready is False
 
 
-print(
-    "Asset State tests completed successfully."
-)
+print("Asset State tests completed successfully.")

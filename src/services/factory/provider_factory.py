@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from abc import ABC
-
 from pydantic import Field
 
 from src.models.base import MissionBaseModel
@@ -42,7 +40,7 @@ class ProviderInstance(MissionBaseModel):
     )
 
 
-class BaseProvider(ABC):
+class BaseProvider:
     """Base runtime provider wrapper."""
 
     def __init__(
@@ -120,10 +118,7 @@ class ProviderFactory:
                 secret,
             )
 
-        raise ValueError(
-            "Unsupported provider category: "
-            f"{profile.category.value}"
-        )
+        raise ValueError("Unsupported provider category: " f"{profile.category.value}")
 
     def create_llm_adapter(
         self,
@@ -139,16 +134,11 @@ class ProviderFactory:
         profile = self.registry.get(profile_id)
 
         if profile.category != ProviderCategory.LLM:
-            raise ValueError(
-                "The selected provider profile is not "
-                "an LLM provider."
-            )
+            raise ValueError("The selected provider profile is not " "an LLM provider.")
 
         secret = self._resolve_profile_secret(profile)
 
-        llm_provider = self._resolve_llm_provider(
-            profile.provider_name
-        )
+        llm_provider = self._resolve_llm_provider(profile.provider_name)
 
         return create_provider_adapter(
             provider=llm_provider,
@@ -165,17 +155,11 @@ class ProviderFactory:
 
         if profile.category != ProviderCategory.LLM:
             raise ValueError(
-                "Default LLM model can only be resolved "
-                "for an LLM provider profile."
+                "Default LLM model can only be resolved " "for an LLM provider profile."
             )
 
-        if (
-            profile.default_model is None
-            or not profile.default_model.strip()
-        ):
-            raise ValueError(
-                "Provider profile has no default model."
-            )
+        if profile.default_model is None or not profile.default_model.strip():
+            raise ValueError("Provider profile has no default model.")
 
         return profile.default_model.strip()
 
@@ -186,13 +170,9 @@ class ProviderFactory:
         """Resolve one profile secret safely."""
 
         if not profile.secret_reference:
-            raise ValueError(
-                "Provider profile has no secret reference."
-            )
+            raise ValueError("Provider profile has no secret reference.")
 
-        return self.secret_manager.resolve_secret(
-            profile.secret_reference
-        )
+        return self.secret_manager.resolve_secret(profile.secret_reference)
 
     @staticmethod
     def _resolve_llm_provider(
@@ -201,8 +181,7 @@ class ProviderFactory:
         """Convert a profile provider name into an LLM enum."""
 
         normalized_name = (
-            provider_name
-            .strip()
+            provider_name.strip()
             .lower()
             .replace("-", "")
             .replace("_", "")
@@ -210,26 +189,20 @@ class ProviderFactory:
         )
 
         aliases: dict[str, SharedLLMProvider] = {
-    "openai": SharedLLMProvider.OPENAI,
-    "chatgpt": SharedLLMProvider.OPENAI,
-
-    "gemini": SharedLLMProvider.GEMINI,
-    "google": SharedLLMProvider.GEMINI,
-    "googleai": SharedLLMProvider.GEMINI,
-    "googleaistudio": SharedLLMProvider.GEMINI,
-    "googlegemini": SharedLLMProvider.GEMINI,
-    "geminigoogle": SharedLLMProvider.GEMINI,
-
-    "anthropic": SharedLLMProvider.ANTHROPIC,
-    "claude": SharedLLMProvider.ANTHROPIC,
-}
-        
+            "openai": SharedLLMProvider.OPENAI,
+            "chatgpt": SharedLLMProvider.OPENAI,
+            "gemini": SharedLLMProvider.GEMINI,
+            "google": SharedLLMProvider.GEMINI,
+            "googleai": SharedLLMProvider.GEMINI,
+            "googleaistudio": SharedLLMProvider.GEMINI,
+            "googlegemini": SharedLLMProvider.GEMINI,
+            "geminigoogle": SharedLLMProvider.GEMINI,
+            "anthropic": SharedLLMProvider.ANTHROPIC,
+            "claude": SharedLLMProvider.ANTHROPIC,
+        }
 
         if normalized_name not in aliases:
-            raise ValueError(
-                "Unsupported LLM provider name: "
-                f"{provider_name}"
-            )
+            raise ValueError("Unsupported LLM provider name: " f"{provider_name}")
 
         return aliases[normalized_name]
 
@@ -240,9 +213,7 @@ class ProviderFactory:
         """Build a validated runtime provider instance."""
 
         if not profile.secret_reference:
-            raise ValueError(
-                "Provider profile has no secret reference."
-            )
+            raise ValueError("Provider profile has no secret reference.")
 
         return ProviderInstance(
             profile_id=profile.profile_id,

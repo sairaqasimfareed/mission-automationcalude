@@ -44,9 +44,7 @@ class EffectPreset(MissionBaseModel):
 
     version: str = "1.0.0"
 
-    status: EffectPresetStatus = (
-        EffectPresetStatus.ACTIVE
-    )
+    status: EffectPresetStatus = EffectPresetStatus.ACTIVE
 
     fallback_preset_id: str | None = None
 
@@ -93,9 +91,7 @@ class EffectPreset(MissionBaseModel):
         cleaned = value.strip()
 
         if not cleaned:
-            raise ValueError(
-                "Effect preset text cannot be empty."
-            )
+            raise ValueError("Effect preset text cannot be empty.")
 
         return cleaned
 
@@ -110,10 +106,7 @@ class EffectPreset(MissionBaseModel):
         for value in values:
             normalized = value.strip().lower()
 
-            if (
-                normalized
-                and normalized not in cleaned
-            ):
+            if normalized and normalized not in cleaned:
                 cleaned.append(normalized)
 
         return cleaned
@@ -122,37 +115,23 @@ class EffectPreset(MissionBaseModel):
     def validate_category_prefix(
         self,
     ) -> EffectPreset:
-        expected_prefix = (
-            f"{self.category.value}."
-        )
+        expected_prefix = f"{self.category.value}."
 
-        if not self.preset_id.startswith(
-            expected_prefix
-        ):
+        if not self.preset_id.startswith(expected_prefix):
             raise ValueError(
-                "Effect preset ID category does not "
-                "match its registry category."
+                "Effect preset ID category does not " "match its registry category."
             )
 
         if (
             self.fallback_preset_id is not None
-            and not self.fallback_preset_id.startswith(
-                expected_prefix
-            )
+            and not self.fallback_preset_id.startswith(expected_prefix)
         ):
             raise ValueError(
-                "Fallback preset must belong to the "
-                "same effect category."
+                "Fallback preset must belong to the " "same effect category."
             )
 
-        if (
-            self.fallback_preset_id
-            == self.preset_id
-        ):
-            raise ValueError(
-                "An effect preset cannot use itself "
-                "as its fallback."
-            )
+        if self.fallback_preset_id == self.preset_id:
+            raise ValueError("An effect preset cannot use itself " "as its fallback.")
 
         return self
 
@@ -160,10 +139,7 @@ class EffectPreset(MissionBaseModel):
     def usable(self) -> bool:
         """Return whether the preset may be resolved."""
 
-        return (
-            self.status
-            == EffectPresetStatus.ACTIVE
-        )
+        return self.status == EffectPresetStatus.ACTIVE
 
 
 class EffectResolutionResult(MissionBaseModel):
@@ -194,49 +170,27 @@ def normalize_effect_id(
     normalized = value.strip().lower()
 
     if not normalized:
-        raise ValueError(
-            "Effect registry ID cannot be empty."
-        )
+        raise ValueError("Effect registry ID cannot be empty.")
 
     if "." not in normalized:
-        raise ValueError(
-            "Effect registry ID requires a "
-            "category prefix."
-        )
+        raise ValueError("Effect registry ID requires a " "category prefix.")
 
-    allowed_characters = set(
-        "abcdefghijklmnopqrstuvwxyz"
-        "0123456789._-"
-    )
+    allowed_characters = set("abcdefghijklmnopqrstuvwxyz" "0123456789._-")
 
-    if any(
-        character not in allowed_characters
-        for character in normalized
-    ):
-        raise ValueError(
-            "Effect registry ID contains "
-            "unsupported characters."
-        )
+    if any(character not in allowed_characters for character in normalized):
+        raise ValueError("Effect registry ID contains " "unsupported characters.")
 
     prefix, name = normalized.split(
         ".",
         maxsplit=1,
     )
 
-    valid_prefixes = {
-        category.value
-        for category in EffectCategory
-    }
+    valid_prefixes = {category.value for category in EffectCategory}
 
     if prefix not in valid_prefixes:
-        raise ValueError(
-            "Effect registry ID uses an "
-            "unsupported category."
-        )
+        raise ValueError("Effect registry ID uses an " "unsupported category.")
 
     if not name:
-        raise ValueError(
-            "Effect registry ID requires a name."
-        )
+        raise ValueError("Effect registry ID requires a name.")
 
     return normalized

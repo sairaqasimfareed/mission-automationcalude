@@ -22,9 +22,7 @@ class FakeDownloadStream(BytesIO):
 
         self.headers = {
             "Content-Type": content_type,
-            "Content-Length": str(
-                len(content)
-            ),
+            "Content-Length": str(len(content)),
         }
 
 
@@ -38,9 +36,7 @@ def successful_opener(
     assert source_url.endswith(".mp4")
     assert timeout_seconds == 10.0
 
-    return FakeDownloadStream(
-        download_content
-    )
+    return FakeDownloadStream(download_content)
 
 
 with TemporaryDirectory() as temporary_directory:
@@ -52,10 +48,7 @@ with TemporaryDirectory() as temporary_directory:
     )
 
     result = service.download_video(
-        source_url=(
-            "https://example.com/"
-            "stock-video.mp4"
-        ),
+        source_url=("https://example.com/" "stock-video.mp4"),
         provider_name="Test Stock",
         provider_asset_id="video-001",
     )
@@ -66,41 +59,25 @@ with TemporaryDirectory() as temporary_directory:
     assert result.success is True
     assert result.temporary_file_path is not None
     assert result.content_hash is not None
-    assert (
-        result.file_size_bytes
-        == len(download_content)
-    )
+    assert result.file_size_bytes == len(download_content)
     assert result.content_type == "video/mp4"
     assert result.retryable is False
 
-    downloaded_path = Path(
-        result.temporary_file_path
-    )
+    downloaded_path = Path(result.temporary_file_path)
 
     assert downloaded_path.exists()
-    assert (
-        downloaded_path.read_bytes()
-        == download_content
-    )
+    assert downloaded_path.read_bytes() == download_content
 
-    assert (
-        result.metadata["provider_name"]
-        == "Test Stock"
-    )
+    assert result.metadata["provider_name"] == "Test Stock"
 
-    assert (
-        result.metadata["provider_asset_id"]
-        == "video-001"
-    )
+    assert result.metadata["provider_asset_id"] == "video-001"
 
 
 def oversized_opener(
     source_url: str,
     timeout_seconds: float,
 ) -> FakeDownloadStream:
-    return FakeDownloadStream(
-        b"x" * 101
-    )
+    return FakeDownloadStream(b"x" * 101)
 
 
 with TemporaryDirectory() as temporary_directory:
@@ -110,13 +87,8 @@ with TemporaryDirectory() as temporary_directory:
         opener=oversized_opener,
     )
 
-    oversized_result = (
-        oversized_service.download_video(
-            source_url=(
-                "https://example.com/"
-                "large-video.mp4"
-            )
-        )
+    oversized_result = oversized_service.download_video(
+        source_url=("https://example.com/" "large-video.mp4")
     )
 
     assert oversized_result.success is False
@@ -128,29 +100,19 @@ with TemporaryDirectory() as temporary_directory:
         temporary_directory=temporary_directory,
     )
 
-    unsupported_result = (
-        unsupported_service.download_video(
-            source_url=(
-                "https://example.com/"
-                "stock-image.jpg"
-            )
-        )
+    unsupported_result = unsupported_service.download_video(
+        source_url=("https://example.com/" "stock-image.jpg")
     )
 
     assert unsupported_result.success is False
-    assert (
-        unsupported_result.error_type
-        == "UnsupportedFileType"
-    )
+    assert unsupported_result.error_type == "UnsupportedFileType"
 
 
 def failing_opener(
     source_url: str,
     timeout_seconds: float,
 ) -> FakeDownloadStream:
-    raise ConnectionError(
-        "Provider unavailable." 
-    )
+    raise ConnectionError("Provider unavailable.")
 
 
 with TemporaryDirectory() as temporary_directory:
@@ -160,21 +122,12 @@ with TemporaryDirectory() as temporary_directory:
     )
 
     failure_result = failing_service.download_video(
-        source_url=(
-            "https://example.com/"
-            "unavailable-video.mp4"
-        )
+        source_url=("https://example.com/" "unavailable-video.mp4")
     )
 
     assert failure_result.success is False
     assert failure_result.retryable is True
-    assert (
-        failure_result.error_type
-        == "ConnectionError"
-    )
+    assert failure_result.error_type == "ConnectionError"
 
 
-print(
-    "Stock Download Service tests "
-    "completed successfully."
-)
+print("Stock Download Service tests " "completed successfully.")

@@ -66,41 +66,28 @@ class TimelineEditingService:
         """
 
         if new_start_time_seconds < 0:
-            raise ValueError(
-                "Timeline start time cannot be negative."
-            )
+            raise ValueError("Timeline start time cannot be negative.")
 
         item = self._find_item(
             timeline=timeline,
             scene_number=scene_number,
         )
 
-        duration = float(
-            item.clip.duration_seconds
-        )
+        duration = float(item.clip.duration_seconds)
 
-        item.start_time_seconds = (
-            new_start_time_seconds
-        )
+        item.start_time_seconds = new_start_time_seconds
 
-        item.end_time_seconds = (
-            new_start_time_seconds
-            + duration
-        )
+        item.end_time_seconds = new_start_time_seconds + duration
 
         if track_index is not None:
             if track_index < 0:
-                raise ValueError(
-                    "Timeline track index cannot be negative."
-                )
+                raise ValueError("Timeline track index cannot be negative.")
 
             item.track_index = track_index
 
         if layer_index is not None:
             if layer_index < 0:
-                raise ValueError(
-                    "Timeline layer index cannot be negative."
-                )
+                raise ValueError("Timeline layer index cannot be negative.")
 
             item.layer_index = layer_index
 
@@ -123,27 +110,16 @@ class TimelineEditingService:
         """
 
         if replacement_clip.status != VideoClipStatus.READY:
-            raise ValueError(
-                "Replacement clip must have READY status."
-            )
+            raise ValueError("Replacement clip must have READY status.")
 
-        if (
-            replacement_clip.scene_number
-            != scene_number
-        ):
+        if replacement_clip.scene_number != scene_number:
             raise ValueError(
                 "Replacement clip scene number must match "
                 "the timeline scene being replaced."
             )
 
-        if (
-            not replacement_clip.local_file
-            and not replacement_clip.source_url
-        ):
-            raise ValueError(
-                "Replacement clip requires a local file "
-                "or source URL."
-            )
+        if not replacement_clip.local_file and not replacement_clip.source_url:
+            raise ValueError("Replacement clip requires a local file " "or source URL.")
 
         item = self._find_item(
             timeline=timeline,
@@ -152,11 +128,8 @@ class TimelineEditingService:
 
         item.clip = replacement_clip
 
-        item.end_time_seconds = (
-            item.start_time_seconds
-            + float(
-                replacement_clip.duration_seconds
-            )
+        item.end_time_seconds = item.start_time_seconds + float(
+            replacement_clip.duration_seconds
         )
 
         self._replace_legacy_clip(
@@ -190,9 +163,7 @@ class TimelineEditingService:
 
         if remove_legacy_clip:
             timeline.clips = [
-                clip
-                for clip in timeline.clips
-                if clip.scene_number != scene_number
+                clip for clip in timeline.clips if clip.scene_number != scene_number
             ]
 
         timeline.calculate_duration()
@@ -213,10 +184,7 @@ class TimelineEditingService:
             (
                 item
                 for item in timeline.items
-                if (
-                    item.enabled
-                    and item.track_index == 0
-                )
+                if (item.enabled and item.track_index == 0)
             ),
             key=lambda item: (
                 item.start_time_seconds,
@@ -227,14 +195,10 @@ class TimelineEditingService:
         current_time = 0.0
 
         for item in primary_items:
-            duration = float(
-                item.clip.duration_seconds
-            )
+            duration = float(item.clip.duration_seconds)
 
             item.start_time_seconds = current_time
-            item.end_time_seconds = (
-                current_time + duration
-            )
+            item.end_time_seconds = current_time + duration
 
             current_time = item.end_time_seconds
 
@@ -250,22 +214,14 @@ class TimelineEditingService:
     ) -> VideoTimelineItem:
         """Return one timeline item by scene number."""
 
-        matches = [
-            item
-            for item in timeline.items
-            if item.scene_number == scene_number
-        ]
+        matches = [item for item in timeline.items if item.scene_number == scene_number]
 
         if not matches:
-            raise KeyError(
-                "Timeline scene was not found: "
-                f"{scene_number}"
-            )
+            raise KeyError("Timeline scene was not found: " f"{scene_number}")
 
         if len(matches) > 1:
             raise ValueError(
-                "Multiple timeline items use the same "
-                f"scene number: {scene_number}"
+                "Multiple timeline items use the same " f"scene number: {scene_number}"
             )
 
         return matches[0]
@@ -282,21 +238,14 @@ class TimelineEditingService:
         updated_clips: list[VideoClip] = []
 
         for clip in timeline.clips:
-            if (
-                clip.scene_number
-                == replacement_clip.scene_number
-            ):
-                updated_clips.append(
-                    replacement_clip
-                )
+            if clip.scene_number == replacement_clip.scene_number:
+                updated_clips.append(replacement_clip)
                 replaced = True
             else:
                 updated_clips.append(clip)
 
         if not replaced:
-            updated_clips.append(
-                replacement_clip
-            )
+            updated_clips.append(replacement_clip)
 
         timeline.clips = sorted(
             updated_clips,

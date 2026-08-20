@@ -5,7 +5,6 @@ from src.shared.llm.models import (
     LLMUsage,
 )
 
-
 usage = LLMUsage(
     input_tokens=100,
     output_tokens=50,

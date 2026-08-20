@@ -19,30 +19,21 @@ def build_context(
     """Build a minimum valid StageContext."""
 
     job = VideoJob(
-        project_name=(
-            "Stage Context User Input Test"
-        ),
+        project_name=("Stage Context User Input Test"),
         channel_name="Mission Channel",
         niche="automation",
-        topic=(
-            "Execution-scoped user input"
-        ),
+        topic=("Execution-scoped user input"),
     )
 
     state = PipelineState(
-        current_stage=(
-            PipelineStageName.RESEARCH
-        ),
+        current_stage=(PipelineStageName.RESEARCH),
     )
 
     return StageContext(
         job=job,
         pipeline_state=state,
         dry_run=True,
-        user_input=dict(
-            user_input
-            or {}
-        ),
+        user_input=dict(user_input or {}),
     )
 
 
@@ -58,19 +49,9 @@ def test_has_user_input_reports_presence() -> None:
         }
     )
 
-    assert (
-        context.has_user_input(
-            "asset_decisions"
-        )
-        is True
-    )
+    assert context.has_user_input("asset_decisions") is True
 
-    assert (
-        context.has_user_input(
-            "missing"
-        )
-        is False
-    )
+    assert context.has_user_input("missing") is False
 
 
 def test_get_user_input_does_not_consume() -> None:
@@ -87,23 +68,14 @@ def test_get_user_input_does_not_consume() -> None:
         }
     )
 
-    first = context.get_user_input(
-        "asset_decisions"
-    )
+    first = context.get_user_input("asset_decisions")
 
-    second = context.get_user_input(
-        "asset_decisions"
-    )
+    second = context.get_user_input("asset_decisions")
 
     assert first == payload
     assert second == payload
 
-    assert (
-        context.has_user_input(
-            "asset_decisions"
-        )
-        is True
-    )
+    assert context.has_user_input("asset_decisions") is True
 
 
 def test_get_user_input_returns_default() -> None:
@@ -131,25 +103,13 @@ def test_consume_user_input_removes_key() -> None:
         }
     )
 
-    consumed = (
-        context.consume_user_input(
-            "asset_decisions"
-        )
-    )
+    consumed = context.consume_user_input("asset_decisions")
 
     assert consumed == payload
 
-    assert (
-        context.has_user_input(
-            "asset_decisions"
-        )
-        is False
-    )
+    assert context.has_user_input("asset_decisions") is False
 
-    assert (
-        "asset_decisions"
-        not in context.user_input
-    )
+    assert "asset_decisions" not in context.user_input
 
 
 def test_consumption_is_one_time() -> None:
@@ -164,13 +124,9 @@ def test_consumption_is_one_time() -> None:
         }
     )
 
-    first = context.consume_user_input(
-        "asset_decisions"
-    )
+    first = context.consume_user_input("asset_decisions")
 
-    second = context.consume_user_input(
-        "asset_decisions"
-    )
+    second = context.consume_user_input("asset_decisions")
 
     assert first is not None
     assert second is None
@@ -181,11 +137,9 @@ def test_consume_user_input_returns_default() -> None:
 
     sentinel = object()
 
-    result = (
-        context.consume_user_input(
-            "missing",
-            sentinel,
-        )
+    result = context.consume_user_input(
+        "missing",
+        sentinel,
     )
 
     assert result is sentinel
@@ -207,30 +161,15 @@ def test_consuming_one_key_preserves_others() -> None:
         }
     )
 
-    context.consume_user_input(
-        "asset_decisions"
-    )
+    context.consume_user_input("asset_decisions")
 
-    assert (
-        "asset_decisions"
-        not in context.user_input
-    )
+    assert "asset_decisions" not in context.user_input
 
-    assert (
-        context.user_input[
-            "approval"
-        ]
-        == {
-            "approved": True,
-        }
-    )
+    assert context.user_input["approval"] == {
+        "approved": True,
+    }
 
-    assert (
-        context.user_input[
-            "notes"
-        ]
-        == "keep me"
-    )
+    assert context.user_input["notes"] == "keep me"
 
 
 def test_user_input_instances_are_independent() -> None:
@@ -238,27 +177,19 @@ def test_user_input_instances_are_independent() -> None:
 
     second = build_context()
 
-    first.user_input[
-        "asset_decisions"
-    ] = [
+    first.user_input["asset_decisions"] = [
         {
             "scene_number": 1,
             "decision": "manual_upload",
         },
     ]
 
-    assert (
-        second.user_input
-        == {}
-    )
+    assert second.user_input == {}
 
 
 def main() -> None:
     print()
-    print(
-        "Running Stage Context "
-        "User Input tests..."
-    )
+    print("Running Stage Context " "User Input tests...")
     print()
 
     test_has_user_input_reports_presence()
@@ -271,10 +202,7 @@ def main() -> None:
     test_user_input_instances_are_independent()
 
     print()
-    print(
-        "Stage Context User Input tests "
-        "completed successfully."
-    )
+    print("Stage Context User Input tests " "completed successfully.")
 
 
 if __name__ == "__main__":

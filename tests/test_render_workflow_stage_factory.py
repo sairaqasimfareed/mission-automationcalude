@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TypeVar, cast
+from typing import cast
 
 import pytest
 
@@ -55,10 +55,8 @@ from src.services.voice_timeline_service import (
     VoiceTimelineService,
 )
 
-T = TypeVar("T")
 
-
-def _dependency(
+def _dependency[T](
     dependency_type: type[T],
 ) -> T:
     """

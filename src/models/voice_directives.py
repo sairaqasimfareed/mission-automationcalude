@@ -133,10 +133,7 @@ class PronunciationDirective(MissionBaseModel):
         cleaned = value.strip()
 
         if not cleaned:
-            raise ValueError(
-                "Pronunciation directive text "
-                "cannot be empty."
-            )
+            raise ValueError("Pronunciation directive text " "cannot be empty.")
 
         return cleaned
 
@@ -197,13 +194,9 @@ class VoicePauseDirective(MissionBaseModel):
     def validate_pause_location(
         self,
     ) -> VoicePauseDirective:
-        if (
-            self.after_text is None
-            and self.at_character_index is None
-        ):
+        if self.after_text is None and self.at_character_index is None:
             raise ValueError(
-                "Voice pause requires after_text or "
-                "at_character_index."
+                "Voice pause requires after_text or " "at_character_index."
             )
 
         return self
@@ -238,9 +231,7 @@ class VoiceEmphasisDirective(MissionBaseModel):
         cleaned = value.strip()
 
         if not cleaned:
-            raise ValueError(
-                "Voice emphasis text cannot be empty."
-            )
+            raise ValueError("Voice emphasis text cannot be empty.")
 
         return cleaned
 
@@ -306,9 +297,7 @@ class VoiceProviderPreferences(MissionBaseModel):
         }
 
         if normalized not in supported_formats:
-            raise ValueError(
-                "Unsupported voice output format."
-            )
+            raise ValueError("Unsupported voice output format.")
 
         return normalized
 
@@ -323,10 +312,7 @@ class VoiceProviderPreferences(MissionBaseModel):
         for value in values:
             normalized = value.strip()
 
-            if (
-                normalized
-                and normalized not in cleaned
-            ):
+            if normalized and normalized not in cleaned:
                 cleaned.append(normalized)
 
         return cleaned
@@ -346,13 +332,9 @@ class SceneVoiceDirectives(MissionBaseModel):
         ge=1,
     )
 
-    voice_profile_id: str = (
-        "voice.neutral_narrator"
-    )
+    voice_profile_id: str = "voice.neutral_narrator"
 
-    fallback_voice_profile_id: str | None = (
-        "voice.neutral_narrator"
-    )
+    fallback_voice_profile_id: str | None = "voice.neutral_narrator"
 
     language: str = "English"
 
@@ -364,17 +346,11 @@ class SceneVoiceDirectives(MissionBaseModel):
 
     energy: VoiceEnergy = VoiceEnergy.MEDIUM
 
-    pitch_style: VoicePitchStyle = (
-        VoicePitchStyle.NATURAL
-    )
+    pitch_style: VoicePitchStyle = VoicePitchStyle.NATURAL
 
-    pause_style: VoicePauseStyle = (
-        VoicePauseStyle.NATURAL
-    )
+    pause_style: VoicePauseStyle = VoicePauseStyle.NATURAL
 
-    emphasis_style: VoiceEmphasisStyle = (
-        VoiceEmphasisStyle.BALANCED
-    )
+    emphasis_style: VoiceEmphasisStyle = VoiceEmphasisStyle.BALANCED
 
     speed: float = Field(
         default=1.0,
@@ -426,21 +402,15 @@ class SceneVoiceDirectives(MissionBaseModel):
         le=30.0,
     )
 
-    pronunciation_directives: list[
-        PronunciationDirective
-    ] = Field(
+    pronunciation_directives: list[PronunciationDirective] = Field(
         default_factory=list,
     )
 
-    pause_directives: list[
-        VoicePauseDirective
-    ] = Field(
+    pause_directives: list[VoicePauseDirective] = Field(
         default_factory=list,
     )
 
-    emphasis_directives: list[
-        VoiceEmphasisDirective
-    ] = Field(
+    emphasis_directives: list[VoiceEmphasisDirective] = Field(
         default_factory=list,
     )
 
@@ -448,13 +418,9 @@ class SceneVoiceDirectives(MissionBaseModel):
         default_factory=VoiceProviderPreferences,
     )
 
-    source: VoiceDirectiveSource = (
-        VoiceDirectiveSource.SYSTEM_DEFAULT
-    )
+    source: VoiceDirectiveSource = VoiceDirectiveSource.SYSTEM_DEFAULT
 
-    status: VoiceDirectiveStatus = (
-        VoiceDirectiveStatus.DRAFT
-    )
+    status: VoiceDirectiveStatus = VoiceDirectiveStatus.DRAFT
 
     warnings: list[str] = Field(
         default_factory=list,
@@ -476,9 +442,7 @@ class SceneVoiceDirectives(MissionBaseModel):
         if value is None:
             return None
 
-        return _normalize_voice_profile_id(
-            value
-        )
+        return _normalize_voice_profile_id(value)
 
     @field_validator("language")
     @classmethod
@@ -489,10 +453,7 @@ class SceneVoiceDirectives(MissionBaseModel):
         cleaned = value.strip()
 
         if not cleaned:
-            raise ValueError(
-                "Voice directive language "
-                "cannot be empty."
-            )
+            raise ValueError("Voice directive language " "cannot be empty.")
 
         return cleaned
 
@@ -505,22 +466,12 @@ class SceneVoiceDirectives(MissionBaseModel):
         cleaned = value.strip().lower()
 
         if not cleaned:
-            raise ValueError(
-                "Voice language code cannot be empty."
-            )
+            raise ValueError("Voice language code cannot be empty.")
 
-        allowed_characters = set(
-            "abcdefghijklmnopqrstuvwxyz-"
-        )
+        allowed_characters = set("abcdefghijklmnopqrstuvwxyz-")
 
-        if any(
-            character not in allowed_characters
-            for character in cleaned
-        ):
-            raise ValueError(
-                "Voice language code contains "
-                "unsupported characters."
-            )
+        if any(character not in allowed_characters for character in cleaned):
+            raise ValueError("Voice language code contains " "unsupported characters.")
 
         return cleaned
 
@@ -528,48 +479,27 @@ class SceneVoiceDirectives(MissionBaseModel):
     def validate_voice_directives(
         self,
     ) -> SceneVoiceDirectives:
-        if (
-            self.fallback_voice_profile_id
-            == self.voice_profile_id
-        ):
+        if self.fallback_voice_profile_id == self.voice_profile_id:
             self.fallback_voice_profile_id = None
 
         pronunciation_keys = [
-            (
-                directive.text.lower()
-                if not directive.case_sensitive
-                else directive.text
-            )
-            for directive in (
-                self.pronunciation_directives
-            )
+            (directive.text.lower() if not directive.case_sensitive else directive.text)
+            for directive in (self.pronunciation_directives)
         ]
 
-        if len(pronunciation_keys) != len(
-            set(pronunciation_keys)
-        ):
-            raise ValueError(
-                "Duplicate pronunciation directives "
-                "are not allowed."
-            )
+        if len(pronunciation_keys) != len(set(pronunciation_keys)):
+            raise ValueError("Duplicate pronunciation directives " "are not allowed.")
 
         emphasis_keys = [
             (
                 directive.text.lower(),
                 directive.occurrence,
             )
-            for directive in (
-                self.emphasis_directives
-            )
+            for directive in (self.emphasis_directives)
         ]
 
-        if len(emphasis_keys) != len(
-            set(emphasis_keys)
-        ):
-            raise ValueError(
-                "Duplicate emphasis directives "
-                "are not allowed."
-            )
+        if len(emphasis_keys) != len(set(emphasis_keys)):
+            raise ValueError("Duplicate emphasis directives " "are not allowed.")
 
         return self
 
@@ -592,35 +522,17 @@ def _normalize_voice_profile_id(
     normalized = value.strip().lower()
 
     if not normalized:
-        raise ValueError(
-            "Voice profile ID cannot be empty."
-        )
+        raise ValueError("Voice profile ID cannot be empty.")
 
-    if not normalized.startswith(
-        "voice."
-    ):
-        raise ValueError(
-            "Voice profile ID must start "
-            "with 'voice.'."
-        )
+    if not normalized.startswith("voice."):
+        raise ValueError("Voice profile ID must start " "with 'voice.'.")
 
     if normalized == "voice.":
-        raise ValueError(
-            "Voice profile ID requires a name."
-        )
+        raise ValueError("Voice profile ID requires a name.")
 
-    allowed_characters = set(
-        "abcdefghijklmnopqrstuvwxyz"
-        "0123456789._-"
-    )
+    allowed_characters = set("abcdefghijklmnopqrstuvwxyz" "0123456789._-")
 
-    if any(
-        character not in allowed_characters
-        for character in normalized
-    ):
-        raise ValueError(
-            "Voice profile ID contains "
-            "unsupported characters."
-        )
+    if any(character not in allowed_characters for character in normalized):
+        raise ValueError("Voice profile ID contains " "unsupported characters.")
 
     return normalized

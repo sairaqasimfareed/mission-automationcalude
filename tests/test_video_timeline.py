@@ -1,9 +1,9 @@
+from src.models.media_strategy import SceneSourceType
 from src.models.video_clip import (
     VideoClip,
     VideoClipStatus,
 )
 from src.models.video_timeline import VideoTimeline
-from src.models.media_strategy import SceneSourceType
 
 clip1 = VideoClip(
     scene_number=1,
@@ -54,4 +54,3 @@ assert duration == 26
 assert len(timeline.clips) == 3
 
 print("Video Timeline tests completed successfully.")
-

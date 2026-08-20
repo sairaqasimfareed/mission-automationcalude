@@ -24,9 +24,7 @@ class ScriptAgent:
         estimated_cost_usd: float = 0.0,
     ) -> None:
         if estimated_cost_usd < 0:
-            raise ValueError(
-                "Estimated script cost cannot be negative."
-            )
+            raise ValueError("Estimated script cost cannot be negative.")
 
         self.llm_service = llm_service
         self.profile_ids = profile_ids
@@ -39,9 +37,7 @@ class ScriptAgent:
         """Generate one script from approved research."""
 
         if research.status != ResearchStatus.APPROVED:
-            raise ValueError(
-                "Script generation requires approved research."
-            )
+            raise ValueError("Script generation requires approved research.")
 
         request = LLMRequest(
             provider=LLMProvider.OPENAI,
@@ -52,11 +48,7 @@ class ScriptAgent:
                 f"Topic: {research.topic}\n\n"
                 f"Research summary:\n"
                 f"{research.research_summary}\n\n"
-                "Key facts:\n"
-                + "\n".join(
-                    f"- {fact}"
-                    for fact in research.key_facts
-                )
+                "Key facts:\n" + "\n".join(f"- {fact}" for fact in research.key_facts)
             ),
             system_prompt=(
                 "You are a professional long-form YouTube "
@@ -85,19 +77,12 @@ class ScriptAgent:
                 or "All configured LLM providers failed."
             )
 
-            raise RuntimeError(
-                "Script generation failed: "
-                f"{error_message}"
-            )
+            raise RuntimeError("Script generation failed: " f"{error_message}")
 
-        content = (
-            service_result.result.content or ""
-        ).strip()
+        content = (service_result.result.content or "").strip()
 
         if not content:
-            raise RuntimeError(
-                "Script provider returned empty content."
-            )
+            raise RuntimeError("Script provider returned empty content.")
 
         word_count = len(content.split())
 

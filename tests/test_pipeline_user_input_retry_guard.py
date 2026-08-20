@@ -27,9 +27,7 @@ from src.pipeline.stage_result import (
 )
 
 
-class ConsumingRetryStage(
-    BasePipelineStage
-):
+class ConsumingRetryStage(BasePipelineStage):
     """
     Synthetic stage proving one-shot user input is not reapplied
     across automatic retry attempts.
@@ -59,15 +57,9 @@ class ConsumingRetryStage(
     ) -> StageResult:
         self.execution_count += 1
 
-        payload = (
-            context.consume_user_input(
-                self.USER_INPUT_KEY
-            )
-        )
+        payload = context.consume_user_input(self.USER_INPUT_KEY)
 
-        self.seen_payloads.append(
-            payload
-        )
+        self.seen_payloads.append(payload)
 
         if payload is not None:
             self.decision_apply_count += 1
@@ -75,9 +67,7 @@ class ConsumingRetryStage(
         if self.execution_count == 1:
             return StageResult(
                 stage=self.stage_name,
-                status=(
-                    PipelineStageStatus.FAILED
-                ),
+                status=(PipelineStageStatus.FAILED),
                 errors=[
                     "Synthetic first-attempt failure.",
                 ],
@@ -85,15 +75,11 @@ class ConsumingRetryStage(
 
         return StageResult(
             stage=self.stage_name,
-            status=(
-                PipelineStageStatus.COMPLETED
-            ),
+            status=(PipelineStageStatus.COMPLETED),
         )
 
 
-class NonConsumingRetryStage(
-    BasePipelineStage
-):
+class NonConsumingRetryStage(BasePipelineStage):
     """
     Control stage proving non-destructive reads remain visible across
     retry attempts.
@@ -117,20 +103,14 @@ class NonConsumingRetryStage(
     ) -> StageResult:
         self.execution_count += 1
 
-        payload = context.get_user_input(
-            self.USER_INPUT_KEY
-        )
+        payload = context.get_user_input(self.USER_INPUT_KEY)
 
-        self.seen_payloads.append(
-            payload
-        )
+        self.seen_payloads.append(payload)
 
         if self.execution_count == 1:
             return StageResult(
                 stage=self.stage_name,
-                status=(
-                    PipelineStageStatus.FAILED
-                ),
+                status=(PipelineStageStatus.FAILED),
                 errors=[
                     "Synthetic first-attempt failure.",
                 ],
@@ -138,9 +118,7 @@ class NonConsumingRetryStage(
 
         return StageResult(
             stage=self.stage_name,
-            status=(
-                PipelineStageStatus.COMPLETED
-            ),
+            status=(PipelineStageStatus.COMPLETED),
         )
 
 
@@ -154,23 +132,17 @@ def build_settings() -> AdvancedSettings:
 
 def build_context() -> StageContext:
     job = VideoJob(
-        project_name=(
-            "Pipeline User Input Retry Guard"
-        ),
+        project_name=("Pipeline User Input Retry Guard"),
         channel_name="Mission Channel",
         niche="automation",
-        topic=(
-            "Retry-safe one-shot user input"
-        ),
+        topic=("Retry-safe one-shot user input"),
     )
 
     return StageContext(
         job=job,
         pipeline_state=(
             PipelineState(
-                current_stage=(
-                    PipelineStageName.RENDER
-                ),
+                current_stage=(PipelineStageName.RENDER),
             )
         ),
         dry_run=True,
@@ -178,9 +150,7 @@ def build_context() -> StageContext:
             "synthetic_decision": {
                 "approved": True,
             },
-            "unrelated": (
-                "preserve-me"
-            ),
+            "unrelated": ("preserve-me"),
         },
     )
 
@@ -191,69 +161,37 @@ def test_consumed_input_is_not_reapplied_on_retry() -> None:
     stage = ConsumingRetryStage()
 
     runner = PipelineRunner(
-        advanced_settings=(
-            build_settings()
-        ),
+        advanced_settings=(build_settings()),
     )
 
-    runner.register(
-        stage
-    )
+    runner.register(stage)
 
-    results = runner.run(
-        context
-    )
+    results = runner.run(context)
 
     assert len(results) == 1
 
     result = results[0]
 
-    assert (
-        result.status
-        == PipelineStageStatus.COMPLETED
-    )
+    assert result.status == PipelineStageStatus.COMPLETED
 
-    assert (
-        result.retry_count
-        == 1
-    )
+    assert result.retry_count == 1
 
-    assert (
-        stage.execution_count
-        == 2
-    )
+    assert stage.execution_count == 2
 
-    assert (
-        stage.decision_apply_count
-        == 1
-    )
+    assert stage.decision_apply_count == 1
 
-    assert (
-        stage.seen_payloads
-        == [
-            {
-                "approved": True,
-            },
-            None,
-        ]
-    )
+    assert stage.seen_payloads == [
+        {
+            "approved": True,
+        },
+        None,
+    ]
 
-    assert (
-        "synthetic_decision"
-        not in context.user_input
-    )
+    assert "synthetic_decision" not in context.user_input
 
-    assert (
-        context.user_input[
-            "unrelated"
-        ]
-        == "preserve-me"
-    )
+    assert context.user_input["unrelated"] == "preserve-me"
 
-    assert (
-        context.job.retry_count
-        == 1
-    )
+    assert context.job.retry_count == 1
 
 
 def test_non_consumed_input_remains_visible_on_retry() -> None:
@@ -262,56 +200,33 @@ def test_non_consumed_input_remains_visible_on_retry() -> None:
     stage = NonConsumingRetryStage()
 
     runner = PipelineRunner(
-        advanced_settings=(
-            build_settings()
-        ),
+        advanced_settings=(build_settings()),
     )
 
-    runner.register(
-        stage
-    )
+    runner.register(stage)
 
-    results = runner.run(
-        context
-    )
+    results = runner.run(context)
 
     assert len(results) == 1
 
     result = results[0]
 
-    assert (
-        result.status
-        == PipelineStageStatus.COMPLETED
-    )
+    assert result.status == PipelineStageStatus.COMPLETED
 
-    assert (
-        result.retry_count
-        == 1
-    )
+    assert result.retry_count == 1
 
-    assert (
-        stage.execution_count
-        == 2
-    )
+    assert stage.execution_count == 2
 
-    assert (
-        stage.seen_payloads
-        == [
-            {
-                "approved": True,
-            },
-            {
-                "approved": True,
-            },
-        ]
-    )
+    assert stage.seen_payloads == [
+        {
+            "approved": True,
+        },
+        {
+            "approved": True,
+        },
+    ]
 
-    assert (
-        context.has_user_input(
-            "synthetic_decision"
-        )
-        is True
-    )
+    assert context.has_user_input("synthetic_decision") is True
 
 
 def test_consumed_input_stays_absent_after_retry_completion() -> None:
@@ -320,40 +235,21 @@ def test_consumed_input_stays_absent_after_retry_completion() -> None:
     stage = ConsumingRetryStage()
 
     runner = PipelineRunner(
-        advanced_settings=(
-            build_settings()
-        ),
+        advanced_settings=(build_settings()),
     )
 
-    runner.register(
-        stage
-    )
+    runner.register(stage)
 
-    runner.run(
-        context
-    )
+    runner.run(context)
 
-    assert (
-        context.get_user_input(
-            "synthetic_decision"
-        )
-        is None
-    )
+    assert context.get_user_input("synthetic_decision") is None
 
-    assert (
-        context.consume_user_input(
-            "synthetic_decision"
-        )
-        is None
-    )
+    assert context.consume_user_input("synthetic_decision") is None
 
 
 def main() -> None:
     print()
-    print(
-        "Running Pipeline User Input "
-        "Retry Guard tests..."
-    )
+    print("Running Pipeline User Input " "Retry Guard tests...")
     print()
 
     test_consumed_input_is_not_reapplied_on_retry()
@@ -361,10 +257,7 @@ def main() -> None:
     test_consumed_input_stays_absent_after_retry_completion()
 
     print()
-    print(
-        "Pipeline User Input Retry Guard "
-        "tests completed successfully."
-    )
+    print("Pipeline User Input Retry Guard " "tests completed successfully.")
 
 
 if __name__ == "__main__":

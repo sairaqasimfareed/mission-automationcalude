@@ -46,9 +46,7 @@ class FailingAdapter(LLMProviderAdapter):
         request: LLMRequest,
     ) -> Callable[[], LLMProviderResponse]:
         def operation() -> LLMProviderResponse:
-            raise RuntimeError(
-                "Primary provider failed."
-            )
+            raise RuntimeError("Primary provider failed.")
 
         return operation
 
@@ -71,9 +69,7 @@ class SuccessfulAdapter(LLMProviderAdapter):
                     total_tokens=150,
                     estimated_cost_usd=0.25,
                 ),
-                provider_request_id=(
-                    "gemini-request-001"
-                ),
+                provider_request_id=("gemini-request-001"),
                 metadata={
                     "test": True,
                 },
@@ -84,9 +80,7 @@ class SuccessfulAdapter(LLMProviderAdapter):
 
 secret_store = InMemorySecretStore()
 
-secret_manager = ProviderSecretManager(
-    secret_store
-)
+secret_manager = ProviderSecretManager(secret_store)
 
 openai_secret = secret_manager.create_secret(
     profile_id="openai-main",
@@ -108,13 +102,9 @@ registry = ProviderRegistry(
             category=ProviderCategory.LLM,
             enabled=True,
             priority=1,
-            secret_reference=(
-                openai_secret.secret_reference
-            ),
+            secret_reference=(openai_secret.secret_reference),
             default_model="openai-test-model",
-            health_status=(
-                ProviderHealthStatus.HEALTHY
-            ),
+            health_status=(ProviderHealthStatus.HEALTHY),
             capabilities=[
                 "text_generation",
             ],
@@ -129,13 +119,9 @@ registry = ProviderRegistry(
             category=ProviderCategory.LLM,
             enabled=True,
             priority=2,
-            secret_reference=(
-                gemini_secret.secret_reference
-            ),
+            secret_reference=(gemini_secret.secret_reference),
             default_model="gemini-test-model",
-            health_status=(
-                ProviderHealthStatus.HEALTHY
-            ),
+            health_status=(ProviderHealthStatus.HEALTHY),
             capabilities=[
                 "text_generation",
             ],
@@ -152,9 +138,7 @@ provider_factory = ProviderFactory(
     secret_manager=secret_manager,
 )
 
-budget_service = ProviderBudgetService(
-    registry
-)
+budget_service = ProviderBudgetService(registry)
 
 gateway = LLMGateway(
     retry_config=RetryConfig(
@@ -174,9 +158,7 @@ def resolve_test_adapter(
     if profile_id == "gemini-backup":
         return SuccessfulAdapter()
 
-    raise KeyError(
-        f"Unexpected profile: {profile_id}"
-    )
+    raise KeyError(f"Unexpected profile: {profile_id}")
 
 
 service = LLMService(
@@ -218,10 +200,7 @@ print(
 
 assert service_result.is_success is True
 
-assert (
-    service_result.selected_profile_id
-    == "gemini-backup"
-)
+assert service_result.selected_profile_id == "gemini-backup"
 
 assert service_result.used_failover is True
 
@@ -230,41 +209,22 @@ assert service_result.attempted_profile_ids == [
     "gemini-backup",
 ]
 
-assert (
-    service_result.result.content
-    == "Fallback provider succeeded."
-)
+assert service_result.result.content == "Fallback provider succeeded."
 
-assert (
-    service_result.result.provider
-    == LLMProvider.GEMINI
-)
+assert service_result.result.provider == LLMProvider.GEMINI
 
-assert (
-    service_result.result.provider_request_id
-    == "gemini-request-001"
-)
+assert service_result.result.provider_request_id == "gemini-request-001"
 
 assert len(service_result.attempts) == 2
 
 
-openai_profile = registry.get(
-    "openai-main"
-)
+openai_profile = registry.get("openai-main")
 
-gemini_profile = registry.get(
-    "gemini-backup"
-)
+gemini_profile = registry.get("gemini-backup")
 
-assert (
-    openai_profile.health_status
-    == ProviderHealthStatus.DEGRADED
-)
+assert openai_profile.health_status == ProviderHealthStatus.DEGRADED
 
-assert (
-    gemini_profile.health_status
-    == ProviderHealthStatus.HEALTHY
-)
+assert gemini_profile.health_status == ProviderHealthStatus.HEALTHY
 
 assert openai_profile.daily_spent_usd == 0.0
 assert openai_profile.monthly_spent_usd == 0.0
@@ -294,15 +254,9 @@ try:
         estimated_cost_usd=-1.0,
     )
 except ValueError:
-    print(
-        "Negative estimated cost successfully blocked."
-    )
+    print("Negative estimated cost successfully blocked.")
 else:
-    raise AssertionError(
-        "Negative estimated cost should fail."
-    )
+    raise AssertionError("Negative estimated cost should fail.")
 
 
-print(
-    "LLM Service tests completed successfully."
-)
+print("LLM Service tests completed successfully.")

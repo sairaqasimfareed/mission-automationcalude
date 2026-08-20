@@ -6,6 +6,7 @@ exclude = '''
 /(
     \.git
   | \.venv
+  | \.claude
   | __pycache__
   | build
   | dist
@@ -19,6 +20,7 @@ target-version = "py313"
 exclude = [
     ".git",
     ".venv",
+    ".claude",
     "__pycache__",
     "build",
     "dist",

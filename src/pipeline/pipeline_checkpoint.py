@@ -42,31 +42,19 @@ class PipelineCheckpoint(MissionBaseModel):
         le=100,
     )
 
-    completed_stages: list[
-        PipelineStageName
-    ] = Field(
+    completed_stages: list[PipelineStageName] = Field(
         default_factory=list,
     )
 
-    skipped_stages: list[
-        PipelineStageName
-    ] = Field(
+    skipped_stages: list[PipelineStageName] = Field(
         default_factory=list,
     )
 
-    failed_stage: (
-        PipelineStageName
-        | None
-    ) = None
+    failed_stage: PipelineStageName | None = None
 
-    waiting_stage: (
-        PipelineStageName
-        | None
-    ) = None
+    waiting_stage: PipelineStageName | None = None
 
-    stage_results: list[
-        StageResult
-    ] = Field(
+    stage_results: list[StageResult] = Field(
         default_factory=list,
     )
 
@@ -84,11 +72,7 @@ class PipelineCheckpoint(MissionBaseModel):
     )
 
     created_at: datetime = Field(
-        default_factory=lambda: (
-            datetime.now(
-                UTC
-            )
-        ),
+        default_factory=lambda: (datetime.now(UTC)),
     )
 
     metadata: dict[
@@ -105,26 +89,15 @@ class PipelineCheckpoint(MissionBaseModel):
     @classmethod
     def normalize_stage_lists(
         cls,
-        values: list[
-            PipelineStageName
-        ],
-    ) -> list[
-        PipelineStageName
-    ]:
+        values: list[PipelineStageName],
+    ) -> list[PipelineStageName]:
         """Deduplicate stage lists while preserving order."""
 
-        normalized: list[
-            PipelineStageName
-        ] = []
+        normalized: list[PipelineStageName] = []
 
         for value in values:
-            if (
-                value
-                not in normalized
-            ):
-                normalized.append(
-                    value
-                )
+            if value not in normalized:
+                normalized.append(value)
 
         return normalized
 
@@ -142,18 +115,10 @@ class PipelineCheckpoint(MissionBaseModel):
         normalized: list[str] = []
 
         for value in values:
-            cleaned = (
-                value.strip()
-            )
+            cleaned = value.strip()
 
-            if (
-                cleaned
-                and cleaned
-                not in normalized
-            ):
-                normalized.append(
-                    cleaned
-                )
+            if cleaned and cleaned not in normalized:
+                normalized.append(cleaned)
 
         return normalized
 
@@ -163,103 +128,51 @@ class PipelineCheckpoint(MissionBaseModel):
     ) -> PipelineCheckpoint:
         """Prevent contradictory checkpoint state."""
 
-        if (
-            self.failed_stage
-            is not None
-            and self.waiting_stage
-            is not None
-        ):
+        if self.failed_stage is not None and self.waiting_stage is not None:
             raise ValueError(
                 "Pipeline checkpoint cannot be "
                 "failed and waiting for user "
                 "at the same time."
             )
 
-        if (
-            self.failed_stage
-            is not None
-            and self.failed_stage
-            in self.completed_stages
-        ):
-            raise ValueError(
-                "Failed checkpoint stage cannot "
-                "also be completed."
-            )
+        if self.failed_stage is not None and self.failed_stage in self.completed_stages:
+            raise ValueError("Failed checkpoint stage cannot " "also be completed.")
 
         if (
-            self.waiting_stage
-            is not None
-            and self.waiting_stage
-            in self.completed_stages
+            self.waiting_stage is not None
+            and self.waiting_stage in self.completed_stages
         ):
-            raise ValueError(
-                "Waiting checkpoint stage cannot "
-                "also be completed."
-            )
+            raise ValueError("Waiting checkpoint stage cannot " "also be completed.")
 
-        result_stages = {
-            result.stage
-            for result
-            in self.stage_results
-        }
+        result_stages = {result.stage for result in self.stage_results}
 
-        for stage in (
-            self.completed_stages
-        ):
-            if (
-                stage
-                not in result_stages
-            ):
+        for stage in self.completed_stages:
+            if stage not in result_stages:
                 raise ValueError(
-                    "Completed checkpoint stages "
-                    "must have a StageResult."
+                    "Completed checkpoint stages " "must have a StageResult."
                 )
 
-        if (
-            self.failed_stage
-            is not None
-        ):
+        if self.failed_stage is not None:
             matching = [
                 result
-                for result
-                in self.stage_results
-                if (
-                    result.stage
-                    == self.failed_stage
-                )
+                for result in self.stage_results
+                if (result.stage == self.failed_stage)
             ]
 
-            if (
-                not matching
-                or matching[-1].status
-                != PipelineStageStatus.FAILED
-            ):
+            if not matching or matching[-1].status != PipelineStageStatus.FAILED:
                 raise ValueError(
-                    "Failed checkpoint stage requires "
-                    "a matching failed StageResult."
+                    "Failed checkpoint stage requires " "a matching failed StageResult."
                 )
 
-        if (
-            self.waiting_stage
-            is not None
-        ):
+        if self.waiting_stage is not None:
             matching = [
                 result
-                for result
-                in self.stage_results
-                if (
-                    result.stage
-                    == self.waiting_stage
-                )
+                for result in self.stage_results
+                if (result.stage == self.waiting_stage)
             ]
 
-            if (
-                not matching
-                or matching[-1].status
-                != (
-                    PipelineStageStatus
-                    .WAITING_FOR_USER
-                )
+            if not matching or matching[-1].status != (
+                PipelineStageStatus.WAITING_FOR_USER
             ):
                 raise ValueError(
                     "Waiting checkpoint stage requires "
@@ -280,12 +193,7 @@ class PipelineCheckpoint(MissionBaseModel):
         considered resumable.
         """
 
-        return (
-            self.failed_stage
-            is not None
-            or self.waiting_stage
-            is not None
-        )
+        return self.failed_stage is not None or self.waiting_stage is not None
 
     @property
     def terminally_failed(
@@ -293,10 +201,7 @@ class PipelineCheckpoint(MissionBaseModel):
     ) -> bool:
         """Return whether checkpoint records a failed stage."""
 
-        return (
-            self.failed_stage
-            is not None
-        )
+        return self.failed_stage is not None
 
     @property
     def waiting_for_user(
@@ -304,7 +209,4 @@ class PipelineCheckpoint(MissionBaseModel):
     ) -> bool:
         """Return whether checkpoint is blocked on user input."""
 
-        return (
-            self.waiting_stage
-            is not None
-        )
+        return self.waiting_stage is not None

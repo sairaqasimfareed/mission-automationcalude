@@ -20,27 +20,17 @@ class PipelineResumePlan(MissionBaseModel):
 
     resume_enabled: bool
 
-    resume_stage: (
-        PipelineStageName
-        | None
-    ) = None
+    resume_stage: PipelineStageName | None = None
 
-    skipped_stages: list[
-        PipelineStageName
-    ] = Field(
+    skipped_stages: list[PipelineStageName] = Field(
         default_factory=list,
     )
 
-    execution_stages: list[
-        PipelineStageName
-    ] = Field(
+    execution_stages: list[PipelineStageName] = Field(
         default_factory=list,
     )
 
-    checkpoint_stage: (
-        PipelineStageName
-        | None
-    ) = None
+    checkpoint_stage: PipelineStageName | None = None
 
     resumed_from_failure: bool = False
 
@@ -55,68 +45,42 @@ class PipelineResumePlan(MissionBaseModel):
         if not self.resume_enabled:
             if self.resume_stage is not None:
                 raise ValueError(
-                    "Disabled resume plan cannot "
-                    "define a resume stage."
+                    "Disabled resume plan cannot " "define a resume stage."
                 )
 
             if self.skipped_stages:
                 raise ValueError(
-                    "Disabled resume plan cannot "
-                    "skip checkpoint stages."
+                    "Disabled resume plan cannot " "skip checkpoint stages."
                 )
 
-            if (
-                self.resumed_from_failure
-                or self.resumed_from_waiting
-            ):
+            if self.resumed_from_failure or self.resumed_from_waiting:
                 raise ValueError(
-                    "Disabled resume plan cannot "
-                    "record a resume origin."
+                    "Disabled resume plan cannot " "record a resume origin."
                 )
 
-        if (
-            self.resumed_from_failure
-            and self.resumed_from_waiting
-        ):
+        if self.resumed_from_failure and self.resumed_from_waiting:
             raise ValueError(
                 "Resume plan cannot originate from "
                 "failure and waiting-for-user "
                 "simultaneously."
             )
 
-        if (
-            self.resume_enabled
-            and self.resume_stage is None
-            and self.execution_stages
-        ):
+        if self.resume_enabled and self.resume_stage is None and self.execution_stages:
             raise ValueError(
-                "Enabled resume plan with execution "
-                "stages requires a resume stage."
+                "Enabled resume plan with execution " "stages requires a resume stage."
             )
 
         if (
             self.resume_stage is not None
-            and self.resume_stage
-            not in self.execution_stages
+            and self.resume_stage not in self.execution_stages
         ):
-            raise ValueError(
-                "Resume stage must appear in "
-                "execution stages."
-            )
+            raise ValueError("Resume stage must appear in " "execution stages.")
 
-        overlap = (
-            set(
-                self.skipped_stages
-            )
-            & set(
-                self.execution_stages
-            )
-        )
+        overlap = set(self.skipped_stages) & set(self.execution_stages)
 
         if overlap:
             raise ValueError(
-                "Resume plan cannot both skip and "
-                "execute the same stage."
+                "Resume plan cannot both skip and " "execute the same stage."
             )
 
         return self

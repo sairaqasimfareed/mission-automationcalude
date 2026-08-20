@@ -20,12 +20,8 @@ from src.services.voice_profile_registry_service import (
 
 def _service() -> GenreVoiceDirectiveGenerationService:
     return GenreVoiceDirectiveGenerationService(
-        genre_registry=(
-            GenreProfileRegistryService.with_default_profiles()
-        ),
-        voice_profile_registry=(
-            VoiceProfileRegistryService.with_default_profiles()
-        ),
+        genre_registry=(GenreProfileRegistryService.with_default_profiles()),
+        voice_profile_registry=(VoiceProfileRegistryService.with_default_profiles()),
     )
 
 
@@ -37,26 +33,16 @@ def _scene(
     return Scene(
         scene_number=scene_number,
         title=f"Scene {scene_number}",
-        narration=(
-            f"Synthetic narration for scene "
-            f"{scene_number}."
-        ),
-        visual_prompt=(
-            f"Synthetic visual prompt for scene "
-            f"{scene_number}."
-        ),
+        narration=(f"Synthetic narration for scene " f"{scene_number}."),
+        visual_prompt=(f"Synthetic visual prompt for scene " f"{scene_number}."),
         estimated_duration_seconds=duration_seconds,
         status=SceneStatus.READY,
     )
 
 
 def test_exposes_injected_registries() -> None:
-    genre_registry = (
-        GenreProfileRegistryService.with_default_profiles()
-    )
-    voice_registry = (
-        VoiceProfileRegistryService.with_default_profiles()
-    )
+    genre_registry = GenreProfileRegistryService.with_default_profiles()
+    voice_registry = VoiceProfileRegistryService.with_default_profiles()
 
     service = GenreVoiceDirectiveGenerationService(
         genre_registry=genre_registry,
@@ -74,14 +60,8 @@ def test_generate_uses_genre_voice_profile() -> None:
     )
 
     assert directives.scene_number == 1
-    assert (
-        directives.voice_profile_id
-        == "voice.horror_whisper"
-    )
-    assert (
-        directives.source
-        == VoiceDirectiveSource.GENRE_PROFILE
-    )
+    assert directives.voice_profile_id == "voice.horror_whisper"
+    assert directives.source == VoiceDirectiveSource.GENRE_PROFILE
 
 
 def test_generate_uses_canonical_voice_profile_values() -> None:
@@ -92,9 +72,7 @@ def test_generate_uses_canonical_voice_profile_values() -> None:
         genre_id="genre.horror",
     )
 
-    profile = service.voice_profile_registry.get(
-        "voice.horror_whisper"
-    )
+    profile = service.voice_profile_registry.get("voice.horror_whisper")
 
     assert directives.emotion == VoiceEmotion.SUSPENSEFUL
     assert directives.emotion == profile.emotion
@@ -102,35 +80,14 @@ def test_generate_uses_canonical_voice_profile_values() -> None:
     assert directives.energy == profile.energy
     assert directives.pitch_style == profile.pitch_style
     assert directives.pause_style == profile.pause_style
-    assert (
-        directives.emphasis_style
-        == profile.emphasis_style
-    )
+    assert directives.emphasis_style == profile.emphasis_style
     assert directives.speed == profile.default_speed
-    assert (
-        directives.pitch_adjustment
-        == profile.default_pitch_adjustment
-    )
-    assert (
-        directives.volume_gain_db
-        == profile.default_volume_gain_db
-    )
-    assert (
-        directives.stability
-        == profile.default_stability
-    )
-    assert (
-        directives.similarity_boost
-        == profile.default_similarity_boost
-    )
-    assert (
-        directives.style_strength
-        == profile.default_style_strength
-    )
-    assert (
-        directives.speaker_boost
-        == profile.default_speaker_boost
-    )
+    assert directives.pitch_adjustment == profile.default_pitch_adjustment
+    assert directives.volume_gain_db == profile.default_volume_gain_db
+    assert directives.stability == profile.default_stability
+    assert directives.similarity_boost == profile.default_similarity_boost
+    assert directives.style_strength == profile.default_style_strength
+    assert directives.speaker_boost == profile.default_speaker_boost
 
 
 def test_generate_preserves_language_inputs() -> None:
@@ -172,18 +129,9 @@ def test_generate_records_resolution_metadata() -> None:
     assert metadata["resolved_genre_id"] == "genre.horror"
     assert metadata["genre_fallback_used"] is False
 
-    assert (
-        metadata["requested_voice_profile_id"]
-        == "voice.horror_whisper"
-    )
-    assert (
-        metadata["resolved_voice_profile_id"]
-        == "voice.horror_whisper"
-    )
-    assert (
-        metadata["voice_profile_fallback_used"]
-        is False
-    )
+    assert metadata["requested_voice_profile_id"] == "voice.horror_whisper"
+    assert metadata["resolved_voice_profile_id"] == "voice.horror_whisper"
+    assert metadata["voice_profile_fallback_used"] is False
 
     assert metadata["scene_title"] == "Scene 7"
     assert metadata["scene_duration_seconds"] == 14
@@ -197,15 +145,12 @@ def test_generate_records_genre_voice_defaults() -> None:
         genre_id="genre.horror",
     )
 
-    genre_profile = service.genre_registry.get(
-        "genre.horror"
-    )
+    genre_profile = service.genre_registry.get("genre.horror")
 
-    assert (
-        directives.metadata["genre_voice_defaults"]
-        == genre_profile.voice.model_dump(
-            mode="json",
-        )
+    assert directives.metadata[
+        "genre_voice_defaults"
+    ] == genre_profile.voice.model_dump(
+        mode="json",
     )
 
 
@@ -215,14 +160,8 @@ def test_generate_normalizes_requested_genre_metadata() -> None:
         genre_id="  GENRE.HORROR  ",
     )
 
-    assert (
-        directives.metadata["requested_genre_id"]
-        == "genre.horror"
-    )
-    assert (
-        directives.metadata["resolved_genre_id"]
-        == "genre.horror"
-    )
+    assert directives.metadata["requested_genre_id"] == "genre.horror"
+    assert directives.metadata["resolved_genre_id"] == "genre.horror"
 
 
 def test_unknown_genre_uses_existing_genre_fallback() -> None:
@@ -231,14 +170,8 @@ def test_unknown_genre_uses_existing_genre_fallback() -> None:
         genre_id="genre.does_not_exist",
     )
 
-    assert (
-        directives.metadata["requested_genre_id"]
-        == "genre.does_not_exist"
-    )
-    assert (
-        directives.metadata["genre_fallback_used"]
-        is True
-    )
+    assert directives.metadata["requested_genre_id"] == "genre.does_not_exist"
+    assert directives.metadata["genre_fallback_used"] is True
     assert directives.warnings
 
 
@@ -252,10 +185,7 @@ def test_generate_many_returns_scene_number_order() -> None:
         genre_id="genre.documentary",
     )
 
-    assert [
-        directive.scene_number
-        for directive in directives
-    ] == [1, 2, 3]
+    assert [directive.scene_number for directive in directives] == [1, 2, 3]
 
 
 def test_generate_many_preserves_language_inputs() -> None:
@@ -271,14 +201,8 @@ def test_generate_many_preserves_language_inputs() -> None:
 
     assert len(directives) == 2
 
-    assert all(
-        directive.language == "Urdu"
-        for directive in directives
-    )
-    assert all(
-        directive.language_code == "ur-pk"
-        for directive in directives
-    )
+    assert all(directive.language == "Urdu" for directive in directives)
+    assert all(directive.language_code == "ur-pk" for directive in directives)
 
 
 def test_generate_many_empty_input_returns_empty_list() -> None:

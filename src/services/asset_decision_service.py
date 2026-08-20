@@ -38,9 +38,7 @@ class AssetDecisionService:
         """
 
         state.user_decision = decision
-        state.apply_decision_to_remaining_scenes = (
-            apply_to_remaining_scenes
-        )
+        state.apply_decision_to_remaining_scenes = apply_to_remaining_scenes
 
         if decision != AssetUserDecision.RETRY:
             state.clear_active_failure()
@@ -97,9 +95,7 @@ class AssetDecisionService:
             )
 
         else:
-            raise ValueError(
-                f"Unsupported asset decision: {decision}"
-            )
+            raise ValueError(f"Unsupported asset decision: {decision}")
 
         return state
 
@@ -115,26 +111,19 @@ class AssetDecisionService:
         """Select and approve one local or stock candidate."""
 
         if not candidates:
-            raise ValueError(
-                f"No {candidate_label} asset candidates are available."
-            )
+            raise ValueError(f"No {candidate_label} asset candidates are available.")
 
         if candidate_index is None:
-            raise ValueError(
-                f"A {candidate_label} candidate index is required."
-            )
+            raise ValueError(f"A {candidate_label} candidate index is required.")
 
         if not 0 <= candidate_index < len(candidates):
-            raise IndexError(
-                f"Selected {candidate_label} candidate index is invalid."
-            )
+            raise IndexError(f"Selected {candidate_label} candidate index is invalid.")
 
         candidate = candidates[candidate_index]
 
         if candidate.source_type != expected_source:
             raise ValueError(
-                f"Selected candidate is not a valid "
-                f"{candidate_label} asset."
+                f"Selected candidate is not a valid " f"{candidate_label} asset."
             )
 
         approved_candidate = candidate.model_copy(
@@ -164,10 +153,7 @@ class AssetDecisionService:
             self._record_disabled_module_failure(
                 state=state,
                 module_name="manual_upload",
-                message=(
-                    "Manual upload module is disabled "
-                    "for this scene."
-                ),
+                message=("Manual upload module is disabled " "for this scene."),
                 recovery_options=[
                     AssetRecoveryAction.SEARCH_STOCK,
                     AssetRecoveryAction.SKIP_SCENE,
@@ -182,18 +168,14 @@ class AssetDecisionService:
 
         if manual_upload_path is None:
             state.manual_upload_path = None
-            state.status = (
-                AssetWorkflowStatus.WAITING_FOR_MANUAL_UPLOAD
-            )
+            state.status = AssetWorkflowStatus.WAITING_FOR_MANUAL_UPLOAD
             return
 
         normalized_path = manual_upload_path.strip()
 
         if not normalized_path:
             state.manual_upload_path = None
-            state.status = (
-                AssetWorkflowStatus.WAITING_FOR_MANUAL_UPLOAD
-            )
+            state.status = AssetWorkflowStatus.WAITING_FOR_MANUAL_UPLOAD
             return
 
         path = Path(normalized_path).expanduser()
@@ -202,10 +184,7 @@ class AssetDecisionService:
             failure = AssetModuleFailure(
                 module_name="manual_upload",
                 reason=AssetFailureReason.FILE_NOT_FOUND,
-                message=(
-                    "The selected manual upload file "
-                    "does not exist."
-                ),
+                message=("The selected manual upload file " "does not exist."),
                 recoverable=True,
                 requires_user_decision=True,
                 recovery_options=[
@@ -224,13 +203,8 @@ class AssetDecisionService:
         if not path.is_file():
             failure = AssetModuleFailure(
                 module_name="manual_upload",
-                reason=(
-                    AssetFailureReason.INVALID_MANUAL_UPLOAD
-                ),
-                message=(
-                    "The selected manual upload path "
-                    "is not a file."
-                ),
+                reason=(AssetFailureReason.INVALID_MANUAL_UPLOAD),
+                message=("The selected manual upload path " "is not a file."),
                 recoverable=True,
                 requires_user_decision=True,
                 recovery_options=[
@@ -279,9 +253,7 @@ class AssetDecisionService:
         state.selected_candidate = None
 
         if state.stock_module_enabled:
-            state.selected_source = (
-                SceneSourceType.STOCK_FOOTAGE
-            )
+            state.selected_source = SceneSourceType.STOCK_FOOTAGE
             state.status = AssetWorkflowStatus.SEARCHING_STOCK
             return
 
@@ -331,9 +303,7 @@ class AssetDecisionService:
         failure = state.active_failure
 
         if failure is None:
-            raise ValueError(
-                "There is no active asset failure to retry."
-            )
+            raise ValueError("There is no active asset failure to retry.")
 
         reason = failure.reason
         state.clear_active_failure()
@@ -342,9 +312,7 @@ class AssetDecisionService:
             AssetFailureReason.NO_LOCAL_RESULTS,
         }:
             if state.local_module_enabled:
-                state.status = (
-                    AssetWorkflowStatus.SEARCHING_LOCAL
-                )
+                state.status = AssetWorkflowStatus.SEARCHING_LOCAL
                 return
 
         if reason in {
@@ -356,10 +324,7 @@ class AssetDecisionService:
         }:
             if state.manual_upload_module_enabled:
                 state.manual_upload_requested = True
-                state.status = (
-                    AssetWorkflowStatus
-                    .WAITING_FOR_MANUAL_UPLOAD
-                )
+                state.status = AssetWorkflowStatus.WAITING_FOR_MANUAL_UPLOAD
                 return
 
         if reason in {
@@ -370,9 +335,7 @@ class AssetDecisionService:
             AssetFailureReason.STOCK_API_AUTHENTICATION_FAILED,
         }:
             if state.stock_module_enabled:
-                state.status = (
-                    AssetWorkflowStatus.SEARCHING_STOCK
-                )
+                state.status = AssetWorkflowStatus.SEARCHING_STOCK
                 return
 
         failure = AssetModuleFailure(
@@ -422,13 +385,9 @@ class AssetDecisionService:
         state.placeholder_requested = True
         state.skipped = False
 
-        state.warnings.append(
-            "A placeholder asset was requested for this scene."
-        )
+        state.warnings.append("A placeholder asset was requested for this scene.")
 
-        state.status = (
-            AssetWorkflowStatus.WAITING_FOR_USER_DECISION
-        )
+        state.status = AssetWorkflowStatus.WAITING_FOR_USER_DECISION
 
     def _disable_failed_module(
         self,
@@ -439,9 +398,7 @@ class AssetDecisionService:
         failure = state.active_failure
 
         if failure is None:
-            raise ValueError(
-                "There is no failed module to disable."
-            )
+            raise ValueError("There is no failed module to disable.")
 
         module_name = failure.module_name.strip().lower()
 
@@ -454,20 +411,12 @@ class AssetDecisionService:
             state.clear_active_failure()
 
             if state.manual_upload_module_enabled:
-                state.status = (
-                    AssetWorkflowStatus
-                    .WAITING_FOR_MANUAL_UPLOAD
-                )
+                state.status = AssetWorkflowStatus.WAITING_FOR_MANUAL_UPLOAD
                 state.manual_upload_requested = True
             elif state.stock_module_enabled:
-                state.status = (
-                    AssetWorkflowStatus.SEARCHING_STOCK
-                )
+                state.status = AssetWorkflowStatus.SEARCHING_STOCK
             else:
-                state.status = (
-                    AssetWorkflowStatus
-                    .WAITING_FOR_RECOVERY_DECISION
-                )
+                state.status = AssetWorkflowStatus.WAITING_FOR_RECOVERY_DECISION
 
             return
 
@@ -480,14 +429,9 @@ class AssetDecisionService:
             state.clear_active_failure()
 
             if state.stock_module_enabled:
-                state.status = (
-                    AssetWorkflowStatus.SEARCHING_STOCK
-                )
+                state.status = AssetWorkflowStatus.SEARCHING_STOCK
             else:
-                state.status = (
-                    AssetWorkflowStatus
-                    .WAITING_FOR_RECOVERY_DECISION
-                )
+                state.status = AssetWorkflowStatus.WAITING_FOR_RECOVERY_DECISION
 
             return
 
@@ -500,22 +444,15 @@ class AssetDecisionService:
             state.clear_active_failure()
 
             if state.manual_upload_module_enabled:
-                state.status = (
-                    AssetWorkflowStatus
-                    .WAITING_FOR_MANUAL_UPLOAD
-                )
+                state.status = AssetWorkflowStatus.WAITING_FOR_MANUAL_UPLOAD
                 state.manual_upload_requested = True
             else:
-                state.status = (
-                    AssetWorkflowStatus
-                    .WAITING_FOR_RECOVERY_DECISION
-                )
+                state.status = AssetWorkflowStatus.WAITING_FOR_RECOVERY_DECISION
 
             return
 
         raise ValueError(
-            "The failed asset module cannot be disabled: "
-            f"{failure.module_name}"
+            "The failed asset module cannot be disabled: " f"{failure.module_name}"
         )
 
     @staticmethod

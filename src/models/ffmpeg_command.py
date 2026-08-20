@@ -52,10 +52,7 @@ class FFmpegCommandPlan(MissionBaseModel):
         cleaned = value.strip()
 
         if not cleaned:
-            raise ValueError(
-                "FFmpeg command text "
-                "cannot be empty."
-            )
+            raise ValueError("FFmpeg command text " "cannot be empty.")
 
         return cleaned
 
@@ -68,10 +65,7 @@ class FFmpegCommandPlan(MissionBaseModel):
         cls,
         value: str,
     ) -> str:
-        return (
-            value.strip()
-            .strip("[]")
-        )
+        return value.strip().strip("[]")
 
     @field_validator("arguments")
     @classmethod
@@ -79,20 +73,14 @@ class FFmpegCommandPlan(MissionBaseModel):
         cls,
         values: list[str],
     ) -> list[str]:
-        return [
-            value
-            for value in values
-            if value != ""
-        ]
+        return [value for value in values if value != ""]
 
     @model_validator(mode="after")
     def validate_command(
         self,
     ) -> FFmpegCommandPlan:
         if not self.arguments:
-            raise ValueError(
-                "FFmpeg command requires arguments."
-            )
+            raise ValueError("FFmpeg command requires arguments.")
 
         return self
 
@@ -109,22 +97,13 @@ class FFmpegCommandPlan(MissionBaseModel):
     def command_preview(self) -> str:
         """Return human-readable command preview."""
 
-        return " ".join(
-            self._quote_argument(
-                value
-            )
-            for value in self.command
-        )
+        return " ".join(self._quote_argument(value) for value in self.command)
 
     @staticmethod
     def _quote_argument(
         value: str,
     ) -> str:
-        if (
-            " " not in value
-            and "\t" not in value
-            and '"' not in value
-        ):
+        if " " not in value and "\t" not in value and '"' not in value:
             return value
 
         escaped = value.replace(
@@ -132,6 +111,4 @@ class FFmpegCommandPlan(MissionBaseModel):
             '\\"',
         )
 
-        return (
-            f'"{escaped}"'
-        )
+        return f'"{escaped}"'

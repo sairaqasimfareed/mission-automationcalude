@@ -12,7 +12,6 @@ from src.services.asset_storage_service import (
     AssetStorageService,
 )
 
-
 with TemporaryDirectory() as temporary_directory:
     root = Path(temporary_directory)
 
@@ -23,14 +22,9 @@ with TemporaryDirectory() as temporary_directory:
         parents=True,
     )
 
-    source_file = (
-        source_directory
-        / "roman_army_clip.mp4"
-    )
+    source_file = source_directory / "roman_army_clip.mp4"
 
-    source_file.write_bytes(
-        b"test-video-content"
-    )
+    source_file.write_bytes(b"test-video-content")
 
     asset_index = AssetIndex()
 
@@ -61,15 +55,9 @@ with TemporaryDirectory() as temporary_directory:
 
     stored_asset = first_result.asset
 
-    assert (
-        stored_asset.source
-        == IndexedAssetSource.MANUAL_UPLOAD
-    )
+    assert stored_asset.source == IndexedAssetSource.MANUAL_UPLOAD
 
-    assert (
-        stored_asset.asset_type
-        == IndexedAssetType.VIDEO
-    )
+    assert stored_asset.asset_type == IndexedAssetType.VIDEO
 
     assert stored_asset.content_hash is not None
     assert stored_asset.provider == "Manual Upload"
@@ -80,29 +68,20 @@ with TemporaryDirectory() as temporary_directory:
         "army",
     ]
 
-    stored_path = Path(
-        stored_asset.file_path
-    ).resolve()
+    stored_path = Path(stored_asset.file_path).resolve()
 
-    resolved_storage_directory = (
-        storage_directory.resolve()
-    )
+    resolved_storage_directory = storage_directory.resolve()
 
     assert stored_path.exists()
 
-    assert (
-        resolved_storage_directory
-        in stored_path.parents
-    )
+    assert resolved_storage_directory in stored_path.parents
 
     assert len(asset_index.assets) == 1
 
-    duplicate_result = (
-        service.store_manual_upload(
-            source_path=source_file,
-            project_id="history-project",
-            scene_number=2,
-        )
+    duplicate_result = service.store_manual_upload(
+        source_path=source_file,
+        project_id="history-project",
+        scene_number=2,
     )
 
     assert duplicate_result.success is True
@@ -112,7 +91,4 @@ with TemporaryDirectory() as temporary_directory:
     assert len(asset_index.assets) == 1
 
 
-print(
-    "Asset Storage Service tests "
-    "completed successfully."
-)
+print("Asset Storage Service tests " "completed successfully.")

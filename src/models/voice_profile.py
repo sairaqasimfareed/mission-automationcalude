@@ -42,33 +42,21 @@ class VoiceProfile(MissionBaseModel):
 
     version: str = "1.0.0"
 
-    status: VoiceProfileStatus = (
-        VoiceProfileStatus.ACTIVE
-    )
+    status: VoiceProfileStatus = VoiceProfileStatus.ACTIVE
 
-    fallback_profile_id: str | None = (
-        "voice.neutral_narrator"
-    )
+    fallback_profile_id: str | None = "voice.neutral_narrator"
 
-    emotion: VoiceEmotion = (
-        VoiceEmotion.NEUTRAL
-    )
+    emotion: VoiceEmotion = VoiceEmotion.NEUTRAL
 
     pace: VoicePace = VoicePace.MODERATE
 
     energy: VoiceEnergy = VoiceEnergy.MEDIUM
 
-    pitch_style: VoicePitchStyle = (
-        VoicePitchStyle.NATURAL
-    )
+    pitch_style: VoicePitchStyle = VoicePitchStyle.NATURAL
 
-    pause_style: VoicePauseStyle = (
-        VoicePauseStyle.NATURAL
-    )
+    pause_style: VoicePauseStyle = VoicePauseStyle.NATURAL
 
-    emphasis_style: VoiceEmphasisStyle = (
-        VoiceEmphasisStyle.BALANCED
-    )
+    emphasis_style: VoiceEmphasisStyle = VoiceEmphasisStyle.BALANCED
 
     default_speed: float = Field(
         default=1.0,
@@ -129,9 +117,7 @@ class VoiceProfile(MissionBaseModel):
         cls,
         value: str,
     ) -> str:
-        return normalize_voice_profile_id(
-            value
-        )
+        return normalize_voice_profile_id(value)
 
     @field_validator("fallback_profile_id")
     @classmethod
@@ -142,9 +128,7 @@ class VoiceProfile(MissionBaseModel):
         if value is None:
             return None
 
-        return normalize_voice_profile_id(
-            value
-        )
+        return normalize_voice_profile_id(value)
 
     @field_validator(
         "display_name",
@@ -158,9 +142,7 @@ class VoiceProfile(MissionBaseModel):
         cleaned = value.strip()
 
         if not cleaned:
-            raise ValueError(
-                "Voice profile text cannot be empty."
-            )
+            raise ValueError("Voice profile text cannot be empty.")
 
         return cleaned
 
@@ -183,10 +165,7 @@ class VoiceProfile(MissionBaseModel):
         for value in values:
             normalized = value.strip().lower()
 
-            if (
-                normalized
-                and normalized not in cleaned
-            ):
+            if normalized and normalized not in cleaned:
                 cleaned.append(normalized)
 
         return cleaned
@@ -205,22 +184,13 @@ class VoiceProfile(MissionBaseModel):
             dict[str, Any],
         ] = {}
 
-        for provider_name, settings in (
-            mappings.items()
-        ):
-            normalized_name = (
-                provider_name.strip().lower()
-            )
+        for provider_name, settings in mappings.items():
+            normalized_name = provider_name.strip().lower()
 
             if not normalized_name:
-                raise ValueError(
-                    "Voice provider mapping name "
-                    "cannot be empty."
-                )
+                raise ValueError("Voice provider mapping name " "cannot be empty.")
 
-            cleaned[
-                normalized_name
-            ] = dict(settings)
+            cleaned[normalized_name] = dict(settings)
 
         return cleaned
 
@@ -228,24 +198,15 @@ class VoiceProfile(MissionBaseModel):
     def validate_fallback(
         self,
     ) -> VoiceProfile:
-        if (
-            self.fallback_profile_id
-            == self.profile_id
-        ):
-            raise ValueError(
-                "A voice profile cannot use itself "
-                "as its fallback."
-            )
+        if self.fallback_profile_id == self.profile_id:
+            raise ValueError("A voice profile cannot use itself " "as its fallback.")
 
         if (
-            self.profile_id
-            == "voice.neutral_narrator"
-            and self.fallback_profile_id
-            is not None
+            self.profile_id == "voice.neutral_narrator"
+            and self.fallback_profile_id is not None
         ):
             raise ValueError(
-                "The neutral narrator profile cannot "
-                "declare another fallback."
+                "The neutral narrator profile cannot " "declare another fallback."
             )
 
         return self
@@ -254,15 +215,10 @@ class VoiceProfile(MissionBaseModel):
     def usable(self) -> bool:
         """Return whether this profile may be selected."""
 
-        return (
-            self.status
-            == VoiceProfileStatus.ACTIVE
-        )
+        return self.status == VoiceProfileStatus.ACTIVE
 
 
-class VoiceProfileResolutionResult(
-    MissionBaseModel
-):
+class VoiceProfileResolutionResult(MissionBaseModel):
     """Result of resolving one requested voice profile."""
 
     requested_profile_id: str
@@ -291,35 +247,17 @@ def normalize_voice_profile_id(
     normalized = value.strip().lower()
 
     if not normalized:
-        raise ValueError(
-            "Voice profile ID cannot be empty."
-        )
+        raise ValueError("Voice profile ID cannot be empty.")
 
-    if not normalized.startswith(
-        "voice."
-    ):
-        raise ValueError(
-            "Voice profile ID must start "
-            "with 'voice.'."
-        )
+    if not normalized.startswith("voice."):
+        raise ValueError("Voice profile ID must start " "with 'voice.'.")
 
     if normalized == "voice.":
-        raise ValueError(
-            "Voice profile ID requires a name."
-        )
+        raise ValueError("Voice profile ID requires a name.")
 
-    allowed_characters = set(
-        "abcdefghijklmnopqrstuvwxyz"
-        "0123456789._-"
-    )
+    allowed_characters = set("abcdefghijklmnopqrstuvwxyz" "0123456789._-")
 
-    if any(
-        character not in allowed_characters
-        for character in normalized
-    ):
-        raise ValueError(
-            "Voice profile ID contains "
-            "unsupported characters."
-        )
+    if any(character not in allowed_characters for character in normalized):
+        raise ValueError("Voice profile ID contains " "unsupported characters.")
 
     return normalized

@@ -77,9 +77,7 @@ from src.services.scene_asset_workflow_service import (
 )
 
 
-class WaitingAssetWorkflowService(
-    SceneAssetWorkflowService
-):
+class WaitingAssetWorkflowService(SceneAssetWorkflowService):
     """
     Deterministic workflow facade for waiting/resume integration tests.
 
@@ -93,9 +91,7 @@ class WaitingAssetWorkflowService(
     def __init__(
         self,
     ) -> None:
-        self.decision_service = (
-            AssetDecisionService()
-        )
+        self.decision_service = AssetDecisionService()
 
         self.manual_upload_service = None
         self.visual_asset_router = None
@@ -110,27 +106,15 @@ class WaitingAssetWorkflowService(
         self.start_count += 1
 
         return SceneAssetState(
-            scene_id=str(
-                scene.id
-            ),
-            scene_number=(
-                scene.scene_number
-            ),
-            status=(
-                AssetWorkflowStatus
-                .WAITING_FOR_MANUAL_UPLOAD
-            ),
-            selected_source=(
-                SceneSourceType
-                .MANUAL_UPLOAD
-            ),
+            scene_id=str(scene.id),
+            scene_number=(scene.scene_number),
+            status=(AssetWorkflowStatus.WAITING_FOR_MANUAL_UPLOAD),
+            selected_source=(SceneSourceType.MANUAL_UPLOAD),
             manual_upload_requested=True,
         )
 
 
-class SuccessfulVoiceStage(
-    BasePipelineStage
-):
+class SuccessfulVoiceStage(BasePipelineStage):
     """Completed upstream stage used to verify resume skipping."""
 
     def __init__(
@@ -142,9 +126,7 @@ class SuccessfulVoiceStage(
     def stage_name(
         self,
     ) -> PipelineStageName:
-        return (
-            PipelineStageName.VOICE
-        )
+        return PipelineStageName.VOICE
 
     def execute(
         self,
@@ -156,15 +138,11 @@ class SuccessfulVoiceStage(
 
         return StageResult(
             stage=self.stage_name,
-            status=(
-                PipelineStageStatus.COMPLETED
-            ),
+            status=(PipelineStageStatus.COMPLETED),
         )
 
 
-class SuccessfulRenderStage(
-    BasePipelineStage
-):
+class SuccessfulRenderStage(BasePipelineStage):
     """Render stage reached only after user input resolves waiting."""
 
     def __init__(
@@ -176,9 +154,7 @@ class SuccessfulRenderStage(
     def stage_name(
         self,
     ) -> PipelineStageName:
-        return (
-            PipelineStageName.RENDER
-        )
+        return PipelineStageName.RENDER
 
     def execute(
         self,
@@ -186,31 +162,20 @@ class SuccessfulRenderStage(
     ) -> StageResult:
         self.execution_count += 1
 
-        prepare_render_ready_job(
-            context.job
-        )
+        prepare_render_ready_job(context.job)
 
-        context.job.render_result = (
-            RenderResult(
-                success=True,
-                output_file=(
-                    "outputs/"
-                    "waiting_resume_final.mp4"
-                ),
-                render_engine="synthetic",
-                render_time_seconds=0.1,
-                duration_seconds=30,
-                status=(
-                    RenderStatus.COMPLETED
-                ),
-            )
+        context.job.render_result = RenderResult(
+            success=True,
+            output_file=("outputs/" "waiting_resume_final.mp4"),
+            render_engine="synthetic",
+            render_time_seconds=0.1,
+            duration_seconds=30,
+            status=(RenderStatus.COMPLETED),
         )
 
         return StageResult(
             stage=self.stage_name,
-            status=(
-                PipelineStageStatus.COMPLETED
-            ),
+            status=(PipelineStageStatus.COMPLETED),
         )
 
 
@@ -224,31 +189,21 @@ def build_research() -> ResearchResult:
     """
 
     return ResearchResult(
-        topic=(
-            "Waiting-for-user checkpoint resume"
-        ),
+        topic=("Waiting-for-user checkpoint resume"),
         research_summary=(
             "Synthetic approved research for "
             "waiting-for-user serialized "
             "restart recovery testing."
         ),
         prompt_version="test-1.0",
-        status=(
-            ResearchStatus.APPROVED
-        ),
+        status=(ResearchStatus.APPROVED),
     )
-
 
 
 def build_script() -> Script:
     return Script(
-        title=(
-            "Waiting Resume Test"
-        ),
-        content=(
-            "Synthetic script content for "
-            "waiting-for-user resume testing."
-        ),
+        title=("Waiting Resume Test"),
+        content=("Synthetic script content for " "waiting-for-user resume testing."),
         prompt_version="test-1.0",
         word_count=8,
         estimated_duration_seconds=30,
@@ -259,30 +214,19 @@ def build_script() -> Script:
 def build_scene() -> Scene:
     return Scene(
         scene_number=1,
-        title=(
-            "Waiting Resume Scene"
-        ),
-        narration=(
-            "Synthetic narration for "
-            "waiting resume testing."
-        ),
-        visual_prompt=(
-            "Synthetic waiting resume visual."
-        ),
+        title=("Waiting Resume Scene"),
+        narration=("Synthetic narration for " "waiting resume testing."),
+        visual_prompt=("Synthetic waiting resume visual."),
         estimated_duration_seconds=30,
     )
 
 
 def build_job() -> VideoJob:
     job = VideoJob(
-        project_name=(
-            "Waiting Resume Integration"
-        ),
+        project_name=("Waiting Resume Integration"),
         channel_name="Mission Channel",
         niche="automation",
-        topic=(
-            "Waiting-for-user checkpoint resume"
-        ),
+        topic=("Waiting-for-user checkpoint resume"),
         status=JobStatus.PENDING,
         current_stage=WorkflowStage.VOICE,
         research=build_research(),
@@ -311,13 +255,8 @@ def build_settings() -> AdvancedSettings:
 def build_storage(
     root: Path,
 ) -> PipelineCheckpointStorageService:
-    return (
-        PipelineCheckpointStorageService(
-            storage_root=(
-                root
-                / "checkpoints"
-            ),
-        )
+    return PipelineCheckpointStorageService(
+        storage_root=(root / "checkpoints"),
     )
 
 
@@ -329,93 +268,52 @@ def prepare_render_ready_job(
     result validation.
     """
 
-    scene = (
-        job.scenes[0]
-    )
+    scene = job.scenes[0]
 
-    selected_state = (
-        job.scene_asset_states[0]
-    )
+    selected_state = job.scene_asset_states[0]
 
-    selected_candidate = (
-        selected_state
-        .selected_candidate
-    )
+    selected_candidate = selected_state.selected_candidate
 
     if selected_candidate is None:
-        raise AssertionError(
-            "Resolved asset state requires "
-            "a selected candidate."
-        )
+        raise AssertionError("Resolved asset state requires " "a selected candidate.")
 
     if not selected_candidate.file_path:
-        raise AssertionError(
-            "Resolved asset candidate requires "
-            "a file path."
-        )
+        raise AssertionError("Resolved asset candidate requires " "a file path.")
 
-    scene.manual_file_path = (
-        selected_candidate.file_path
-    )
+    scene.manual_file_path = selected_candidate.file_path
 
-    scene.selected_asset_path = (
-        selected_candidate.file_path
-    )
+    scene.selected_asset_path = selected_candidate.file_path
 
-    scene.source_status = (
-        SceneSourceStatus.READY
-    )
+    scene.source_status = SceneSourceStatus.READY
 
-    scene.status = (
-        SceneStatus.READY
-    )
+    scene.status = SceneStatus.READY
 
     clip = VideoClip(
-        scene_number=(
-            scene.scene_number
-        ),
-        source_type=(
-            SceneSourceType.MANUAL_UPLOAD
-        ),
+        scene_number=(scene.scene_number),
+        source_type=(SceneSourceType.MANUAL_UPLOAD),
         duration_seconds=30,
-        prompt=(
-            "Synthetic waiting-resume "
-            "render clip."
-        ),
+        prompt=("Synthetic waiting-resume " "render clip."),
         provider="Manual Upload",
-        local_file=(
-            selected_candidate.file_path
-        ),
-        source_status=(
-            SceneSourceStatus.READY
-        ),
-        status=(
-            VideoClipStatus.READY
-        ),
+        local_file=(selected_candidate.file_path),
+        source_status=(SceneSourceStatus.READY),
+        status=(VideoClipStatus.READY),
     )
 
-    job.voice_file = (
-        "assets/audio/"
-        "waiting_resume_voice.wav"
-    )
+    job.voice_file = "assets/audio/" "waiting_resume_voice.wav"
 
     job.video_clips = [
         clip,
     ]
 
-    job.video_timeline = (
-        VideoTimeline(
-            clips=[
-                clip,
-            ],
-        )
+    job.video_timeline = VideoTimeline(
+        clips=[
+            clip,
+        ],
     )
 
     job.video_timeline.calculate_duration()
 
-    job.audio_timeline = (
-        AudioTimeline()
-    )
+    job.audio_timeline = AudioTimeline()
 
 
 def build_orchestrator(
@@ -429,18 +327,12 @@ def build_orchestrator(
         stages=[
             voice_stage,
             AssetPipelineStage(
-                asset_workflow_service=(
-                    workflow
-                ),
+                asset_workflow_service=(workflow),
             ),
             render_stage,
         ],
-        advanced_settings=(
-            build_settings()
-        ),
-        checkpoint_storage_service=(
-            storage
-        ),
+        advanced_settings=(build_settings()),
+        checkpoint_storage_service=(storage),
     )
 
 
@@ -449,21 +341,13 @@ def test_waiting_stage_persists_checkpoint(
 ) -> None:
     job = build_job()
 
-    storage = build_storage(
-        tmp_path
-    )
+    storage = build_storage(tmp_path)
 
-    workflow = (
-        WaitingAssetWorkflowService()
-    )
+    workflow = WaitingAssetWorkflowService()
 
-    voice_stage = (
-        SuccessfulVoiceStage()
-    )
+    voice_stage = SuccessfulVoiceStage()
 
-    render_stage = (
-        SuccessfulRenderStage()
-    )
+    render_stage = SuccessfulRenderStage()
 
     service = build_orchestrator(
         storage=storage,
@@ -472,87 +356,37 @@ def test_waiting_stage_persists_checkpoint(
         render_stage=render_stage,
     )
 
-    result = service.execute(
-        job
+    result = service.execute(job)
+
+    assert result.success is False
+
+    assert result.failed_stage == WorkflowStage.ASSET_GENERATION
+
+    assert voice_stage.execution_count == 1
+
+    assert workflow.start_count == 1
+
+    assert render_stage.execution_count == 0
+
+    assert len(job.scene_asset_states) == 1
+
+    state = job.scene_asset_states[0]
+
+    assert state.status == (AssetWorkflowStatus.WAITING_FOR_MANUAL_UPLOAD)
+
+    checkpoint = storage.load_latest(
+        job_id=job.id,
     )
 
-    assert (
-        result.success
-        is False
-    )
+    assert checkpoint is not None
 
-    assert (
-        result.failed_stage
-        == WorkflowStage.ASSET_GENERATION
-    )
+    assert checkpoint.waiting_stage == (PipelineStageName.ASSET_SELECTION)
 
-    assert (
-        voice_stage.execution_count
-        == 1
-    )
+    assert checkpoint.failed_stage is None
 
-    assert (
-        workflow.start_count
-        == 1
-    )
+    assert PipelineStageName.VOICE in checkpoint.completed_stages
 
-    assert (
-        render_stage.execution_count
-        == 0
-    )
-
-    assert (
-        len(
-            job.scene_asset_states
-        )
-        == 1
-    )
-
-    state = (
-        job.scene_asset_states[0]
-    )
-
-    assert (
-        state.status
-        == (
-            AssetWorkflowStatus
-            .WAITING_FOR_MANUAL_UPLOAD
-        )
-    )
-
-    checkpoint = (
-        storage.load_latest(
-            job_id=job.id,
-        )
-    )
-
-    assert (
-        checkpoint
-        is not None
-    )
-
-    assert (
-        checkpoint.waiting_stage
-        == (
-            PipelineStageName
-            .ASSET_SELECTION
-        )
-    )
-
-    assert (
-        checkpoint.failed_stage
-        is None
-    )
-
-    assert (
-        PipelineStageName.VOICE
-        in checkpoint.completed_stages
-    )
-
-    assert (
-        checkpoint.resumable
-        is True
-    )
+    assert checkpoint.resumable is True
 
 
 def test_resume_applies_manual_upload_decision(
@@ -560,21 +394,13 @@ def test_resume_applies_manual_upload_decision(
 ) -> None:
     job = build_job()
 
-    storage = build_storage(
-        tmp_path
-    )
+    storage = build_storage(tmp_path)
 
-    first_workflow = (
-        WaitingAssetWorkflowService()
-    )
+    first_workflow = WaitingAssetWorkflowService()
 
-    first_voice = (
-        SuccessfulVoiceStage()
-    )
+    first_voice = SuccessfulVoiceStage()
 
-    first_render = (
-        SuccessfulRenderStage()
-    )
+    first_render = SuccessfulRenderStage()
 
     first_service = build_orchestrator(
         storage=storage,
@@ -583,48 +409,25 @@ def test_resume_applies_manual_upload_decision(
         render_stage=first_render,
     )
 
-    first_result = (
-        first_service.execute(
-            job
-        )
+    first_result = first_service.execute(job)
+
+    assert first_result.success is False
+
+    waiting_checkpoint = storage.load_latest(
+        job_id=job.id,
     )
 
-    assert (
-        first_result.success
-        is False
-    )
+    assert waiting_checkpoint is not None
 
-    waiting_checkpoint = (
-        storage.load_latest(
-            job_id=job.id,
-        )
-    )
+    upload_file = tmp_path / "manual_scene_1.mp4"
 
-    assert (
-        waiting_checkpoint
-        is not None
-    )
+    upload_file.write_bytes(b"synthetic-manual-video")
 
-    upload_file = (
-        tmp_path
-        / "manual_scene_1.mp4"
-    )
+    second_workflow = WaitingAssetWorkflowService()
 
-    upload_file.write_bytes(
-        b"synthetic-manual-video"
-    )
+    second_voice = SuccessfulVoiceStage()
 
-    second_workflow = (
-        WaitingAssetWorkflowService()
-    )
-
-    second_voice = (
-        SuccessfulVoiceStage()
-    )
-
-    second_render = (
-        SuccessfulRenderStage()
-    )
+    second_render = SuccessfulRenderStage()
 
     second_service = build_orchestrator(
         storage=storage,
@@ -633,130 +436,55 @@ def test_resume_applies_manual_upload_decision(
         render_stage=second_render,
     )
 
-    second_result = (
-        second_service.execute(
-            job,
-            user_input={
-                "asset_decisions": [
-                    {
-                        "scene_number": 1,
-                        "decision": (
-                            AssetUserDecision
-                            .MANUAL_UPLOAD
-                            .value
-                        ),
-                        "manual_upload_path": (
-                            str(
-                                upload_file
-                            )
-                        ),
-                    },
-                ],
-            },
-        )
+    second_result = second_service.execute(
+        job,
+        user_input={
+            "asset_decisions": [
+                {
+                    "scene_number": 1,
+                    "decision": (AssetUserDecision.MANUAL_UPLOAD.value),
+                    "manual_upload_path": (str(upload_file)),
+                },
+            ],
+        },
     )
 
-    assert (
-        second_result.success
-        is True
-    )
+    assert second_result.success is True
 
     # VOICE completed before the waiting checkpoint and therefore must
     # not execute again.
-    assert (
-        second_voice.execution_count
-        == 0
-    )
+    assert second_voice.execution_count == 0
 
     # Existing asset state is resumed, so local/manual discovery must
     # not restart.
-    assert (
-        second_workflow.start_count
-        == 0
+    assert second_workflow.start_count == 0
+
+    assert second_render.execution_count == 1
+
+    assert len(job.scene_asset_states) == 1
+
+    resolved_state = job.scene_asset_states[0]
+
+    assert resolved_state.status == AssetWorkflowStatus.READY
+
+    assert resolved_state.user_decision == (AssetUserDecision.MANUAL_UPLOAD)
+
+    assert resolved_state.selected_candidate is not None
+
+    assert resolved_state.selected_candidate.file_path == str(upload_file.resolve())
+
+    assert job.status == JobStatus.COMPLETED
+
+    assert job.current_stage == (WorkflowStage.READY_FOR_UPLOAD)
+
+    assert second_result.metadata["resumed"] is True
+
+    assert second_result.metadata["resume_stage"] == (
+        PipelineStageName.ASSET_SELECTION.value
     )
 
-    assert (
-        second_render.execution_count
-        == 1
-    )
-
-    assert (
-        len(
-            job.scene_asset_states
-        )
-        == 1
-    )
-
-    resolved_state = (
-        job.scene_asset_states[0]
-    )
-
-    assert (
-        resolved_state.status
-        == AssetWorkflowStatus.READY
-    )
-
-    assert (
-        resolved_state.user_decision
-        == (
-            AssetUserDecision
-            .MANUAL_UPLOAD
-        )
-    )
-
-    assert (
-        resolved_state.selected_candidate
-        is not None
-    )
-
-    assert (
-        resolved_state
-        .selected_candidate
-        .file_path
-        == str(
-            upload_file.resolve()
-        )
-    )
-
-    assert (
-        job.status
-        == JobStatus.COMPLETED
-    )
-
-    assert (
-        job.current_stage
-        == (
-            WorkflowStage
-            .READY_FOR_UPLOAD
-        )
-    )
-
-    assert (
-        second_result.metadata[
-            "resumed"
-        ]
-        is True
-    )
-
-    assert (
-        second_result.metadata[
-            "resume_stage"
-        ]
-        == (
-            PipelineStageName
-            .ASSET_SELECTION
-            .value
-        )
-    )
-
-    assert (
-        second_result.metadata[
-            "loaded_checkpoint_id"
-        ]
-        == str(
-            waiting_checkpoint
-            .checkpoint_id
-        )
+    assert second_result.metadata["loaded_checkpoint_id"] == str(
+        waiting_checkpoint.checkpoint_id
     )
 
 
@@ -779,21 +507,13 @@ def test_serialized_waiting_job_resumes_after_runtime_restart(
 
     job = build_job()
 
-    storage = build_storage(
-        tmp_path
-    )
+    storage = build_storage(tmp_path)
 
-    first_workflow = (
-        WaitingAssetWorkflowService()
-    )
+    first_workflow = WaitingAssetWorkflowService()
 
-    first_voice = (
-        SuccessfulVoiceStage()
-    )
+    first_voice = SuccessfulVoiceStage()
 
-    first_render = (
-        SuccessfulRenderStage()
-    )
+    first_render = SuccessfulRenderStage()
 
     first_service = build_orchestrator(
         storage=storage,
@@ -802,700 +522,77 @@ def test_serialized_waiting_job_resumes_after_runtime_restart(
         render_stage=first_render,
     )
 
-    first_result = (
-        first_service.execute(
-            job
-        )
-    )
-
-    assert (
-        first_result.success
-        is False
-    )
-
-    assert (
-        first_voice.execution_count
-        == 1
-    )
-
-    assert (
-        first_workflow.start_count
-        == 1
-    )
-
-    assert (
-        first_render.execution_count
-        == 0
-    )
-
-    waiting_checkpoint = (
-        storage.load_latest(
-            job_id=job.id,
-        )
-    )
-
-    assert (
-        waiting_checkpoint
-        is not None
-    )
-
-    assert (
-        waiting_checkpoint.waiting_stage
-        == (
-            PipelineStageName
-            .ASSET_SELECTION
-        )
-    )
-
-    assert (
-        waiting_checkpoint.resumable
-        is True
-    )
-
-    assert (
-        len(
-            job.scene_asset_states
-        )
-        == 1
-    )
-
-    original_state = (
-        job.scene_asset_states[0]
-    )
-
-    assert (
-        original_state.status
-        == (
-            AssetWorkflowStatus
-            .WAITING_FOR_MANUAL_UPLOAD
-        )
-    )
-
-    original_job_id = (
-        job.id
-    )
-
-    serialized_job = (
-        job.model_dump_json()
-    )
-
-    restarted_job = (
-        VideoJob.model_validate_json(
-            serialized_job
-        )
-    )
-
-    assert (
-        restarted_job
-        is not job
-    )
-
-    assert (
-        restarted_job.id
-        == original_job_id
-    )
-
-    assert (
-        len(
-            restarted_job
-            .scene_asset_states
-        )
-        == 1
-    )
-
-    restarted_state = (
-        restarted_job
-        .scene_asset_states[0]
-    )
-
-    assert (
-        restarted_state.status
-        == (
-            AssetWorkflowStatus
-            .WAITING_FOR_MANUAL_UPLOAD
-        )
-    )
-
-    assert (
-        restarted_state
-        .manual_upload_requested
-        is True
-    )
-
-    assert (
-        restarted_state
-        .selected_source
-        == SceneSourceType.MANUAL_UPLOAD
-    )
-
-    upload_file = (
-        tmp_path
-        / "serialized_restart_manual_scene.mp4"
-    )
-
-    upload_file.write_bytes(
-        b"serialized-restart-manual-video"
-    )
-
-    second_workflow = (
-        WaitingAssetWorkflowService()
-    )
-
-    second_voice = (
-        SuccessfulVoiceStage()
-    )
-
-    second_render = (
-        SuccessfulRenderStage()
-    )
-
-    second_service = build_orchestrator(
-        storage=storage,
-        workflow=second_workflow,
-        voice_stage=second_voice,
-        render_stage=second_render,
-    )
-
-    second_result = (
-        second_service.execute(
-            restarted_job,
-            user_input={
-                "asset_decisions": [
-                    {
-                        "scene_number": 1,
-                        "decision": (
-                            AssetUserDecision
-                            .MANUAL_UPLOAD
-                            .value
-                        ),
-                        "manual_upload_path": (
-                            str(
-                                upload_file
-                            )
-                        ),
-                    },
-                ],
-            },
-        )
-    )
-
-    assert (
-        second_result.success
-        is True
-    )
-
-    # VOICE already completed before the waiting checkpoint.
-    assert (
-        second_voice.execution_count
-        == 0
-    )
-
-    # The serialized SceneAssetState must be resumed instead of starting
-    # the asset workflow from scratch.
-    assert (
-        second_workflow.start_count
-        == 0
-    )
-
-    assert (
-        second_render.execution_count
-        == 1
-    )
-
-    assert (
-        len(
-            restarted_job
-            .scene_asset_states
-        )
-        == 1
-    )
-
-    resolved_state = (
-        restarted_job
-        .scene_asset_states[0]
-    )
-
-    assert (
-        resolved_state.status
-        == AssetWorkflowStatus.READY
-    )
-
-    assert (
-        resolved_state.user_decision
-        == (
-            AssetUserDecision
-            .MANUAL_UPLOAD
-        )
-    )
-
-    assert (
-        resolved_state.selected_candidate
-        is not None
-    )
-
-    assert (
-        resolved_state
-        .selected_candidate
-        .file_path
-        == str(
-            upload_file.resolve()
-        )
-    )
-
-    assert (
-        restarted_job.status
-        == JobStatus.COMPLETED
-    )
-
-    assert (
-        restarted_job.current_stage
-        == (
-            WorkflowStage
-            .READY_FOR_UPLOAD
-        )
-    )
-
-    assert (
-        restarted_job.render_result
-        is not None
-    )
-
-    assert (
-        restarted_job.render_result.success
-        is True
-    )
-
-    assert (
-        second_result.metadata[
-            "resumed"
-        ]
-        is True
-    )
-
-    assert (
-        second_result.metadata[
-            "resume_stage"
-        ]
-        == (
-            PipelineStageName
-            .ASSET_SELECTION
-            .value
-        )
-    )
-
-    assert (
-        second_result.metadata[
-            "loaded_checkpoint_id"
-        ]
-        == str(
-            waiting_checkpoint
-            .checkpoint_id
-        )
-    )
-
-    checkpoints = (
-        storage.list_for_job(
-            job_id=(
-                restarted_job.id
-            ),
-        )
-    )
-
-    assert (
-        len(checkpoints)
-        == 2
-    )
-
-    latest_checkpoint = (
-        storage.load_latest(
-            job_id=(
-                restarted_job.id
-            ),
-        )
-    )
-
-    assert (
-        latest_checkpoint
-        is not None
-    )
-
-    assert (
-        latest_checkpoint.resumable
-        is False
-    )
-
-    assert (
-        latest_checkpoint.waiting_stage
-        is None
-    )
-
-    assert (
-        latest_checkpoint.failed_stage
-        is None
-    )
-def test_resume_without_input_waits_again(
-    tmp_path: Path,
-) -> None:
-    job = build_job()
-
-    storage = build_storage(
-        tmp_path
-    )
-
-    first_service = build_orchestrator(
-        storage=storage,
-        workflow=(
-            WaitingAssetWorkflowService()
-        ),
-        voice_stage=(
-            SuccessfulVoiceStage()
-        ),
-        render_stage=(
-            SuccessfulRenderStage()
-        ),
-    )
-
-    first_result = (
-        first_service.execute(
-            job
-        )
-    )
-
-    assert (
-        first_result.success
-        is False
-    )
-
-    second_workflow = (
-        WaitingAssetWorkflowService()
-    )
-
-    second_voice = (
-        SuccessfulVoiceStage()
-    )
-
-    second_render = (
-        SuccessfulRenderStage()
-    )
-
-    second_service = build_orchestrator(
-        storage=storage,
-        workflow=second_workflow,
-        voice_stage=second_voice,
-        render_stage=second_render,
-    )
-
-    second_result = (
-        second_service.execute(
-            job
-        )
-    )
-
-    assert (
-        second_result.success
-        is False
-    )
-
-    assert (
-        second_result.failed_stage
-        == WorkflowStage.ASSET_GENERATION
-    )
-
-    assert (
-        second_voice.execution_count
-        == 0
-    )
-
-    assert (
-        second_workflow.start_count
-        == 0
-    )
-
-    assert (
-        second_render.execution_count
-        == 0
-    )
-
-    latest = (
-        storage.load_latest(
-            job_id=job.id,
-        )
-    )
-
-    assert latest is not None
-
-    assert (
-        latest.waiting_stage
-        == (
-            PipelineStageName
-            .ASSET_SELECTION
-        )
-    )
-
-
-def test_successful_resume_persists_terminal_checkpoint(
-    tmp_path: Path,
-) -> None:
-    job = build_job()
-
-    storage = build_storage(
-        tmp_path
-    )
-
-    first_service = build_orchestrator(
-        storage=storage,
-        workflow=(
-            WaitingAssetWorkflowService()
-        ),
-        voice_stage=(
-            SuccessfulVoiceStage()
-        ),
-        render_stage=(
-            SuccessfulRenderStage()
-        ),
-    )
-
-    first_service.execute(
-        job
-    )
-
-    upload_file = (
-        tmp_path
-        / "terminal_manual_scene.mp4"
-    )
-
-    upload_file.write_bytes(
-        b"terminal-manual-video"
-    )
-
-    second_service = build_orchestrator(
-        storage=storage,
-        workflow=(
-            WaitingAssetWorkflowService()
-        ),
-        voice_stage=(
-            SuccessfulVoiceStage()
-        ),
-        render_stage=(
-            SuccessfulRenderStage()
-        ),
-    )
-
-    result = (
-        second_service.execute(
-            job,
-            user_input={
-                "asset_decisions": [
-                    {
-                        "scene_number": 1,
-                        "decision": (
-                            "manual_upload"
-                        ),
-                        "manual_upload_path": (
-                            str(
-                                upload_file
-                            )
-                        ),
-                    },
-                ],
-            },
-        )
-    )
-
-    assert result.success is True
-
-    checkpoints = (
-        storage.list_for_job(
-            job_id=job.id,
-        )
-    )
-
-    assert (
-        len(checkpoints)
-        == 2
-    )
-
-    latest = (
-        storage.load_latest(
-            job_id=job.id,
-        )
-    )
-
-    assert latest is not None
-
-    assert (
-        latest.waiting_stage
-        is None
-    )
-
-    assert (
-        latest.failed_stage
-        is None
-    )
-
-    assert (
-        latest.resumable
-        is False
-    )
-
-    assert (
-        latest.completed_stages
-        == [
-            PipelineStageName.VOICE,
-            (
-                PipelineStageName
-                .ASSET_SELECTION
-            ),
-            PipelineStageName.RENDER,
-        ]
-    )
-
-
-def test_unknown_scene_input_fails_cleanly(
-    tmp_path: Path,
-) -> None:
-    job = build_job()
-
-    storage = build_storage(
-        tmp_path
-    )
-
-    first_service = build_orchestrator(
-        storage=storage,
-        workflow=(
-            WaitingAssetWorkflowService()
-        ),
-        voice_stage=(
-            SuccessfulVoiceStage()
-        ),
-        render_stage=(
-            SuccessfulRenderStage()
-        ),
-    )
-
-    first_service.execute(
-        job
-    )
-
-    resumed_service = build_orchestrator(
-        storage=storage,
-        workflow=(
-            WaitingAssetWorkflowService()
-        ),
-        voice_stage=(
-            SuccessfulVoiceStage()
-        ),
-        render_stage=(
-            SuccessfulRenderStage()
-        ),
-    )
-
-    result = (
-        resumed_service.execute(
-            job,
-            user_input={
-                "asset_decisions": [
-                    {
-                        "scene_number": 999,
-                        "decision": (
-                            "skip_scene"
-                        ),
-                    },
-                ],
-            },
-        )
-    )
-
-    assert (
-        result.success
-        is False
-    )
-
-    assert (
-        "unknown scene number 999"
-        in result.errors[-1]
-    )
-
-
-def test_explicit_terminal_checkpoint_rejects_stale_resume(
-    tmp_path: Path,
-) -> None:
-    job = build_job()
-
-    storage = build_storage(
-        tmp_path
-    )
-
-    first_service = build_orchestrator(
-        storage=storage,
-        workflow=(
-            WaitingAssetWorkflowService()
-        ),
-        voice_stage=(
-            SuccessfulVoiceStage()
-        ),
-        render_stage=(
-            SuccessfulRenderStage()
-        ),
-    )
-
-    first_result = first_service.execute(
-        job
-    )
+    first_result = first_service.execute(job)
 
     assert first_result.success is False
 
-    waiting_checkpoint = (
-        storage.load_latest(
-            job_id=job.id,
-        )
+    assert first_voice.execution_count == 1
+
+    assert first_workflow.start_count == 1
+
+    assert first_render.execution_count == 0
+
+    waiting_checkpoint = storage.load_latest(
+        job_id=job.id,
     )
 
     assert waiting_checkpoint is not None
+
+    assert waiting_checkpoint.waiting_stage == (PipelineStageName.ASSET_SELECTION)
+
     assert waiting_checkpoint.resumable is True
 
-    first_upload = (
-        tmp_path
-        / "resolved_scene.mp4"
-    )
+    assert len(job.scene_asset_states) == 1
 
-    first_upload.write_bytes(
-        b"resolved-scene-video"
-    )
+    original_state = job.scene_asset_states[0]
+
+    assert original_state.status == (AssetWorkflowStatus.WAITING_FOR_MANUAL_UPLOAD)
+
+    original_job_id = job.id
+
+    serialized_job = job.model_dump_json()
+
+    restarted_job = VideoJob.model_validate_json(serialized_job)
+
+    assert restarted_job is not job
+
+    assert restarted_job.id == original_job_id
+
+    assert len(restarted_job.scene_asset_states) == 1
+
+    restarted_state = restarted_job.scene_asset_states[0]
+
+    assert restarted_state.status == (AssetWorkflowStatus.WAITING_FOR_MANUAL_UPLOAD)
+
+    assert restarted_state.manual_upload_requested is True
+
+    assert restarted_state.selected_source == SceneSourceType.MANUAL_UPLOAD
+
+    upload_file = tmp_path / "serialized_restart_manual_scene.mp4"
+
+    upload_file.write_bytes(b"serialized-restart-manual-video")
+
+    second_workflow = WaitingAssetWorkflowService()
+
+    second_voice = SuccessfulVoiceStage()
+
+    second_render = SuccessfulRenderStage()
 
     second_service = build_orchestrator(
         storage=storage,
-        workflow=(
-            WaitingAssetWorkflowService()
-        ),
-        voice_stage=(
-            SuccessfulVoiceStage()
-        ),
-        render_stage=(
-            SuccessfulRenderStage()
-        ),
+        workflow=second_workflow,
+        voice_stage=second_voice,
+        render_stage=second_render,
     )
 
     second_result = second_service.execute(
-        job,
-        checkpoint_id=(
-            waiting_checkpoint
-            .checkpoint_id
-        ),
+        restarted_job,
         user_input={
             "asset_decisions": [
                 {
                     "scene_number": 1,
-                    "decision": (
-                        AssetUserDecision
-                        .MANUAL_UPLOAD
-                        .value
-                    ),
-                    "manual_upload_path": (
-                        str(
-                            first_upload
-                        )
-                    ),
+                    "decision": (AssetUserDecision.MANUAL_UPLOAD.value),
+                    "manual_upload_path": (str(upload_file)),
                 },
             ],
         },
@@ -1503,54 +600,298 @@ def test_explicit_terminal_checkpoint_rejects_stale_resume(
 
     assert second_result.success is True
 
-    terminal_checkpoint = (
-        storage.load_latest(
-            job_id=job.id,
-        )
+    # VOICE already completed before the waiting checkpoint.
+    assert second_voice.execution_count == 0
+
+    # The serialized SceneAssetState must be resumed instead of starting
+    # the asset workflow from scratch.
+    assert second_workflow.start_count == 0
+
+    assert second_render.execution_count == 1
+
+    assert len(restarted_job.scene_asset_states) == 1
+
+    resolved_state = restarted_job.scene_asset_states[0]
+
+    assert resolved_state.status == AssetWorkflowStatus.READY
+
+    assert resolved_state.user_decision == (AssetUserDecision.MANUAL_UPLOAD)
+
+    assert resolved_state.selected_candidate is not None
+
+    assert resolved_state.selected_candidate.file_path == str(upload_file.resolve())
+
+    assert restarted_job.status == JobStatus.COMPLETED
+
+    assert restarted_job.current_stage == (WorkflowStage.READY_FOR_UPLOAD)
+
+    assert restarted_job.render_result is not None
+
+    assert restarted_job.render_result.success is True
+
+    assert second_result.metadata["resumed"] is True
+
+    assert second_result.metadata["resume_stage"] == (
+        PipelineStageName.ASSET_SELECTION.value
+    )
+
+    assert second_result.metadata["loaded_checkpoint_id"] == str(
+        waiting_checkpoint.checkpoint_id
+    )
+
+    checkpoints = storage.list_for_job(
+        job_id=(restarted_job.id),
+    )
+
+    assert len(checkpoints) == 2
+
+    latest_checkpoint = storage.load_latest(
+        job_id=(restarted_job.id),
+    )
+
+    assert latest_checkpoint is not None
+
+    assert latest_checkpoint.resumable is False
+
+    assert latest_checkpoint.waiting_stage is None
+
+    assert latest_checkpoint.failed_stage is None
+
+
+def test_resume_without_input_waits_again(
+    tmp_path: Path,
+) -> None:
+    job = build_job()
+
+    storage = build_storage(tmp_path)
+
+    first_service = build_orchestrator(
+        storage=storage,
+        workflow=(WaitingAssetWorkflowService()),
+        voice_stage=(SuccessfulVoiceStage()),
+        render_stage=(SuccessfulRenderStage()),
+    )
+
+    first_result = first_service.execute(job)
+
+    assert first_result.success is False
+
+    second_workflow = WaitingAssetWorkflowService()
+
+    second_voice = SuccessfulVoiceStage()
+
+    second_render = SuccessfulRenderStage()
+
+    second_service = build_orchestrator(
+        storage=storage,
+        workflow=second_workflow,
+        voice_stage=second_voice,
+        render_stage=second_render,
+    )
+
+    second_result = second_service.execute(job)
+
+    assert second_result.success is False
+
+    assert second_result.failed_stage == WorkflowStage.ASSET_GENERATION
+
+    assert second_voice.execution_count == 0
+
+    assert second_workflow.start_count == 0
+
+    assert second_render.execution_count == 0
+
+    latest = storage.load_latest(
+        job_id=job.id,
+    )
+
+    assert latest is not None
+
+    assert latest.waiting_stage == (PipelineStageName.ASSET_SELECTION)
+
+
+def test_successful_resume_persists_terminal_checkpoint(
+    tmp_path: Path,
+) -> None:
+    job = build_job()
+
+    storage = build_storage(tmp_path)
+
+    first_service = build_orchestrator(
+        storage=storage,
+        workflow=(WaitingAssetWorkflowService()),
+        voice_stage=(SuccessfulVoiceStage()),
+        render_stage=(SuccessfulRenderStage()),
+    )
+
+    first_service.execute(job)
+
+    upload_file = tmp_path / "terminal_manual_scene.mp4"
+
+    upload_file.write_bytes(b"terminal-manual-video")
+
+    second_service = build_orchestrator(
+        storage=storage,
+        workflow=(WaitingAssetWorkflowService()),
+        voice_stage=(SuccessfulVoiceStage()),
+        render_stage=(SuccessfulRenderStage()),
+    )
+
+    result = second_service.execute(
+        job,
+        user_input={
+            "asset_decisions": [
+                {
+                    "scene_number": 1,
+                    "decision": ("manual_upload"),
+                    "manual_upload_path": (str(upload_file)),
+                },
+            ],
+        },
+    )
+
+    assert result.success is True
+
+    checkpoints = storage.list_for_job(
+        job_id=job.id,
+    )
+
+    assert len(checkpoints) == 2
+
+    latest = storage.load_latest(
+        job_id=job.id,
+    )
+
+    assert latest is not None
+
+    assert latest.waiting_stage is None
+
+    assert latest.failed_stage is None
+
+    assert latest.resumable is False
+
+    assert latest.completed_stages == [
+        PipelineStageName.VOICE,
+        (PipelineStageName.ASSET_SELECTION),
+        PipelineStageName.RENDER,
+    ]
+
+
+def test_unknown_scene_input_fails_cleanly(
+    tmp_path: Path,
+) -> None:
+    job = build_job()
+
+    storage = build_storage(tmp_path)
+
+    first_service = build_orchestrator(
+        storage=storage,
+        workflow=(WaitingAssetWorkflowService()),
+        voice_stage=(SuccessfulVoiceStage()),
+        render_stage=(SuccessfulRenderStage()),
+    )
+
+    first_service.execute(job)
+
+    resumed_service = build_orchestrator(
+        storage=storage,
+        workflow=(WaitingAssetWorkflowService()),
+        voice_stage=(SuccessfulVoiceStage()),
+        render_stage=(SuccessfulRenderStage()),
+    )
+
+    result = resumed_service.execute(
+        job,
+        user_input={
+            "asset_decisions": [
+                {
+                    "scene_number": 999,
+                    "decision": ("skip_scene"),
+                },
+            ],
+        },
+    )
+
+    assert result.success is False
+
+    assert "unknown scene number 999" in result.errors[-1]
+
+
+def test_explicit_terminal_checkpoint_rejects_stale_resume(
+    tmp_path: Path,
+) -> None:
+    job = build_job()
+
+    storage = build_storage(tmp_path)
+
+    first_service = build_orchestrator(
+        storage=storage,
+        workflow=(WaitingAssetWorkflowService()),
+        voice_stage=(SuccessfulVoiceStage()),
+        render_stage=(SuccessfulRenderStage()),
+    )
+
+    first_result = first_service.execute(job)
+
+    assert first_result.success is False
+
+    waiting_checkpoint = storage.load_latest(
+        job_id=job.id,
+    )
+
+    assert waiting_checkpoint is not None
+    assert waiting_checkpoint.resumable is True
+
+    first_upload = tmp_path / "resolved_scene.mp4"
+
+    first_upload.write_bytes(b"resolved-scene-video")
+
+    second_service = build_orchestrator(
+        storage=storage,
+        workflow=(WaitingAssetWorkflowService()),
+        voice_stage=(SuccessfulVoiceStage()),
+        render_stage=(SuccessfulRenderStage()),
+    )
+
+    second_result = second_service.execute(
+        job,
+        checkpoint_id=(waiting_checkpoint.checkpoint_id),
+        user_input={
+            "asset_decisions": [
+                {
+                    "scene_number": 1,
+                    "decision": (AssetUserDecision.MANUAL_UPLOAD.value),
+                    "manual_upload_path": (str(first_upload)),
+                },
+            ],
+        },
+    )
+
+    assert second_result.success is True
+
+    terminal_checkpoint = storage.load_latest(
+        job_id=job.id,
     )
 
     assert terminal_checkpoint is not None
 
-    assert (
-        terminal_checkpoint.resumable
-        is False
-    )
+    assert terminal_checkpoint.resumable is False
 
-    resolved_state = (
-        job.scene_asset_states[0]
-    )
+    resolved_state = job.scene_asset_states[0]
 
-    assert (
-        resolved_state.selected_candidate
-        is not None
-    )
+    assert resolved_state.selected_candidate is not None
 
-    original_file_path = (
-        resolved_state
-        .selected_candidate
-        .file_path
-    )
+    original_file_path = resolved_state.selected_candidate.file_path
 
-    stale_upload = (
-        tmp_path
-        / "stale_scene.mp4"
-    )
+    stale_upload = tmp_path / "stale_scene.mp4"
 
-    stale_upload.write_bytes(
-        b"stale-scene-video"
-    )
+    stale_upload.write_bytes(b"stale-scene-video")
 
-    stale_workflow = (
-        WaitingAssetWorkflowService()
-    )
+    stale_workflow = WaitingAssetWorkflowService()
 
-    stale_voice = (
-        SuccessfulVoiceStage()
-    )
+    stale_voice = SuccessfulVoiceStage()
 
-    stale_render = (
-        SuccessfulRenderStage()
-    )
+    stale_render = SuccessfulRenderStage()
 
     stale_service = build_orchestrator(
         storage=storage,
@@ -1561,24 +902,13 @@ def test_explicit_terminal_checkpoint_rejects_stale_resume(
 
     stale_result = stale_service.execute(
         job,
-        checkpoint_id=(
-            terminal_checkpoint
-            .checkpoint_id
-        ),
+        checkpoint_id=(terminal_checkpoint.checkpoint_id),
         user_input={
             "asset_decisions": [
                 {
                     "scene_number": 1,
-                    "decision": (
-                        AssetUserDecision
-                        .MANUAL_UPLOAD
-                        .value
-                    ),
-                    "manual_upload_path": (
-                        str(
-                            stale_upload
-                        )
-                    ),
+                    "decision": (AssetUserDecision.MANUAL_UPLOAD.value),
+                    "manual_upload_path": (str(stale_upload)),
                 },
             ],
         },
@@ -1586,17 +916,9 @@ def test_explicit_terminal_checkpoint_rejects_stale_resume(
 
     assert stale_result.success is False
 
-    assert (
-        "not resumable"
-        in stale_result.errors[-1]
-    )
+    assert "not resumable" in stale_result.errors[-1]
 
-    assert (
-        stale_result.metadata[
-            "checkpoint_phase"
-        ]
-        == "resume_preparation"
-    )
+    assert stale_result.metadata["checkpoint_phase"] == "resume_preparation"
 
     # Resume preparation must fail before any pipeline stage executes.
     assert stale_voice.execution_count == 0
@@ -1604,46 +926,26 @@ def test_explicit_terminal_checkpoint_rejects_stale_resume(
     assert stale_render.execution_count == 0
 
     # The stale decision must not replace the already resolved asset.
-    assert (
-        job.scene_asset_states[0]
-        .selected_candidate
-        is not None
-    )
+    assert job.scene_asset_states[0].selected_candidate is not None
 
-    assert (
-        job.scene_asset_states[0]
-        .selected_candidate
-        .file_path
-        == original_file_path
-    )
+    assert job.scene_asset_states[0].selected_candidate.file_path == original_file_path
 
-    assert (
-        original_file_path
-        == str(
-            first_upload.resolve()
-        )
-    )
+    assert original_file_path == str(first_upload.resolve())
 
     # A rejected stale resume must not create another checkpoint.
-    checkpoints = (
-        storage.list_for_job(
-            job_id=job.id,
-        )
+    checkpoints = storage.list_for_job(
+        job_id=job.id,
     )
 
     assert len(checkpoints) == 2
+
+
 def main() -> None:
     print()
-    print(
-        "Running Render Orchestrator "
-        "Waiting Resume tests..."
-    )
+    print("Running Render Orchestrator " "Waiting Resume tests...")
     print()
 
-    print(
-        "Run this suite with pytest because "
-        "it uses the tmp_path fixture."
-    )
+    print("Run this suite with pytest because " "it uses the tmp_path fixture.")
 
 
 if __name__ == "__main__":

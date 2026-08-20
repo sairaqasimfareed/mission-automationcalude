@@ -23,16 +23,12 @@ class GenreTimelinePipelineStatus(str, Enum):
 
     COMPLETED = "completed"
 
-    COMPLETED_WITH_WARNINGS = (
-        "completed_with_warnings"
-    )
+    COMPLETED_WITH_WARNINGS = "completed_with_warnings"
 
     FAILED = "failed"
 
 
-class GenreTimelinePipelineResult(
-    MissionBaseModel
-):
+class GenreTimelinePipelineResult(MissionBaseModel):
     """
     Result of building a genre-aware, render-ready timeline.
 
@@ -46,15 +42,11 @@ class GenreTimelinePipelineResult(
 
     timeline: VideoTimeline
 
-    directives: list[
-        SceneEditingDirectives
-    ] = Field(
+    directives: list[SceneEditingDirectives] = Field(
         default_factory=list,
     )
 
-    blueprints: list[
-        ResolvedSceneEditingBlueprint
-    ] = Field(
+    blueprints: list[ResolvedSceneEditingBlueprint] = Field(
         default_factory=list,
     )
 
@@ -74,10 +66,7 @@ class GenreTimelinePipelineResult(
 
         return self.status in {
             GenreTimelinePipelineStatus.COMPLETED,
-            (
-                GenreTimelinePipelineStatus
-                .COMPLETED_WITH_WARNINGS
-            ),
+            (GenreTimelinePipelineStatus.COMPLETED_WITH_WARNINGS),
         }
 
     @property
@@ -87,10 +76,7 @@ class GenreTimelinePipelineResult(
         return (
             self.is_successful
             and self.validation.is_valid
-            and (
-                self.validation
-                .all_enabled_items_render_ready
-            )
+            and (self.validation.all_enabled_items_render_ready)
         )
 
     @property
@@ -103,7 +89,4 @@ class GenreTimelinePipelineResult(
     def fallback_count(self) -> int:
         """Return total effect fallback count."""
 
-        return sum(
-            blueprint.fallback_count
-            for blueprint in self.blueprints
-        )
+        return sum(blueprint.fallback_count for blueprint in self.blueprints)

@@ -45,9 +45,7 @@ class CameraDirective(MissionBaseModel):
 
     preset_id: str = "camera.none"
 
-    intensity: DirectiveIntensity = (
-        DirectiveIntensity.MEDIUM
-    )
+    intensity: DirectiveIntensity = DirectiveIntensity.MEDIUM
 
     start_offset_seconds: float = Field(
         default=0.0,
@@ -90,12 +88,10 @@ class CameraDirective(MissionBaseModel):
     ) -> CameraDirective:
         if (
             self.end_offset_seconds is not None
-            and self.end_offset_seconds
-            <= self.start_offset_seconds
+            and self.end_offset_seconds <= self.start_offset_seconds
         ):
             raise ValueError(
-                "Camera directive end offset must be "
-                "greater than its start offset."
+                "Camera directive end offset must be " "greater than its start offset."
             )
 
         return self
@@ -112,9 +108,7 @@ class TransitionDirective(MissionBaseModel):
         le=10.0,
     )
 
-    intensity: DirectiveIntensity = (
-        DirectiveIntensity.MEDIUM
-    )
+    intensity: DirectiveIntensity = DirectiveIntensity.MEDIUM
 
     metadata: dict[str, Any] = Field(
         default_factory=dict,
@@ -135,14 +129,8 @@ class TransitionDirective(MissionBaseModel):
     def validate_transition_duration(
         self,
     ) -> TransitionDirective:
-        if (
-            self.preset_id != "transition.cut"
-            and self.duration_seconds <= 0
-        ):
-            raise ValueError(
-                "Non-cut transitions require a "
-                "positive duration."
-            )
+        if self.preset_id != "transition.cut" and self.duration_seconds <= 0:
+            raise ValueError("Non-cut transitions require a " "positive duration.")
 
         return self
 
@@ -152,13 +140,9 @@ class VisualEffectDirective(MissionBaseModel):
 
     preset_id: str
 
-    intensity: DirectiveIntensity = (
-        DirectiveIntensity.MEDIUM
-    )
+    intensity: DirectiveIntensity = DirectiveIntensity.MEDIUM
 
-    timing_mode: DirectiveTimingMode = (
-        DirectiveTimingMode.FULL_SCENE
-    )
+    timing_mode: DirectiveTimingMode = DirectiveTimingMode.FULL_SCENE
 
     start_offset_seconds: float = Field(
         default=0.0,
@@ -198,13 +182,11 @@ class VisualEffectDirective(MissionBaseModel):
         self,
     ) -> VisualEffectDirective:
         if (
-            self.timing_mode
-            == DirectiveTimingMode.RELATIVE_PERCENT
+            self.timing_mode == DirectiveTimingMode.RELATIVE_PERCENT
             and self.relative_position_percent is None
         ):
             raise ValueError(
-                "Relative-percent timing requires "
-                "relative_position_percent."
+                "Relative-percent timing requires " "relative_position_percent."
             )
 
         return self
@@ -215,9 +197,7 @@ class AnimationDirective(MissionBaseModel):
 
     preset_id: str
 
-    intensity: DirectiveIntensity = (
-        DirectiveIntensity.MEDIUM
-    )
+    intensity: DirectiveIntensity = DirectiveIntensity.MEDIUM
 
     start_offset_seconds: float = Field(
         default=0.0,
@@ -252,9 +232,7 @@ class MusicDirective(MissionBaseModel):
 
     preset_id: str = "music.none"
 
-    intensity: DirectiveIntensity = (
-        DirectiveIntensity.LOW
-    )
+    intensity: DirectiveIntensity = DirectiveIntensity.LOW
 
     volume_percent: float = Field(
         default=25.0,
@@ -297,9 +275,7 @@ class SoundEffectDirective(MissionBaseModel):
 
     preset_id: str
 
-    timing_mode: DirectiveTimingMode = (
-        DirectiveTimingMode.ABSOLUTE_SECONDS
-    )
+    timing_mode: DirectiveTimingMode = DirectiveTimingMode.ABSOLUTE_SECONDS
 
     start_offset_seconds: float = Field(
         default=0.0,
@@ -318,9 +294,7 @@ class SoundEffectDirective(MissionBaseModel):
         le=100.0,
     )
 
-    intensity: DirectiveIntensity = (
-        DirectiveIntensity.MEDIUM
-    )
+    intensity: DirectiveIntensity = DirectiveIntensity.MEDIUM
 
     enabled: bool = True
 
@@ -344,13 +318,11 @@ class SoundEffectDirective(MissionBaseModel):
         self,
     ) -> SoundEffectDirective:
         if (
-            self.timing_mode
-            == DirectiveTimingMode.RELATIVE_PERCENT
+            self.timing_mode == DirectiveTimingMode.RELATIVE_PERCENT
             and self.relative_position_percent is None
         ):
             raise ValueError(
-                "Relative-percent SFX timing requires "
-                "relative_position_percent."
+                "Relative-percent SFX timing requires " "relative_position_percent."
             )
 
         return self
@@ -431,15 +403,11 @@ class SceneEditingDirectives(MissionBaseModel):
         default_factory=TransitionDirective,
     )
 
-    visual_effects: list[
-        VisualEffectDirective
-    ] = Field(
+    visual_effects: list[VisualEffectDirective] = Field(
         default_factory=list,
     )
 
-    animations: list[
-        AnimationDirective
-    ] = Field(
+    animations: list[AnimationDirective] = Field(
         default_factory=list,
     )
 
@@ -447,9 +415,7 @@ class SceneEditingDirectives(MissionBaseModel):
         default_factory=MusicDirective,
     )
 
-    sound_effects: list[
-        SoundEffectDirective
-    ] = Field(
+    sound_effects: list[SoundEffectDirective] = Field(
         default_factory=list,
     )
 
@@ -457,9 +423,7 @@ class SceneEditingDirectives(MissionBaseModel):
         default_factory=SubtitleDirective,
     )
 
-    status: EditingDirectiveStatus = (
-        EditingDirectiveStatus.DRAFT
-    )
+    status: EditingDirectiveStatus = EditingDirectiveStatus.DRAFT
 
     warnings: list[str] = Field(
         default_factory=list,
@@ -492,23 +456,16 @@ class SceneEditingDirectives(MissionBaseModel):
 
         if len(visual_ids) != len(set(visual_ids)):
             raise ValueError(
-                "Duplicate enabled visual effect IDs "
-                "are not allowed in one scene."
+                "Duplicate enabled visual effect IDs " "are not allowed in one scene."
             )
 
         animation_ids = [
-            directive.preset_id
-            for directive in self.animations
-            if directive.enabled
+            directive.preset_id for directive in self.animations if directive.enabled
         ]
 
-        if (
-            len(animation_ids)
-            != len(set(animation_ids))
-        ):
+        if len(animation_ids) != len(set(animation_ids)):
             raise ValueError(
-                "Duplicate enabled animation IDs "
-                "are not allowed in one scene."
+                "Duplicate enabled animation IDs " "are not allowed in one scene."
             )
 
         return self
@@ -517,26 +474,13 @@ class SceneEditingDirectives(MissionBaseModel):
     def active_effect_count(self) -> int:
         """Return the number of enabled effect instructions."""
 
-        visual_count = sum(
-            directive.enabled
-            for directive in self.visual_effects
-        )
+        visual_count = sum(directive.enabled for directive in self.visual_effects)
 
-        animation_count = sum(
-            directive.enabled
-            for directive in self.animations
-        )
+        animation_count = sum(directive.enabled for directive in self.animations)
 
-        sfx_count = sum(
-            directive.enabled
-            for directive in self.sound_effects
-        )
+        sfx_count = sum(directive.enabled for directive in self.sound_effects)
 
-        return (
-            visual_count
-            + animation_count
-            + sfx_count
-        )
+        return visual_count + animation_count + sfx_count
 
 
 def _normalize_registry_id(
@@ -549,28 +493,16 @@ def _normalize_registry_id(
     normalized = value.strip().lower()
 
     if not normalized:
-        raise ValueError(
-            "Directive registry ID cannot be empty."
-        )
+        raise ValueError("Directive registry ID cannot be empty.")
 
     if not normalized.startswith(expected_prefix):
         raise ValueError(
-            "Directive registry ID must start with "
-            f"'{expected_prefix}'."
+            "Directive registry ID must start with " f"'{expected_prefix}'."
         )
 
-    allowed_characters = set(
-        "abcdefghijklmnopqrstuvwxyz"
-        "0123456789._-"
-    )
+    allowed_characters = set("abcdefghijklmnopqrstuvwxyz" "0123456789._-")
 
-    if any(
-        character not in allowed_characters
-        for character in normalized
-    ):
-        raise ValueError(
-            "Directive registry ID contains "
-            "unsupported characters."
-        )
+    if any(character not in allowed_characters for character in normalized):
+        raise ValueError("Directive registry ID contains " "unsupported characters.")
 
     return normalized

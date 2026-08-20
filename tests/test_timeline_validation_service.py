@@ -30,16 +30,11 @@ def build_clip(
 ) -> VideoClip:
     return VideoClip(
         scene_number=scene_number,
-        source_type=(
-            SceneSourceType.MANUAL_UPLOAD
-        ),
+        source_type=(SceneSourceType.MANUAL_UPLOAD),
         duration_seconds=duration_seconds,
         prompt=f"Scene {scene_number}",
         provider="Manual Upload",
-        local_file=(
-            "assets/videos/manual/"
-            f"scene_{scene_number:03}.mp4"
-        ),
+        local_file=("assets/videos/manual/" f"scene_{scene_number:03}.mp4"),
         source_status=SceneSourceStatus.READY,
         status=VideoClipStatus.READY,
     )
@@ -65,9 +60,7 @@ validator = TimelineValidationService()
 
 valid_timeline = builder.build(clips)
 
-valid_result = validator.validate(
-    valid_timeline
-)
+valid_result = validator.validate(valid_timeline)
 
 print("Valid timeline:", valid_result.is_valid)
 print("Items:", valid_result.enabled_item_count)
@@ -80,10 +73,7 @@ assert valid_result.is_valid is True
 assert valid_result.issue_count == 0
 assert valid_result.enabled_item_count == 3
 assert valid_result.track_count == 1
-assert (
-    valid_result.total_duration_seconds
-    == 26.0
-)
+assert valid_result.total_duration_seconds == 26.0
 
 
 gap_timeline = VideoTimeline(
@@ -104,17 +94,13 @@ gap_timeline = VideoTimeline(
     ],
 )
 
-gap_result = validator.validate(
-    gap_timeline
-)
+gap_result = validator.validate(gap_timeline)
 
 assert gap_result.is_valid is False
 assert gap_result.gap_duration_seconds == 2.0
 
 assert any(
-    issue.code
-    == TimelineValidationCode.TIMELINE_GAP
-    for issue in gap_result.errors
+    issue.code == TimelineValidationCode.TIMELINE_GAP for issue in gap_result.errors
 )
 
 
@@ -136,19 +122,13 @@ overlap_timeline = VideoTimeline(
     ],
 )
 
-overlap_result = validator.validate(
-    overlap_timeline
-)
+overlap_result = validator.validate(overlap_timeline)
 
 assert overlap_result.is_valid is False
-assert (
-    overlap_result.overlap_duration_seconds
-    == 2.0
-)
+assert overlap_result.overlap_duration_seconds == 2.0
 
 assert any(
-    issue.code
-    == TimelineValidationCode.TIMELINE_OVERLAP
+    issue.code == TimelineValidationCode.TIMELINE_OVERLAP
     for issue in overlap_result.errors
 )
 
@@ -173,31 +153,24 @@ duplicate_timeline = VideoTimeline(
     ],
 )
 
-duplicate_result = validator.validate(
-    duplicate_timeline
-)
+duplicate_result = validator.validate(duplicate_timeline)
 
 assert duplicate_result.is_valid is False
 
 assert any(
-    issue.code
-    == TimelineValidationCode.DUPLICATE_SCENE
+    issue.code == TimelineValidationCode.DUPLICATE_SCENE
     for issue in duplicate_result.errors
 )
 
 
 empty_timeline = VideoTimeline()
 
-empty_result = validator.validate(
-    empty_timeline
-)
+empty_result = validator.validate(empty_timeline)
 
 assert empty_result.is_valid is False
 
 assert any(
-    issue.code
-    == TimelineValidationCode.NO_ITEMS
-    for issue in empty_result.errors
+    issue.code == TimelineValidationCode.NO_ITEMS for issue in empty_result.errors
 )
 
 
@@ -216,15 +189,10 @@ disabled_timeline = VideoTimeline(
     ],
 )
 
-disabled_result = validator.validate(
-    disabled_timeline
-)
+disabled_result = validator.validate(disabled_timeline)
 
 assert disabled_result.is_valid is False
 assert disabled_result.enabled_item_count == 0
 
 
-print(
-    "Timeline Validation Service tests "
-    "completed successfully."
-)
+print("Timeline Validation Service tests " "completed successfully.")

@@ -31,36 +31,21 @@ class ContentPipeline:
         research_profile_ids: list[str] | None = None,
         research_estimated_cost_usd: float = 0.0,
     ) -> None:
-        self.research_pipeline = (
-            research_pipeline
-            or ResearchPipeline(
-                llm_service=llm_service,
-                profile_ids=research_profile_ids,
-                estimated_cost_usd=(
-                    research_estimated_cost_usd
-                ),
-            )
+        self.research_pipeline = research_pipeline or ResearchPipeline(
+            llm_service=llm_service,
+            profile_ids=research_profile_ids,
+            estimated_cost_usd=(research_estimated_cost_usd),
         )
 
-        self.script_pipeline = (
-    script_pipeline
-    or ScriptPipeline(
-        llm_service=llm_service,
-        profile_ids=research_profile_ids,
-        estimated_cost_usd=research_estimated_cost_usd,
-    )
-)
-        
-
-        self.originality_agent = (
-            originality_agent
-            or OriginalityAgent()
+        self.script_pipeline = script_pipeline or ScriptPipeline(
+            llm_service=llm_service,
+            profile_ids=research_profile_ids,
+            estimated_cost_usd=research_estimated_cost_usd,
         )
 
-        self.scene_planner = (
-            scene_planner
-            or ScenePlannerAgent()
-        )
+        self.originality_agent = originality_agent or OriginalityAgent()
+
+        self.scene_planner = scene_planner or ScenePlannerAgent()
 
     def run(
         self,
@@ -68,31 +53,21 @@ class ContentPipeline:
     ) -> VideoJob:
         """Run research, script, originality and scene planning."""
 
-        research = self.research_pipeline.run(
-            job.topic
-        )
+        research = self.research_pipeline.run(job.topic)
 
         job.research = research
         job.current_stage = WorkflowStage.SCRIPT
 
-        script = self.script_pipeline.run(
-            research
-        )
+        script = self.script_pipeline.run(research)
 
         job.script = script
-        job.current_stage = (
-            WorkflowStage.ORIGINALITY_REVIEW
-        )
+        job.current_stage = WorkflowStage.ORIGINALITY_REVIEW
 
-        originality = self.originality_agent.analyze(
-            script
-        )
+        originality = self.originality_agent.analyze(script)
 
         job.originality_review = originality
 
-        scenes = self.scene_planner.plan(
-            script
-        )
+        scenes = self.scene_planner.plan(script)
 
         job.scenes = scenes
         job.current_stage = WorkflowStage.QUALITY_CHECK

@@ -36,9 +36,7 @@ class SubtitleExecution(MissionBaseModel):
 
     schema_version: str = "1.0"
 
-    status: SubtitleExecutionStatus = (
-        SubtitleExecutionStatus.PLANNED
-    )
+    status: SubtitleExecutionStatus = SubtitleExecutionStatus.PLANNED
 
     scene_number: int = Field(
         ge=1,
@@ -56,9 +54,7 @@ class SubtitleExecution(MissionBaseModel):
 
     burn_into_video: bool = True
 
-    timing_source: SubtitleTimingSource = (
-        SubtitleTimingSource.ESTIMATED
-    )
+    timing_source: SubtitleTimingSource = SubtitleTimingSource.ESTIMATED
 
     start_time_seconds: float = Field(
         ge=0.0,
@@ -112,9 +108,7 @@ class SubtitleExecution(MissionBaseModel):
         cleaned = value.strip()
 
         if not cleaned:
-            raise ValueError(
-                "Subtitle execution text cannot be empty."
-            )
+            raise ValueError("Subtitle execution text cannot be empty.")
 
         return cleaned
 
@@ -126,14 +120,8 @@ class SubtitleExecution(MissionBaseModel):
     ) -> str:
         normalized = value.strip().lower()
 
-        if (
-            not normalized.startswith("subtitle.")
-            or normalized == "subtitle."
-        ):
-            raise ValueError(
-                "Subtitle preset ID must start "
-                "with 'subtitle.'."
-            )
+        if not normalized.startswith("subtitle.") or normalized == "subtitle.":
+            raise ValueError("Subtitle preset ID must start " "with 'subtitle.'.")
 
         return normalized
 
@@ -148,13 +136,9 @@ class SubtitleExecution(MissionBaseModel):
 
         normalized = value.strip().lower()
 
-        if (
-            not normalized.startswith("animation.")
-            or normalized == "animation."
-        ):
+        if not normalized.startswith("animation.") or normalized == "animation.":
             raise ValueError(
-                "Subtitle animation preset ID must "
-                "start with 'animation.'."
+                "Subtitle animation preset ID must " "start with 'animation.'."
             )
 
         return normalized
@@ -170,10 +154,7 @@ class SubtitleExecution(MissionBaseModel):
         for value in values:
             warning = value.strip()
 
-            if (
-                warning
-                and warning not in cleaned
-            ):
+            if warning and warning not in cleaned:
                 cleaned.append(warning)
 
         return cleaned
@@ -182,99 +163,42 @@ class SubtitleExecution(MissionBaseModel):
     def validate_execution(
         self,
     ) -> SubtitleExecution:
-        if (
-            self.scene_end_time_seconds
-            <= self.scene_start_time_seconds
+        if self.scene_end_time_seconds <= self.scene_start_time_seconds:
+            raise ValueError("Subtitle scene end must be greater " "than scene start.")
+
+        if self.end_time_seconds <= self.start_time_seconds:
+            raise ValueError("Subtitle end time must be greater " "than start time.")
+
+        calculated_duration = self.end_time_seconds - self.start_time_seconds
+
+        if abs(calculated_duration - self.duration_seconds) > 0.001:
+            raise ValueError("Subtitle duration does not match " "execution timing.")
+
+        if self.start_time_seconds < self.scene_start_time_seconds - 0.001:
+            raise ValueError("Subtitle cannot start before its scene.")
+
+        if self.end_time_seconds > self.scene_end_time_seconds + 0.001:
+            raise ValueError("Subtitle cannot end after its scene.")
+
+        expected_local_start = self.start_time_seconds - self.scene_start_time_seconds
+
+        expected_local_end = self.end_time_seconds - self.scene_start_time_seconds
+
+        if abs(expected_local_start - self.local_start_offset_seconds) > 0.001:
+            raise ValueError(
+                "Subtitle local start offset does not " "match global timing."
+            )
+
+        if abs(expected_local_end - self.local_end_offset_seconds) > 0.001:
+            raise ValueError(
+                "Subtitle local end offset does not " "match global timing."
+            )
+
+        if self.status == SubtitleExecutionStatus.APPLIED and not self.metadata.get(
+            "renderer"
         ):
             raise ValueError(
-                "Subtitle scene end must be greater "
-                "than scene start."
-            )
-
-        if (
-            self.end_time_seconds
-            <= self.start_time_seconds
-        ):
-            raise ValueError(
-                "Subtitle end time must be greater "
-                "than start time."
-            )
-
-        calculated_duration = (
-            self.end_time_seconds
-            - self.start_time_seconds
-        )
-
-        if (
-            abs(
-                calculated_duration
-                - self.duration_seconds
-            )
-            > 0.001
-        ):
-            raise ValueError(
-                "Subtitle duration does not match "
-                "execution timing."
-            )
-
-        if (
-            self.start_time_seconds
-            < self.scene_start_time_seconds - 0.001
-        ):
-            raise ValueError(
-                "Subtitle cannot start before its scene."
-            )
-
-        if (
-            self.end_time_seconds
-            > self.scene_end_time_seconds + 0.001
-        ):
-            raise ValueError(
-                "Subtitle cannot end after its scene."
-            )
-
-        expected_local_start = (
-            self.start_time_seconds
-            - self.scene_start_time_seconds
-        )
-
-        expected_local_end = (
-            self.end_time_seconds
-            - self.scene_start_time_seconds
-        )
-
-        if (
-            abs(
-                expected_local_start
-                - self.local_start_offset_seconds
-            )
-            > 0.001
-        ):
-            raise ValueError(
-                "Subtitle local start offset does not "
-                "match global timing."
-            )
-
-        if (
-            abs(
-                expected_local_end
-                - self.local_end_offset_seconds
-            )
-            > 0.001
-        ):
-            raise ValueError(
-                "Subtitle local end offset does not "
-                "match global timing."
-            )
-
-        if (
-            self.status
-            == SubtitleExecutionStatus.APPLIED
-            and not self.metadata.get("renderer")
-        ):
-            raise ValueError(
-                "Applied subtitle execution requires "
-                "renderer metadata."
+                "Applied subtitle execution requires " "renderer metadata."
             )
 
         return self
@@ -295,9 +219,7 @@ class SubtitleExecutionPlan(MissionBaseModel):
 
     schema_version: str = "1.0"
 
-    executions: list[
-        SubtitleExecution
-    ] = Field(
+    executions: list[SubtitleExecution] = Field(
         default_factory=list,
     )
 
@@ -347,31 +269,16 @@ class SubtitleExecutionPlan(MissionBaseModel):
     def validate_plan(
         self,
     ) -> SubtitleExecutionPlan:
-        if self.segment_count != len(
-            self.executions
-        ):
+        if self.segment_count != len(self.executions):
             raise ValueError(
-                "Subtitle segment count must match "
-                "execution collection."
+                "Subtitle segment count must match " "execution collection."
             )
 
-        if (
-            self.ready_execution_count
-            > self.segment_count
-        ):
-            raise ValueError(
-                "Ready subtitle count cannot exceed "
-                "segment count."
-            )
+        if self.ready_execution_count > self.segment_count:
+            raise ValueError("Ready subtitle count cannot exceed " "segment count.")
 
-        if (
-            self.is_render_ready
-            and not self.is_valid
-        ):
-            raise ValueError(
-                "Render-ready subtitle plans "
-                "must be valid."
-            )
+        if self.is_render_ready and not self.is_valid:
+            raise ValueError("Render-ready subtitle plans " "must be valid.")
 
         return self
 
@@ -387,60 +294,42 @@ class SubtitleExecutionPlan(MissionBaseModel):
             ),
         )
 
-        self.segment_count = len(
-            self.executions
-        )
+        self.segment_count = len(self.executions)
 
         self.estimated_segment_count = sum(
             1
             for execution in self.executions
-            if (
-                execution.timing_source
-                == SubtitleTimingSource.ESTIMATED
-            )
+            if (execution.timing_source == SubtitleTimingSource.ESTIMATED)
         )
 
         self.precise_segment_count = sum(
             1
             for execution in self.executions
-            if (
-                execution.timing_source
-                == SubtitleTimingSource.PRECISE
-            )
+            if (execution.timing_source == SubtitleTimingSource.PRECISE)
         )
 
         self.ready_execution_count = sum(
-            1
-            for execution in self.executions
-            if execution.is_ready
+            1 for execution in self.executions if execution.is_ready
         )
 
         self.scene_count = len(
-            {
-                execution.scene_number
-                for execution in self.executions
-            }
+            {execution.scene_number for execution in self.executions}
         )
 
         self.is_valid = all(
-            execution.status
-            != SubtitleExecutionStatus.FAILED
+            execution.status != SubtitleExecutionStatus.FAILED
             for execution in self.executions
         )
 
         self.is_render_ready = (
-            self.is_valid
-            and self.ready_execution_count
-            == self.segment_count
+            self.is_valid and self.ready_execution_count == self.segment_count
         )
 
     @property
     def has_subtitles(self) -> bool:
         """Return whether subtitle segments exist."""
 
-        return bool(
-            self.executions
-        )
+        return bool(self.executions)
 
     @property
     def applied_count(self) -> int:
@@ -449,10 +338,7 @@ class SubtitleExecutionPlan(MissionBaseModel):
         return sum(
             1
             for execution in self.executions
-            if (
-                execution.status
-                == SubtitleExecutionStatus.APPLIED
-            )
+            if (execution.status == SubtitleExecutionStatus.APPLIED)
         )
 
     @property
@@ -462,8 +348,5 @@ class SubtitleExecutionPlan(MissionBaseModel):
         return sum(
             1
             for execution in self.executions
-            if (
-                execution.status
-                == SubtitleExecutionStatus.FAILED
-            )
+            if (execution.status == SubtitleExecutionStatus.FAILED)
         )

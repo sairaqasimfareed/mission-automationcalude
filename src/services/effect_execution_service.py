@@ -36,13 +36,10 @@ class EffectExecutionService:
     def __init__(
         self,
         *,
-        timeline_validation_service: (
-            TimelineValidationService | None
-        ) = None,
+        timeline_validation_service: TimelineValidationService | None = None,
     ) -> None:
         self.timeline_validation_service = (
-            timeline_validation_service
-            or TimelineValidationService()
+            timeline_validation_service or TimelineValidationService()
         )
 
     def build_plan(
@@ -55,43 +52,28 @@ class EffectExecutionService:
     ) -> EffectExecutionPlan:
         """Build visual-effect executions for a video timeline."""
 
-        if (
-            track_index is not None
-            and track_index < 0
-        ):
-            raise ValueError(
-                "Effect plan track index "
-                "cannot be negative."
-            )
+        if track_index is not None and track_index < 0:
+            raise ValueError("Effect plan track index " "cannot be negative.")
 
         if validate_timeline:
-            validation_result = (
-                self.timeline_validation_service.validate(
-                    timeline,
-                    require_gap_free_primary_track=True,
-                    require_editing_blueprints=True,
-                    warn_on_blueprint_fallbacks=True,
-                )
+            validation_result = self.timeline_validation_service.validate(
+                timeline,
+                require_gap_free_primary_track=True,
+                require_editing_blueprints=True,
+                warn_on_blueprint_fallbacks=True,
             )
 
             if not validation_result.is_valid:
                 raise ValueError(
                     "Video timeline is not valid for "
                     "visual-effect planning. "
-                    + " ".join(
-                        issue.message
-                        for issue
-                        in validation_result.errors
-                    )
+                    + " ".join(issue.message for issue in validation_result.errors)
                 )
 
         items = [
             item
             for item in timeline.ordered_items()
-            if (
-                track_index is None
-                or item.track_index == track_index
-            )
+            if (track_index is None or item.track_index == track_index)
         ]
 
         if not items:
@@ -100,9 +82,7 @@ class EffectExecutionService:
                 "at least one enabled timeline item."
             )
 
-        executions: list[
-            EffectExecution
-        ] = []
+        executions: list[EffectExecution] = []
 
         plan_warnings: list[str] = []
 
@@ -117,35 +97,24 @@ class EffectExecutionService:
 
             if not blueprint.is_resolved:
                 raise ValueError(
-                    "Effect execution planning requires "
-                    "resolved editing blueprints."
+                    "Effect execution planning requires " "resolved editing blueprints."
                 )
 
-            if (
-                blueprint.scene_number
-                != item.scene_number
-            ):
+            if blueprint.scene_number != item.scene_number:
                 raise ValueError(
-                    "Editing blueprint scene number "
-                    "does not match timeline item."
+                    "Editing blueprint scene number " "does not match timeline item."
                 )
 
-            scene_executions = (
-                self.build_scene_effects(
-                    item=item,
-                )
+            scene_executions = self.build_scene_effects(
+                item=item,
             )
 
-            executions.extend(
-                scene_executions
-            )
+            executions.extend(scene_executions)
 
             plan_warnings.extend(
                 warning
-                for execution
-                in scene_executions
-                for warning
-                in execution.warnings
+                for execution in scene_executions
+                for warning in execution.warnings
             )
 
         plan = self._create_plan(
@@ -154,20 +123,14 @@ class EffectExecutionService:
             warnings=plan_warnings,
             metadata={
                 "track_index": track_index,
-                "timeline_validation_performed": (
-                    validate_timeline
-                ),
+                "timeline_validation_performed": (validate_timeline),
             },
         )
 
-        self.validate_plan(
-            plan
-        )
+        self.validate_plan(plan)
 
         if mark_ready:
-            self.mark_ready(
-                plan
-            )
+            self.mark_ready(plan)
 
         return plan
 
@@ -181,30 +144,20 @@ class EffectExecutionService:
         blueprint = item.editing_blueprint
 
         if blueprint is None:
-            raise ValueError(
-                "Timeline item does not contain "
-                "an editing blueprint."
-            )
+            raise ValueError("Timeline item does not contain " "an editing blueprint.")
 
         if not blueprint.is_resolved:
             raise ValueError(
-                "Timeline item contains an unresolved "
-                "editing blueprint."
+                "Timeline item contains an unresolved " "editing blueprint."
             )
 
-        executions: list[
-            EffectExecution
-        ] = []
+        executions: list[EffectExecution] = []
 
         for instruction in blueprint.visual_effects:
             if not instruction.enabled:
                 continue
 
-            preset_id = (
-                instruction
-                .preset
-                .resolved_preset_id
-            )
+            preset_id = instruction.preset.resolved_preset_id
 
             if preset_id == "visual.none":
                 continue
@@ -227,36 +180,18 @@ class EffectExecutionService:
         """Build one normalized visual-effect execution."""
 
         if not instruction.enabled:
-            raise ValueError(
-                "Disabled visual effects cannot "
-                "produce executions."
-            )
+            raise ValueError("Disabled visual effects cannot " "produce executions.")
 
-        preset_id = (
-            instruction
-            .preset
-            .resolved_preset_id
-        )
+        preset_id = instruction.preset.resolved_preset_id
 
-        if not preset_id.startswith(
-            "visual."
-        ):
-            raise ValueError(
-                "Visual effect execution requires "
-                "a visual preset."
-            )
+        if not preset_id.startswith("visual."):
+            raise ValueError("Visual effect execution requires " "a visual preset.")
 
-        scene_start = (
-            item.start_time_seconds
-        )
+        scene_start = item.start_time_seconds
 
-        scene_end = (
-            item.end_time_seconds
-        )
+        scene_end = item.end_time_seconds
 
-        scene_duration = (
-            item.duration_seconds
-        )
+        scene_duration = item.duration_seconds
 
         (
             local_start,
@@ -264,41 +199,19 @@ class EffectExecutionService:
             relative_percent,
         ) = self._resolve_local_timing(
             instruction=instruction,
-            scene_duration_seconds=(
-                scene_duration
-            ),
+            scene_duration_seconds=(scene_duration),
         )
 
-        global_start = (
-            scene_start
-            + local_start
-        )
+        global_start = scene_start + local_start
 
-        global_end = (
-            global_start
-            + duration
-        )
+        global_end = global_start + duration
 
-        if (
-            global_end
-            > scene_end + self.TIME_TOLERANCE_SECONDS
-        ):
-            raise ValueError(
-                "Visual-effect execution extends "
-                "beyond its scene."
-            )
+        if global_end > scene_end + self.TIME_TOLERANCE_SECONDS:
+            raise ValueError("Visual-effect execution extends " "beyond its scene.")
 
-        effect_type = (
-            self._effect_type(
-                instruction
-            )
-        )
+        effect_type = self._effect_type(instruction)
 
-        warnings = (
-            self._instruction_warnings(
-                instruction
-            )
-        )
+        warnings = self._instruction_warnings(instruction)
 
         return EffectExecution(
             status=EffectExecutionStatus.PLANNED,
@@ -315,37 +228,15 @@ class EffectExecutionService:
             scene_start_time_seconds=scene_start,
             scene_end_time_seconds=scene_end,
             scene_duration_seconds=scene_duration,
-            local_start_offset_seconds=(
-                local_start
-            ),
-            relative_position_percent=(
-                relative_percent
-            ),
-            implementation=dict(
-                instruction
-                .preset
-                .implementation
-            ),
+            local_start_offset_seconds=(local_start),
+            relative_position_percent=(relative_percent),
+            implementation=dict(instruction.preset.implementation),
             warnings=warnings,
             metadata={
-                "timeline_item_id": str(
-                    item.id
-                ),
-                "directive_path": (
-                    instruction
-                    .preset
-                    .directive_path
-                ),
-                "found_exact_match": (
-                    instruction
-                    .preset
-                    .found_exact_match
-                ),
-                "used_fallback": (
-                    instruction
-                    .preset
-                    .used_fallback
-                ),
+                "timeline_item_id": str(item.id),
+                "directive_path": (instruction.preset.directive_path),
+                "found_exact_match": (instruction.preset.found_exact_match),
+                "used_fallback": (instruction.preset.used_fallback),
             },
         )
 
@@ -358,76 +249,44 @@ class EffectExecutionService:
         errors: list[str] = []
 
         for execution in plan.executions:
-            execution_errors = (
-                self._execution_errors(
-                    execution=execution,
-                    timeline_duration_seconds=(
-                        plan
-                        .timeline_duration_seconds
-                    ),
-                )
+            execution_errors = self._execution_errors(
+                execution=execution,
+                timeline_duration_seconds=(plan.timeline_duration_seconds),
             )
 
             if execution_errors:
-                execution.status = (
-                    EffectExecutionStatus.FAILED
-                )
+                execution.status = EffectExecutionStatus.FAILED
 
                 for message in execution_errors:
-                    if (
-                        message
-                        not in execution.warnings
-                    ):
-                        execution.warnings.append(
-                            message
-                        )
+                    if message not in execution.warnings:
+                        execution.warnings.append(message)
 
-                    errors.append(
-                        message
-                    )
+                    errors.append(message)
 
-            elif (
-                execution.status
-                == EffectExecutionStatus.PLANNED
-            ):
-                execution.status = (
-                    EffectExecutionStatus.VALIDATED
-                )
+            elif execution.status == EffectExecutionStatus.PLANNED:
+                execution.status = EffectExecutionStatus.VALIDATED
 
         plan.warnings = self._unique_text(
             [
                 *plan.warnings,
                 *[
                     warning
-                    for execution
-                    in plan.executions
-                    for warning
-                    in execution.warnings
+                    for execution in plan.executions
+                    for warning in execution.warnings
                 ],
             ]
         )
 
-        plan.metadata[
-            "validation_performed"
-        ] = True
+        plan.metadata["validation_performed"] = True
 
-        plan.metadata[
-            "validation_errors"
-        ] = self._unique_text(
-            errors
-        )
+        plan.metadata["validation_errors"] = self._unique_text(errors)
 
         plan.refresh_summary()
 
-        plan.is_valid = (
-            len(errors) == 0
-            and plan.failed_count == 0
-        )
+        plan.is_valid = len(errors) == 0 and plan.failed_count == 0
 
         plan.is_render_ready = (
-            plan.is_valid
-            and plan.ready_execution_count
-            == plan.effect_count
+            plan.is_valid and plan.ready_execution_count == plan.effect_count
         )
 
         return plan
@@ -438,40 +297,24 @@ class EffectExecutionService:
     ) -> EffectExecutionPlan:
         """Mark validated visual effects as renderer-ready."""
 
-        self.validate_plan(
-            plan
-        )
+        self.validate_plan(plan)
 
         if not plan.is_valid:
-            raise ValueError(
-                "Invalid visual-effect plan cannot "
-                "be marked ready."
-            )
+            raise ValueError("Invalid visual-effect plan cannot " "be marked ready.")
 
         for execution in plan.executions:
-            if (
-                execution.status
-                == EffectExecutionStatus.VALIDATED
-            ):
-                execution.status = (
-                    EffectExecutionStatus.READY
-                )
+            if execution.status == EffectExecutionStatus.VALIDATED:
+                execution.status = EffectExecutionStatus.READY
 
         plan.refresh_summary()
 
-        plan.is_valid = (
-            plan.failed_count == 0
-        )
+        plan.is_valid = plan.failed_count == 0
 
         plan.is_render_ready = (
-            plan.is_valid
-            and plan.ready_execution_count
-            == plan.effect_count
+            plan.is_valid and plan.ready_execution_count == plan.effect_count
         )
 
-        plan.metadata[
-            "marked_ready"
-        ] = True
+        plan.metadata["marked_ready"] = True
 
         return plan
 
@@ -481,21 +324,14 @@ class EffectExecutionService:
         *,
         execution_id: str,
         renderer: str,
-        renderer_metadata: (
-            dict[str, Any] | None
-        ) = None,
+        renderer_metadata: dict[str, Any] | None = None,
     ) -> EffectExecution:
         """Mark one ready effect execution as applied."""
 
-        cleaned_renderer = (
-            renderer.strip()
-        )
+        cleaned_renderer = renderer.strip()
 
         if not cleaned_renderer:
-            raise ValueError(
-                "Applied visual effect requires "
-                "a renderer name."
-            )
+            raise ValueError("Applied visual effect requires " "a renderer name.")
 
         execution = self._find_execution(
             plan=plan,
@@ -507,23 +343,14 @@ class EffectExecutionService:
             EffectExecutionStatus.APPLIED,
         }:
             raise ValueError(
-                "Only ready visual-effect executions "
-                "can be marked applied."
+                "Only ready visual-effect executions " "can be marked applied."
             )
 
-        execution.metadata[
-            "renderer"
-        ] = cleaned_renderer
+        execution.metadata["renderer"] = cleaned_renderer
 
-        execution.metadata[
-            "renderer_metadata"
-        ] = dict(
-            renderer_metadata or {}
-        )
+        execution.metadata["renderer_metadata"] = dict(renderer_metadata or {})
 
-        execution.status = (
-            EffectExecutionStatus.APPLIED
-        )
+        execution.status = EffectExecutionStatus.APPLIED
 
         plan.refresh_summary()
 
@@ -534,43 +361,29 @@ class EffectExecutionService:
         plan: EffectExecutionPlan,
         *,
         renderer: str,
-        renderer_metadata: (
-            dict[str, Any] | None
-        ) = None,
+        renderer_metadata: dict[str, Any] | None = None,
     ) -> list[EffectExecution]:
         """Mark every ready visual effect as applied."""
 
-        cleaned_renderer = (
-            renderer.strip()
-        )
+        cleaned_renderer = renderer.strip()
 
         if not cleaned_renderer:
-            raise ValueError(
-                "Applied visual effects require "
-                "a renderer name."
-            )
+            raise ValueError("Applied visual effects require " "a renderer name.")
 
         if not plan.is_render_ready:
             raise ValueError(
-                "Effect execution plan must be "
-                "render-ready before application."
+                "Effect execution plan must be " "render-ready before application."
             )
 
-        applied: list[
-            EffectExecution
-        ] = []
+        applied: list[EffectExecution] = []
 
         for execution in plan.executions:
             applied.append(
                 self.mark_applied(
                     plan,
-                    execution_id=str(
-                        execution.id
-                    ),
+                    execution_id=str(execution.id),
                     renderer=cleaned_renderer,
-                    renderer_metadata=(
-                        renderer_metadata
-                    ),
+                    renderer_metadata=(renderer_metadata),
                 )
             )
 
@@ -582,50 +395,30 @@ class EffectExecutionService:
         *,
         execution_id: str,
         error_message: str,
-        failure_metadata: (
-            dict[str, Any] | None
-        ) = None,
+        failure_metadata: dict[str, Any] | None = None,
     ) -> EffectExecution:
         """Mark one effect execution as failed."""
 
-        cleaned_message = (
-            error_message.strip()
-        )
+        cleaned_message = error_message.strip()
 
         if not cleaned_message:
-            raise ValueError(
-                "Visual-effect failure message "
-                "cannot be empty."
-            )
+            raise ValueError("Visual-effect failure message " "cannot be empty.")
 
         execution = self._find_execution(
             plan=plan,
             execution_id=execution_id,
         )
 
-        execution.status = (
-            EffectExecutionStatus.FAILED
-        )
+        execution.status = EffectExecutionStatus.FAILED
 
-        execution.metadata[
-            "failure_message"
-        ] = cleaned_message
+        execution.metadata["failure_message"] = cleaned_message
 
-        execution.metadata[
-            "failure_details"
-        ] = dict(
-            failure_metadata or {}
-        )
+        execution.metadata["failure_details"] = dict(failure_metadata or {})
 
-        warning = (
-            "Visual-effect execution failed: "
-            f"{cleaned_message}"
-        )
+        warning = "Visual-effect execution failed: " f"{cleaned_message}"
 
         if warning not in execution.warnings:
-            execution.warnings.append(
-                warning
-            )
+            execution.warnings.append(warning)
 
         plan.warnings = self._unique_text(
             [
@@ -651,79 +444,35 @@ class EffectExecutionService:
 
         return {
             "plan_id": str(plan.id),
-            "schema_version": (
-                plan.schema_version
-            ),
-            "timeline_duration_seconds": (
-                plan.timeline_duration_seconds
-            ),
+            "schema_version": (plan.schema_version),
+            "timeline_duration_seconds": (plan.timeline_duration_seconds),
             "scene_count": plan.scene_count,
             "effect_count": plan.effect_count,
-            "full_scene_effect_count": (
-                plan.full_scene_effect_count
-            ),
-            "timed_effect_count": (
-                plan.timed_effect_count
-            ),
-            "ready_execution_count": (
-                plan.ready_execution_count
-            ),
-            "applied_count": (
-                plan.applied_count
-            ),
-            "failed_count": (
-                plan.failed_count
-            ),
+            "full_scene_effect_count": (plan.full_scene_effect_count),
+            "timed_effect_count": (plan.timed_effect_count),
+            "ready_execution_count": (plan.ready_execution_count),
+            "applied_count": (plan.applied_count),
+            "failed_count": (plan.failed_count),
             "is_valid": plan.is_valid,
-            "is_render_ready": (
-                plan.is_render_ready
-            ),
-            "warning_count": len(
-                plan.warnings
-            ),
-            "warnings": list(
-                plan.warnings
-            ),
-            "metadata": dict(
-                plan.metadata
-            ),
+            "is_render_ready": (plan.is_render_ready),
+            "warning_count": len(plan.warnings),
+            "warnings": list(plan.warnings),
+            "metadata": dict(plan.metadata),
             "executions": [
                 {
-                    "execution_id": str(
-                        execution.id
-                    ),
-                    "status": (
-                        execution.status.value
-                    ),
-                    "scene_number": (
-                        execution.scene_number
-                    ),
-                    "preset_id": (
-                        execution.preset_id
-                    ),
-                    "effect_type": (
-                        execution.effect_type
-                    ),
-                    "timing_mode": (
-                        execution.timing_mode.value
-                    ),
-                    "start_time_seconds": (
-                        execution.start_time_seconds
-                    ),
-                    "end_time_seconds": (
-                        execution.end_time_seconds
-                    ),
-                    "duration_seconds": (
-                        execution.duration_seconds
-                    ),
+                    "execution_id": str(execution.id),
+                    "status": (execution.status.value),
+                    "scene_number": (execution.scene_number),
+                    "preset_id": (execution.preset_id),
+                    "effect_type": (execution.effect_type),
+                    "timing_mode": (execution.timing_mode.value),
+                    "start_time_seconds": (execution.start_time_seconds),
+                    "end_time_seconds": (execution.end_time_seconds),
+                    "duration_seconds": (execution.duration_seconds),
                     "local_start_offset_seconds": (
-                        execution
-                        .local_start_offset_seconds
+                        execution.local_start_offset_seconds
                     ),
-                    "relative_position_percent": (
-                        execution
-                        .relative_position_percent
-                    ),
+                    "relative_position_percent": (execution.relative_position_percent),
                 }
                 for execution in plan.executions
             ],
@@ -743,120 +492,72 @@ class EffectExecutionService:
 
         if scene_duration_seconds <= 0.0:
             raise ValueError(
-                "Visual-effect planning requires "
-                "positive scene duration."
+                "Visual-effect planning requires " "positive scene duration."
             )
 
-        timing_mode = (
-            instruction.timing_mode
-        )
+        timing_mode = instruction.timing_mode
 
         duration = (
-            float(
-                instruction.duration_seconds
-            )
-            if instruction.duration_seconds
-            is not None
+            float(instruction.duration_seconds)
+            if instruction.duration_seconds is not None
             else None
         )
 
-        relative_percent: float | None = (
-            instruction
-            .relative_position_percent
-        )
+        relative_percent: float | None = instruction.relative_position_percent
 
-        if (
-            timing_mode
-            == DirectiveTimingMode.FULL_SCENE
-        ):
+        if timing_mode == DirectiveTimingMode.FULL_SCENE:
             return (
                 0.0,
                 scene_duration_seconds,
                 None,
             )
 
-        if (
-            timing_mode
-            == DirectiveTimingMode.SCENE_START
-        ):
+        if timing_mode == DirectiveTimingMode.SCENE_START:
             resolved_duration = (
-                duration
-                if duration is not None
-                else scene_duration_seconds
+                duration if duration is not None else scene_duration_seconds
             )
 
             return (
                 0.0,
                 self._bounded_duration(
                     start_offset_seconds=0.0,
-                    duration_seconds=(
-                        resolved_duration
-                    ),
-                    scene_duration_seconds=(
-                        scene_duration_seconds
-                    ),
+                    duration_seconds=(resolved_duration),
+                    scene_duration_seconds=(scene_duration_seconds),
                 ),
                 None,
             )
 
-        if (
-            timing_mode
-            == DirectiveTimingMode.SCENE_MIDDLE
-        ):
+        if timing_mode == DirectiveTimingMode.SCENE_MIDDLE:
             resolved_duration = (
-                duration
-                if duration is not None
-                else scene_duration_seconds
+                duration if duration is not None else scene_duration_seconds
             )
 
             local_start = max(
                 0.0,
-                (
-                    scene_duration_seconds
-                    - resolved_duration
-                )
-                / 2.0,
+                (scene_duration_seconds - resolved_duration) / 2.0,
             )
 
             return (
                 local_start,
                 self._bounded_duration(
-                    start_offset_seconds=(
-                        local_start
-                    ),
-                    duration_seconds=(
-                        resolved_duration
-                    ),
-                    scene_duration_seconds=(
-                        scene_duration_seconds
-                    ),
+                    start_offset_seconds=(local_start),
+                    duration_seconds=(resolved_duration),
+                    scene_duration_seconds=(scene_duration_seconds),
                 ),
                 None,
             )
 
-        if (
-            timing_mode
-            == DirectiveTimingMode.SCENE_END
-        ):
+        if timing_mode == DirectiveTimingMode.SCENE_END:
             resolved_duration = (
-                duration
-                if duration is not None
-                else scene_duration_seconds
+                duration if duration is not None else scene_duration_seconds
             )
 
-            if (
-                resolved_duration
-                > scene_duration_seconds
-            ):
+            if resolved_duration > scene_duration_seconds:
                 raise ValueError(
-                    "Scene-end visual-effect duration "
-                    "exceeds scene duration."
+                    "Scene-end visual-effect duration " "exceeds scene duration."
                 )
 
-            local_start = (
-                scene_duration_seconds
-                - resolved_duration
-            )
+            local_start = scene_duration_seconds - resolved_duration
 
             return (
                 local_start,
@@ -864,93 +565,55 @@ class EffectExecutionService:
                 None,
             )
 
-        if (
-            timing_mode
-            == DirectiveTimingMode.ABSOLUTE_SECONDS
-        ):
-            local_start = float(
-                instruction
-                .start_offset_seconds
-            )
+        if timing_mode == DirectiveTimingMode.ABSOLUTE_SECONDS:
+            local_start = float(instruction.start_offset_seconds)
 
             resolved_duration = (
                 duration
                 if duration is not None
-                else (
-                    scene_duration_seconds
-                    - local_start
-                )
+                else (scene_duration_seconds - local_start)
             )
 
             return (
                 local_start,
                 self._bounded_duration(
-                    start_offset_seconds=(
-                        local_start
-                    ),
-                    duration_seconds=(
-                        resolved_duration
-                    ),
-                    scene_duration_seconds=(
-                        scene_duration_seconds
-                    ),
+                    start_offset_seconds=(local_start),
+                    duration_seconds=(resolved_duration),
+                    scene_duration_seconds=(scene_duration_seconds),
                 ),
                 None,
             )
 
-        if (
-            timing_mode
-            == DirectiveTimingMode.RELATIVE_PERCENT
-        ):
+        if timing_mode == DirectiveTimingMode.RELATIVE_PERCENT:
             if relative_percent is None:
                 raise ValueError(
-                    "Relative-percent visual effect "
-                    "requires a percentage position."
+                    "Relative-percent visual effect " "requires a percentage position."
                 )
 
-            local_start = (
-                scene_duration_seconds
-                * relative_percent
-                / 100.0
-            )
+            local_start = scene_duration_seconds * relative_percent / 100.0
 
-            if (
-                local_start
-                >= scene_duration_seconds
-            ):
+            if local_start >= scene_duration_seconds:
                 raise ValueError(
-                    "Relative visual-effect position "
-                    "must occur before scene end."
+                    "Relative visual-effect position " "must occur before scene end."
                 )
 
             resolved_duration = (
                 duration
                 if duration is not None
-                else (
-                    scene_duration_seconds
-                    - local_start
-                )
+                else (scene_duration_seconds - local_start)
             )
 
             return (
                 local_start,
                 self._bounded_duration(
-                    start_offset_seconds=(
-                        local_start
-                    ),
-                    duration_seconds=(
-                        resolved_duration
-                    ),
-                    scene_duration_seconds=(
-                        scene_duration_seconds
-                    ),
+                    start_offset_seconds=(local_start),
+                    duration_seconds=(resolved_duration),
+                    scene_duration_seconds=(scene_duration_seconds),
                 ),
                 relative_percent,
             )
 
-        raise ValueError(
-            "Unsupported visual-effect timing mode."
-        )
+        raise ValueError("Unsupported visual-effect timing mode.")
 
     @staticmethod
     def _bounded_duration(
@@ -962,39 +625,20 @@ class EffectExecutionService:
         """Validate an effect duration inside its scene."""
 
         if start_offset_seconds < 0.0:
-            raise ValueError(
-                "Visual-effect start offset "
-                "cannot be negative."
-            )
+            raise ValueError("Visual-effect start offset " "cannot be negative.")
 
         if duration_seconds <= 0.0:
+            raise ValueError("Visual-effect duration must " "be positive.")
+
+        if start_offset_seconds >= scene_duration_seconds:
             raise ValueError(
-                "Visual-effect duration must "
-                "be positive."
+                "Visual-effect start offset " "must occur before scene end."
             )
 
-        if (
-            start_offset_seconds
-            >= scene_duration_seconds
+        if start_offset_seconds + duration_seconds > (
+            scene_duration_seconds + EffectExecutionService.TIME_TOLERANCE_SECONDS
         ):
-            raise ValueError(
-                "Visual-effect start offset "
-                "must occur before scene end."
-            )
-
-        if (
-            start_offset_seconds
-            + duration_seconds
-            > (
-                scene_duration_seconds
-                + EffectExecutionService
-                .TIME_TOLERANCE_SECONDS
-            )
-        ):
-            raise ValueError(
-                "Visual-effect duration extends "
-                "beyond scene duration."
-            )
+            raise ValueError("Visual-effect duration extends " "beyond scene duration.")
 
         return duration_seconds
 
@@ -1004,37 +648,26 @@ class EffectExecutionService:
     ) -> str:
         """Resolve a normalized visual-effect type."""
 
-        implementation = (
-            instruction
-            .preset
-            .implementation
-        )
+        implementation = instruction.preset.implementation
 
         for key in (
             "effect",
             "type",
             "filter",
         ):
-            value = implementation.get(
-                key
-            )
+            value = implementation.get(key)
 
             if isinstance(
                 value,
                 str,
             ):
-                cleaned = (
-                    value.strip().lower()
-                )
+                cleaned = value.strip().lower()
 
                 if cleaned:
                     return cleaned
 
         return (
-            instruction
-            .preset
-            .resolved_preset_id
-            .split(
+            instruction.preset.resolved_preset_id.split(
                 ".",
                 maxsplit=1,
             )[-1]
@@ -1051,9 +684,7 @@ class EffectExecutionService:
         warnings: list[str] = []
 
         if instruction.preset.used_fallback:
-            warnings.append(
-                "Visual effect uses a fallback preset."
-            )
+            warnings.append("Visual effect uses a fallback preset.")
 
         return warnings
 
@@ -1067,38 +698,17 @@ class EffectExecutionService:
 
         errors: list[str] = []
 
-        if (
-            execution.start_time_seconds
-            < execution.scene_start_time_seconds
-            - 0.001
-        ):
-            errors.append(
-                "Visual effect starts before its scene."
-            )
+        if execution.start_time_seconds < execution.scene_start_time_seconds - 0.001:
+            errors.append("Visual effect starts before its scene.")
 
-        if (
-            execution.end_time_seconds
-            > execution.scene_end_time_seconds
-            + 0.001
-        ):
-            errors.append(
-                "Visual effect ends after its scene."
-            )
+        if execution.end_time_seconds > execution.scene_end_time_seconds + 0.001:
+            errors.append("Visual effect ends after its scene.")
 
-        if (
-            execution.end_time_seconds
-            > timeline_duration_seconds
-            + 0.001
-        ):
-            errors.append(
-                "Visual effect ends after the timeline."
-            )
+        if execution.end_time_seconds > timeline_duration_seconds + 0.001:
+            errors.append("Visual effect ends after the timeline.")
 
         if execution.duration_seconds <= 0.0:
-            errors.append(
-                "Visual effect requires "
-                "positive duration."
-            )
+            errors.append("Visual effect requires " "positive duration.")
 
         return errors
 
@@ -1123,67 +733,30 @@ class EffectExecutionService:
             ),
         )
 
-        effect_count = len(
-            ordered_executions
-        )
+        effect_count = len(ordered_executions)
 
         full_scene_count = sum(
-            1
-            for execution
-            in ordered_executions
-            if execution.is_full_scene
+            1 for execution in ordered_executions if execution.is_full_scene
         )
 
-        timed_count = (
-            effect_count
-            - full_scene_count
-        )
+        timed_count = effect_count - full_scene_count
 
-        ready_count = sum(
-            1
-            for execution
-            in ordered_executions
-            if execution.is_ready
-        )
+        ready_count = sum(1 for execution in ordered_executions if execution.is_ready)
 
-        scene_count = len(
-            {
-                execution.scene_number
-                for execution
-                in ordered_executions
-            }
-        )
+        scene_count = len({execution.scene_number for execution in ordered_executions})
 
         return EffectExecutionPlan(
             executions=ordered_executions,
-            timeline_duration_seconds=(
-                timeline.calculate_duration()
-            ),
+            timeline_duration_seconds=(timeline.calculate_duration()),
             scene_count=scene_count,
             effect_count=effect_count,
-            full_scene_effect_count=(
-                full_scene_count
-            ),
-            timed_effect_count=(
-                timed_count
-            ),
-            ready_execution_count=(
-                ready_count
-            ),
+            full_scene_effect_count=(full_scene_count),
+            timed_effect_count=(timed_count),
+            ready_execution_count=(ready_count),
             is_valid=True,
-            is_render_ready=(
-                ready_count
-                == effect_count
-            ),
-            warnings=(
-                EffectExecutionService
-                ._unique_text(
-                    warnings
-                )
-            ),
-            metadata=dict(
-                metadata
-            ),
+            is_render_ready=(ready_count == effect_count),
+            warnings=(EffectExecutionService._unique_text(warnings)),
+            metadata=dict(metadata),
         )
 
     @staticmethod
@@ -1194,15 +767,10 @@ class EffectExecutionService:
     ) -> EffectExecution:
         """Return one visual-effect execution by ID."""
 
-        cleaned_id = (
-            execution_id.strip()
-        )
+        cleaned_id = execution_id.strip()
 
         if not cleaned_id:
-            raise ValueError(
-                "Visual-effect execution ID "
-                "cannot be empty."
-            )
+            raise ValueError("Visual-effect execution ID " "cannot be empty.")
 
         matches = [
             execution
@@ -1211,16 +779,10 @@ class EffectExecutionService:
         ]
 
         if not matches:
-            raise KeyError(
-                "Visual-effect execution "
-                f"was not found: {cleaned_id}"
-            )
+            raise KeyError("Visual-effect execution " f"was not found: {cleaned_id}")
 
         if len(matches) > 1:
-            raise ValueError(
-                "Multiple visual-effect executions "
-                "share the same ID."
-            )
+            raise ValueError("Multiple visual-effect executions " "share the same ID.")
 
         return matches[0]
 
@@ -1235,12 +797,7 @@ class EffectExecutionService:
         for value in values:
             normalized = value.strip()
 
-            if (
-                normalized
-                and normalized not in cleaned
-            ):
-                cleaned.append(
-                    normalized
-                )
+            if normalized and normalized not in cleaned:
+                cleaned.append(normalized)
 
         return cleaned

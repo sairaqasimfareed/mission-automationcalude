@@ -112,10 +112,7 @@ class LLMService:
         self.budget_service = budget_service
         self.gateway = gateway
 
-        self.adapter_resolver = (
-            adapter_resolver
-            or provider_factory.create_llm_adapter
-        )
+        self.adapter_resolver = adapter_resolver or provider_factory.create_llm_adapter
 
     def generate(
         self,
@@ -127,18 +124,12 @@ class LLMService:
         """Execute an LLM request with automatic failover."""
 
         if estimated_cost_usd < 0:
-            raise ValueError(
-                "Estimated LLM cost cannot be negative."
-            )
+            raise ValueError("Estimated LLM cost cannot be negative.")
 
-        candidates = self._resolve_candidates(
-            profile_ids
-        )
+        candidates = self._resolve_candidates(profile_ids)
 
         if not candidates:
-            raise ValueError(
-                "No usable LLM provider profiles are available."
-            )
+            raise ValueError("No usable LLM provider profiles are available.")
 
         attempted_profile_ids: list[str] = []
         attempts: list[LLMServiceAttempt] = []
@@ -150,20 +141,16 @@ class LLMService:
             candidates,
             start=1,
         ):
-            attempted_profile_ids.append(
-                profile.profile_id
-            )
+            attempted_profile_ids.append(profile.profile_id)
 
             model = self._resolve_model(
                 profile=profile,
                 request=request,
             )
 
-            budget_check = (
-                self.budget_service.check_request(
-                    profile.profile_id,
-                    estimated_cost_usd,
-                )
+            budget_check = self.budget_service.check_request(
+                profile.profile_id,
+                estimated_cost_usd,
             )
 
             if not budget_check.allowed:
@@ -177,16 +164,12 @@ class LLMService:
                         profile_id=profile.profile_id,
                         provider_name=profile.provider_name,
                         model=model,
-                        status=(
-                            LLMCallStatus.BLOCKED_BY_BUDGET
-                        ),
+                        status=(LLMCallStatus.BLOCKED_BY_BUDGET),
                         error_message=message,
                     )
                 )
 
-                failure_messages.append(
-                    f"{profile.profile_id}: {message}"
-                )
+                failure_messages.append(f"{profile.profile_id}: {message}")
 
                 continue
 
@@ -200,31 +183,23 @@ class LLMService:
                 reserved = True
 
             try:
-                adapter = self.adapter_resolver(
-                    profile.profile_id
-                )
+                adapter = self.adapter_resolver(profile.profile_id)
 
                 provider_request = request.model_copy(
                     update={
                         "provider": adapter.provider,
                         "model": model,
-                        "provider_profile_id": (
-                            profile.profile_id
-                        ),
+                        "provider_profile_id": (profile.profile_id),
                     }
                 )
 
-                operation = adapter.create_operation(
-                    provider_request
-                )
+                operation = adapter.create_operation(provider_request)
 
                 result = self.gateway.call(
                     provider=adapter.provider,
                     model=model,
                     operation=operation,
-                    expect_json=(
-                        provider_request.expect_json
-                    ),
+                    expect_json=(provider_request.expect_json),
                 )
 
             except Exception as error:
@@ -232,47 +207,31 @@ class LLMService:
                     status=LLMCallStatus.PROVIDER_ERROR,
                     provider=request.provider,
                     model=model,
-                    error_message=(
-                        f"{type(error).__name__}: {error}"
-                    ),
+                    error_message=(f"{type(error).__name__}: {error}"),
                     metadata={
                         "profile_id": profile.profile_id,
                         "error_type": type(error).__name__,
                     },
                 )
 
-            result.metadata["profile_id"] = (
-                profile.profile_id
-            )
+            result.metadata["profile_id"] = profile.profile_id
 
-            actual_cost = (
-                result.usage.estimated_cost_usd
-            )
+            actual_cost = result.usage.estimated_cost_usd
 
             if result.is_success:
-                accounting_warning = (
-                    self._finalize_successful_cost(
-                        profile_id=profile.profile_id,
-                        reserved=reserved,
-                        reserved_cost_usd=(
-                            estimated_cost_usd
-                        ),
-                        actual_cost_usd=actual_cost,
-                    )
+                accounting_warning = self._finalize_successful_cost(
+                    profile_id=profile.profile_id,
+                    reserved=reserved,
+                    reserved_cost_usd=(estimated_cost_usd),
+                    actual_cost_usd=actual_cost,
                 )
 
                 if accounting_warning is not None:
-                    result.warnings.append(
-                        accounting_warning
-                    )
+                    result.warnings.append(accounting_warning)
 
-                    result.metadata[
-                        "budget_accounting_warning"
-                    ] = accounting_warning
+                    result.metadata["budget_accounting_warning"] = accounting_warning
 
-                self._record_success(
-                    profile.profile_id
-                )
+                self._record_success(profile.profile_id)
 
                 attempts.append(
                     LLMServiceAttempt(
@@ -281,23 +240,15 @@ class LLMService:
                         provider_name=profile.provider_name,
                         model=result.model,
                         status=result.status,
-                        budget_reserved_usd=(
-                            estimated_cost_usd
-                            if reserved
-                            else 0.0
-                        ),
+                        budget_reserved_usd=(estimated_cost_usd if reserved else 0.0),
                         actual_cost_usd=actual_cost,
                     )
                 )
 
                 return LLMServiceResult(
                     result=result,
-                    selected_profile_id=(
-                        profile.profile_id
-                    ),
-                    attempted_profile_ids=(
-                        attempted_profile_ids
-                    ),
+                    selected_profile_id=(profile.profile_id),
+                    attempted_profile_ids=(attempted_profile_ids),
                     attempts=attempts,
                     used_failover=attempt_number > 1,
                     all_providers_failed=False,
@@ -309,18 +260,11 @@ class LLMService:
                     estimated_cost_usd,
                 )
 
-            self._record_failure(
-                profile.profile_id
-            )
+            self._record_failure(profile.profile_id)
 
-            error_message = (
-                result.error_message
-                or "Provider call failed."
-            )
+            error_message = result.error_message or "Provider call failed."
 
-            failure_messages.append(
-                f"{profile.profile_id}: {error_message}"
-            )
+            failure_messages.append(f"{profile.profile_id}: {error_message}")
 
             attempts.append(
                 LLMServiceAttempt(
@@ -329,11 +273,7 @@ class LLMService:
                     provider_name=profile.provider_name,
                     model=result.model,
                     status=result.status,
-                    budget_reserved_usd=(
-                        estimated_cost_usd
-                        if reserved
-                        else 0.0
-                    ),
+                    budget_reserved_usd=(estimated_cost_usd if reserved else 0.0),
                     actual_cost_usd=actual_cost,
                     error_message=error_message,
                 )
@@ -356,9 +296,7 @@ class LLMService:
             model=request.model,
             error_message=consolidated_message,
             metadata={
-                "attempted_profile_ids": (
-                    ",".join(attempted_profile_ids)
-                ),
+                "attempted_profile_ids": (",".join(attempted_profile_ids)),
                 "attempt_count": len(attempts),
                 "all_providers_failed": True,
             },
@@ -399,22 +337,16 @@ class LLMService:
 
             seen.add(normalized_id)
 
-            if not self.registry.contains(
-                normalized_id
-            ):
+            if not self.registry.contains(normalized_id):
                 raise KeyError(
-                    "Failover provider profile is not "
-                    f"registered: {normalized_id}"
+                    "Failover provider profile is not " f"registered: {normalized_id}"
                 )
 
-            profile = self.registry.get(
-                normalized_id
-            )
+            profile = self.registry.get(normalized_id)
 
             if profile.category != ProviderCategory.LLM:
                 raise ValueError(
-                    "Failover profile is not an LLM "
-                    f"provider: {normalized_id}"
+                    "Failover profile is not an LLM " f"provider: {normalized_id}"
                 )
 
             if profile.usable:
@@ -430,10 +362,7 @@ class LLMService:
     ) -> str:
         """Resolve the model for one provider attempt."""
 
-        if (
-            profile.default_model is not None
-            and profile.default_model.strip()
-        ):
+        if profile.default_model is not None and profile.default_model.strip():
             return profile.default_model.strip()
 
         return request.model
@@ -452,23 +381,17 @@ class LLMService:
             try:
                 self.budget_service.adjust_reserved_cost(
                     profile_id,
-                    reserved_cost_usd=(
-                        reserved_cost_usd
-                    ),
+                    reserved_cost_usd=(reserved_cost_usd),
                     actual_cost_usd=actual_cost_usd,
                 )
                 return None
 
             except ValueError as error:
-                current_profile = self.registry.get(
-                    profile_id
-                )
+                current_profile = self.registry.get(profile_id)
 
                 reservation_missing = (
-                    current_profile.daily_spent_usd
-                    < reserved_cost_usd
-                    or current_profile.monthly_spent_usd
-                    < reserved_cost_usd
+                    current_profile.daily_spent_usd < reserved_cost_usd
+                    or current_profile.monthly_spent_usd < reserved_cost_usd
                 )
 
                 if reservation_missing:
@@ -480,10 +403,7 @@ class LLMService:
                     except ValueError:
                         pass
 
-                return (
-                    "Actual provider cost could not be fully "
-                    f"recorded: {error}"
-                )
+                return "Actual provider cost could not be fully " f"recorded: {error}"
 
         if actual_cost_usd <= 0:
             return None
@@ -496,10 +416,7 @@ class LLMService:
             return None
 
         except ValueError as error:
-            return (
-                "Actual provider cost could not be recorded: "
-                f"{error}"
-            )
+            return "Actual provider cost could not be recorded: " f"{error}"
 
     def _record_success(
         self,
@@ -507,18 +424,14 @@ class LLMService:
     ) -> None:
         """Mark a provider healthy and reset failures."""
 
-        profile = self.registry.get(
-            profile_id
-        )
+        profile = self.registry.get(profile_id)
 
         metadata = dict(profile.metadata)
         metadata[self.FAILURE_COUNT_KEY] = "0"
 
         updated_profile = profile.model_copy(
             update={
-                "health_status": (
-                    ProviderHealthStatus.HEALTHY
-                ),
+                "health_status": (ProviderHealthStatus.HEALTHY),
                 "metadata": metadata,
             }
         )
@@ -534,9 +447,7 @@ class LLMService:
     ) -> None:
         """Increment failures and escalate provider health."""
 
-        profile = self.registry.get(
-            profile_id
-        )
+        profile = self.registry.get(profile_id)
 
         metadata = dict(profile.metadata)
 
@@ -546,22 +457,17 @@ class LLMService:
         )
 
         try:
-            previous_failure_count = int(
-                raw_failure_count
-            )
+            previous_failure_count = int(raw_failure_count)
         except ValueError:
             previous_failure_count = 0
 
         failure_count = previous_failure_count + 1
 
-        metadata[self.FAILURE_COUNT_KEY] = str(
-            failure_count
-        )
+        metadata[self.FAILURE_COUNT_KEY] = str(failure_count)
 
         status = (
             ProviderHealthStatus.UNHEALTHY
-            if failure_count
-            >= self.UNHEALTHY_FAILURE_THRESHOLD
+            if failure_count >= self.UNHEALTHY_FAILURE_THRESHOLD
             else ProviderHealthStatus.DEGRADED
         )
 

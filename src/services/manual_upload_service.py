@@ -61,19 +61,13 @@ class ManualUploadService:
         self,
         *,
         storage_service: AssetStorageService,
-        maximum_file_size_bytes: int = (
-            5 * 1024 * 1024 * 1024
-        ),
+        maximum_file_size_bytes: int = (5 * 1024 * 1024 * 1024),
     ) -> None:
         if maximum_file_size_bytes < 1:
-            raise ValueError(
-                "Maximum upload size must be positive."
-            )
+            raise ValueError("Maximum upload size must be positive.")
 
         self.storage_service = storage_service
-        self.maximum_file_size_bytes = (
-            maximum_file_size_bytes
-        )
+        self.maximum_file_size_bytes = maximum_file_size_bytes
 
     def process_video_upload(
         self,
@@ -86,15 +80,9 @@ class ManualUploadService:
     ) -> ManualUploadResult:
         """Validate, store, index, and normalize an upload."""
 
-        source = (
-            Path(file_path)
-            .expanduser()
-            .resolve()
-        )
+        source = Path(file_path).expanduser().resolve()
 
-        validation_failure = self._validate_video(
-            source
-        )
+        validation_failure = self._validate_video(source)
 
         if validation_failure is not None:
             return ManualUploadResult(
@@ -102,86 +90,56 @@ class ManualUploadService:
                 failure=validation_failure,
             )
 
-        storage_result = (
-            self.storage_service.store_manual_upload(
-                source_path=source,
-                project_id=project_id,
-                scene_number=scene_number,
-                asset_type=IndexedAssetType.VIDEO,
-                title=title,
-                tags=tags,
-                metadata={
-                    "upload_kind": "manual_video",
-                },
-            )
+        storage_result = self.storage_service.store_manual_upload(
+            source_path=source,
+            project_id=project_id,
+            scene_number=scene_number,
+            asset_type=IndexedAssetType.VIDEO,
+            title=title,
+            tags=tags,
+            metadata={
+                "upload_kind": "manual_video",
+            },
         )
 
-        if (
-            not storage_result.success
-            or storage_result.asset is None
-        ):
+        if not storage_result.success or storage_result.asset is None:
             failure = AssetModuleFailure(
                 module_name="manual_upload",
-                reason=(
-                    AssetFailureReason
-                    .INVALID_MANUAL_UPLOAD
-                ),
-                message=(
-                    storage_result.message
-                    or "Manual upload storage failed."
-                ),
+                reason=(AssetFailureReason.INVALID_MANUAL_UPLOAD),
+                message=(storage_result.message or "Manual upload storage failed."),
                 recoverable=True,
                 requires_user_decision=True,
                 recovery_options=[
-                    AssetRecoveryAction
-                    .RETRY_MANUAL_UPLOAD,
+                    AssetRecoveryAction.RETRY_MANUAL_UPLOAD,
                     AssetRecoveryAction.SEARCH_STOCK,
                     AssetRecoveryAction.SKIP_SCENE,
                 ],
-                metadata=dict(
-                    storage_result.metadata
-                ),
+                metadata=dict(storage_result.metadata),
             )
 
             return ManualUploadResult(
                 success=False,
                 failure=failure,
-                warnings=list(
-                    storage_result.warnings
-                ),
+                warnings=list(storage_result.warnings),
             )
 
         asset = storage_result.asset
 
         candidate = AssetCandidate(
             title=asset.title,
-            source_type=(
-                SceneSourceType.MANUAL_UPLOAD
-            ),
+            source_type=(SceneSourceType.MANUAL_UPLOAD),
             file_path=asset.file_path,
-            provider=(
-                asset.provider
-                or "Manual Upload"
-            ),
-            license_type=(
-                asset.license_type
-                or "user_provided"
-            ),
-            duration_seconds=(
-                asset.duration_seconds
-            ),
+            provider=(asset.provider or "Manual Upload"),
+            license_type=(asset.license_type or "user_provided"),
+            duration_seconds=(asset.duration_seconds),
             resolution=asset.resolution,
             aspect_ratio=asset.aspect_ratio,
             approved=True,
             tags=list(asset.tags),
             metadata={
                 "asset_id": str(asset.id),
-                "content_hash": (
-                    asset.content_hash or ""
-                ),
-                "reused_existing": (
-                    storage_result.reused_existing
-                ),
+                "content_hash": (asset.content_hash or ""),
+                "reused_existing": (storage_result.reused_existing),
             },
         )
 
@@ -189,15 +147,9 @@ class ManualUploadService:
             success=True,
             candidate=candidate,
             indexed_asset=asset,
-            reused_existing=(
-                storage_result.reused_existing
-            ),
-            warnings=list(
-                storage_result.warnings
-            ),
-            metadata=dict(
-                storage_result.metadata
-            ),
+            reused_existing=(storage_result.reused_existing),
+            warnings=list(storage_result.warnings),
+            metadata=dict(storage_result.metadata),
         )
 
     def _validate_video(
@@ -210,15 +162,11 @@ class ManualUploadService:
             return AssetModuleFailure(
                 module_name="manual_upload",
                 reason=AssetFailureReason.FILE_NOT_FOUND,
-                message=(
-                    "The selected upload file "
-                    "does not exist."
-                ),
+                message=("The selected upload file " "does not exist."),
                 recoverable=True,
                 requires_user_decision=True,
                 recovery_options=[
-                    AssetRecoveryAction
-                    .RETRY_MANUAL_UPLOAD,
+                    AssetRecoveryAction.RETRY_MANUAL_UPLOAD,
                     AssetRecoveryAction.SEARCH_STOCK,
                     AssetRecoveryAction.SKIP_SCENE,
                 ],
@@ -230,19 +178,12 @@ class ManualUploadService:
         if not file_path.is_file():
             return AssetModuleFailure(
                 module_name="manual_upload",
-                reason=(
-                    AssetFailureReason
-                    .INVALID_MANUAL_UPLOAD
-                ),
-                message=(
-                    "The selected upload path "
-                    "is not a file."
-                ),
+                reason=(AssetFailureReason.INVALID_MANUAL_UPLOAD),
+                message=("The selected upload path " "is not a file."),
                 recoverable=True,
                 requires_user_decision=True,
                 recovery_options=[
-                    AssetRecoveryAction
-                    .RETRY_MANUAL_UPLOAD,
+                    AssetRecoveryAction.RETRY_MANUAL_UPLOAD,
                     AssetRecoveryAction.SEARCH_STOCK,
                     AssetRecoveryAction.SKIP_SCENE,
                 ],
@@ -253,32 +194,24 @@ class ManualUploadService:
 
         extension = file_path.suffix.lower()
 
-        if extension not in (
-            self.SUPPORTED_VIDEO_EXTENSIONS
-        ):
+        if extension not in (self.SUPPORTED_VIDEO_EXTENSIONS):
             return AssetModuleFailure(
                 module_name="manual_upload",
-                reason=(
-                    AssetFailureReason.INVALID_FILE_TYPE
-                ),
+                reason=(AssetFailureReason.INVALID_FILE_TYPE),
                 message=(
-                    "The selected file type is not "
-                    "supported for video upload."
+                    "The selected file type is not " "supported for video upload."
                 ),
                 recoverable=True,
                 requires_user_decision=True,
                 recovery_options=[
-                    AssetRecoveryAction
-                    .RETRY_MANUAL_UPLOAD,
+                    AssetRecoveryAction.RETRY_MANUAL_UPLOAD,
                     AssetRecoveryAction.SEARCH_STOCK,
                     AssetRecoveryAction.SKIP_SCENE,
                 ],
                 metadata={
                     "extension": extension,
                     "supported_extensions": ",".join(
-                        sorted(
-                            self.SUPPORTED_VIDEO_EXTENSIONS
-                        )
+                        sorted(self.SUPPORTED_VIDEO_EXTENSIONS)
                     ),
                 },
             )
@@ -288,26 +221,20 @@ class ManualUploadService:
         if file_size > self.maximum_file_size_bytes:
             return AssetModuleFailure(
                 module_name="manual_upload",
-                reason=(
-                    AssetFailureReason.FILE_TOO_LARGE
-                ),
+                reason=(AssetFailureReason.FILE_TOO_LARGE),
                 message=(
-                    "The selected video exceeds the "
-                    "maximum allowed upload size."
+                    "The selected video exceeds the " "maximum allowed upload size."
                 ),
                 recoverable=True,
                 requires_user_decision=True,
                 recovery_options=[
-                    AssetRecoveryAction
-                    .RETRY_MANUAL_UPLOAD,
+                    AssetRecoveryAction.RETRY_MANUAL_UPLOAD,
                     AssetRecoveryAction.SEARCH_STOCK,
                     AssetRecoveryAction.SKIP_SCENE,
                 ],
                 metadata={
                     "file_size_bytes": str(file_size),
-                    "maximum_file_size_bytes": str(
-                        self.maximum_file_size_bytes
-                    ),
+                    "maximum_file_size_bytes": str(self.maximum_file_size_bytes),
                 },
             )
 

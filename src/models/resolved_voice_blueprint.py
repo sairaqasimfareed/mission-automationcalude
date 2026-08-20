@@ -26,16 +26,12 @@ class VoiceBlueprintResolutionStatus(str, Enum):
 
     PENDING = "pending"
     RESOLVED = "resolved"
-    RESOLVED_WITH_FALLBACK = (
-        "resolved_with_fallback"
-    )
+    RESOLVED_WITH_FALLBACK = "resolved_with_fallback"
     GENERATED = "generated"
     FAILED = "failed"
 
 
-class ResolvedVoiceProfileReference(
-    MissionBaseModel
-):
+class ResolvedVoiceProfileReference(MissionBaseModel):
     """Resolved reusable voice-profile information."""
 
     requested_profile_id: str
@@ -74,10 +70,7 @@ class ResolvedVoiceProfileReference(
             or not normalized.startswith("voice.")
             or normalized == "voice."
         ):
-            raise ValueError(
-                "Resolved voice profile IDs must "
-                "start with 'voice.'."
-            )
+            raise ValueError("Resolved voice profile IDs must " "start with 'voice.'.")
 
         return normalized
 
@@ -90,17 +83,12 @@ class ResolvedVoiceProfileReference(
         cleaned = value.strip()
 
         if not cleaned:
-            raise ValueError(
-                "Resolved voice profile display "
-                "name cannot be empty."
-            )
+            raise ValueError("Resolved voice profile display " "name cannot be empty.")
 
         return cleaned
 
 
-class ResolvedVoiceBlueprint(
-    MissionBaseModel
-):
+class ResolvedVoiceBlueprint(MissionBaseModel):
     """
     Final provider-independent voice generation plan.
 
@@ -129,17 +117,11 @@ class ResolvedVoiceBlueprint(
     pace: VoicePace = VoicePace.MODERATE
     energy: VoiceEnergy = VoiceEnergy.MEDIUM
 
-    pitch_style: VoicePitchStyle = (
-        VoicePitchStyle.NATURAL
-    )
+    pitch_style: VoicePitchStyle = VoicePitchStyle.NATURAL
 
-    pause_style: VoicePauseStyle = (
-        VoicePauseStyle.NATURAL
-    )
+    pause_style: VoicePauseStyle = VoicePauseStyle.NATURAL
 
-    emphasis_style: VoiceEmphasisStyle = (
-        VoiceEmphasisStyle.BALANCED
-    )
+    emphasis_style: VoiceEmphasisStyle = VoiceEmphasisStyle.BALANCED
 
     speed: float = Field(
         default=1.0,
@@ -191,21 +173,15 @@ class ResolvedVoiceBlueprint(
         le=30.0,
     )
 
-    pronunciation_directives: list[
-        PronunciationDirective
-    ] = Field(
+    pronunciation_directives: list[PronunciationDirective] = Field(
         default_factory=list,
     )
 
-    pause_directives: list[
-        VoicePauseDirective
-    ] = Field(
+    pause_directives: list[VoicePauseDirective] = Field(
         default_factory=list,
     )
 
-    emphasis_directives: list[
-        VoiceEmphasisDirective
-    ] = Field(
+    emphasis_directives: list[VoiceEmphasisDirective] = Field(
         default_factory=list,
     )
 
@@ -240,9 +216,7 @@ class ResolvedVoiceBlueprint(
         ge=0,
     )
 
-    source: VoiceDirectiveSource = (
-        VoiceDirectiveSource.SYSTEM_DEFAULT
-    )
+    source: VoiceDirectiveSource = VoiceDirectiveSource.SYSTEM_DEFAULT
 
     warnings: list[str] = Field(
         default_factory=list,
@@ -267,10 +241,7 @@ class ResolvedVoiceBlueprint(
         cleaned = value.strip()
 
         if not cleaned:
-            raise ValueError(
-                "Resolved voice blueprint text "
-                "cannot be empty."
-            )
+            raise ValueError("Resolved voice blueprint text " "cannot be empty.")
 
         return cleaned
 
@@ -296,36 +267,22 @@ class ResolvedVoiceBlueprint(
     ) -> ResolvedVoiceBlueprint:
         if (
             self.profile.used_fallback
-            and self.status
-            == VoiceBlueprintResolutionStatus.RESOLVED
+            and self.status == VoiceBlueprintResolutionStatus.RESOLVED
         ):
             raise ValueError(
-                "A fallback voice profile requires "
-                "RESOLVED_WITH_FALLBACK status."
+                "A fallback voice profile requires " "RESOLVED_WITH_FALLBACK status."
             )
 
-        if (
-            not self.profile.used_fallback
-            and self.status
-            == (
-                VoiceBlueprintResolutionStatus
-                .RESOLVED_WITH_FALLBACK
-            )
+        if not self.profile.used_fallback and self.status == (
+            VoiceBlueprintResolutionStatus.RESOLVED_WITH_FALLBACK
         ):
-            raise ValueError(
-                "RESOLVED_WITH_FALLBACK requires "
-                "a fallback profile."
-            )
+            raise ValueError("RESOLVED_WITH_FALLBACK requires " "a fallback profile.")
 
         if (
-            self.status
-            == VoiceBlueprintResolutionStatus.GENERATED
+            self.status == VoiceBlueprintResolutionStatus.GENERATED
             and not self.output_file
         ):
-            raise ValueError(
-                "A generated voice blueprint requires "
-                "an output file."
-            )
+            raise ValueError("A generated voice blueprint requires " "an output file.")
 
         return self
 
@@ -335,10 +292,7 @@ class ResolvedVoiceBlueprint(
 
         return self.status in {
             VoiceBlueprintResolutionStatus.RESOLVED,
-            (
-                VoiceBlueprintResolutionStatus
-                .RESOLVED_WITH_FALLBACK
-            ),
+            (VoiceBlueprintResolutionStatus.RESOLVED_WITH_FALLBACK),
             VoiceBlueprintResolutionStatus.GENERATED,
         }
 
@@ -346,16 +300,10 @@ class ResolvedVoiceBlueprint(
     def is_generation_ready(self) -> bool:
         """Return whether a provider may generate this voice."""
 
-        return (
-            self.status in {
-                VoiceBlueprintResolutionStatus.RESOLVED,
-                (
-                    VoiceBlueprintResolutionStatus
-                    .RESOLVED_WITH_FALLBACK
-                ),
-            }
-            and bool(self.narration_text)
-        )
+        return self.status in {
+            VoiceBlueprintResolutionStatus.RESOLVED,
+            (VoiceBlueprintResolutionStatus.RESOLVED_WITH_FALLBACK),
+        } and bool(self.narration_text)
 
     @property
     def explicit_instruction_count(self) -> int:

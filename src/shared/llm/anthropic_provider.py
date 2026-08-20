@@ -31,9 +31,7 @@ class AnthropicProviderAdapter(LLMProviderAdapter):
         normalized_api_key = api_key.strip()
 
         if not normalized_api_key:
-            raise ValueError(
-                "Anthropic API key cannot be empty."
-            )
+            raise ValueError("Anthropic API key cannot be empty.")
 
         self._client = client or Anthropic(
             api_key=normalized_api_key,
@@ -47,8 +45,7 @@ class AnthropicProviderAdapter(LLMProviderAdapter):
 
         if request.provider != LLMProvider.ANTHROPIC:
             raise ValueError(
-                "AnthropicProviderAdapter requires "
-                "an Anthropic request."
+                "AnthropicProviderAdapter requires " "an Anthropic request."
             )
 
         def operation() -> LLMProviderResponse:
@@ -89,19 +86,13 @@ class AnthropicProviderAdapter(LLMProviderAdapter):
             )
 
         except anthropic.APITimeoutError as error:
-            raise TimeoutError(
-                "Anthropic request timed out."
-            ) from error
+            raise TimeoutError("Anthropic request timed out.") from error
 
         except anthropic.APIConnectionError as error:
-            raise ConnectionError(
-                "Could not connect to Anthropic."
-            ) from error
+            raise ConnectionError("Could not connect to Anthropic.") from error
 
         except anthropic.RateLimitError as error:
-            raise ConnectionError(
-                "Anthropic rate limit was reached."
-            ) from error
+            raise ConnectionError("Anthropic rate limit was reached.") from error
 
         except anthropic.APIStatusError as error:
             raw_request_id = getattr(
@@ -111,9 +102,7 @@ class AnthropicProviderAdapter(LLMProviderAdapter):
             )
 
             error_request_id = (
-                str(raw_request_id)
-                if raw_request_id is not None
-                else "unknown"
+                str(raw_request_id) if raw_request_id is not None else "unknown"
             )
 
             raise RuntimeError(
@@ -131,11 +120,7 @@ class AnthropicProviderAdapter(LLMProviderAdapter):
             None,
         )
 
-        message_id = (
-            str(raw_message_id)
-            if raw_message_id is not None
-            else ""
-        )
+        message_id = str(raw_message_id) if raw_message_id is not None else ""
 
         return LLMProviderResponse(
             content=content,
@@ -186,10 +171,7 @@ class AnthropicProviderAdapter(LLMProviderAdapter):
                 None,
             )
 
-            if (
-                block_type == "text"
-                and isinstance(block_text, str)
-            ):
+            if block_type == "text" and isinstance(block_text, str):
                 text_parts.append(block_text)
 
         return "".join(text_parts)
@@ -230,8 +212,6 @@ class AnthropicProviderAdapter(LLMProviderAdapter):
         return LLMUsage(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
-            total_tokens=(
-                input_tokens + output_tokens
-            ),
+            total_tokens=(input_tokens + output_tokens),
             estimated_cost_usd=0.0,
         )

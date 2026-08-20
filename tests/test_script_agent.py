@@ -29,13 +29,9 @@ class SuccessfulLLMService:
         estimated_cost_usd: float = 0.0,
         profile_ids: list[str] | None = None,
     ) -> LLMServiceResult:
-        assert request.prompt_version == (
-            "script_prompt_v2.0.0"
-        )
+        assert request.prompt_version == ("script_prompt_v2.0.0")
 
-        assert "Hidden Underground Cities" in (
-            request.prompt
-        )
+        assert "Hidden Underground Cities" in (request.prompt)
 
         assert estimated_cost_usd == 0.40
 
@@ -79,12 +75,8 @@ class SuccessfulLLMService:
                     profile_id="openai-main",
                     provider_name="OpenAI",
                     model="openai-test-model",
-                    status=(
-                        LLMCallStatus.PROVIDER_ERROR
-                    ),
-                    error_message=(
-                        "Primary provider unavailable."
-                    ),
+                    status=(LLMCallStatus.PROVIDER_ERROR),
+                    error_message=("Primary provider unavailable."),
                 ),
                 LLMServiceAttempt(
                     attempt_number=2,
@@ -101,18 +93,11 @@ class SuccessfulLLMService:
 research = ResearchResult(
     topic="Top 10 Hidden Underground Cities",
     research_summary=(
-        "Underground cities were built for protection, "
-        "survival and trade."
+        "Underground cities were built for protection, " "survival and trade."
     ),
     key_facts=[
-        (
-            "Several underground cities contain homes "
-            "and storage rooms."
-        ),
-        (
-            "Many were designed to protect communities "
-            "from invasion."
-        ),
+        ("Several underground cities contain homes " "and storage rooms."),
+        ("Many were designed to protect communities " "from invasion."),
     ],
     prompt_version="research_prompt_v2.0.0",
     status=ResearchStatus.APPROVED,
@@ -136,21 +121,15 @@ print("Prompt version:", script.prompt_version)
 print("Word count:", script.word_count)
 print("Content:", script.content)
 
-assert script.title == (
-    "Top 10 Hidden Underground Cities"
-)
+assert script.title == ("Top 10 Hidden Underground Cities")
 
 assert script.status == ScriptStatus.UNDER_REVIEW
 
-assert script.prompt_version == (
-    "script_prompt_v2.0.0"
-)
+assert script.prompt_version == ("script_prompt_v2.0.0")
 
 assert script.word_count > 0
 
-assert "Beneath ordinary streets" in (
-    script.content
-)
+assert "Beneath ordinary streets" in (script.content)
 
 
 unapproved_research = research.model_copy(
@@ -160,17 +139,11 @@ unapproved_research = research.model_copy(
 )
 
 try:
-    agent.generate(
-        unapproved_research
-    )
+    agent.generate(unapproved_research)
 except ValueError:
-    print(
-        "Unapproved research successfully blocked."
-    )
+    print("Unapproved research successfully blocked.")
 else:
-    raise AssertionError(
-        "Unapproved research should fail."
-    )
+    raise AssertionError("Unapproved research should fail.")
 
 
 try:
@@ -179,13 +152,9 @@ try:
         estimated_cost_usd=-1.0,
     )
 except ValueError:
-    print(
-        "Negative script cost successfully blocked."
-    )
+    print("Negative script cost successfully blocked.")
 else:
-    raise AssertionError(
-        "Negative script cost should fail."
-    )
+    raise AssertionError("Negative script cost should fail.")
 
 
 print("Script Agent tests completed successfully.")

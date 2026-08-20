@@ -66,17 +66,12 @@ class AssetPipelineStage(BasePipelineStage):
         self,
         *,
         asset_workflow_service: SceneAssetWorkflowService,
-        video_clip_builder_service: (
-            SceneAssetVideoClipBuilderService | None
-        ) = None,
+        video_clip_builder_service: SceneAssetVideoClipBuilderService | None = None,
     ) -> None:
-        self._asset_workflow_service = (
-            asset_workflow_service
-        )
+        self._asset_workflow_service = asset_workflow_service
 
         self._video_clip_builder_service = (
-            video_clip_builder_service
-            or SceneAssetVideoClipBuilderService()
+            video_clip_builder_service or SceneAssetVideoClipBuilderService()
         )
 
     @property
@@ -85,10 +80,7 @@ class AssetPipelineStage(BasePipelineStage):
     ) -> PipelineStageName:
         """Return the pipeline identifier."""
 
-        return (
-            PipelineStageName
-            .ASSET_SELECTION
-        )
+        return PipelineStageName.ASSET_SELECTION
 
     def execute(
         self,
@@ -102,44 +94,28 @@ class AssetPipelineStage(BasePipelineStage):
         accidentally discard an earlier user-visible workflow state.
         """
 
-        started_at = (
-            time.perf_counter()
-        )
+        started_at = time.perf_counter()
 
         scenes = sorted(
             context.job.scenes,
-            key=lambda value: (
-                value.scene_number
-            ),
+            key=lambda value: (value.scene_number),
         )
 
         if not scenes:
             return self._failed_result(
                 started_at=started_at,
-                error_message=(
-                    "Asset stage requires "
-                    "planned scenes."
-                ),
+                error_message=("Asset stage requires " "planned scenes."),
             )
 
-        existing_states = (
-            context.job
-            .scene_asset_states
-        )
+        existing_states = context.job.scene_asset_states
 
-        decisions = (
-            self._consume_decisions(
-                context
-            )
-        )
+        decisions = self._consume_decisions(context)
 
         if existing_states:
-            states = (
-                self._resume_states(
-                    scenes=scenes,
-                    states=existing_states,
-                    decisions=decisions,
-                )
+            states = self._resume_states(
+                scenes=scenes,
+                states=existing_states,
+                decisions=decisions,
             )
         else:
             if decisions:
@@ -152,87 +128,47 @@ class AssetPipelineStage(BasePipelineStage):
                     ),
                 )
 
-            states = (
-                self._start_states(
-                    scenes
-                )
-            )
+            states = self._start_states(scenes)
 
-        context.job.scene_asset_states = (
-            states
-        )
+        context.job.scene_asset_states = states
 
-        warnings = (
-            self._collect_warnings(
-                states
-            )
-        )
+        warnings = self._collect_warnings(states)
 
-        errors = (
-            self._collect_errors(
-                states
-            )
-        )
+        errors = self._collect_errors(states)
 
-        metadata = (
-            self._build_metadata(
-                states
-            )
-        )
+        metadata = self._build_metadata(states)
 
         if errors:
             return StageResult(
                 stage=self.stage_name,
-                status=(
-                    PipelineStageStatus
-                    .FAILED
-                ),
-                duration_seconds=(
-                    time.perf_counter()
-                    - started_at
-                ),
+                status=(PipelineStageStatus.FAILED),
+                duration_seconds=(time.perf_counter() - started_at),
                 progress_percent=100,
                 warnings=warnings,
                 errors=errors,
                 metadata=metadata,
             )
 
-        if self._requires_user_input(
-            states
-        ):
+        if self._requires_user_input(states):
             return StageResult(
                 stage=self.stage_name,
-                status=(
-                    PipelineStageStatus
-                    .WAITING_FOR_USER
-                ),
-                duration_seconds=(
-                    time.perf_counter()
-                    - started_at
-                ),
+                status=(PipelineStageStatus.WAITING_FOR_USER),
+                duration_seconds=(time.perf_counter() - started_at),
                 progress_percent=100,
                 warnings=warnings,
                 errors=[],
                 metadata=metadata,
             )
 
-        context.job.video_clips = (
-            self._video_clip_builder_service.build_clips(
-                scenes=scenes,
-                states=states,
-            )
+        context.job.video_clips = self._video_clip_builder_service.build_clips(
+            scenes=scenes,
+            states=states,
         )
 
         return StageResult(
             stage=self.stage_name,
-            status=(
-                PipelineStageStatus
-                .COMPLETED
-            ),
-            duration_seconds=(
-                time.perf_counter()
-                - started_at
-            ),
+            status=(PipelineStageStatus.COMPLETED),
+            duration_seconds=(time.perf_counter() - started_at),
             progress_percent=100,
             warnings=warnings,
             errors=[],
@@ -249,21 +185,12 @@ class AssetPipelineStage(BasePipelineStage):
         This preserves the historical AssetPipelineStage behavior.
         """
 
-        states: list[
-            SceneAssetState
-        ] = []
+        states: list[SceneAssetState] = []
 
         for scene in scenes:
-            state = (
-                self._asset_workflow_service
-                .start(
-                    scene
-                )
-            )
+            state = self._asset_workflow_service.start(scene)
 
-            states.append(
-                state
-            )
+            states.append(state)
 
         return states
 
@@ -281,10 +208,7 @@ class AssetPipelineStage(BasePipelineStage):
         Only scenes with supplied user decisions are mutated.
         """
 
-        scene_by_number = {
-            scene.scene_number: scene
-            for scene in scenes
-        }
+        scene_by_number = {scene.scene_number: scene for scene in scenes}
 
         state_by_number: dict[
             int,
@@ -292,108 +216,61 @@ class AssetPipelineStage(BasePipelineStage):
         ] = {}
 
         for state in states:
-            if (
-                state.scene_number
-                in state_by_number
-            ):
+            if state.scene_number in state_by_number:
                 raise ValueError(
                     "Duplicate persisted asset state "
                     "for scene "
                     f"{state.scene_number}."
                 )
 
-            state_by_number[
-                state.scene_number
-            ] = state
+            state_by_number[state.scene_number] = state
 
-        expected_scene_numbers = set(
-            scene_by_number
-        )
+        expected_scene_numbers = set(scene_by_number)
 
-        persisted_scene_numbers = set(
-            state_by_number
-        )
+        persisted_scene_numbers = set(state_by_number)
 
-        unknown_states = sorted(
-            persisted_scene_numbers
-            - expected_scene_numbers
-        )
+        unknown_states = sorted(persisted_scene_numbers - expected_scene_numbers)
 
         if unknown_states:
             raise ValueError(
                 "Persisted asset state references "
                 "unknown scene number(s): "
-                + ", ".join(
-                    str(value)
-                    for value in unknown_states
-                )
+                + ", ".join(str(value) for value in unknown_states)
                 + "."
             )
 
-        missing_states = sorted(
-            expected_scene_numbers
-            - persisted_scene_numbers
-        )
+        missing_states = sorted(expected_scene_numbers - persisted_scene_numbers)
 
         if missing_states:
             raise ValueError(
                 "Persisted asset state is missing "
                 "scene number(s): "
-                + ", ".join(
-                    str(value)
-                    for value in missing_states
-                )
+                + ", ".join(str(value) for value in missing_states)
                 + "."
             )
 
-        decisions_by_scene = (
-            self._index_decisions(
-                decisions=decisions,
-                scene_numbers=(
-                    expected_scene_numbers
-                ),
-            )
+        decisions_by_scene = self._index_decisions(
+            decisions=decisions,
+            scene_numbers=(expected_scene_numbers),
         )
 
-        updated_states: list[
-            SceneAssetState
-        ] = []
+        updated_states: list[SceneAssetState] = []
 
-        for scene_number in sorted(
-            expected_scene_numbers
-        ):
-            scene = (
-                scene_by_number[
-                    scene_number
-                ]
-            )
+        for scene_number in sorted(expected_scene_numbers):
+            scene = scene_by_number[scene_number]
 
-            state = (
-                state_by_number[
-                    scene_number
-                ]
-            )
+            state = state_by_number[scene_number]
 
-            decision_payload = (
-                decisions_by_scene.get(
-                    scene_number
-                )
-            )
+            decision_payload = decisions_by_scene.get(scene_number)
 
             if decision_payload is not None:
-                state = (
-                    self._apply_decision(
-                        scene=scene,
-                        state=state,
-                        payload=(
-                            decision_payload
-                        ),
-                    )
+                state = self._apply_decision(
+                    scene=scene,
+                    state=state,
+                    payload=(decision_payload),
                 )
 
-            updated_states.append(
-                state
-            )
+            updated_states.append(state)
 
         return updated_states
 
@@ -411,27 +288,16 @@ class AssetPipelineStage(BasePipelineStage):
         workflow transitions.
         """
 
-        raw_decision = (
-            payload.get(
-                "decision"
-            )
-        )
+        raw_decision = payload.get("decision")
 
         if not isinstance(
             raw_decision,
             str,
         ):
-            raise ValueError(
-                "Asset decision requires a "
-                "string 'decision' value."
-            )
+            raise ValueError("Asset decision requires a " "string 'decision' value.")
 
         try:
-            decision = (
-                AssetUserDecision(
-                    raw_decision.strip()
-                )
-            )
+            decision = AssetUserDecision(raw_decision.strip())
         except ValueError as error:
             raise ValueError(
                 "Unsupported asset decision "
@@ -440,56 +306,35 @@ class AssetPipelineStage(BasePipelineStage):
                 f"{raw_decision}."
             ) from error
 
-        selected_candidate_index = (
-            self._optional_int(
-                payload=payload,
-                key=(
-                    "selected_candidate_index"
-                ),
-            )
+        selected_candidate_index = self._optional_int(
+            payload=payload,
+            key=("selected_candidate_index"),
         )
 
-        manual_upload_path = (
-            self._optional_string(
-                payload=payload,
-                key="manual_upload_path",
-            )
+        manual_upload_path = self._optional_string(
+            payload=payload,
+            key="manual_upload_path",
         )
 
-        project_id = (
-            self._optional_string(
-                payload=payload,
-                key="project_id",
-            )
+        project_id = self._optional_string(
+            payload=payload,
+            key="project_id",
         )
 
-        apply_to_remaining_scenes = (
-            self._optional_bool(
-                payload=payload,
-                key=(
-                    "apply_to_remaining_scenes"
-                ),
-                default=False,
-            )
+        apply_to_remaining_scenes = self._optional_bool(
+            payload=payload,
+            key=("apply_to_remaining_scenes"),
+            default=False,
         )
 
-        return (
-            self._asset_workflow_service
-            .apply_decision(
-                scene=scene,
-                state=state,
-                decision=decision,
-                selected_candidate_index=(
-                    selected_candidate_index
-                ),
-                manual_upload_path=(
-                    manual_upload_path
-                ),
-                project_id=project_id,
-                apply_to_remaining_scenes=(
-                    apply_to_remaining_scenes
-                ),
-            )
+        return self._asset_workflow_service.apply_decision(
+            scene=scene,
+            state=state,
+            decision=decision,
+            selected_candidate_index=(selected_candidate_index),
+            manual_upload_path=(manual_upload_path),
+            project_id=project_id,
+            apply_to_remaining_scenes=(apply_to_remaining_scenes),
         )
 
     @classmethod
@@ -509,11 +354,7 @@ class AssetPipelineStage(BasePipelineStage):
         existing SceneAssetWorkflowService.
         """
 
-        raw_decisions = (
-            context.consume_user_input(
-                cls.USER_INPUT_KEY
-            )
-        )
+        raw_decisions = context.consume_user_input(cls.USER_INPUT_KEY)
 
         if raw_decisions is None:
             return []
@@ -522,25 +363,17 @@ class AssetPipelineStage(BasePipelineStage):
             raw_decisions,
             list,
         ):
-            raise ValueError(
-                "'asset_decisions' user input "
-                "must be a list."
-            )
+            raise ValueError("'asset_decisions' user input " "must be a list.")
 
-        decisions: list[
-            dict[str, Any]
-        ] = []
+        decisions: list[dict[str, Any]] = []
 
-        for index, raw_decision in enumerate(
-            raw_decisions
-        ):
+        for index, raw_decision in enumerate(raw_decisions):
             if not isinstance(
                 raw_decision,
                 dict,
             ):
                 raise ValueError(
-                    "Asset decision at index "
-                    f"{index} must be an object."
+                    "Asset decision at index " f"{index} must be an object."
                 )
 
             normalized: dict[
@@ -548,34 +381,24 @@ class AssetPipelineStage(BasePipelineStage):
                 Any,
             ] = {}
 
-            for key, value in (
-                raw_decision.items()
-            ):
+            for key, value in raw_decision.items():
                 if not isinstance(
                     key,
                     str,
                 ):
-                    raise ValueError(
-                        "Asset decision keys "
-                        "must be strings."
-                    )
+                    raise ValueError("Asset decision keys " "must be strings.")
 
-                normalized[
-                    key
-                ] = value
+                normalized[key] = value
 
-            decisions.append(
-                normalized
-            )
+            decisions.append(normalized)
 
         return decisions
+
     @classmethod
     def _index_decisions(
         cls,
         *,
-        decisions: list[
-            dict[str, Any]
-        ],
+        decisions: list[dict[str, Any]],
         scene_numbers: set[int],
     ) -> dict[
         int,
@@ -589,35 +412,23 @@ class AssetPipelineStage(BasePipelineStage):
         ] = {}
 
         for payload in decisions:
-            scene_number = (
-                cls._required_scene_number(
-                    payload
-                )
-            )
+            scene_number = cls._required_scene_number(payload)
 
-            if (
-                scene_number
-                not in scene_numbers
-            ):
+            if scene_number not in scene_numbers:
                 raise ValueError(
                     "Asset decision references "
                     "unknown scene number "
                     f"{scene_number}."
                 )
 
-            if (
-                scene_number
-                in indexed
-            ):
+            if scene_number in indexed:
                 raise ValueError(
                     "Multiple asset decisions "
                     "were supplied for scene "
                     f"{scene_number}."
                 )
 
-            indexed[
-                scene_number
-            ] = payload
+            indexed[scene_number] = payload
 
         return indexed
 
@@ -630,9 +441,7 @@ class AssetPipelineStage(BasePipelineStage):
     ) -> int:
         """Return one validated decision scene number."""
 
-        value = payload.get(
-            "scene_number"
-        )
+        value = payload.get("scene_number")
 
         if (
             isinstance(value, bool)
@@ -643,9 +452,7 @@ class AssetPipelineStage(BasePipelineStage):
             or value < 1
         ):
             raise ValueError(
-                "Asset decision requires a "
-                "positive integer "
-                "'scene_number'."
+                "Asset decision requires a " "positive integer " "'scene_number'."
             )
 
         return value
@@ -661,24 +468,17 @@ class AssetPipelineStage(BasePipelineStage):
     ) -> int | None:
         """Read an optional integer decision field."""
 
-        value = payload.get(
-            key
-        )
+        value = payload.get(key)
 
         if value is None:
             return None
 
-        if (
-            isinstance(value, bool)
-            or not isinstance(
-                value,
-                int,
-            )
+        if isinstance(value, bool) or not isinstance(
+            value,
+            int,
         ):
             raise ValueError(
-                f"Asset decision field "
-                f"'{key}' must be an integer "
-                "or null."
+                f"Asset decision field " f"'{key}' must be an integer " "or null."
             )
 
         return value
@@ -694,9 +494,7 @@ class AssetPipelineStage(BasePipelineStage):
     ) -> str | None:
         """Read an optional string decision field."""
 
-        value = payload.get(
-            key
-        )
+        value = payload.get(key)
 
         if value is None:
             return None
@@ -706,19 +504,12 @@ class AssetPipelineStage(BasePipelineStage):
             str,
         ):
             raise ValueError(
-                f"Asset decision field "
-                f"'{key}' must be a string "
-                "or null."
+                f"Asset decision field " f"'{key}' must be a string " "or null."
             )
 
-        cleaned = (
-            value.strip()
-        )
+        cleaned = value.strip()
 
-        return (
-            cleaned
-            or None
-        )
+        return cleaned or None
 
     @staticmethod
     def _optional_bool(
@@ -741,18 +532,13 @@ class AssetPipelineStage(BasePipelineStage):
             value,
             bool,
         ):
-            raise ValueError(
-                f"Asset decision field "
-                f"'{key}' must be boolean."
-            )
+            raise ValueError(f"Asset decision field " f"'{key}' must be boolean.")
 
         return value
 
     @staticmethod
     def _requires_user_input(
-        states: list[
-            SceneAssetState
-        ],
+        states: list[SceneAssetState],
     ) -> bool:
         """
         Return whether one or more scene workflows require input.
@@ -762,74 +548,45 @@ class AssetPipelineStage(BasePipelineStage):
         duplicating its status list.
         """
 
-        return any(
-            state.requires_user_decision
-            for state in states
-        )
+        return any(state.requires_user_decision for state in states)
 
     @staticmethod
     def _collect_warnings(
-        states: list[
-            SceneAssetState
-        ],
+        states: list[SceneAssetState],
     ) -> list[str]:
         """Collect unique warnings from all scene asset states."""
 
         warnings: list[str] = []
 
         for state in states:
-            for warning in (
-                state.warnings
-            ):
-                cleaned = (
-                    warning.strip()
-                )
+            for warning in state.warnings:
+                cleaned = warning.strip()
 
-                if (
-                    cleaned
-                    and cleaned
-                    not in warnings
-                ):
-                    warnings.append(
-                        cleaned
-                    )
+                if cleaned and cleaned not in warnings:
+                    warnings.append(cleaned)
 
         return warnings
 
     @staticmethod
     def _collect_errors(
-        states: list[
-            SceneAssetState
-        ],
+        states: list[SceneAssetState],
     ) -> list[str]:
         """Collect unique errors from all scene asset states."""
 
         errors: list[str] = []
 
         for state in states:
-            for error in (
-                state.errors
-            ):
-                cleaned = (
-                    error.strip()
-                )
+            for error in state.errors:
+                cleaned = error.strip()
 
-                if (
-                    cleaned
-                    and cleaned
-                    not in errors
-                ):
-                    errors.append(
-                        cleaned
-                    )
+                if cleaned and cleaned not in errors:
+                    errors.append(cleaned)
 
         return errors
 
     @staticmethod
     def _build_metadata(
-        states: list[
-            SceneAssetState
-        ],
+        states: list[SceneAssetState],
     ) -> dict[str, object]:
         """Build stable asset-stage diagnostic metadata."""
 
@@ -838,18 +595,12 @@ class AssetPipelineStage(BasePipelineStage):
             int,
         ] = {}
 
-        waiting_scene_numbers: list[
-            int
-        ] = []
+        waiting_scene_numbers: list[int] = []
 
         for state in states:
-            status = (
-                state.status.value
-            )
+            status = state.status.value
 
-            status_counts[
-                status
-            ] = (
+            status_counts[status] = (
                 status_counts.get(
                     status,
                     0,
@@ -857,26 +608,14 @@ class AssetPipelineStage(BasePipelineStage):
                 + 1
             )
 
-            if (
-                state.requires_user_decision
-            ):
-                waiting_scene_numbers.append(
-                    state.scene_number
-                )
+            if state.requires_user_decision:
+                waiting_scene_numbers.append(state.scene_number)
 
         return {
-            "scene_count": len(
-                states
-            ),
-            "status_counts": (
-                status_counts
-            ),
-            "waiting_for_user": bool(
-                waiting_scene_numbers
-            ),
-            "waiting_scene_numbers": (
-                waiting_scene_numbers
-            ),
+            "scene_count": len(states),
+            "status_counts": (status_counts),
+            "waiting_for_user": bool(waiting_scene_numbers),
+            "waiting_scene_numbers": (waiting_scene_numbers),
         }
 
     def _failed_result(
@@ -889,14 +628,8 @@ class AssetPipelineStage(BasePipelineStage):
 
         return StageResult(
             stage=self.stage_name,
-            status=(
-                PipelineStageStatus
-                .FAILED
-            ),
-            duration_seconds=(
-                time.perf_counter()
-                - started_at
-            ),
+            status=(PipelineStageStatus.FAILED),
+            duration_seconds=(time.perf_counter() - started_at),
             progress_percent=100,
             errors=[
                 error_message,

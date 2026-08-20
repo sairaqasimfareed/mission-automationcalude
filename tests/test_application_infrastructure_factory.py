@@ -87,12 +87,7 @@ def test_build_uses_injected_secret_store() -> None:
 
     infrastructure = factory.build()
 
-    assert (
-        infrastructure
-        .provider_secret_manager
-        .secret_store
-        is secret_store
-    )
+    assert infrastructure.provider_secret_manager.secret_store is secret_store
 
 
 def test_build_shares_registry_with_provider_factory() -> None:
@@ -102,10 +97,7 @@ def test_build_shares_registry_with_provider_factory() -> None:
 
     infrastructure = factory.build()
 
-    assert (
-        infrastructure.provider_factory.registry
-        is infrastructure.provider_registry
-    )
+    assert infrastructure.provider_factory.registry is infrastructure.provider_registry
 
 
 def test_build_shares_registry_with_budget_service() -> None:
@@ -128,10 +120,7 @@ def test_build_shares_registry_with_llm_service() -> None:
 
     infrastructure = factory.build()
 
-    assert (
-        infrastructure.llm_service.registry
-        is infrastructure.provider_registry
-    )
+    assert infrastructure.llm_service.registry is infrastructure.provider_registry
 
 
 def test_build_shares_provider_factory_with_llm_service() -> None:
@@ -142,8 +131,7 @@ def test_build_shares_provider_factory_with_llm_service() -> None:
     infrastructure = factory.build()
 
     assert (
-        infrastructure.llm_service.provider_factory
-        is infrastructure.provider_factory
+        infrastructure.llm_service.provider_factory is infrastructure.provider_factory
     )
 
 
@@ -167,10 +155,7 @@ def test_build_shares_gateway_with_llm_service() -> None:
 
     infrastructure = factory.build()
 
-    assert (
-        infrastructure.llm_service.gateway
-        is infrastructure.llm_gateway
-    )
+    assert infrastructure.llm_service.gateway is infrastructure.llm_gateway
 
 
 def test_build_preserves_injected_gateway() -> None:
@@ -198,35 +183,17 @@ def test_build_creates_fresh_runtime_graph() -> None:
 
     assert first is not second
 
-    assert (
-        first.provider_registry
-        is not second.provider_registry
-    )
+    assert first.provider_registry is not second.provider_registry
 
-    assert (
-        first.provider_secret_manager
-        is not second.provider_secret_manager
-    )
+    assert first.provider_secret_manager is not second.provider_secret_manager
 
-    assert (
-        first.provider_factory
-        is not second.provider_factory
-    )
+    assert first.provider_factory is not second.provider_factory
 
-    assert (
-        first.provider_budget_service
-        is not second.provider_budget_service
-    )
+    assert first.provider_budget_service is not second.provider_budget_service
 
-    assert (
-        first.llm_gateway
-        is not second.llm_gateway
-    )
+    assert first.llm_gateway is not second.llm_gateway
 
-    assert (
-        first.llm_service
-        is not second.llm_service
-    )
+    assert first.llm_service is not second.llm_service
 
 
 def test_build_reuses_secret_store_across_runtime_graphs() -> None:
@@ -239,15 +206,9 @@ def test_build_reuses_secret_store_across_runtime_graphs() -> None:
     first = factory.build()
     second = factory.build()
 
-    assert (
-        first.provider_secret_manager.secret_store
-        is secret_store
-    )
+    assert first.provider_secret_manager.secret_store is secret_store
 
-    assert (
-        second.provider_secret_manager.secret_store
-        is secret_store
-    )
+    assert second.provider_secret_manager.secret_store is secret_store
 
 
 def test_infrastructure_is_frozen() -> None:
@@ -257,7 +218,4 @@ def test_infrastructure_is_frozen() -> None:
 
     infrastructure = factory.build()
 
-    assert (
-        infrastructure.provider_registry
-        is infrastructure.llm_service.registry
-    )
+    assert infrastructure.provider_registry is infrastructure.llm_service.registry

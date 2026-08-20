@@ -3,7 +3,6 @@ from pydantic import ValidationError
 from src.shared.llm.models import LLMProvider
 from src.shared.llm.request import LLMRequest
 
-
 request = LLMRequest(
     provider=LLMProvider.OPENAI,
     model=" test-model ",
@@ -70,13 +69,9 @@ try:
         },
     )
 except ValidationError:
-    print(
-        "Schema without JSON mode successfully blocked."
-    )
+    print("Schema without JSON mode successfully blocked.")
 else:
-    raise AssertionError(
-        "response_schema must require expect_json."
-    )
+    raise AssertionError("response_schema must require expect_json.")
 
 
 try:
@@ -90,9 +85,7 @@ try:
 except ValidationError:
     print("Invalid temperature successfully blocked.")
 else:
-    raise AssertionError(
-        "Temperature above the limit should fail."
-    )
+    raise AssertionError("Temperature above the limit should fail.")
 
 
 try:
@@ -105,9 +98,7 @@ try:
 except ValidationError:
     print("Empty model successfully blocked.")
 else:
-    raise AssertionError(
-        "Empty model should fail."
-    )
+    raise AssertionError("Empty model should fail.")
 
 
 serialized = request.model_dump_json()

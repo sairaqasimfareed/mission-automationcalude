@@ -46,9 +46,7 @@ class GenreValidationIssue(MissionBaseModel):
     )
 
 
-class ResolvedGenreEffectReference(
-    MissionBaseModel
-):
+class ResolvedGenreEffectReference(MissionBaseModel):
     """One genre editing reference resolved through the registry."""
 
     field_path: str
@@ -62,9 +60,7 @@ class ResolvedGenreEffectReference(
     is_resolved: bool = False
 
 
-class GenreProfileValidationResult(
-    MissionBaseModel
-):
+class GenreProfileValidationResult(MissionBaseModel):
     """Complete validation report for one universal genre profile."""
 
     genre_id: str
@@ -72,21 +68,15 @@ class GenreProfileValidationResult(
     is_valid: bool
     is_production_ready: bool
 
-    errors: list[
-        GenreValidationIssue
-    ] = Field(
+    errors: list[GenreValidationIssue] = Field(
         default_factory=list,
     )
 
-    warnings: list[
-        GenreValidationIssue
-    ] = Field(
+    warnings: list[GenreValidationIssue] = Field(
         default_factory=list,
     )
 
-    resolved_effects: list[
-        ResolvedGenreEffectReference
-    ] = Field(
+    resolved_effects: list[ResolvedGenreEffectReference] = Field(
         default_factory=list,
     )
 
@@ -104,34 +94,23 @@ class GenreProfileValidationResult(
     def issue_count(self) -> int:
         """Return total validation issue count."""
 
-        return (
-            len(self.errors)
-            + len(self.warnings)
-        )
+        return len(self.errors) + len(self.warnings)
 
 
-class GenreRegistryValidationResult(
-    MissionBaseModel
-):
+class GenreRegistryValidationResult(MissionBaseModel):
     """Validation report for the complete genre registry."""
 
     is_valid: bool
 
-    profile_results: list[
-        GenreProfileValidationResult
-    ] = Field(
+    profile_results: list[GenreProfileValidationResult] = Field(
         default_factory=list,
     )
 
-    errors: list[
-        GenreValidationIssue
-    ] = Field(
+    errors: list[GenreValidationIssue] = Field(
         default_factory=list,
     )
 
-    warnings: list[
-        GenreValidationIssue
-    ] = Field(
+    warnings: list[GenreValidationIssue] = Field(
         default_factory=list,
     )
 
@@ -142,13 +121,6 @@ class GenreRegistryValidationResult(
     def issue_count(self) -> int:
         """Return all registry and profile issues."""
 
-        profile_issue_count = sum(
-            result.issue_count
-            for result in self.profile_results
-        )
+        profile_issue_count = sum(result.issue_count for result in self.profile_results)
 
-        return (
-            len(self.errors)
-            + len(self.warnings)
-            + profile_issue_count
-        )
+        return len(self.errors) + len(self.warnings) + profile_issue_count

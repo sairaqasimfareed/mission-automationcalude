@@ -20,17 +20,11 @@ class VoiceTimelineValidationCode(str, Enum):
 
     NO_VOICE_TRACKS = "no_voice_tracks"
 
-    DUPLICATE_SCENE_VOICE = (
-        "duplicate_scene_voice"
-    )
+    DUPLICATE_SCENE_VOICE = "duplicate_scene_voice"
 
-    MISSING_SCENE_NUMBER = (
-        "missing_scene_number"
-    )
+    MISSING_SCENE_NUMBER = "missing_scene_number"
 
-    INVALID_SCENE_NUMBER = (
-        "invalid_scene_number"
-    )
+    INVALID_SCENE_NUMBER = "invalid_scene_number"
 
     INVALID_TRACK_TYPE = "invalid_track_type"
 
@@ -46,16 +40,12 @@ class VoiceTimelineValidationCode(str, Enum):
 
     VOICE_GAP = "voice_gap"
 
-    MISSING_EXPECTED_SCENE = (
-        "missing_expected_scene"
-    )
+    MISSING_EXPECTED_SCENE = "missing_expected_scene"
 
     UNEXPECTED_SCENE = "unexpected_scene"
 
 
-class VoiceTimelineValidationIssue(
-    MissionBaseModel
-):
+class VoiceTimelineValidationIssue(MissionBaseModel):
     """One issue found in a voice timeline."""
 
     code: VoiceTimelineValidationCode
@@ -79,22 +69,16 @@ class VoiceTimelineValidationIssue(
     )
 
 
-class VoiceTimelineValidationResult(
-    MissionBaseModel
-):
+class VoiceTimelineValidationResult(MissionBaseModel):
     """Complete validation report for voice timeline tracks."""
 
     is_valid: bool
 
-    errors: list[
-        VoiceTimelineValidationIssue
-    ] = Field(
+    errors: list[VoiceTimelineValidationIssue] = Field(
         default_factory=list,
     )
 
-    warnings: list[
-        VoiceTimelineValidationIssue
-    ] = Field(
+    warnings: list[VoiceTimelineValidationIssue] = Field(
         default_factory=list,
     )
 
@@ -126,10 +110,7 @@ class VoiceTimelineValidationResult(
     def issue_count(self) -> int:
         """Return total validation issue count."""
 
-        return (
-            len(self.errors)
-            + len(self.warnings)
-        )
+        return len(self.errors) + len(self.warnings)
 
     @property
     def has_voice_tracks(self) -> bool:

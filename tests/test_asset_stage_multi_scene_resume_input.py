@@ -34,9 +34,7 @@ from src.services.scene_asset_workflow_service import (
 )
 
 
-class RecordingWorkflowService(
-    SceneAssetWorkflowService
-):
+class RecordingWorkflowService(SceneAssetWorkflowService):
     """Record deterministic decision application for multi-scene tests."""
 
     def __init__(self) -> None:
@@ -59,13 +57,9 @@ class RecordingWorkflowService(
         del project_id
         del apply_to_remaining_scenes
 
-        self.apply_calls.append(
-            scene.scene_number
-        )
+        self.apply_calls.append(scene.scene_number)
 
-        state.status = (
-            AssetWorkflowStatus.READY
-        )
+        state.status = AssetWorkflowStatus.READY
 
         return state
 
@@ -76,14 +70,8 @@ def build_scene(
     return Scene(
         scene_number=scene_number,
         title=f"Scene {scene_number}",
-        narration=(
-            f"Synthetic narration for scene "
-            f"{scene_number}."
-        ),
-        visual_prompt=(
-            f"Synthetic visual prompt for "
-            f"scene {scene_number}."
-        ),
+        narration=(f"Synthetic narration for scene " f"{scene_number}."),
+        visual_prompt=(f"Synthetic visual prompt for " f"scene {scene_number}."),
         estimated_duration_seconds=10,
     )
 
@@ -92,16 +80,9 @@ def build_waiting_state(
     scene: Scene,
 ) -> SceneAssetState:
     return SceneAssetState(
-        scene_id=str(
-            scene.id
-        ),
-        scene_number=(
-            scene.scene_number
-        ),
-        status=(
-            AssetWorkflowStatus
-            .WAITING_FOR_USER_DECISION
-        ),
+        scene_id=str(scene.id),
+        scene_number=(scene.scene_number),
+        status=(AssetWorkflowStatus.WAITING_FOR_USER_DECISION),
     )
 
 
@@ -109,31 +90,20 @@ def build_job(
     scene_count: int = 3,
 ) -> VideoJob:
     research = ResearchResult.model_construct(
-        status=(
-            ResearchStatus.APPROVED
-        ),
+        status=(ResearchStatus.APPROVED),
     )
 
     script = Script(
-        title=(
-            "Multi Scene Resume Input"
-        ),
-        content=(
-            "Synthetic script for multi-scene "
-            "resume-input testing."
-        ),
+        title=("Multi Scene Resume Input"),
+        content=("Synthetic script for multi-scene " "resume-input testing."),
         prompt_version="test-1.0",
         word_count=8,
         estimated_duration_seconds=30,
-        status=(
-            ScriptStatus.APPROVED
-        ),
+        status=(ScriptStatus.APPROVED),
     )
 
     scenes = [
-        build_scene(
-            scene_number
-        )
+        build_scene(scene_number)
         for scene_number in range(
             1,
             scene_count + 1,
@@ -141,26 +111,17 @@ def build_job(
     ]
 
     job = VideoJob(
-        project_name=(
-            "Multi Scene Resume Input Test"
-        ),
+        project_name=("Multi Scene Resume Input Test"),
         channel_name="Mission Channel",
         niche="automation",
-        topic=(
-            "Multi-scene resume input hardening"
-        ),
+        topic=("Multi-scene resume input hardening"),
         research=research,
         script=script,
     )
 
     job.scenes = scenes
 
-    job.scene_asset_states = [
-        build_waiting_state(
-            scene
-        )
-        for scene in scenes
-    ]
+    job.scene_asset_states = [build_waiting_state(scene) for scene in scenes]
 
     return job
 
@@ -174,16 +135,11 @@ def build_context(
         job=job,
         pipeline_state=(
             PipelineState(
-                current_stage=(
-                    PipelineStageName
-                    .ASSET_SELECTION
-                ),
+                current_stage=(PipelineStageName.ASSET_SELECTION),
             )
         ),
         dry_run=True,
-        user_input=dict(
-            user_input
-        ),
+        user_input=dict(user_input),
     )
 
 
@@ -216,28 +172,17 @@ def test_multiple_scene_decisions_apply_once_each() -> None:
         asset_workflow_service=service,
     )
 
-    result = stage.execute(
-        context
-    )
+    result = stage.execute(context)
 
-    assert (
-        result.status
-        == PipelineStageStatus.COMPLETED
-    )
+    assert result.status == PipelineStageStatus.COMPLETED
 
-    assert (
-        service.apply_calls
-        == [
-            1,
-            2,
-            3,
-        ]
-    )
+    assert service.apply_calls == [
+        1,
+        2,
+        3,
+    ]
 
-    assert (
-        "asset_decisions"
-        not in context.user_input
-    )
+    assert "asset_decisions" not in context.user_input
 
 
 def test_partial_decisions_leave_other_scenes_waiting() -> None:
@@ -261,44 +206,22 @@ def test_partial_decisions_leave_other_scenes_waiting() -> None:
         asset_workflow_service=service,
     )
 
-    result = stage.execute(
-        context
+    result = stage.execute(context)
+
+    assert result.status == (PipelineStageStatus.WAITING_FOR_USER)
+
+    assert service.apply_calls == [
+        2,
+    ]
+
+    assert job.scene_asset_states[0].status == (
+        AssetWorkflowStatus.WAITING_FOR_USER_DECISION
     )
 
-    assert (
-        result.status
-        == (
-            PipelineStageStatus
-            .WAITING_FOR_USER
-        )
-    )
+    assert job.scene_asset_states[1].status == AssetWorkflowStatus.READY
 
-    assert (
-        service.apply_calls
-        == [
-            2,
-        ]
-    )
-
-    assert (
-        job.scene_asset_states[0].status
-        == (
-            AssetWorkflowStatus
-            .WAITING_FOR_USER_DECISION
-        )
-    )
-
-    assert (
-        job.scene_asset_states[1].status
-        == AssetWorkflowStatus.READY
-    )
-
-    assert (
-        job.scene_asset_states[2].status
-        == (
-            AssetWorkflowStatus
-            .WAITING_FOR_USER_DECISION
-        )
+    assert job.scene_asset_states[2].status == (
+        AssetWorkflowStatus.WAITING_FOR_USER_DECISION
     )
 
 
@@ -328,30 +251,15 @@ def test_duplicate_scene_decisions_are_rejected() -> None:
     )
 
     try:
-        stage.execute(
-            context
-        )
+        stage.execute(context)
     except ValueError as error:
-        assert (
-            "Multiple asset decisions "
-            "were supplied for scene 1."
-            in str(error)
-        )
+        assert "Multiple asset decisions " "were supplied for scene 1." in str(error)
     else:
-        raise AssertionError(
-            "Duplicate scene decisions "
-            "must raise ValueError."
-        )
+        raise AssertionError("Duplicate scene decisions " "must raise ValueError.")
 
-    assert (
-        service.apply_calls
-        == []
-    )
+    assert service.apply_calls == []
 
-    assert (
-        "asset_decisions"
-        not in context.user_input
-    )
+    assert "asset_decisions" not in context.user_input
 
 
 def test_unknown_scene_decision_is_rejected() -> None:
@@ -376,29 +284,15 @@ def test_unknown_scene_decision_is_rejected() -> None:
     )
 
     try:
-        stage.execute(
-            context
-        )
+        stage.execute(context)
     except ValueError as error:
-        assert (
-            "unknown scene number 99"
-            in str(error)
-        )
+        assert "unknown scene number 99" in str(error)
     else:
-        raise AssertionError(
-            "Unknown scene decision "
-            "must raise ValueError."
-        )
+        raise AssertionError("Unknown scene decision " "must raise ValueError.")
 
-    assert (
-        service.apply_calls
-        == []
-    )
+    assert service.apply_calls == []
 
-    assert (
-        "asset_decisions"
-        not in context.user_input
-    )
+    assert "asset_decisions" not in context.user_input
 
 
 def test_scene_decisions_are_applied_in_scene_order() -> None:
@@ -430,31 +324,20 @@ def test_scene_decisions_are_applied_in_scene_order() -> None:
         asset_workflow_service=service,
     )
 
-    result = stage.execute(
-        context
-    )
+    result = stage.execute(context)
 
-    assert (
-        result.status
-        == PipelineStageStatus.COMPLETED
-    )
+    assert result.status == PipelineStageStatus.COMPLETED
 
-    assert (
-        service.apply_calls
-        == [
-            1,
-            2,
-            3,
-        ]
-    )
+    assert service.apply_calls == [
+        1,
+        2,
+        3,
+    ]
 
 
 def main() -> None:
     print()
-    print(
-        "Running Asset Stage Multi-Scene "
-        "Resume Input tests..."
-    )
+    print("Running Asset Stage Multi-Scene " "Resume Input tests...")
     print()
 
     test_multiple_scene_decisions_apply_once_each()
@@ -464,10 +347,7 @@ def main() -> None:
     test_scene_decisions_are_applied_in_scene_order()
 
     print()
-    print(
-        "Asset Stage Multi-Scene Resume "
-        "Input tests completed successfully."
-    )
+    print("Asset Stage Multi-Scene Resume " "Input tests completed successfully.")
 
 
 if __name__ == "__main__":

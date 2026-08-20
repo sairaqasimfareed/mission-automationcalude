@@ -27,64 +27,44 @@ def test_disabled_plan() -> None:
 def test_enabled_plan() -> None:
     plan = PipelineResumePlan(
         resume_enabled=True,
-        resume_stage=(
-            PipelineStageName.RENDER
-        ),
+        resume_stage=(PipelineStageName.RENDER),
         skipped_stages=[
             PipelineStageName.VOICE,
         ],
         execution_stages=[
             PipelineStageName.RENDER,
         ],
-        checkpoint_stage=(
-            PipelineStageName.RENDER
-        ),
+        checkpoint_stage=(PipelineStageName.RENDER),
         resumed_from_failure=True,
     )
 
     assert plan.resume_enabled is True
 
-    assert (
-        plan.resume_stage
-        == PipelineStageName.RENDER
-    )
+    assert plan.resume_stage == PipelineStageName.RENDER
 
-    assert (
-        plan.resumed_from_failure
-        is True
-    )
+    assert plan.resumed_from_failure is True
 
 
 def test_disabled_plan_rejects_resume_stage() -> None:
     try:
         PipelineResumePlan(
             resume_enabled=False,
-            resume_stage=(
-                PipelineStageName.RENDER
-            ),
+            resume_stage=(PipelineStageName.RENDER),
             execution_stages=[
                 PipelineStageName.RENDER,
             ],
         )
     except ValidationError as error:
-        assert (
-            "Disabled resume plan"
-            in str(error)
-        )
+        assert "Disabled resume plan" in str(error)
     else:
-        raise AssertionError(
-            "Disabled plan with resume "
-            "stage must fail."
-        )
+        raise AssertionError("Disabled plan with resume " "stage must fail.")
 
 
 def test_resume_origins_are_mutually_exclusive() -> None:
     try:
         PipelineResumePlan(
             resume_enabled=True,
-            resume_stage=(
-                PipelineStageName.RENDER
-            ),
+            resume_stage=(PipelineStageName.RENDER),
             execution_stages=[
                 PipelineStageName.RENDER,
             ],
@@ -92,47 +72,31 @@ def test_resume_origins_are_mutually_exclusive() -> None:
             resumed_from_waiting=True,
         )
     except ValidationError as error:
-        assert (
-            "failure and waiting-for-user"
-            in str(error)
-        )
+        assert "failure and waiting-for-user" in str(error)
     else:
-        raise AssertionError(
-            "Contradictory resume origin "
-            "must fail."
-        )
+        raise AssertionError("Contradictory resume origin " "must fail.")
 
 
 def test_resume_stage_must_be_executed() -> None:
     try:
         PipelineResumePlan(
             resume_enabled=True,
-            resume_stage=(
-                PipelineStageName.RENDER
-            ),
+            resume_stage=(PipelineStageName.RENDER),
             execution_stages=[
                 PipelineStageName.VOICE,
             ],
         )
     except ValidationError as error:
-        assert (
-            "must appear in execution stages"
-            in str(error)
-        )
+        assert "must appear in execution stages" in str(error)
     else:
-        raise AssertionError(
-            "Resume stage outside execution "
-            "set must fail."
-        )
+        raise AssertionError("Resume stage outside execution " "set must fail.")
 
 
 def test_skip_execute_overlap_rejected() -> None:
     try:
         PipelineResumePlan(
             resume_enabled=True,
-            resume_stage=(
-                PipelineStageName.RENDER
-            ),
+            resume_stage=(PipelineStageName.RENDER),
             skipped_stages=[
                 PipelineStageName.VOICE,
             ],
@@ -142,21 +106,14 @@ def test_skip_execute_overlap_rejected() -> None:
             ],
         )
     except ValidationError as error:
-        assert (
-            "both skip and execute"
-            in str(error)
-        )
+        assert "both skip and execute" in str(error)
     else:
-        raise AssertionError(
-            "Skip/execution overlap must fail."
-        )
+        raise AssertionError("Skip/execution overlap must fail.")
 
 
 def main() -> None:
     print()
-    print(
-        "Running Pipeline Resume Plan tests..."
-    )
+    print("Running Pipeline Resume Plan tests...")
     print()
 
     test_disabled_plan()
@@ -167,10 +124,7 @@ def main() -> None:
     test_skip_execute_overlap_rejected()
 
     print()
-    print(
-        "Pipeline Resume Plan tests "
-        "completed successfully."
-    )
+    print("Pipeline Resume Plan tests " "completed successfully.")
 
 
 if __name__ == "__main__":

@@ -53,9 +53,7 @@ from src.services.genre_timeline_pipeline_service import (
 )
 
 
-class SyntheticTimelineService(
-    GenreTimelinePipelineService
-):
+class SyntheticTimelineService(GenreTimelinePipelineService):
     """
     Deterministic timeline service used to isolate the pipeline adapter.
 
@@ -77,22 +75,13 @@ class SyntheticTimelineService(
         self.received_clips: list[VideoClip] = []
         self.received_genre_id: str | None = None
 
-        self.received_overrides: (
-            dict[int, SceneEditingDirectives]
-            | None
-        ) = None
+        self.received_overrides: dict[int, SceneEditingDirectives] | None = None
 
-        self.received_output_resolution: (
-            str | None
-        ) = None
+        self.received_output_resolution: str | None = None
 
-        self.received_frame_rate: (
-            int | None
-        ) = None
+        self.received_frame_rate: int | None = None
 
-        self.received_warn_on_fallbacks: (
-            bool | None
-        ) = None
+        self.received_warn_on_fallbacks: bool | None = None
 
     def build(
         self,
@@ -100,42 +89,24 @@ class SyntheticTimelineService(
         scenes: list[Scene],
         clips: list[VideoClip],
         genre_id: str,
-        overrides_by_scene: (
-            dict[int, SceneEditingDirectives]
-            | None
-        ) = None,
+        overrides_by_scene: dict[int, SceneEditingDirectives] | None = None,
         output_resolution: str = "1920x1080",
         frame_rate: int = 30,
         warn_on_blueprint_fallbacks: bool = True,
     ) -> GenreTimelinePipelineResult:
-        self.received_scenes = list(
-            scenes
-        )
+        self.received_scenes = list(scenes)
 
-        self.received_clips = list(
-            clips
-        )
+        self.received_clips = list(clips)
 
-        self.received_genre_id = (
-            genre_id
-        )
+        self.received_genre_id = genre_id
 
-        self.received_overrides = dict(
-            overrides_by_scene
-            or {}
-        )
+        self.received_overrides = dict(overrides_by_scene or {})
 
-        self.received_output_resolution = (
-            output_resolution
-        )
+        self.received_output_resolution = output_resolution
 
-        self.received_frame_rate = (
-            frame_rate
-        )
+        self.received_frame_rate = frame_rate
 
-        self.received_warn_on_fallbacks = (
-            warn_on_blueprint_fallbacks
-        )
+        self.received_warn_on_fallbacks = warn_on_blueprint_fallbacks
 
         if self._raise_error is not None:
             raise self._raise_error
@@ -156,23 +127,16 @@ def build_job(
         niche="horror",
         topic="Timeline stage adapter",
         status=JobStatus.RUNNING,
-        current_stage=(
-            WorkflowStage.EDITING
-        ),
+        current_stage=(WorkflowStage.EDITING),
     )
 
-    research = (
-        ResearchResult.model_construct(
-            status=ResearchStatus.APPROVED,
-        )
+    research = ResearchResult.model_construct(
+        status=ResearchStatus.APPROVED,
     )
 
     script = Script(
         title="Timeline stage test",
-        content=(
-            "Synthetic narration for "
-            "timeline-stage testing."
-        ),
+        content=("Synthetic narration for " "timeline-stage testing."),
         prompt_version="test-1.0",
         word_count=5,
         estimated_duration_seconds=10,
@@ -186,21 +150,11 @@ def build_job(
         scene = Scene(
             scene_number=1,
             title="Synthetic Scene",
-            narration=(
-                "Synthetic narration for "
-                "timeline-stage testing."
-            ),
-            visual_prompt=(
-                "Synthetic timeline visual."
-            ),
+            narration=("Synthetic narration for " "timeline-stage testing."),
+            visual_prompt=("Synthetic timeline visual."),
             estimated_duration_seconds=10,
-            manual_file_path=(
-                "assets/videos/manual/"
-                "timeline_test.mp4"
-            ),
-            source_status=(
-                SceneSourceStatus.READY
-            ),
+            manual_file_path=("assets/videos/manual/" "timeline_test.mp4"),
+            source_status=(SceneSourceStatus.READY),
             status=SceneStatus.READY,
         )
 
@@ -211,25 +165,13 @@ def build_job(
         if include_clips:
             clip = VideoClip(
                 scene_number=1,
-                source_type=(
-                    SceneSourceType
-                    .MANUAL_UPLOAD
-                ),
+                source_type=(SceneSourceType.MANUAL_UPLOAD),
                 duration_seconds=10,
-                prompt=(
-                    "Synthetic timeline clip."
-                ),
+                prompt=("Synthetic timeline clip."),
                 provider="Manual Upload",
-                local_file=(
-                    "assets/videos/manual/"
-                    "timeline_test.mp4"
-                ),
-                source_status=(
-                    SceneSourceStatus.READY
-                ),
-                status=(
-                    VideoClipStatus.READY
-                ),
+                local_file=("assets/videos/manual/" "timeline_test.mp4"),
+                source_status=(SceneSourceStatus.READY),
+                status=(VideoClipStatus.READY),
             )
 
             job.video_clips = [
@@ -247,10 +189,7 @@ def build_context(
     return StageContext(
         job=job,
         pipeline_state=PipelineState(
-            current_stage=(
-                PipelineStageName
-                .VIDEO_TIMELINE
-            ),
+            current_stage=(PipelineStageName.VIDEO_TIMELINE),
         ),
         dry_run=True,
     )
@@ -262,12 +201,8 @@ def build_timeline(
     """Build a basic synthetic timeline from the job clips."""
 
     timeline = VideoTimeline(
-        clips=list(
-            job.video_clips
-        ),
-        output_resolution=(
-            "1920x1080"
-        ),
+        clips=list(job.video_clips),
+        output_resolution=("1920x1080"),
         frame_rate=30,
     )
 
@@ -279,22 +214,19 @@ def build_timeline(
 def build_success_validation() -> TimelineValidationResult:
     """Build a synthetic render-ready validation report."""
 
-    return (
-        TimelineValidationResult
-        .model_construct(
-            is_valid=True,
-            item_count=1,
-            enabled_item_count=1,
-            track_count=1,
-            total_duration_seconds=10.0,
-            gap_duration_seconds=0.0,
-            overlap_duration_seconds=0.0,
-            blueprint_count=1,
-            render_ready_item_count=1,
-            blueprint_fallback_count=0,
-            errors=[],
-            warnings=[],
-        )
+    return TimelineValidationResult.model_construct(
+        is_valid=True,
+        item_count=1,
+        enabled_item_count=1,
+        track_count=1,
+        total_duration_seconds=10.0,
+        gap_duration_seconds=0.0,
+        overlap_duration_seconds=0.0,
+        blueprint_count=1,
+        render_ready_item_count=1,
+        blueprint_fallback_count=0,
+        errors=[],
+        warnings=[],
     )
 
 
@@ -302,39 +234,27 @@ def build_failed_validation() -> TimelineValidationResult:
     """Build a synthetic invalid validation report."""
 
     issue = TimelineValidationIssue(
-        code=(
-            TimelineValidationCode
-            .CLIP_NOT_READY
-        ),
-        severity=(
-            TimelineValidationSeverity
-            .ERROR
-        ),
-        message=(
-            "Synthetic timeline "
-            "validation failure."
-        ),
+        code=(TimelineValidationCode.CLIP_NOT_READY),
+        severity=(TimelineValidationSeverity.ERROR),
+        message=("Synthetic timeline " "validation failure."),
         scene_number=1,
     )
 
-    return (
-        TimelineValidationResult
-        .model_construct(
-            is_valid=False,
-            item_count=1,
-            enabled_item_count=1,
-            track_count=1,
-            total_duration_seconds=10.0,
-            gap_duration_seconds=0.0,
-            overlap_duration_seconds=0.0,
-            blueprint_count=0,
-            render_ready_item_count=0,
-            blueprint_fallback_count=0,
-            errors=[
-                issue,
-            ],
-            warnings=[],
-        )
+    return TimelineValidationResult.model_construct(
+        is_valid=False,
+        item_count=1,
+        enabled_item_count=1,
+        track_count=1,
+        total_duration_seconds=10.0,
+        gap_duration_seconds=0.0,
+        overlap_duration_seconds=0.0,
+        blueprint_count=0,
+        render_ready_item_count=0,
+        blueprint_fallback_count=0,
+        errors=[
+            issue,
+        ],
+        warnings=[],
     )
 
 
@@ -345,34 +265,19 @@ def build_success_result(
 ) -> GenreTimelinePipelineResult:
     """Build a synthetic successful timeline-pipeline result."""
 
-    validation = (
-        build_success_validation()
-    )
+    validation = build_success_validation()
 
-    return (
-        GenreTimelinePipelineResult
-        .model_construct(
-            requested_genre_id="horror",
-            status=(
-                GenreTimelinePipelineStatus
-                .COMPLETED
-            ),
-            timeline=(
-                build_timeline(
-                    job
-                )
-            ),
-            directives=[],
-            blueprints=[],
-            validation=validation,
-            warnings=(
-                warnings
-                or []
-            ),
-            metadata={
-                "synthetic": True,
-            },
-        )
+    return GenreTimelinePipelineResult.model_construct(
+        requested_genre_id="horror",
+        status=(GenreTimelinePipelineStatus.COMPLETED),
+        timeline=(build_timeline(job)),
+        directives=[],
+        blueprints=[],
+        validation=validation,
+        warnings=(warnings or []),
+        metadata={
+            "synthetic": True,
+        },
     )
 
 
@@ -381,31 +286,19 @@ def build_failed_result(
 ) -> GenreTimelinePipelineResult:
     """Build a synthetic failed timeline-pipeline result."""
 
-    return (
-        GenreTimelinePipelineResult
-        .model_construct(
-            requested_genre_id="horror",
-            status=(
-                GenreTimelinePipelineStatus
-                .FAILED
-            ),
-            timeline=(
-                build_timeline(
-                    job
-                )
-            ),
-            directives=[],
-            blueprints=[],
-            validation=(
-                build_failed_validation()
-            ),
-            warnings=[
-                "Synthetic timeline warning.",
-            ],
-            metadata={
-                "synthetic": True,
-            },
-        )
+    return GenreTimelinePipelineResult.model_construct(
+        requested_genre_id="horror",
+        status=(GenreTimelinePipelineStatus.FAILED),
+        timeline=(build_timeline(job)),
+        directives=[],
+        blueprints=[],
+        validation=(build_failed_validation()),
+        warnings=[
+            "Synthetic timeline warning.",
+        ],
+        metadata={
+            "synthetic": True,
+        },
     )
 
 
@@ -413,11 +306,7 @@ def test_stage_name() -> None:
     job = build_job()
 
     service = SyntheticTimelineService(
-        result=(
-            build_success_result(
-                job
-            )
-        ),
+        result=(build_success_result(job)),
     )
 
     stage = TimelinePipelineStage(
@@ -425,22 +314,14 @@ def test_stage_name() -> None:
         timeline_service=service,
     )
 
-    assert (
-        stage.stage_name
-        == PipelineStageName
-        .VIDEO_TIMELINE
-    )
+    assert stage.stage_name == PipelineStageName.VIDEO_TIMELINE
 
 
 def test_genre_id_is_normalized() -> None:
     job = build_job()
 
     service = SyntheticTimelineService(
-        result=(
-            build_success_result(
-                job
-            )
-        ),
+        result=(build_success_result(job)),
     )
 
     stage = TimelinePipelineStage(
@@ -448,21 +329,14 @@ def test_genre_id_is_normalized() -> None:
         timeline_service=service,
     )
 
-    assert (
-        stage.genre_id
-        == "horror"
-    )
+    assert stage.genre_id == "horror"
 
 
 def test_empty_genre_id_rejected() -> None:
     job = build_job()
 
     service = SyntheticTimelineService(
-        result=(
-            build_success_result(
-                job
-            )
-        ),
+        result=(build_success_result(job)),
     )
 
     try:
@@ -471,25 +345,16 @@ def test_empty_genre_id_rejected() -> None:
             timeline_service=service,
         )
     except ValueError as error:
-        assert (
-            "requires a genre ID"
-            in str(error)
-        )
+        assert "requires a genre ID" in str(error)
     else:
-        raise AssertionError(
-            "Empty genre ID must fail."
-        )
+        raise AssertionError("Empty genre ID must fail.")
 
 
 def test_empty_resolution_rejected() -> None:
     job = build_job()
 
     service = SyntheticTimelineService(
-        result=(
-            build_success_result(
-                job
-            )
-        ),
+        result=(build_success_result(job)),
     )
 
     try:
@@ -499,26 +364,16 @@ def test_empty_resolution_rejected() -> None:
             output_resolution="   ",
         )
     except ValueError as error:
-        assert (
-            "requires an output resolution"
-            in str(error)
-        )
+        assert "requires an output resolution" in str(error)
     else:
-        raise AssertionError(
-            "Empty output resolution "
-            "must fail."
-        )
+        raise AssertionError("Empty output resolution " "must fail.")
 
 
 def test_invalid_frame_rate_rejected() -> None:
     job = build_job()
 
     service = SyntheticTimelineService(
-        result=(
-            build_success_result(
-                job
-            )
-        ),
+        result=(build_success_result(job)),
     )
 
     try:
@@ -528,15 +383,9 @@ def test_invalid_frame_rate_rejected() -> None:
             frame_rate=0,
         )
     except ValueError as error:
-        assert (
-            "frame rate must be positive"
-            in str(error)
-        )
+        assert "frame rate must be positive" in str(error)
     else:
-        raise AssertionError(
-            "Non-positive frame rate "
-            "must fail."
-        )
+        raise AssertionError("Non-positive frame rate " "must fail.")
 
 
 def test_missing_scenes_fails() -> None:
@@ -546,10 +395,7 @@ def test_missing_scenes_fails() -> None:
     )
 
     service = SyntheticTimelineService(
-        result=(
-            GenreTimelinePipelineResult
-            .model_construct()
-        ),
+        result=(GenreTimelinePipelineResult.model_construct()),
     )
 
     stage = TimelinePipelineStage(
@@ -557,25 +403,15 @@ def test_missing_scenes_fails() -> None:
         timeline_service=service,
     )
 
-    result = stage.execute(
-        build_context(
-            job
-        )
-    )
+    result = stage.execute(build_context(job))
 
-    assert (
-        result.status
-        == PipelineStageStatus.FAILED
-    )
+    assert result.status == PipelineStageStatus.FAILED
 
     assert result.errors == [
         "Timeline stage requires planned scenes.",
     ]
 
-    assert (
-        job.video_timeline
-        is None
-    )
+    assert job.video_timeline is None
 
 
 def test_missing_clips_fails() -> None:
@@ -585,10 +421,7 @@ def test_missing_clips_fails() -> None:
     )
 
     service = SyntheticTimelineService(
-        result=(
-            GenreTimelinePipelineResult
-            .model_construct()
-        ),
+        result=(GenreTimelinePipelineResult.model_construct()),
     )
 
     stage = TimelinePipelineStage(
@@ -596,35 +429,21 @@ def test_missing_clips_fails() -> None:
         timeline_service=service,
     )
 
-    result = stage.execute(
-        build_context(
-            job
-        )
-    )
+    result = stage.execute(build_context(job))
 
-    assert (
-        result.status
-        == PipelineStageStatus.FAILED
-    )
+    assert result.status == PipelineStageStatus.FAILED
 
     assert result.errors == [
         "Timeline stage requires ready video clips.",
     ]
 
-    assert (
-        job.video_timeline
-        is None
-    )
+    assert job.video_timeline is None
 
 
 def test_successful_timeline_execution() -> None:
     job = build_job()
 
-    pipeline_result = (
-        build_success_result(
-            job
-        )
-    )
+    pipeline_result = build_success_result(job)
 
     service = SyntheticTimelineService(
         result=pipeline_result,
@@ -638,80 +457,31 @@ def test_successful_timeline_execution() -> None:
         warn_on_blueprint_fallbacks=False,
     )
 
-    result = stage.execute(
-        build_context(
-            job
-        )
-    )
+    result = stage.execute(build_context(job))
 
-    assert (
-        result.status
-        == PipelineStageStatus.COMPLETED
-    )
+    assert result.status == PipelineStageStatus.COMPLETED
 
     assert result.successful is True
 
-    assert (
-        job.video_timeline
-        is pipeline_result.timeline
-    )
+    assert job.video_timeline is pipeline_result.timeline
 
-    assert (
-        service.received_genre_id
-        == "horror"
-    )
+    assert service.received_genre_id == "horror"
 
-    assert (
-        len(
-            service.received_scenes
-        )
-        == 1
-    )
+    assert len(service.received_scenes) == 1
 
-    assert (
-        len(
-            service.received_clips
-        )
-        == 1
-    )
+    assert len(service.received_clips) == 1
 
-    assert (
-        service
-        .received_output_resolution
-        == "1280x720"
-    )
+    assert service.received_output_resolution == "1280x720"
 
-    assert (
-        service.received_frame_rate
-        == 24
-    )
+    assert service.received_frame_rate == 24
 
-    assert (
-        service
-        .received_warn_on_fallbacks
-        is False
-    )
+    assert service.received_warn_on_fallbacks is False
 
-    assert (
-        result.metadata[
-            "genre_id"
-        ]
-        == "horror"
-    )
+    assert result.metadata["genre_id"] == "horror"
 
-    assert (
-        result.metadata[
-            "render_ready"
-        ]
-        is True
-    )
+    assert result.metadata["render_ready"] is True
 
-    assert (
-        result.metadata[
-            "timeline_duration_seconds"
-        ]
-        == 10.0
-    )
+    assert result.metadata["timeline_duration_seconds"] == 10.0
 
 
 def test_warnings_are_propagated() -> None:
@@ -722,10 +492,7 @@ def test_warnings_are_propagated() -> None:
             build_success_result(
                 job,
                 warnings=[
-                    (
-                        "Synthetic timeline "
-                        "warning."
-                    ),
+                    ("Synthetic timeline " "warning."),
                 ],
             )
         ),
@@ -736,16 +503,9 @@ def test_warnings_are_propagated() -> None:
         timeline_service=service,
     )
 
-    result = stage.execute(
-        build_context(
-            job
-        )
-    )
+    result = stage.execute(build_context(job))
 
-    assert (
-        result.status
-        == PipelineStageStatus.COMPLETED
-    )
+    assert result.status == PipelineStageStatus.COMPLETED
 
     assert result.warnings == [
         "Synthetic timeline warning.",
@@ -756,11 +516,7 @@ def test_failed_validation_is_translated() -> None:
     job = build_job()
 
     service = SyntheticTimelineService(
-        result=(
-            build_failed_result(
-                job
-            )
-        ),
+        result=(build_failed_result(job)),
     )
 
     stage = TimelinePipelineStage(
@@ -768,83 +524,52 @@ def test_failed_validation_is_translated() -> None:
         timeline_service=service,
     )
 
-    result = stage.execute(
-        build_context(
-            job
-        )
-    )
+    result = stage.execute(build_context(job))
 
-    assert (
-        result.status
-        == PipelineStageStatus.FAILED
-    )
+    assert result.status == PipelineStageStatus.FAILED
 
     assert result.successful is False
 
     assert result.errors == [
-        (
-            "Synthetic timeline "
-            "validation failure."
-        ),
+        ("Synthetic timeline " "validation failure."),
     ]
 
     assert result.warnings == [
         "Synthetic timeline warning.",
     ]
 
-    assert (
-        job.video_timeline
-        is None
-    )
+    assert job.video_timeline is None
 
-    assert (
-        result.metadata[
-            "render_ready"
-        ]
-        is False
-    )
+    assert result.metadata["render_ready"] is False
 
 
 def test_non_render_ready_result_without_errors_uses_fallback_message() -> None:
     job = build_job()
 
-    validation = (
-        TimelineValidationResult
-        .model_construct(
-            is_valid=True,
-            item_count=1,
-            enabled_item_count=1,
-            track_count=1,
-            total_duration_seconds=10.0,
-            gap_duration_seconds=0.0,
-            overlap_duration_seconds=0.0,
-            blueprint_count=0,
-            render_ready_item_count=0,
-            blueprint_fallback_count=0,
-            errors=[],
-            warnings=[],
-        )
+    validation = TimelineValidationResult.model_construct(
+        is_valid=True,
+        item_count=1,
+        enabled_item_count=1,
+        track_count=1,
+        total_duration_seconds=10.0,
+        gap_duration_seconds=0.0,
+        overlap_duration_seconds=0.0,
+        blueprint_count=0,
+        render_ready_item_count=0,
+        blueprint_fallback_count=0,
+        errors=[],
+        warnings=[],
     )
 
-    pipeline_result = (
-        GenreTimelinePipelineResult
-        .model_construct(
-            requested_genre_id="horror",
-            status=(
-                GenreTimelinePipelineStatus
-                .COMPLETED
-            ),
-            timeline=(
-                build_timeline(
-                    job
-                )
-            ),
-            directives=[],
-            blueprints=[],
-            validation=validation,
-            warnings=[],
-            metadata={},
-        )
+    pipeline_result = GenreTimelinePipelineResult.model_construct(
+        requested_genre_id="horror",
+        status=(GenreTimelinePipelineStatus.COMPLETED),
+        timeline=(build_timeline(job)),
+        directives=[],
+        blueprints=[],
+        validation=validation,
+        warnings=[],
+        metadata={},
     )
 
     service = SyntheticTimelineService(
@@ -856,42 +581,23 @@ def test_non_render_ready_result_without_errors_uses_fallback_message() -> None:
         timeline_service=service,
     )
 
-    result = stage.execute(
-        build_context(
-            job
-        )
-    )
+    result = stage.execute(build_context(job))
 
-    assert (
-        result.status
-        == PipelineStageStatus.FAILED
-    )
+    assert result.status == PipelineStageStatus.FAILED
 
     assert result.errors == [
-        (
-            "Genre timeline pipeline did not "
-            "produce a render-ready timeline."
-        ),
+        ("Genre timeline pipeline did not " "produce a render-ready timeline."),
     ]
 
-    assert (
-        job.video_timeline
-        is None
-    )
+    assert job.video_timeline is None
 
 
 def test_service_exception_propagates() -> None:
     job = build_job()
 
     service = SyntheticTimelineService(
-        result=(
-            build_success_result(
-                job
-            )
-        ),
-        raise_error=RuntimeError(
-            "Synthetic timeline exception."
-        ),
+        result=(build_success_result(job)),
+        raise_error=RuntimeError("Synthetic timeline exception."),
     )
 
     stage = TimelinePipelineStage(
@@ -900,31 +606,18 @@ def test_service_exception_propagates() -> None:
     )
 
     try:
-        stage.execute(
-            build_context(
-                job
-            )
-        )
+        stage.execute(build_context(job))
     except RuntimeError as error:
-        assert (
-            str(error)
-            == (
-                "Synthetic timeline "
-                "exception."
-            )
-        )
+        assert str(error) == ("Synthetic timeline " "exception.")
     else:
         raise AssertionError(
-            "Unexpected timeline-service "
-            "exceptions must propagate."
+            "Unexpected timeline-service " "exceptions must propagate."
         )
 
 
 def main() -> None:
     print()
-    print(
-        "Running Timeline Pipeline Stage tests..."
-    )
+    print("Running Timeline Pipeline Stage tests...")
     print()
 
     test_stage_name()
@@ -937,16 +630,11 @@ def main() -> None:
     test_successful_timeline_execution()
     test_warnings_are_propagated()
     test_failed_validation_is_translated()
-    (
-        test_non_render_ready_result_without_errors_uses_fallback_message()
-    )
+    (test_non_render_ready_result_without_errors_uses_fallback_message())
     test_service_exception_propagates()
 
     print()
-    print(
-        "Timeline Pipeline Stage tests "
-        "completed successfully."
-    )
+    print("Timeline Pipeline Stage tests " "completed successfully.")
 
 
 if __name__ == "__main__":

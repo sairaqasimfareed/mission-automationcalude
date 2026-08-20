@@ -30,9 +30,7 @@ def completed_result(
 ) -> StageResult:
     return StageResult(
         stage=stage,
-        status=(
-            PipelineStageStatus.COMPLETED
-        ),
+        status=(PipelineStageStatus.COMPLETED),
         retry_count=retry_count,
     )
 
@@ -44,9 +42,7 @@ def failed_result(
 ) -> StageResult:
     return StageResult(
         stage=stage,
-        status=(
-            PipelineStageStatus.FAILED
-        ),
+        status=(PipelineStageStatus.FAILED),
         retry_count=retry_count,
         errors=[
             "Synthetic checkpoint failure.",
@@ -59,10 +55,7 @@ def waiting_result(
 ) -> StageResult:
     return StageResult(
         stage=stage,
-        status=(
-            PipelineStageStatus
-            .WAITING_FOR_USER
-        ),
+        status=(PipelineStageStatus.WAITING_FOR_USER),
         warnings=[
             "Synthetic user input required.",
         ],
@@ -74,9 +67,7 @@ def skipped_result(
 ) -> StageResult:
     return StageResult(
         stage=stage,
-        status=(
-            PipelineStageStatus.SKIPPED
-        ),
+        status=(PipelineStageStatus.SKIPPED),
     )
 
 
@@ -84,55 +75,31 @@ def test_completed_checkpoint_snapshot() -> None:
     job = build_job()
 
     state = PipelineState(
-        current_stage=(
-            PipelineStageName.RENDER
-        ),
+        current_stage=(PipelineStageName.RENDER),
         overall_progress=100,
         stages=[
-            completed_result(
-                PipelineStageName.VOICE
-            ),
-            completed_result(
-                PipelineStageName.RENDER
-            ),
+            completed_result(PipelineStageName.VOICE),
+            completed_result(PipelineStageName.RENDER),
         ],
     )
 
-    checkpoint = (
-        PipelineCheckpointService()
-        .create(
-            job=job,
-            pipeline_state=state,
-        )
+    checkpoint = PipelineCheckpointService().create(
+        job=job,
+        pipeline_state=state,
     )
 
-    assert (
-        checkpoint.job_id
-        == job.id
-    )
+    assert checkpoint.job_id == job.id
 
-    assert (
-        checkpoint.completed_stages
-        == [
-            PipelineStageName.VOICE,
-            PipelineStageName.RENDER,
-        ]
-    )
+    assert checkpoint.completed_stages == [
+        PipelineStageName.VOICE,
+        PipelineStageName.RENDER,
+    ]
 
-    assert (
-        checkpoint.failed_stage
-        is None
-    )
+    assert checkpoint.failed_stage is None
 
-    assert (
-        checkpoint.waiting_stage
-        is None
-    )
+    assert checkpoint.waiting_stage is None
 
-    assert (
-        checkpoint.resumable
-        is False
-    )
+    assert checkpoint.resumable is False
 
 
 def test_failed_checkpoint_snapshot() -> None:
@@ -141,14 +108,10 @@ def test_failed_checkpoint_snapshot() -> None:
     job.retry_count = 2
 
     state = PipelineState(
-        current_stage=(
-            PipelineStageName.RENDER
-        ),
+        current_stage=(PipelineStageName.RENDER),
         overall_progress=75,
         stages=[
-            completed_result(
-                PipelineStageName.VOICE
-            ),
+            completed_result(PipelineStageName.VOICE),
             failed_result(
                 PipelineStageName.RENDER,
                 retry_count=2,
@@ -159,144 +122,82 @@ def test_failed_checkpoint_snapshot() -> None:
         ],
     )
 
-    checkpoint = (
-        PipelineCheckpointService()
-        .create(
-            job=job,
-            pipeline_state=state,
-        )
+    checkpoint = PipelineCheckpointService().create(
+        job=job,
+        pipeline_state=state,
     )
 
-    assert (
-        checkpoint.failed_stage
-        == PipelineStageName.RENDER
-    )
+    assert checkpoint.failed_stage == PipelineStageName.RENDER
 
-    assert (
-        checkpoint.completed_stages
-        == [
-            PipelineStageName.VOICE,
-        ]
-    )
+    assert checkpoint.completed_stages == [
+        PipelineStageName.VOICE,
+    ]
 
-    assert (
-        checkpoint.total_retry_count
-        == 2
-    )
+    assert checkpoint.total_retry_count == 2
 
-    assert (
-        checkpoint.resumable
-        is True
-    )
+    assert checkpoint.resumable is True
 
-    assert (
-        checkpoint.errors
-        == [
-            "Synthetic checkpoint failure.",
-        ]
-    )
+    assert checkpoint.errors == [
+        "Synthetic checkpoint failure.",
+    ]
 
 
 def test_waiting_checkpoint_snapshot() -> None:
     job = build_job()
 
     state = PipelineState(
-        current_stage=(
-            PipelineStageName
-            .ASSET_SELECTION
-        ),
+        current_stage=(PipelineStageName.ASSET_SELECTION),
         overall_progress=50,
         stages=[
-            completed_result(
-                PipelineStageName.VOICE
-            ),
-            waiting_result(
-                PipelineStageName
-                .ASSET_SELECTION
-            ),
+            completed_result(PipelineStageName.VOICE),
+            waiting_result(PipelineStageName.ASSET_SELECTION),
         ],
         warnings=[
             "Synthetic user input required.",
         ],
     )
 
-    checkpoint = (
-        PipelineCheckpointService()
-        .create(
-            job=job,
-            pipeline_state=state,
-        )
+    checkpoint = PipelineCheckpointService().create(
+        job=job,
+        pipeline_state=state,
     )
 
-    assert (
-        checkpoint.waiting_stage
-        == (
-            PipelineStageName
-            .ASSET_SELECTION
-        )
-    )
+    assert checkpoint.waiting_stage == (PipelineStageName.ASSET_SELECTION)
 
-    assert (
-        checkpoint.failed_stage
-        is None
-    )
+    assert checkpoint.failed_stage is None
 
-    assert (
-        checkpoint.waiting_for_user
-        is True
-    )
+    assert checkpoint.waiting_for_user is True
 
-    assert (
-        checkpoint.resumable
-        is True
-    )
+    assert checkpoint.resumable is True
 
 
 def test_skipped_stages_are_captured() -> None:
     job = build_job()
 
     state = PipelineState(
-        current_stage=(
-            PipelineStageName.RENDER
-        ),
+        current_stage=(PipelineStageName.RENDER),
         overall_progress=100,
         stages=[
-            skipped_result(
-                PipelineStageName
-                .BACKGROUND_MUSIC
-            ),
-            completed_result(
-                PipelineStageName.RENDER
-            ),
+            skipped_result(PipelineStageName.BACKGROUND_MUSIC),
+            completed_result(PipelineStageName.RENDER),
         ],
     )
 
-    checkpoint = (
-        PipelineCheckpointService()
-        .create(
-            job=job,
-            pipeline_state=state,
-        )
+    checkpoint = PipelineCheckpointService().create(
+        job=job,
+        pipeline_state=state,
     )
 
-    assert (
-        checkpoint.skipped_stages
-        == [
-            (
-                PipelineStageName
-                .BACKGROUND_MUSIC
-            ),
-        ]
-    )
+    assert checkpoint.skipped_stages == [
+        (PipelineStageName.BACKGROUND_MUSIC),
+    ]
 
 
 def test_metadata_is_copied() -> None:
     job = build_job()
 
     state = PipelineState(
-        current_stage=(
-            PipelineStageName.VOICE
-        ),
+        current_stage=(PipelineStageName.VOICE),
     )
 
     metadata = {
@@ -304,104 +205,68 @@ def test_metadata_is_copied() -> None:
         "resume_allowed": True,
     }
 
-    checkpoint = (
-        PipelineCheckpointService()
-        .create(
-            job=job,
-            pipeline_state=state,
-            metadata=metadata,
-        )
+    checkpoint = PipelineCheckpointService().create(
+        job=job,
+        pipeline_state=state,
+        metadata=metadata,
     )
 
-    assert (
-        checkpoint.metadata
-        == metadata
-    )
+    assert checkpoint.metadata == metadata
 
-    assert (
-        checkpoint.metadata
-        is not metadata
-    )
+    assert checkpoint.metadata is not metadata
 
 
 def test_stage_results_are_snapshotted() -> None:
     job = build_job()
 
-    result = completed_result(
-        PipelineStageName.VOICE
-    )
+    result = completed_result(PipelineStageName.VOICE)
 
     state = PipelineState(
-        current_stage=(
-            PipelineStageName.VOICE
-        ),
+        current_stage=(PipelineStageName.VOICE),
         stages=[
             result,
         ],
     )
 
-    checkpoint = (
-        PipelineCheckpointService()
-        .create(
-            job=job,
-            pipeline_state=state,
-        )
+    checkpoint = PipelineCheckpointService().create(
+        job=job,
+        pipeline_state=state,
     )
 
-    assert (
-        checkpoint.stage_results
-        == [
-            result,
-        ]
-    )
+    assert checkpoint.stage_results == [
+        result,
+    ]
 
-    assert (
-        checkpoint.stage_results
-        is not state.stages
-    )
+    assert checkpoint.stage_results is not state.stages
 
 
 def test_latest_failed_stage_is_authoritative() -> None:
     job = build_job()
 
     state = PipelineState(
-        current_stage=(
-            PipelineStageName.RENDER
-        ),
+        current_stage=(PipelineStageName.RENDER),
         stages=[
-            failed_result(
-                PipelineStageName.VOICE
-            ),
-            failed_result(
-                PipelineStageName.RENDER
-            ),
+            failed_result(PipelineStageName.VOICE),
+            failed_result(PipelineStageName.RENDER),
         ],
         errors=[
             "Synthetic checkpoint failure.",
         ],
     )
 
-    checkpoint = (
-        PipelineCheckpointService()
-        .create(
-            job=job,
-            pipeline_state=state,
-        )
+    checkpoint = PipelineCheckpointService().create(
+        job=job,
+        pipeline_state=state,
     )
 
-    assert (
-        checkpoint.failed_stage
-        == PipelineStageName.RENDER
-    )
+    assert checkpoint.failed_stage == PipelineStageName.RENDER
 
 
 def test_diagnostics_are_preserved() -> None:
     job = build_job()
 
     state = PipelineState(
-        current_stage=(
-            PipelineStageName.RENDER
-        ),
+        current_stage=(PipelineStageName.RENDER),
         warnings=[
             "Warning A.",
             "Warning B.",
@@ -411,36 +276,24 @@ def test_diagnostics_are_preserved() -> None:
         ],
     )
 
-    checkpoint = (
-        PipelineCheckpointService()
-        .create(
-            job=job,
-            pipeline_state=state,
-        )
+    checkpoint = PipelineCheckpointService().create(
+        job=job,
+        pipeline_state=state,
     )
 
-    assert (
-        checkpoint.warnings
-        == [
-            "Warning A.",
-            "Warning B.",
-        ]
-    )
+    assert checkpoint.warnings == [
+        "Warning A.",
+        "Warning B.",
+    ]
 
-    assert (
-        checkpoint.errors
-        == [
-            "Error A.",
-        ]
-    )
+    assert checkpoint.errors == [
+        "Error A.",
+    ]
 
 
 def main() -> None:
     print()
-    print(
-        "Running Pipeline Checkpoint "
-        "Service tests..."
-    )
+    print("Running Pipeline Checkpoint " "Service tests...")
     print()
 
     test_completed_checkpoint_snapshot()
@@ -453,10 +306,7 @@ def main() -> None:
     test_diagnostics_are_preserved()
 
     print()
-    print(
-        "Pipeline Checkpoint Service tests "
-        "completed successfully."
-    )
+    print("Pipeline Checkpoint Service tests " "completed successfully.")
 
 
 if __name__ == "__main__":
