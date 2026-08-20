@@ -121,17 +121,30 @@ class ApprovalGateService:
     def latest_pending(job: VideoJob) -> ContentDecisionRecord | None:
         """Return the single most recent still-pending decision, if any."""
 
+        pending = ApprovalGateService.all_pending(job)
+
+        return pending[0] if pending else None
+
+    @staticmethod
+    def all_pending(job: VideoJob) -> list[ContentDecisionRecord]:
+        """
+        Return every decision point whose latest record is still
+        pending - unlike latest_pending(), this doesn't stop at the
+        first one, so a readiness check can report every open gate at
+        once rather than only the earliest.
+        """
+
         latest_by_point: dict[str, ContentDecisionRecord] = {}
 
         for record in job.content_decisions:
             if record.approval is not None:
                 latest_by_point[record.approval.decision_point] = record
 
-        for record in latest_by_point.values():
-            if record.approval is not None and record.approval.requires_human_action:
-                return record
-
-        return None
+        return [
+            record
+            for record in latest_by_point.values()
+            if record.approval is not None and record.approval.requires_human_action
+        ]
 
     @staticmethod
     def _latest_record_for_point(

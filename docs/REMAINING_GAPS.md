@@ -34,18 +34,44 @@ stop the pipeline," which is what this phase delivers.
 
 ## Phase 2 - Readiness & typed blockers
 
-- [ ] **Typed `Blocker` model.** One shared model (`code`, `stage`,
-      `severity`, `message`, `affected_artifact`, `retryable`,
-      `recovery_action`) usable by orchestration, GUI, logs, and tests.
-- [ ] **`ProductionReadinessService`.** One centralized service answering
-      "is this project ready" with `BLOCKED`/`READY_FOR_RENDER`/
-      `READY_FOR_FINAL_EXPORT`/`COMPLETED` and a list of typed blockers.
-      Every GUI readiness indicator must consume this service, not
-      duplicate its logic.
-- [ ] **Retrofit existing failure paths onto `Blocker`.** Start with
-      `AssetModuleFailure` (closest existing analog) and the bare
-      `RuntimeError` messages in `MediaGenerationPipeline`/
-      `ContentIntelligencePipeline`.
+- [x] **Typed `Blocker` model.** `src/models/blocker.py`: `Blocker`
+      (`code`, `stage`, `severity`, `message`, `affected_artifact`,
+      `retryable`, `recovery_action`), `BlockerCode`, `BlockerSeverity`.
+- [x] **`ProductionReadinessService`.** `src/services/production_readiness_service.py`
+      evaluates one `VideoJob` into a `ProductionReadinessReport`
+      (`BLOCKED`/`READY_FOR_RENDER`/`READY_FOR_FINAL_EXPORT`/`COMPLETED`
+      + a list of `Blocker`s), covering script/scenes/pending approval
+      gates (reuses `ApprovalGateService.all_pending`)/per-scene asset
+      readiness/audio timeline/video timeline/render result/policy
+      report. Wired into Quality Center's new "Production readiness"
+      card (`src/desktop/views/quality_center_view.py`) - the existing
+      "Post-render checklist" card is left as-is since it covers
+      genuinely different downstream artifacts (SEO/thumbnail/final
+      export) the readiness service doesn't model.
+- [x] **Retrofit `AssetModuleFailure`.** `ProductionReadinessService.
+      _asset_blockers` converts a scene's `active_failure` into a
+      `Blocker` (recoverable → WARNING, unrecoverable → BLOCKING),
+      reusing `AssetModuleFailure.message`/`.recoverable` rather than
+      replacing the model.
+- [ ] **Retrofit `MediaGenerationPipeline`/`ContentIntelligencePipeline`'s
+      bare `RuntimeError` messages onto `Blocker`.** Deliberately not
+      done in this pass - both pipelines' `run_*` methods raise on
+      missing prerequisites and the GUI already catches
+      `(RuntimeError, ValueError)` and displays the message
+      (`_handle_run_ci_stage`, `_run_stage`), with real test coverage
+      of that behavior. Converting these to return/raise `Blocker`-
+      shaped errors touches every stage method in both pipelines plus
+      their GUI call sites and error-path tests - a larger, riskier
+      change than fits this phase. `ProductionReadinessService` already
+      reports the same "missing prerequisite" conditions independently
+      (e.g. `SCRIPT_NOT_GENERATED`, `TIMELINE_NOT_BUILT`) via its own
+      inspection of `VideoJob` state, so the readiness signal exists
+      today even though the exceptions themselves aren't yet
+      `Blocker`-typed.
+- [ ] **Wire `ProductionReadinessService` into Render/Clip workspace
+      readiness indicators**, not just Quality Center - those views
+      currently derive their own "is this scene/render ready" logic
+      locally.
 
 ## Phase 3 - Selective invalidation
 

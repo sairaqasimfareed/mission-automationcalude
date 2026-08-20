@@ -59,6 +59,12 @@ functionality - see `docs/REMAINING_GAPS.md` for what to do about it.
 | Resume planning | `PipelineResumePlan` | `PipelineResumePlannerService` | derived from checkpoint | Render Workspace (implicit) | `test_pipeline_resume_*.py`, `test_pipeline_engine_resume.py` |
 | Render orchestration | `RenderOrchestrationResult` | `RenderOrchestratorService` | `VideoJob.render_result` | Render Workspace, "Run render" | `test_render_orchestrator_*.py` |
 
+## Readiness
+
+| Capability | Model | Service | Persistence | GUI | Tests |
+|---|---|---|---|---|---|
+| Production readiness | `Blocker`, `BlockerCode`, `BlockerSeverity`, `ProductionReadinessReport`, `ReadinessState` (`src/models/blocker.py`, `src/models/production_readiness.py`) | `ProductionReadinessService` (read-only, recomputed each call - not persisted) | - (derived fresh from `VideoJob` state) | Quality Center, "Production readiness" card | `test_production_readiness_service.py`, `test_quality_center_readiness_gui.py` |
+
 ## Cost control
 
 | Capability | Model | Service | Persistence | GUI | Tests | Gap |

@@ -7,10 +7,13 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFrame, QScrollArea, QVBoxLayout, QWidget
 
 from src.desktop.job_store import JobStore
-from src.desktop.widgets import button, card, small_muted, status_label
+from src.desktop.widgets import badge, button, card, small_muted, status_label
+from src.models.blocker import BlockerSeverity
 from src.models.policy import PolicyComplianceReport, RiskLevel
+from src.models.production_readiness import ReadinessState
 from src.models.video_job import VideoJob
 from src.services.policy_service import PolicyService
+from src.services.production_readiness_service import ProductionReadinessService
 
 _LEFT = Qt.AlignmentFlag.AlignLeft
 
@@ -19,6 +22,19 @@ _RISK_ROLE = {
     RiskLevel.MEDIUM: "warning",
     RiskLevel.HIGH: "error",
     RiskLevel.CRITICAL: "error",
+}
+
+_READINESS_ROLE = {
+    ReadinessState.BLOCKED: "error",
+    ReadinessState.READY_FOR_RENDER: "success",
+    ReadinessState.READY_FOR_FINAL_EXPORT: "success",
+    ReadinessState.COMPLETED: "success",
+}
+
+_BLOCKER_SEVERITY_ROLE = {
+    BlockerSeverity.INFO: "warning",
+    BlockerSeverity.WARNING: "warning",
+    BlockerSeverity.BLOCKING: "error",
 }
 
 
@@ -46,6 +62,7 @@ class QualityCenterView(QWidget):
         self._on_change = on_change
         self._job_id: UUID | None = None
         self._policy_service = PolicyService()
+        self._readiness_service = ProductionReadinessService()
 
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -77,8 +94,47 @@ class QualityCenterView(QWidget):
             if widget is not None:
                 widget.deleteLater()
 
+        self._build_readiness_card(job)
         self._build_checklist_card(job)
         self._build_policy_card(job)
+
+    def _build_readiness_card(self, job: VideoJob) -> None:
+        """
+        The single centralized readiness answer (ProductionReadinessService)
+        - every blocker it reports traces to a real, currently-unmet
+        condition on this job, not a duplicated ad hoc check.
+        """
+
+        frame, layout = card("Production readiness", icon_name="dashboard")
+
+        report = self._readiness_service.evaluate(job)
+
+        layout.addWidget(
+            status_label(
+                report.state.value.replace("_", " "),
+                role=_READINESS_ROLE[report.state],
+            )
+        )
+
+        if not report.blockers:
+            layout.addWidget(small_muted("No blockers."))
+            self._layout.addWidget(frame)
+
+            return
+
+        for blocker in report.blockers:
+            layout.addWidget(badge(f"{blocker.stage} · {blocker.severity.value}"))
+            layout.addWidget(
+                status_label(
+                    blocker.message,
+                    role=_BLOCKER_SEVERITY_ROLE[blocker.severity],
+                )
+            )
+
+            if blocker.recovery_action:
+                layout.addWidget(small_muted(blocker.recovery_action))
+
+        self._layout.addWidget(frame)
 
     def _build_checklist_card(self, job: VideoJob) -> None:
         """

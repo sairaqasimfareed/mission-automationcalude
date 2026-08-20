@@ -5,6 +5,37 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-08-20 - Phase 2: Readiness service & typed blockers
+
+Added a typed `Blocker` model (`src/models/blocker.py`: `code`,
+`stage`, `severity`, `message`, `affected_artifact`, `retryable`,
+`recovery_action`) and `ProductionReadinessService`
+(`src/services/production_readiness_service.py`), the first
+centralized answer to "is this project ready" - `BLOCKED`/
+`READY_FOR_RENDER`/`READY_FOR_FINAL_EXPORT`/`COMPLETED`, backed by a
+list of typed blockers rather than a boolean. It inspects script/scene
+planning, every pending approval gate (reusing Phase 1's
+`ApprovalGateService.all_pending`), per-scene asset readiness
+(converting a scene's `AssetModuleFailure` into a `Blocker` - the
+Phase 2 "retrofit an existing failure path" item), the audio timeline,
+the video timeline, the render result, and the policy report. Quality
+Center gets a new "Production readiness" card consuming it directly,
+so that indicator no longer duplicates its own readiness logic; the
+existing "Post-render checklist" card was left alone since it tracks
+genuinely different downstream artifacts (SEO/thumbnail/final export)
+outside this service's scope.
+
+Deliberately not done this phase: converting `MediaGenerationPipeline`'s
+and `ContentIntelligencePipeline`'s bare `RuntimeError` messages into
+`Blocker`-typed errors (would touch every stage method in both
+pipelines plus their GUI call sites and existing error-path tests -
+too large for this pass, and `ProductionReadinessService` already
+surfaces the same "missing prerequisite" conditions independently by
+inspecting `VideoJob` state directly); wiring the readiness service
+into Render/Clip workspace indicators specifically, which still derive
+their own local notions of "ready." Both tracked in
+`docs/REMAINING_GAPS.md`.
+
 ## 2026-08-20 - Phase 1: Approval runtime gating & decision history
 
 `ApprovalPolicyConfig` and `ApprovalService` existed but had never been
