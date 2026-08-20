@@ -4,14 +4,23 @@ from collections.abc import Callable
 from uuid import UUID
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFrame, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QMessageBox,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
 
 from src.desktop.job_store import JobStore
 from src.desktop.widgets import badge, button, card, small_muted, status_label
 from src.models.blocker import BlockerSeverity
+from src.models.final_preview import FinalPreviewAction, FinalPreviewStatus
 from src.models.policy import PolicyComplianceReport, RiskLevel
 from src.models.production_readiness import ReadinessState
 from src.models.video_job import VideoJob
+from src.services.final_preview_service import FinalPreviewService
 from src.services.policy_service import PolicyService
 from src.services.production_readiness_service import ProductionReadinessService
 
@@ -35,6 +44,19 @@ _BLOCKER_SEVERITY_ROLE = {
     BlockerSeverity.INFO: "warning",
     BlockerSeverity.WARNING: "warning",
     BlockerSeverity.BLOCKING: "error",
+}
+
+_FINAL_PREVIEW_STATUS_ROLE = {
+    FinalPreviewStatus.PENDING: "warning",
+    FinalPreviewStatus.APPROVED: "success",
+    FinalPreviewStatus.RETURNED_TO_EDITING: "warning",
+}
+
+_FINAL_PREVIEW_ACTION_LABELS = {
+    FinalPreviewAction.APPROVE_FINAL: "Approve final",
+    FinalPreviewAction.RETURN_TO_EDITING: "Return to editing",
+    FinalPreviewAction.REPLACE_SCENE: "Replace a scene",
+    FinalPreviewAction.REGENERATE_AUDIO: "Regenerate audio",
 }
 
 
@@ -63,6 +85,7 @@ class QualityCenterView(QWidget):
         self._job_id: UUID | None = None
         self._policy_service = PolicyService()
         self._readiness_service = ProductionReadinessService()
+        self._final_preview_service = FinalPreviewService()
 
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -96,6 +119,7 @@ class QualityCenterView(QWidget):
 
         self._build_readiness_card(job)
         self._build_checklist_card(job)
+        self._build_final_preview_card(job)
         self._build_policy_card(job)
 
     def _build_readiness_card(self, job: VideoJob) -> None:
@@ -197,6 +221,86 @@ class QualityCenterView(QWidget):
 
         self._layout.addWidget(frame)
 
+    def _build_final_preview_card(self, job: VideoJob) -> None:
+        """
+        Review the completed render and decide: approve it as final,
+        or send it back for more editing - bound to the exact render
+        identity (RenderIdentityService) it was created from, so an
+        approval that no longer matches the current render is caught
+        rather than silently trusted forever.
+        """
+
+        frame, layout = card("Final preview", icon_name="check-circle")
+
+        if job.render_result is None or not job.render_result.success:
+            layout.addWidget(
+                small_muted("Render a video first - see Render Workspace.")
+            )
+            self._layout.addWidget(frame)
+
+            return
+
+        latest = self._final_preview_service.latest_preview(job)
+
+        if latest is not None:
+            layout.addWidget(
+                status_label(
+                    latest.status.value.replace("_", " "),
+                    role=_FINAL_PREVIEW_STATUS_ROLE[latest.status],
+                )
+            )
+            layout.addWidget(small_muted(f"Output: {latest.output_file}"))
+
+            if latest.status == FinalPreviewStatus.APPROVED:
+                is_current = self._final_preview_service.is_current(job)
+                layout.addWidget(
+                    status_label(
+                        (
+                            "Still matches the current render."
+                            if is_current
+                            else "The render has changed since this was approved."
+                        ),
+                        role="success" if is_current else "error",
+                    )
+                )
+
+        if latest is None or latest.status != FinalPreviewStatus.PENDING:
+            create_button = button(
+                (
+                    "Create final preview"
+                    if latest is None
+                    else "Create a new final preview"
+                ),
+                variant="primary",
+                icon_name="check-circle",
+            )
+            create_button.clicked.connect(self._handle_create_final_preview)
+            layout.addWidget(create_button, alignment=_LEFT)
+        else:
+            action_row = QHBoxLayout()
+            action_row.setSpacing(6)
+
+            for action, label in _FINAL_PREVIEW_ACTION_LABELS.items():
+                action_button = button(
+                    label,
+                    variant=(
+                        "primary"
+                        if action == FinalPreviewAction.APPROVE_FINAL
+                        else "ghost"
+                    ),
+                )
+                action_button.clicked.connect(
+                    lambda _checked=False, a=action: self._handle_resolve_final_preview(
+                        a
+                    )
+                )
+                action_row.addWidget(action_button)
+
+            action_row.addStretch()
+            layout.addLayout(action_row)
+
+        self._layout.addWidget(frame)
+
     def _build_policy_card(self, job: VideoJob) -> None:
         frame, layout = card("Quality and policy check", icon_name="shield")
 
@@ -262,8 +366,43 @@ class QualityCenterView(QWidget):
         self._policy_service.evaluate(job)
         self._on_change()
 
+    def _handle_create_final_preview(self) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        try:
+            self._final_preview_service.create_preview(job)
+        except (RuntimeError, ValueError) as error:
+            self._record_error(job, f"Could not create final preview: {error}")
+
+            return
+
+        self._on_change()
+
+    def _handle_resolve_final_preview(self, action: FinalPreviewAction) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        try:
+            self._final_preview_service.resolve(job, action)
+        except ValueError as error:
+            self._record_error(job, f"Could not resolve final preview: {error}")
+
+            return
+
+        self._on_change()
+
     def _current_job(self) -> VideoJob | None:
         if self._job_id is None:
             return None
 
         return self._job_store.get(self._job_id)
+
+    def _record_error(self, job: VideoJob, message: str) -> None:
+        job.errors.append(message)
+        QMessageBox.warning(self, "Step failed", message)
+        self._on_change()

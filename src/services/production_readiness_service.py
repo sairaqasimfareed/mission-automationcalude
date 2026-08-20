@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from src.models.asset_state import AssetWorkflowStatus
 from src.models.blocker import Blocker, BlockerCode, BlockerSeverity
+from src.models.final_preview import FinalPreviewStatus
 from src.models.production_readiness import ProductionReadinessReport, ReadinessState
 from src.models.render_result import RenderStatus
 from src.models.script_quality_report import ScriptQualityStatus
 from src.models.video_job import VideoJob
 from src.services.approval_gate_service import ApprovalGateService
+from src.services.final_preview_service import FinalPreviewService
 
 _FAILED_ASSET_STATUSES = frozenset(
     {
@@ -39,6 +41,11 @@ class ProductionReadinessService:
     by the time a caller reads them.
     """
 
+    def __init__(
+        self, *, final_preview_service: FinalPreviewService | None = None
+    ) -> None:
+        self.final_preview_service = final_preview_service or FinalPreviewService()
+
     def evaluate(self, job: VideoJob) -> ProductionReadinessReport:
         blockers: list[Blocker] = [
             *self._content_blockers(job),
@@ -49,6 +56,7 @@ class ProductionReadinessService:
             *self._policy_blockers(job),
             *self._staleness_blockers(job),
             *self._manual_audio_blockers(job),
+            *self._final_preview_blockers(job),
         ]
 
         return ProductionReadinessReport(
@@ -300,6 +308,29 @@ class ProductionReadinessService:
             )
             for requirement in job.manual_audio_requirements
             if not requirement.fulfilled
+        ]
+
+    def _final_preview_blockers(self, job: VideoJob) -> list[Blocker]:
+        latest = self.final_preview_service.latest_preview(job)
+
+        if latest is None or latest.status != FinalPreviewStatus.APPROVED:
+            return []
+
+        if self.final_preview_service.is_current(job):
+            return []
+
+        return [
+            Blocker(
+                code=BlockerCode.FINAL_PREVIEW_STALE,
+                stage="final_preview",
+                severity=BlockerSeverity.BLOCKING,
+                message=(
+                    "The approved final preview no longer matches the "
+                    "current render inputs."
+                ),
+                affected_artifact="final_previews",
+                recovery_action="Review and re-approve the final preview.",
+            )
         ]
 
     def _resolve_state(self, job: VideoJob, blockers: list[Blocker]) -> ReadinessState:

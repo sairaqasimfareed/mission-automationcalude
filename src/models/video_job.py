@@ -18,6 +18,7 @@ from src.models.enums import (
     ProductionMode,
     WorkflowStage,
 )
+from src.models.final_preview import FinalPreview
 from src.models.generated_script import GeneratedScript
 from src.models.hook import HookCandidate, HookEvaluation
 from src.models.information_reveal_map import InformationRevealMap
@@ -139,6 +140,8 @@ class VideoJob(MissionBaseModel):
     audio_timeline: AudioTimeline | None = None
     video_timeline: VideoTimeline | None = None
     render_result: RenderResult | None = None
+
+    final_previews: list[FinalPreview] = Field(default_factory=list)
 
     policy_report: PolicyComplianceReport | None = None
 

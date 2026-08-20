@@ -9,6 +9,7 @@ from src.models.asset_state import (
 )
 from src.models.audio_timeline import AudioTimeline
 from src.models.blocker import BlockerCode, BlockerSeverity
+from src.models.final_preview import FinalPreviewAction
 from src.models.manual_audio_requirement import (
     ManualAudioRequirement,
     ManualAudioRequirementType,
@@ -23,6 +24,7 @@ from src.models.video_clip import VideoClip
 from src.models.video_job import VideoJob
 from src.models.video_timeline import VideoTimeline
 from src.services.approval_gate_service import ApprovalGateService
+from src.services.final_preview_service import FinalPreviewService
 from src.services.production_readiness_service import ProductionReadinessService
 
 
@@ -329,6 +331,65 @@ def test_unfulfilled_manual_audio_requirement_is_blocking() -> None:
     assert audio_blockers[0].severity == BlockerSeverity.BLOCKING
     assert audio_blockers[0].affected_artifact == "music"
     assert report.state == ReadinessState.BLOCKED
+
+
+def _job_with_approved_final_preview() -> tuple[VideoJob, FinalPreviewService]:
+    job = _ready_job()
+    job.render_result = RenderResult(
+        success=True,
+        render_engine="ffmpeg",
+        status=RenderStatus.COMPLETED,
+        output_file="out.mp4",
+    )
+    preview_service = FinalPreviewService()
+    preview_service.create_preview(job)
+    preview_service.resolve(job, FinalPreviewAction.APPROVE_FINAL)
+
+    return job, preview_service
+
+
+def test_an_approved_and_current_final_preview_is_not_blocking() -> None:
+    service = ProductionReadinessService()
+    job, _ = _job_with_approved_final_preview()
+
+    report = service.evaluate(job)
+
+    codes = {b.code for b in report.blockers}
+    assert BlockerCode.FINAL_PREVIEW_STALE not in codes
+
+
+def test_an_approved_final_preview_that_no_longer_matches_the_render_is_blocking() -> (
+    None
+):
+    service = ProductionReadinessService()
+    job, _ = _job_with_approved_final_preview()
+
+    job.video_timeline = VideoTimeline(
+        clips=[], total_duration_seconds=8.0, output_resolution="1280x720"
+    )
+
+    report = service.evaluate(job)
+
+    codes = {b.code for b in report.blockers}
+    assert BlockerCode.FINAL_PREVIEW_STALE in codes
+    assert report.state == ReadinessState.BLOCKED
+
+
+def test_a_pending_final_preview_is_not_blocking() -> None:
+    service = ProductionReadinessService()
+    job = _ready_job()
+    job.render_result = RenderResult(
+        success=True,
+        render_engine="ffmpeg",
+        status=RenderStatus.COMPLETED,
+        output_file="out.mp4",
+    )
+    FinalPreviewService().create_preview(job)
+
+    report = service.evaluate(job)
+
+    codes = {b.code for b in report.blockers}
+    assert BlockerCode.FINAL_PREVIEW_STALE not in codes
 
 
 def test_fulfilled_manual_audio_requirement_is_not_blocking() -> None:

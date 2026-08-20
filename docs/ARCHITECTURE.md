@@ -92,3 +92,71 @@ at the point the field is actually regenerated. No new orchestration
 or generic "invalidation engine" is needed - the matrix is intentionally
 just a lookup table plus two explicit call sites per row, not a
 framework.
+
+## Render identity & Final Preview (Phase 5/6)
+
+`RenderIdentityService` (`src/services/render_identity_service.py`)
+computes a deterministic SHA-256 over one job's current render inputs:
+video timeline identity (per-item scene number, track index, timing,
+and clip source - order-independent, sorted before hashing), audio
+timeline identity (per-track type, source file, timing, and volume -
+also order-independent), and render settings (production mode,
+resolution, frame rate). It is pure and stateless: never mutates the
+job, never caches a result, recomputable at any time from
+`VideoJob.video_timeline`/`.audio_timeline`/`.production_mode` alone.
+
+**The produced output file is deliberately not part of the hash.** The
+identity has to be computable from inputs *before* a render exists -
+that is what makes "would a fresh render still match this preview?"
+answerable without re-rendering. Hashing the actual output file's bytes
+would also require file I/O this service has no reason to do. The
+`output_file` a render actually produced is recorded separately,
+alongside the identity, on whichever `FinalPreview` was created from
+it - it identifies what got produced, without being an input to what
+identity that production has.
+
+`FinalPreviewService` (`src/services/final_preview_service.py`) is the
+one consumer: `create_preview(job)` requires a successful
+`render_result` and computes+stores the current identity on a new
+`FinalPreview` (`src/models/final_preview.py`), append-only on
+`VideoJob.final_previews` - same pattern as `content_decisions`/
+`script_version_history`/`stale_artifacts` elsewhere in this codebase.
+`resolve(job, action)` applies one of the four spec'd actions:
+
+- `APPROVE_FINAL` -> `FinalPreviewStatus.APPROVED`
+- `RETURN_TO_EDITING` -> `FinalPreviewStatus.RETURNED_TO_EDITING`
+- `REPLACE_SCENE` / `REGENERATE_AUDIO` -> also `RETURNED_TO_EDITING`,
+  recorded as the human's *stated intent* only. The actual scene
+  replacement or audio regeneration happens through Clip Workspace's
+  bulk asset services or `MediaGenerationPipeline` - both already call
+  `InvalidationService` themselves, so nothing here needs to duplicate
+  that.
+
+**Why a separate action vocabulary instead of reusing
+`ApprovalGateService`'s `HumanApprovalAction`** (APPROVE/EDIT/REJECT/
+REGENERATE/SELECT_ALTERNATIVE/REQUEST_MORE_OPTIONS/RETURN_TO_PREVIOUS,
+Phase 1): that vocabulary is deliberately generic across every content-
+intelligence decision point. REPLACE_SCENE and REGENERATE_AUDIO are
+workflow re-entry commands specific to reviewing a finished render, not
+an approve/reject/changes-requested outcome - stretching the shared
+vocabulary to cover them would have made it less generic for every
+other decision point that actually does fit the approve/reject shape.
+`ApprovalPolicyConfig`'s existing named `final_preview` slot remains
+unused by this mechanism as a result; revisit if a future decision
+point turns out to need this same shape.
+
+`is_current(job)` is the live check a stored `FinalPreview` never
+performs on itself: it recomputes the identity fresh and also checks
+`InvalidationService.is_stale(job, "render_result")` - either signal
+means the preview no longer reflects the job's current render.
+`ProductionReadinessService` surfaces an approved-but-no-longer-current
+preview as a `BLOCKING` `BlockerCode.FINAL_PREVIEW_STALE`, the same
+pattern `ARTIFACT_STALE`/`MANUAL_AUDIO_REQUIRED` already use - one
+blocker code, one shared read, no new GUI surface needed beyond Quality
+Center's existing readiness card.
+
+Render identity was built as part of Phase 5, not a standalone Phase 6
+pass, because Final Preview cannot function without something to bind
+to. The other half of Phase 6 - a unified asset provenance model - was
+not pulled forward, since Final Preview never needed it; it remains a
+separate, not-yet-started gap (`docs/REMAINING_GAPS.md` Phase 6).

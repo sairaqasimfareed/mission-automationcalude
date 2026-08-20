@@ -67,6 +67,8 @@ functionality - see `docs/REMAINING_GAPS.md` for what to do about it.
 |---|---|---|---|---|---|
 | Production readiness | `Blocker`, `BlockerCode`, `BlockerSeverity`, `ProductionReadinessReport`, `ReadinessState` (`src/models/blocker.py`, `src/models/production_readiness.py`) | `ProductionReadinessService` (read-only, recomputed each call - not persisted) | - (derived fresh from `VideoJob` state) | Quality Center, "Production readiness" card | `test_production_readiness_service.py`, `test_quality_center_readiness_gui.py` |
 | Selective invalidation | `StaleArtifact` (`src/models/invalidation.py`) | `InvalidationService`, called from `ContentIntelligencePipeline.run_revision`, `MediaGenerationPipeline.run_voice/.run_music/.run_sound_effects`, `BulkStockAssignmentService`, `BulkClipIngestionService` | `VideoJob.stale_artifacts` | Quality Center, "Production readiness" card (surfaced as `BlockerCode.ARTIFACT_STALE`) | `test_invalidation_service.py` |
+| Render identity | (raw `str` hash, not a model) | `RenderIdentityService` | - (recomputed fresh, not persisted; recorded on `FinalPreview.render_identity` when a preview is created) | - (consumed by Final Preview, not shown directly) | `test_render_identity_service.py` |
+| Final preview | `FinalPreview`, `FinalPreviewAction`, `FinalPreviewStatus` (`src/models/final_preview.py`) | `FinalPreviewService` (append-only: `.resolve()` adds a new record) | `VideoJob.final_previews` | Quality Center, "Final preview" card | `test_final_preview_service.py`, `test_quality_center_final_preview_gui.py`, `test_production_readiness_service.py` (`BlockerCode.FINAL_PREVIEW_STALE` cases) |
 
 ## Cost control
 

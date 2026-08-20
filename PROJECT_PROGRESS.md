@@ -5,6 +5,54 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-08-20 - Phase 5: Final Preview (with render identity pulled forward from Phase 6)
+
+Added `FinalPreview`/`FinalPreviewAction`/`FinalPreviewStatus`
+(`src/models/final_preview.py`, append-only on
+`VideoJob.final_previews`) and `FinalPreviewService`
+(`src/services/final_preview_service.py`) implementing the four spec'd
+actions - APPROVE_FINAL, RETURN_TO_EDITING, REPLACE_SCENE,
+REGENERATE_AUDIO. The spec explicitly requires binding a preview to
+"an exact render identity," which didn't exist yet (that was Phase 6's
+job) - rather than build a loose placeholder, built the real thing:
+`RenderIdentityService` (`src/services/render_identity_service.py`), a
+deterministic SHA-256 over video timeline + audio timeline + render
+settings, order-independent and computable from inputs alone (the
+produced output file is recorded separately, not hashed - identity has
+to be answerable before a render exists, not just after). This is the
+first half of Phase 6, done two phases early because Final Preview
+had no way to function without it; the second half (unified asset
+provenance model) stayed out of scope since nothing in Phase 5 needed
+it.
+
+`FinalPreviewService.is_current(job)` never trusts a stored verdict -
+it recomputes the identity fresh and also checks
+`InvalidationService.is_stale(job, "render_result")` on every call, so
+an approved preview that no longer matches the current render surfaces
+immediately as a new `BLOCKING` `BlockerCode.FINAL_PREVIEW_STALE` via
+`ProductionReadinessService`, not just silently stays "approved."
+Wired into Quality Center as a new "Final preview" card.
+
+Deliberate design choice, not a shortcut: `FinalPreviewAction` is its
+own vocabulary rather than reusing Phase 1's `HumanApprovalAction` -
+REPLACE_SCENE/REGENERATE_AUDIO are workflow re-entry commands, not
+approve/reject outcomes, and forcing them into the shared approval
+vocabulary would have blurred it for every other decision point.
+REPLACE_SCENE/REGENERATE_AUDIO themselves only record the human's
+stated intent; the actual work already happens through Clip
+Workspace/Production Audio, which already invalidate correctly on
+their own.
+
+Building this surfaced one real bug: `FinalPreviewService.create_preview()`
+originally let `RenderIdentityService`'s `ValueError` (missing
+timeline) propagate raw, while the GUI handler only caught
+`RuntimeError` - a render marked successful without both timelines set
+would have crashed the "Create final preview" button instead of
+showing an error. Fixed by having `create_preview()` present a single
+`RuntimeError` contract for every precondition failure, plus widening
+the GUI handler's catch to match this codebase's established
+`(RuntimeError, ValueError)` convention as defense in depth.
+
 ## 2026-08-20 - Phase 4: Unified production audio hardening
 
 Added `MediaGenerationPipeline.run_all_audio()`, coordinating voice,

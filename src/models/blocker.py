@@ -31,6 +31,7 @@ class BlockerCode(str, Enum):
     POLICY_NOT_UPLOAD_READY = "policy_not_upload_ready"
     ARTIFACT_STALE = "artifact_stale"
     MANUAL_AUDIO_REQUIRED = "manual_audio_required"
+    FINAL_PREVIEW_STALE = "final_preview_stale"
 
 
 class Blocker(MissionBaseModel):

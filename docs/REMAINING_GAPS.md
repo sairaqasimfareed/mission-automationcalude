@@ -154,22 +154,51 @@ that file's audio-regeneration row.
 
 ## Phase 5 - Final Preview
 
-- [ ] `FinalPreview` model bound to an exact render identity (depends on
-      Phase 6's render identity).
-- [ ] APPROVE_FINAL / RETURN_TO_EDITING / REPLACE_SCENE /
-      REGENERATE_AUDIO actions, each persisted, each able to invalidate
-      the current approval when the render changes.
+- [x] `FinalPreview` model bound to an exact render identity.
+      `src/models/final_preview.py` + `FinalPreviewService`
+      (`src/services/final_preview_service.py`), bound via the
+      `RenderIdentityService` built for this phase (see Phase 6 below -
+      done early, out of order, because Final Preview cannot function
+      without it).
+- [x] APPROVE_FINAL / RETURN_TO_EDITING / REPLACE_SCENE /
+      REGENERATE_AUDIO actions, each persisted (append-only on
+      `VideoJob.final_previews`, matching `content_decisions`/
+      `script_version_history`), each able to invalidate the current
+      approval when the render changes - `FinalPreviewService.is_current()`
+      recomputes the identity fresh and also checks
+      `InvalidationService.is_stale(job, "render_result")`; an
+      approved-but-stale preview surfaces as a `BLOCKING` blocker via
+      `ProductionReadinessService`. REPLACE_SCENE/REGENERATE_AUDIO are
+      recorded as stated intent only - the actual work happens through
+      Clip Workspace/Production Audio, which already call
+      `InvalidationService` themselves.
+- [ ] **Deliberate design gap, not yet resolved**: `FinalPreviewAction`
+      is its own vocabulary, separate from `ApprovalGateService`'s
+      `HumanApprovalAction`. Reusing Phase 1's approval infrastructure
+      was considered and rejected - REPLACE_SCENE/REGENERATE_AUDIO are
+      workflow re-entry commands, not approve/reject/changes-requested
+      outcomes, and forcing them into that vocabulary would have blurred
+      its generality across every other decision point. Worth revisiting
+      if a future decision point needs the same shape.
 
 ## Phase 6 - Render identity & asset provenance
 
-- [ ] **Deterministic render identity**: SHA-256 (or equivalent) over
-      video timeline identity + audio timeline identity + render
-      settings + output identity.
+- [x] **Deterministic render identity**: `RenderIdentityService`
+      (`src/services/render_identity_service.py`) - SHA-256 over video
+      timeline identity + audio timeline identity + render settings.
+      **Output identity is deliberately not hashed** - the identity
+      must be computable from inputs alone (before a render exists), and
+      hashing the actual output file's bytes would require file I/O this
+      service has no need for; the produced `output_file` is recorded
+      separately on `FinalPreview` instead of folded into the hash.
 - [ ] **Unified asset provenance model** (`asset_id`, `asset_type`,
       `source`, `provider`, `original_request`, `project_id`,
       `scene_id`, `created_at`, `source_version`, `checksum`,
       `qc_status`) - reconcile with the fields `Scene`/`VideoClip`/
-      `AssetCandidate` already carry rather than duplicating them.
+      `AssetCandidate` already carry rather than duplicating them. Not
+      started - this is the one half of Phase 6 that render identity
+      didn't require, so it stayed out of scope when render identity
+      was pulled forward into Phase 5.
 
 ## Phase 7 - Budget gating beyond LLM calls
 
