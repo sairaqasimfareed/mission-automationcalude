@@ -48,6 +48,7 @@ class ProductionReadinessService:
             *self._render_blockers(job),
             *self._policy_blockers(job),
             *self._staleness_blockers(job),
+            *self._manual_audio_blockers(job),
         ]
 
         return ProductionReadinessReport(
@@ -282,6 +283,23 @@ class ProductionReadinessService:
                 recovery_action=f"Re-run the stage that produces '{record.artifact}'.",
             )
             for record in job.stale_artifacts
+        ]
+
+    def _manual_audio_blockers(self, job: VideoJob) -> list[Blocker]:
+        return [
+            Blocker(
+                code=BlockerCode.MANUAL_AUDIO_REQUIRED,
+                stage="production_audio",
+                severity=BlockerSeverity.BLOCKING,
+                message=(
+                    f"{requirement.requirement_type.value} requires a manually "
+                    f"supplied file: {requirement.reason}"
+                ),
+                affected_artifact=requirement.requirement_type.value,
+                recovery_action=requirement.instructions,
+            )
+            for requirement in job.manual_audio_requirements
+            if not requirement.fulfilled
         ]
 
     def _resolve_state(self, job: VideoJob, blockers: list[Blocker]) -> ReadinessState:

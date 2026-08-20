@@ -28,7 +28,11 @@ _SCENE_REPLACEMENT_DOWNSTREAM = (
 )
 
 _AUDIO_REGENERATION_DOWNSTREAM = (
-    "video_timeline",
+    # video_timeline is deliberately excluded: GenreTimelinePipelineService
+    # builds it purely from scenes/clips/genre_id - it embeds no audio
+    # data at all, so regenerating voice/music/SFX never actually makes
+    # an already-built timeline stale, only a render that already mixed
+    # the old audio into its output.
     "render_result",
 )
 

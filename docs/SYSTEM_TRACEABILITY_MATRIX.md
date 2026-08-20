@@ -42,6 +42,8 @@ functionality - see `docs/REMAINING_GAPS.md` for what to do about it.
 | Editing timeline | `VideoTimeline` | `MediaGenerationPipeline.run_timeline` → `GenreTimelinePipelineService` | `VideoJob.video_timeline` | Production Audio, "Build editing timeline" | `test_media_generation_pipeline.py` |
 | Background music | `AudioTrack` (BACKGROUND_MUSIC) | `MediaGenerationPipeline.run_music` → `MusicGenerationService` | `VideoJob.audio_timeline` | Production Audio, "Generate background music" | `test_media_generation_pipeline.py` |
 | Sound effects | `AudioTrack` (SOUND_EFFECT) | `MediaGenerationPipeline.run_sound_effects` → `SoundEffectGenerationService` | `VideoJob.audio_timeline` | Production Audio, "Generate sound effects" | `test_media_generation_pipeline.py` |
+| Generate all audio | `AudioGenerationSummary`, `AudioComponentResult`, `AudioComponentStatus` (`src/models/audio_generation_summary.py`) | `MediaGenerationPipeline.run_all_audio` | `VideoJob.voice_script_version` (binds voice to script version); summary itself is transient, not persisted | Production Audio, "Generate all audio" + last-run summary card | `test_media_generation_pipeline.py`, `test_production_audio_generation_gui.py` |
+| Manual audio requirement | `ManualAudioRequirement`, `ManualAudioRequirementType` (`src/models/manual_audio_requirement.py`) | recorded by `MediaGenerationPipeline.run_all_audio` when no provider is configured | `VideoJob.manual_audio_requirements` | surfaced via Quality Center's readiness card (`BlockerCode.MANUAL_AUDIO_REQUIRED`) - no GUI to mark one `fulfilled` yet | `test_media_generation_pipeline.py`, `test_production_readiness_service.py` |
 
 ## Approval
 

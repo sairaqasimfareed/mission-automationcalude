@@ -5,6 +5,51 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-08-20 - Phase 4: Unified production audio hardening
+
+Added `MediaGenerationPipeline.run_all_audio()`, coordinating voice,
+timeline, music, and sound-effect generation as one action: reuses
+whatever is already valid, regenerates whatever is missing or stale,
+and reports every component's outcome individually
+(`AudioGenerationSummary`/`AudioComponentResult`/`AudioComponentStatus`
+- REUSED/GENERATED/FAILED/SKIPPED/MANUAL_REQUIRED) instead of failing
+atomically on the first problem. Voice reuse is checked against a new
+`VideoJob.voice_script_version` field, set from
+`ScriptVersionHistory.current_version.version_number` whenever voice
+generation succeeds - so a script revision correctly forces voice to
+regenerate even though `run_revision` never touches `voice_status`
+directly. An unconfigured music/SFX provider now produces an explicit
+`ManualAudioRequirement` (`src/models/manual_audio_requirement.py`,
+deduplicated across repeat calls) instead of only a transient
+exception, surfacing as a `BLOCKING` blocker via
+`ProductionReadinessService`. Wired into Production Audio's GUI as a
+"Generate all audio" button plus a last-run summary card.
+
+Building the reuse-detection logic surfaced two real, pre-existing
+bugs that had nothing to do with Phase 4 directly but blocked it:
+`run_voice` called `attach_many(..., replace=False)`, which raises
+`ValueError` the second time voice is generated for a job that already
+has voice tracks - simply clicking "Generate voiceover" twice already
+crashed, before any of this phase's code existed. `run_music`/
+`run_sound_effects` had no duplicate-guard at all and would silently
+accumulate a second music track or duplicate SFX cues on a second
+call. Fixed by having all three replace their own prior output for the
+same scope instead of only ever appending. Also caught and fixed: an
+earlier version of Phase 3's invalidation matrix incorrectly marked
+`video_timeline` stale whenever audio was regenerated - `run_all_audio`
+calling the same job twice immediately exposed this (the timeline
+never got reused, since it was marked stale by the very audio stages
+that ran right after it was built). `GenreTimelinePipelineService`
+takes only `scenes`/`clips`/`genre_id` and embeds no audio data, so
+this was simply wrong; corrected in both `invalidation_service.py` and
+`docs/ARCHITECTURE.md`'s matrix table.
+
+Known gap: `ManualAudioRequirement.fulfilled`/`.provided_file` exist on
+the model and `ProductionReadinessService` already respects them, but
+nothing in the GUI sets them - a human who manually supplies a music
+file today has no way to clear the resulting blocker short of editing
+the project JSON directly.
+
 ## 2026-08-20 - Phase 3: Selective invalidation
 
 Added `InvalidationService` (`src/services/invalidation_service.py`)

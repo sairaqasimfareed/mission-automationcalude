@@ -2,9 +2,18 @@ from __future__ import annotations
 
 import pytest
 
+from src.models.audio_generation_summary import AudioComponentStatus
 from src.models.audio_track import AudioTrackType
+from src.models.editorial_critique import (
+    CriticFinding,
+    EditorialCritique,
+    FindingSeverity,
+)
+from src.models.generated_script import GeneratedScript, ScriptSegment
+from src.models.manual_audio_requirement import ManualAudioRequirementType
 from src.models.media_strategy import SceneSourceStatus, SceneSourceType, VoiceStatus
 from src.models.scene import Scene, SceneStatus
+from src.models.story_blueprint import StoryBeatType
 from src.models.video_clip import VideoClip, VideoClipStatus
 from src.models.video_job import VideoJob
 from src.models.voice_profile import VoiceProfile
@@ -25,6 +34,7 @@ from src.services.genre_voice_directive_generation_service import (
 )
 from src.services.media_generation_pipeline import MediaGenerationPipeline
 from src.services.music_generation_service import MusicGenerationService
+from src.services.script_version_service import ScriptVersionService
 from src.services.sound_effect_generation_service import SoundEffectGenerationService
 from src.services.voice_generation_service import VoiceGenerationService
 from src.services.voice_resolution_runtime import VoiceResolutionRuntimeFactory
@@ -244,3 +254,212 @@ def test_full_sequence_produces_a_multi_track_audio_timeline() -> None:
         AudioTrackType.BACKGROUND_MUSIC,
         AudioTrackType.SOUND_EFFECT,
     }
+
+
+def _generated_script() -> GeneratedScript:
+    return GeneratedScript(
+        topic="Test topic",
+        genre_id="genre.mystery",
+        target_duration_seconds=30,
+        segments=[
+            ScriptSegment(
+                segment_number=1,
+                start_seconds=0,
+                end_seconds=30,
+                narrative_function=StoryBeatType.HOOK,
+                narration="Something happens.",
+                tension_level=60,
+            )
+        ],
+        prompt_version="script_generation_prompt_v1.0.0",
+    )
+
+
+def test_run_all_audio_generates_every_component_from_scratch() -> None:
+    job = _job(_scene(1), _scene(2))
+    job.video_clips = [_clip(1), _clip(2)]
+    pipeline = _pipeline()
+
+    summary = pipeline.run_all_audio(job)
+
+    statuses = {result.component: result.status for result in summary.results}
+    assert statuses == {
+        "voice": AudioComponentStatus.GENERATED,
+        "timeline": AudioComponentStatus.GENERATED,
+        "music": AudioComponentStatus.GENERATED,
+        "sound_effects": AudioComponentStatus.GENERATED,
+    }
+    assert summary.all_succeeded
+
+
+def test_run_all_audio_reuses_a_still_valid_voiceover() -> None:
+    job = _job(_scene(1), _scene(2))
+    job.video_clips = [_clip(1), _clip(2)]
+    pipeline = _pipeline()
+    pipeline.run_voice(job)
+    voice_file_before = job.voice_file
+
+    summary = pipeline.run_all_audio(job)
+
+    voice_result = next(r for r in summary.results if r.component == "voice")
+    assert voice_result.status == AudioComponentStatus.REUSED
+    assert job.voice_file == voice_file_before
+
+
+def test_run_all_audio_reuses_everything_on_a_second_call() -> None:
+    job = _job(_scene(1), _scene(2))
+    job.video_clips = [_clip(1), _clip(2)]
+    pipeline = _pipeline()
+    pipeline.run_all_audio(job)
+
+    summary = pipeline.run_all_audio(job)
+
+    statuses = {result.status for result in summary.results}
+    assert statuses == {AudioComponentStatus.REUSED}
+
+
+def test_run_all_audio_regenerates_voice_after_a_script_revision() -> None:
+    job = _job(_scene(1), _scene(2))
+    job.video_clips = [_clip(1), _clip(2)]
+    pipeline = _pipeline()
+
+    version_service = ScriptVersionService()
+    job.script_version_history = version_service.start_history(
+        topic="Test topic", script=_generated_script()
+    )
+
+    pipeline.run_voice(job)
+    assert job.voice_script_version == 1
+
+    critique = EditorialCritique(
+        topic="Test topic",
+        prompt_version="critique_prompt_v1.0.0",
+        dimension_scores={"narrative_coherence": 50},
+        findings=[
+            CriticFinding(
+                dimension="narrative_coherence",
+                severity=FindingSeverity.MAJOR,
+                segment_number=1,
+                problem="Something is wrong.",
+                reason="It matters.",
+                recommended_correction="Fix it.",
+            )
+        ],
+    )
+    job.script_version_history = version_service.add_revision(
+        history=job.script_version_history,
+        revised_script=_generated_script(),
+        critique=critique,
+    )
+
+    summary = pipeline.run_all_audio(job)
+
+    voice_result = next(r for r in summary.results if r.component == "voice")
+    assert voice_result.status == AudioComponentStatus.GENERATED
+    assert job.voice_script_version == 2
+
+
+def test_run_all_audio_records_a_manual_requirement_when_no_music_provider() -> None:
+    job = _job(_scene(1))
+    job.video_clips = [_clip(1)]
+    pipeline = _pipeline(with_music=False)
+
+    summary = pipeline.run_all_audio(job)
+
+    music_result = next(r for r in summary.results if r.component == "music")
+    assert music_result.status == AudioComponentStatus.MANUAL_REQUIRED
+    assert len(job.manual_audio_requirements) == 1
+    assert (
+        job.manual_audio_requirements[0].requirement_type
+        == ManualAudioRequirementType.MUSIC
+    )
+    assert not summary.all_succeeded
+
+
+def test_run_all_audio_does_not_duplicate_a_manual_requirement_on_repeat_calls() -> (
+    None
+):
+    job = _job(_scene(1))
+    job.video_clips = [_clip(1)]
+    pipeline = _pipeline(with_music=False)
+
+    pipeline.run_all_audio(job)
+    pipeline.run_all_audio(job)
+
+    assert len(job.manual_audio_requirements) == 1
+
+
+def test_run_voice_twice_replaces_rather_than_duplicates_tracks() -> None:
+    job = _job(_scene(1), _scene(2))
+    job.video_clips = [_clip(1), _clip(2)]
+    pipeline = _pipeline()
+
+    pipeline.run_voice(job)
+    pipeline.run_voice(job)
+
+    assert job.audio_timeline is not None
+    voice_tracks = [
+        track
+        for track in job.audio_timeline.tracks
+        if track.track_type == AudioTrackType.VOICEOVER
+    ]
+    assert len(voice_tracks) == 2  # one per scene, not four
+
+
+def test_run_music_twice_replaces_rather_than_duplicates_the_track() -> None:
+    job = _job(_scene(1), _scene(2))
+    job.video_clips = [_clip(1), _clip(2)]
+    pipeline = _pipeline()
+    pipeline.run_timeline(job)
+
+    pipeline.run_music(job)
+    pipeline.run_music(job)
+
+    assert job.audio_timeline is not None
+    music_tracks = [
+        track
+        for track in job.audio_timeline.tracks
+        if track.track_type == AudioTrackType.BACKGROUND_MUSIC
+    ]
+    assert len(music_tracks) == 1
+
+
+def test_run_sound_effects_twice_replaces_rather_than_duplicates_cues() -> None:
+    job = _job(_scene(1), _scene(2))
+    job.video_clips = [_clip(1), _clip(2)]
+    pipeline = _pipeline()
+    pipeline.run_timeline(job)
+
+    pipeline.run_sound_effects(job)
+    first_count = len(
+        [
+            t
+            for t in job.audio_timeline.tracks  # type: ignore[union-attr]
+            if t.track_type == AudioTrackType.SOUND_EFFECT
+        ]
+    )
+    pipeline.run_sound_effects(job)
+    second_count = len(
+        [
+            t
+            for t in job.audio_timeline.tracks  # type: ignore[union-attr]
+            if t.track_type == AudioTrackType.SOUND_EFFECT
+        ]
+    )
+
+    assert first_count > 0
+    assert second_count == first_count
+
+
+def test_run_all_audio_reports_failures_individually_without_raising() -> None:
+    job = _job()  # no scenes, no video clips
+    pipeline = _pipeline()
+
+    summary = pipeline.run_all_audio(job)  # must not raise
+
+    assert len(summary.results) == 4
+    voice_result = next(r for r in summary.results if r.component == "voice")
+    timeline_result = next(r for r in summary.results if r.component == "timeline")
+    assert voice_result.status == AudioComponentStatus.FAILED
+    assert timeline_result.status == AudioComponentStatus.FAILED
+    assert not summary.all_succeeded

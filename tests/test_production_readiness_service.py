@@ -9,6 +9,10 @@ from src.models.asset_state import (
 )
 from src.models.audio_timeline import AudioTimeline
 from src.models.blocker import BlockerCode, BlockerSeverity
+from src.models.manual_audio_requirement import (
+    ManualAudioRequirement,
+    ManualAudioRequirementType,
+)
 from src.models.media_strategy import SceneSourceType, VoiceStatus
 from src.models.production_readiness import ReadinessState
 from src.models.render_result import RenderResult, RenderStatus
@@ -302,3 +306,46 @@ def test_job_with_a_successful_render_is_ready_for_final_export() -> None:
     report = service.evaluate(job)
 
     assert report.state == ReadinessState.READY_FOR_FINAL_EXPORT
+
+
+def test_unfulfilled_manual_audio_requirement_is_blocking() -> None:
+    service = ProductionReadinessService()
+    job = _job(
+        manual_audio_requirements=[
+            ManualAudioRequirement(
+                requirement_type=ManualAudioRequirementType.MUSIC,
+                reason="No music provider is configured.",
+                instructions="Configure a music provider.",
+            )
+        ]
+    )
+
+    report = service.evaluate(job)
+
+    audio_blockers = [
+        b for b in report.blockers if b.code == BlockerCode.MANUAL_AUDIO_REQUIRED
+    ]
+    assert len(audio_blockers) == 1
+    assert audio_blockers[0].severity == BlockerSeverity.BLOCKING
+    assert audio_blockers[0].affected_artifact == "music"
+    assert report.state == ReadinessState.BLOCKED
+
+
+def test_fulfilled_manual_audio_requirement_is_not_blocking() -> None:
+    service = ProductionReadinessService()
+    job = _job(
+        manual_audio_requirements=[
+            ManualAudioRequirement(
+                requirement_type=ManualAudioRequirementType.MUSIC,
+                reason="No music provider is configured.",
+                instructions="Configure a music provider.",
+                fulfilled=True,
+                provided_file="music.mp3",
+            )
+        ]
+    )
+
+    report = service.evaluate(job)
+
+    codes = {b.code for b in report.blockers}
+    assert BlockerCode.MANUAL_AUDIO_REQUIRED not in codes

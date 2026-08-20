@@ -22,6 +22,7 @@ from src.models.generated_script import GeneratedScript
 from src.models.hook import HookCandidate, HookEvaluation
 from src.models.information_reveal_map import InformationRevealMap
 from src.models.invalidation import StaleArtifact
+from src.models.manual_audio_requirement import ManualAudioRequirement
 from src.models.media_strategy import (
     SceneSourceType,
     VisualStrategy,
@@ -90,6 +91,11 @@ class VideoJob(MissionBaseModel):
     voice_status: VoiceStatus = VoiceStatus.PENDING
     voice_file: str | None = None
     voice_provider: str | None = None
+    voice_script_version: int | None = None
+
+    manual_audio_requirements: list[ManualAudioRequirement] = Field(
+        default_factory=list
+    )
 
     research: ResearchResult | None = None
     script: Script | None = None

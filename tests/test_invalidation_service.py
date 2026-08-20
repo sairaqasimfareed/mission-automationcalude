@@ -140,15 +140,28 @@ def test_on_scene_replaced_never_flags_video_clips() -> None:
     assert all(r.artifact != "video_clips" for r in records)
 
 
-def test_on_audio_regenerated_marks_video_timeline_and_render_result() -> None:
+def test_on_audio_regenerated_marks_render_result() -> None:
     job = _job_with_timeline(render_result=RenderResult(render_engine="ffmpeg"))
     service = InvalidationService()
 
     records = service.on_audio_regenerated(job)
 
     artifacts = {r.artifact for r in records}
-    assert artifacts == {"video_timeline", "render_result"}
+    assert artifacts == {"render_result"}
     assert all(r.triggered_by == "audio_regeneration" for r in records)
+
+
+def test_on_audio_regenerated_never_flags_video_timeline() -> None:
+    # video_timeline is deliberately excluded: GenreTimelinePipelineService
+    # builds it purely from scenes/clips/genre_id and embeds no audio
+    # data, so regenerating audio never actually makes an already-built
+    # timeline stale.
+    job = _job_with_timeline()
+    service = InvalidationService()
+
+    records = service.on_audio_regenerated(job)
+
+    assert all(r.artifact != "video_timeline" for r in records)
 
 
 def test_on_audio_regenerated_never_flags_audio_timeline_itself() -> None:

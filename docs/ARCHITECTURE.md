@@ -27,7 +27,7 @@ no longer reflect current truth":
 |---|---|---|
 | Script changed | `scenes`, `scene_asset_states`, `video_clips`, `audio_timeline`, `video_timeline`, `render_result` | `ContentIntelligencePipeline.run_revision` |
 | Scene replaced | `video_timeline`, `render_result` | `BulkStockAssignmentService.assign`, `BulkClipIngestionService.ingest` (per successfully-reassigned scene) |
-| Audio regenerated | `video_timeline`, `render_result` | `MediaGenerationPipeline.run_voice`/`.run_music`/`.run_sound_effects` |
+| Audio regenerated | `render_result` only | `MediaGenerationPipeline.run_voice`/`.run_music`/`.run_sound_effects` |
 
 Two things keep this matrix honest rather than just aspirational:
 
@@ -44,6 +44,17 @@ Two things keep this matrix honest rather than just aspirational:
 - **`audio_timeline` is excluded from the audio-regeneration row** for
   the same reason: `run_voice`/`.run_music`/`.run_sound_effects` write
   it directly as part of the same call.
+- **`video_timeline` is excluded from the audio-regeneration row.**
+  `GenreTimelinePipelineService.build()` takes only `scenes`, `clips`,
+  and `genre_id` - it embeds no audio data at all
+  (`VideoTimelineItem` carries a `clip: VideoClip`, never an audio
+  reference), so regenerating voice/music/SFX never actually makes an
+  already-built timeline stale. Only `render_result` (which does mix
+  the audio in) is affected. An earlier version of this matrix marked
+  `video_timeline` stale here too; `MediaGenerationPipeline.run_all_audio`'s
+  reuse-detection surfaced the bug immediately - a second call marked
+  a just-built timeline stale as a side effect of the music/SFX stages
+  that ran after it, forcing an unnecessary rebuild every time.
 
 Marking is non-destructive: a stale artifact stays exactly where it
 was (`VideoJob.stale_artifacts` records *that* it's stale and *why*,

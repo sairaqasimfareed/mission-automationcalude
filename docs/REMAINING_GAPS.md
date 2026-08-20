@@ -112,16 +112,45 @@ stop the pipeline," which is what this phase delivers.
 
 ## Phase 4 - Unified production audio hardening
 
-- [ ] **"Generate All Audio"** - one action coordinating
-      `MediaGenerationPipeline.run_voice/run_music/run_sound_effects`,
-      reusing valid READY artifacts, reporting failed/missing components
-      individually rather than failing atomically.
-- [ ] **Bind narration to the exact approved script identity/version**
-      (needs Phase 1's decision history and the script version already
-      on `ScriptVersionHistory`).
-- [ ] **`ManualAudioRequirement`** model for audio a human must supply
-      manually, so it's an explicit requirement rather than an ambiguous
-      failure.
+- [x] **"Generate All Audio"** - `MediaGenerationPipeline.run_all_audio()`
+      coordinates voice/timeline/music/SFX as one action, reusing
+      whatever is still valid and reporting each component's outcome
+      individually (`AudioGenerationSummary`) rather than failing
+      atomically. Wired into Production Audio's GUI.
+- [x] **Bind narration to the exact approved script identity/version.**
+      `VideoJob.voice_script_version` is set from
+      `ScriptVersionHistory.current_version.version_number` whenever
+      `run_voice` succeeds; `run_all_audio`'s voice-reuse check compares
+      it against the job's *current* version, so a script revision
+      correctly forces a voice regeneration even though `run_revision`
+      doesn't touch `job.voice_status` directly.
+- [x] **`ManualAudioRequirement`** (`src/models/manual_audio_requirement.py`)
+      - an unconfigured music/SFX provider now produces an explicit,
+      persisted requirement (deduplicated across repeat calls) instead
+      of only a transient exception message, and unfulfilled ones
+      surface as `BLOCKING` blockers via `ProductionReadinessService`.
+      **Not implemented:** any GUI affordance to mark a requirement
+      `fulfilled` with a `provided_file` - the model and readiness
+      wiring exist, but nothing in the app sets those fields today, so
+      a manually-supplied file has no way to actually clear the
+      blocker short of editing the project JSON by hand.
+
+**Bugs found and fixed while building this** (not part of the original
+Phase 4 scope, but directly blocked it): `run_voice` called
+`VoiceTimelineService.attach_many(..., replace=False)`, which raises
+`ValueError` if called a second time on a job that already has voice
+tracks - meaning simply clicking "Generate voiceover" twice already
+crashed, before any Phase 4 code existed. `run_music`/
+`run_sound_effects` had no duplicate-guard at all and would silently
+accumulate a second music track / duplicate SFX cues on a second call.
+Fixed by making all three replace their own prior output for the same
+scope (per-scene for voice, whole-timeline for music/SFX) instead of
+only ever appending. Also: an earlier version of the Phase 3
+invalidation matrix incorrectly marked `video_timeline` stale on audio
+regeneration; `run_all_audio`'s reuse-detection surfaced this
+immediately (a second call would never reuse the timeline). Fixed in
+`docs/ARCHITECTURE.md`'s matrix and `invalidation_service.py` - see
+that file's audio-regeneration row.
 
 ## Phase 5 - Final Preview
 

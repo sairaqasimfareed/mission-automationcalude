@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QApplication, QPushButton  # noqa: E402
 
 from src.desktop.job_store import InMemoryJobStore  # noqa: E402
 from src.desktop.views.production_audio_view import ProductionAudioView  # noqa: E402
+from src.models.audio_generation_summary import AudioComponentStatus  # noqa: E402
 from src.models.media_strategy import (  # noqa: E402
     SceneSourceStatus,
     SceneSourceType,
@@ -259,3 +260,67 @@ def test_unknown_job_id_does_not_crash_generation_handlers(qapp: QApplication) -
     view.set_job(uuid4())
 
     view._handle_run_voice()  # must not raise
+
+
+def test_all_audio_button_enabled_only_with_scenes_and_clips(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job(with_scenes=True, with_clips=False)
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    assert _button(view, "Generate all audio").isEnabled() is False
+
+
+def test_running_all_audio_generates_everything_in_one_action(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job(with_scenes=True, with_clips=True)
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view._handle_run_all_audio()
+
+    assert job.video_timeline is not None
+    assert job.audio_timeline is not None
+    assert len(job.audio_timeline.tracks) >= 3
+    assert not job.errors
+    assert view._last_audio_summary is not None
+    assert view._last_audio_summary.all_succeeded
+
+    view.refresh(job)  # must not raise with a summary now present
+
+
+def test_running_all_audio_twice_reuses_on_the_second_call(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job(with_scenes=True, with_clips=True)
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view._handle_run_all_audio()
+    view._handle_run_all_audio()
+
+    assert view._last_audio_summary is not None
+    statuses = {r.status for r in view._last_audio_summary.results}
+    assert statuses == {AudioComponentStatus.REUSED}
+
+
+def test_unknown_job_id_does_not_crash_run_all_audio(qapp: QApplication) -> None:
+    job_store = InMemoryJobStore()
+    view = _view(job_store)
+    view.set_job(uuid4())
+
+    view._handle_run_all_audio()  # must not raise

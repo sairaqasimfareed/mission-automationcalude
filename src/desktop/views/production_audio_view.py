@@ -7,12 +7,32 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFrame, QMessageBox, QScrollArea, QVBoxLayout, QWidget
 
 from src.desktop.job_store import JobStore
-from src.desktop.widgets import badge, button, card, muted, small_muted, subheading
+from src.desktop.widgets import (
+    badge,
+    button,
+    card,
+    muted,
+    small_muted,
+    status_label,
+    subheading,
+)
+from src.models.audio_generation_summary import (
+    AudioComponentStatus,
+    AudioGenerationSummary,
+)
 from src.models.audio_track import AudioTrack, AudioTrackType
 from src.models.video_job import VideoJob
 from src.services.media_generation_pipeline import MediaGenerationPipeline
 
 _LEFT = Qt.AlignmentFlag.AlignLeft
+
+_COMPONENT_STATUS_ROLE = {
+    AudioComponentStatus.REUSED: "success",
+    AudioComponentStatus.GENERATED: "success",
+    AudioComponentStatus.SKIPPED: "warning",
+    AudioComponentStatus.MANUAL_REQUIRED: "warning",
+    AudioComponentStatus.FAILED: "error",
+}
 
 
 class ProductionAudioView(QWidget):
@@ -39,6 +59,7 @@ class ProductionAudioView(QWidget):
         self._media_generation_pipeline = media_generation_pipeline
         self._on_change = on_change
         self._job_id: UUID | None = None
+        self._last_audio_summary: AudioGenerationSummary | None = None
 
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -71,6 +92,7 @@ class ProductionAudioView(QWidget):
                 widget.deleteLater()
 
         self._build_generation_card(job)
+        self._build_summary_card()
         self._build_voice_card(job)
         self._build_timeline_card(job)
 
@@ -112,6 +134,37 @@ class ProductionAudioView(QWidget):
         sound_effect_button.setEnabled(job.video_timeline is not None)
         sound_effect_button.clicked.connect(self._handle_run_sound_effects)
         layout.addWidget(sound_effect_button, alignment=_LEFT)
+
+        layout.addWidget(
+            small_muted(
+                "Or coordinate all four in one action - reuses whatever is "
+                "already valid and reports each component's outcome "
+                "individually rather than stopping at the first problem."
+            )
+        )
+
+        all_audio_button = button(
+            "Generate all audio", variant="primary", icon_name="audio"
+        )
+        all_audio_button.setEnabled(bool(job.scenes) and bool(job.video_clips))
+        all_audio_button.clicked.connect(self._handle_run_all_audio)
+        layout.addWidget(all_audio_button, alignment=_LEFT)
+
+        self._layout.addWidget(frame)
+
+    def _build_summary_card(self) -> None:
+        summary = self._last_audio_summary
+
+        if summary is None:
+            return
+
+        frame, layout = card("Last 'Generate all audio' run", icon_name="audio")
+
+        for result in summary.results:
+            layout.addWidget(badge(f"{result.component} · {result.status.value}"))
+            layout.addWidget(
+                status_label(result.detail, role=_COMPONENT_STATUS_ROLE[result.status])
+            )
 
         self._layout.addWidget(frame)
 
@@ -238,6 +291,20 @@ class ProductionAudioView(QWidget):
             self._media_generation_pipeline.run_sound_effects,
             "Sound effect generation",
         )
+
+    def _handle_run_all_audio(self) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        summary = self._media_generation_pipeline.run_all_audio(job)
+        self._last_audio_summary = summary
+
+        for result in summary.failed_components:
+            job.errors.append(f"{result.component} generation failed: {result.detail}")
+
+        self._on_change()
 
     def _run_stage(self, stage: Callable[[VideoJob], VideoJob], label: str) -> None:
         job = self._current_job()
