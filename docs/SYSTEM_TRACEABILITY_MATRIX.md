@@ -64,6 +64,7 @@ functionality - see `docs/REMAINING_GAPS.md` for what to do about it.
 | Capability | Model | Service | Persistence | GUI | Tests |
 |---|---|---|---|---|---|
 | Production readiness | `Blocker`, `BlockerCode`, `BlockerSeverity`, `ProductionReadinessReport`, `ReadinessState` (`src/models/blocker.py`, `src/models/production_readiness.py`) | `ProductionReadinessService` (read-only, recomputed each call - not persisted) | - (derived fresh from `VideoJob` state) | Quality Center, "Production readiness" card | `test_production_readiness_service.py`, `test_quality_center_readiness_gui.py` |
+| Selective invalidation | `StaleArtifact` (`src/models/invalidation.py`) | `InvalidationService`, called from `ContentIntelligencePipeline.run_revision`, `MediaGenerationPipeline.run_voice/.run_music/.run_sound_effects`, `BulkStockAssignmentService`, `BulkClipIngestionService` | `VideoJob.stale_artifacts` | Quality Center, "Production readiness" card (surfaced as `BlockerCode.ARTIFACT_STALE`) | `test_invalidation_service.py` |
 
 ## Cost control
 

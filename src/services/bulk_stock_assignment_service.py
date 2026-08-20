@@ -8,6 +8,7 @@ from src.models.bulk_stock_assignment import (
 )
 from src.models.scene import Scene
 from src.models.video_job import VideoJob
+from src.services.invalidation_service import InvalidationService
 from src.services.scene_asset_video_clip_builder_service import (
     SceneAssetVideoClipBuilderService,
 )
@@ -30,11 +31,13 @@ class BulkStockAssignmentService:
         *,
         asset_workflow_service: SceneAssetWorkflowService,
         video_clip_builder_service: SceneAssetVideoClipBuilderService | None = None,
+        invalidation_service: InvalidationService | None = None,
     ) -> None:
         self.asset_workflow_service = asset_workflow_service
         self.video_clip_builder_service = (
             video_clip_builder_service or SceneAssetVideoClipBuilderService()
         )
+        self.invalidation_service = invalidation_service or InvalidationService()
 
     def assign(
         self, *, job: VideoJob, scene_numbers: list[int]
@@ -63,6 +66,14 @@ class BulkStockAssignmentService:
         job.video_clips = self.video_clip_builder_service.build_clips(
             scenes=job.scenes, states=job.scene_asset_states
         )
+        self.invalidation_service.clear_stale(job, "scene_asset_states")
+        self.invalidation_service.clear_stale(job, "video_clips")
+
+        for entry in entries:
+            if entry.status == BulkStockAssignmentEntryStatus.ASSIGNED:
+                self.invalidation_service.on_scene_replaced(
+                    job, scene_number=entry.scene_number
+                )
 
         return BulkStockAssignmentResult(entries=entries)
 

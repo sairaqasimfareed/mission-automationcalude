@@ -11,6 +11,7 @@ from src.models.bulk_clip_ingestion import (
 )
 from src.models.scene import Scene
 from src.models.video_job import VideoJob
+from src.services.invalidation_service import InvalidationService
 from src.services.scene_asset_video_clip_builder_service import (
     SceneAssetVideoClipBuilderService,
 )
@@ -39,11 +40,13 @@ class BulkClipIngestionService:
         *,
         asset_workflow_service: SceneAssetWorkflowService,
         video_clip_builder_service: SceneAssetVideoClipBuilderService | None = None,
+        invalidation_service: InvalidationService | None = None,
     ) -> None:
         self.asset_workflow_service = asset_workflow_service
         self.video_clip_builder_service = (
             video_clip_builder_service or SceneAssetVideoClipBuilderService()
         )
+        self.invalidation_service = invalidation_service or InvalidationService()
 
     def ingest(
         self, *, job: VideoJob, source_directory: Path
@@ -78,6 +81,17 @@ class BulkClipIngestionService:
         job.video_clips = self.video_clip_builder_service.build_clips(
             scenes=job.scenes, states=job.scene_asset_states
         )
+        self.invalidation_service.clear_stale(job, "scene_asset_states")
+        self.invalidation_service.clear_stale(job, "video_clips")
+
+        for entry in entries:
+            if (
+                entry.status == BulkClipIngestionEntryStatus.ASSIGNED
+                and entry.scene_number is not None
+            ):
+                self.invalidation_service.on_scene_replaced(
+                    job, scene_number=entry.scene_number
+                )
 
         ready_scene_numbers = {
             state.scene_number for state in job.scene_asset_states if state.is_ready

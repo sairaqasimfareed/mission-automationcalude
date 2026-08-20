@@ -5,6 +5,44 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-08-20 - Phase 3: Selective invalidation
+
+Added `InvalidationService` (`src/services/invalidation_service.py`)
+and `StaleArtifact` (`src/models/invalidation.py`, on the new
+`VideoJob.stale_artifacts` field), formalizing the three dependency
+rows the master prompt names explicitly - script change, scene
+replacement, audio regeneration - as an actual lookup table (see the
+new invalidation-matrix section in `docs/ARCHITECTURE.md`), not just a
+description. Wired into the real trigger points:
+`ContentIntelligencePipeline.run_revision` (script change),
+`BulkStockAssignmentService`/`BulkClipIngestionService` (scene
+replacement), and `MediaGenerationPipeline.run_voice/.run_music/
+.run_sound_effects` (audio regeneration). Marking is non-destructive
+(same append-only philosophy as `content_decisions`/
+`script_version_history`); clearing is explicit, wired at every stage
+that actually regenerates one of the affected fields
+(`run_scene_planning` for `scenes`, `run_timeline` for
+`video_timeline`, `run_voice` for `audio_timeline`, the two bulk
+services for `scene_asset_states`/`video_clips`). Staleness feeds
+`ProductionReadinessService` directly as a new `BLOCKING`
+`BlockerCode.ARTIFACT_STALE`, so it's visible in Quality Center without
+a second GUI surface.
+
+Two matrix subtleties worth naming: `video_clips` is deliberately
+excluded from the scene-replacement row (rebuilt synchronously in the
+same call) and `audio_timeline` from the audio-regeneration row (same
+reason) - marking either stale would have been actively wrong, not
+just redundant.
+
+Deliberately incomplete: `render_result` staleness is marked but never
+cleared (nothing in the render pipeline calls `clear_stale()` on a
+fresh render - touching that subsystem was judged out of scope for
+this pass), and `AssetPipelineStage` (the render pipeline's own,
+first-run asset resolution stage) doesn't call `InvalidationService`
+at all, on the judgment that a fresh pipeline run rarely has anything
+downstream yet to invalidate - untested, so treated as a judgment call
+rather than a proven-safe one. Both tracked in `docs/REMAINING_GAPS.md`.
+
 ## 2026-08-20 - Phase 2: Readiness service & typed blockers
 
 Added a typed `Blocker` model (`src/models/blocker.py`: `code`,

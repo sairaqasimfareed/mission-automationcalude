@@ -28,6 +28,7 @@ from src.services.hook_generation_service import HookGenerationService
 from src.services.information_reveal_planning_service import (
     InformationRevealPlanningService,
 )
+from src.services.invalidation_service import InvalidationService
 from src.services.llm.llm_service import LLMService
 from src.services.narrative_compression_service import NarrativeCompressionService
 from src.services.packaging_hypothesis_service import PackagingHypothesisService
@@ -164,6 +165,7 @@ class ContentIntelligencePipeline:
         )
         self.continuity_validation_service = ContinuityValidationService()
         self.approval_gate_service = ApprovalGateService()
+        self.invalidation_service = InvalidationService()
 
     def resolve_editorial_profile(self, job: VideoJob) -> EditorialProfile:
         """
@@ -561,6 +563,8 @@ class ContentIntelligencePipeline:
         job.editorial_critique = None
         job.script_quality_report = None
 
+        self.invalidation_service.on_script_changed(job)
+
         return job
 
     def run_packaging_hypothesis(self, job: VideoJob) -> VideoJob:
@@ -609,6 +613,8 @@ class ContentIntelligencePipeline:
             job.generated_script,
             editorial_profile,
         )
+
+        self.invalidation_service.clear_stale(job, "scenes")
 
         return job
 

@@ -11,6 +11,7 @@ from src.services.genre_timeline_pipeline_service import GenreTimelinePipelineSe
 from src.services.genre_voice_directive_generation_service import (
     GenreVoiceDirectiveGenerationService,
 )
+from src.services.invalidation_service import InvalidationService
 from src.services.music_generation_service import MusicGenerationService
 from src.services.sound_effect_generation_service import SoundEffectGenerationService
 from src.services.voice_generation_service import VoiceGenerationService
@@ -49,6 +50,7 @@ class MediaGenerationPipeline:
         genre_timeline_service: GenreTimelinePipelineService,
         music_generation_service: MusicGenerationService | None = None,
         sound_effect_generation_service: SoundEffectGenerationService | None = None,
+        invalidation_service: InvalidationService | None = None,
     ) -> None:
         self.voice_directive_generation_service = voice_directive_generation_service
         self.voice_resolution_runtime = voice_resolution_runtime
@@ -57,6 +59,7 @@ class MediaGenerationPipeline:
         self.genre_timeline_service = genre_timeline_service
         self.music_generation_service = music_generation_service
         self.sound_effect_generation_service = sound_effect_generation_service
+        self.invalidation_service = invalidation_service or InvalidationService()
 
     def run_voice(self, job: VideoJob) -> VideoJob:
         """Stage 1: generate narration for every planned scene."""
@@ -108,6 +111,11 @@ class MediaGenerationPipeline:
         job.voice_provider = self._single_provider(results)
         job.voice_status = VoiceStatus.READY
 
+        self.invalidation_service.clear_stale(job, "audio_timeline")
+        self.invalidation_service.on_audio_regenerated(
+            job, reason="Voice narration was regenerated."
+        )
+
         return job
 
     def run_timeline(self, job: VideoJob) -> VideoJob:
@@ -128,6 +136,8 @@ class MediaGenerationPipeline:
             genre_id=job.genre_id,
         )
         job.video_timeline = result.timeline
+
+        self.invalidation_service.clear_stale(job, "video_timeline")
 
         return job
 
@@ -169,6 +179,10 @@ class MediaGenerationPipeline:
         audio_timeline = job.audio_timeline or AudioTimeline()
         audio_timeline.tracks.append(result.audio_track)
         job.audio_timeline = audio_timeline
+
+        self.invalidation_service.on_audio_regenerated(
+            job, reason="Background music was regenerated."
+        )
 
         return job
 
@@ -230,6 +244,10 @@ class MediaGenerationPipeline:
             raise RuntimeError(
                 "This genre has no sound effects configured for any scene."
             )
+
+        self.invalidation_service.on_audio_regenerated(
+            job, reason="Sound effects were regenerated."
+        )
 
         return job
 

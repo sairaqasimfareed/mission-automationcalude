@@ -29,6 +29,7 @@ class BlockerCode(str, Enum):
     RENDER_NOT_STARTED = "render_not_started"
     RENDER_FAILED = "render_failed"
     POLICY_NOT_UPLOAD_READY = "policy_not_upload_ready"
+    ARTIFACT_STALE = "artifact_stale"
 
 
 class Blocker(MissionBaseModel):

@@ -75,12 +75,40 @@ stop the pipeline," which is what this phase delivers.
 
 ## Phase 3 - Selective invalidation
 
-- [ ] **Formalize the invalidation matrix** (in both code and
+- [x] **Formalize the invalidation matrix** (in both code and
       `docs/ARCHITECTURE.md`) for: script change, scene replacement,
       audio regeneration - the three examples in the master prompt.
-- [ ] **Extend `ScriptVersionService`'s pattern** (or a sibling service)
-      to scene plan / asset / audio / timeline / render invalidation.
-- [ ] Regression tests per dependency path.
+      `InvalidationService` (`src/services/invalidation_service.py`),
+      matrix documented in `docs/ARCHITECTURE.md`.
+- [x] **Extend the pattern to scene plan / asset / audio / timeline /
+      render.** Wired into `ContentIntelligencePipeline.run_revision`
+      (script change), `BulkStockAssignmentService`/
+      `BulkClipIngestionService` (scene replacement), and
+      `MediaGenerationPipeline.run_voice/.run_music/.run_sound_effects`
+      (audio regeneration). `StaleArtifact` records feed
+      `ProductionReadinessService` as `BLOCKING` blockers, so staleness
+      is visible in Quality Center without a separate GUI surface.
+- [x] Regression tests per dependency path. `tests/test_invalidation_service.py`
+      (10 tests: one per trigger's marking behavior, the `video_clips`/
+      `audio_timeline` same-call exclusions, no-op/dedup cases,
+      `is_stale`/`clear_stale`).
+- [ ] **`render_result` staleness is never cleared.** Every other
+      wired field (`scenes`, `scene_asset_states`, `video_clips`,
+      `video_timeline`, `audio_timeline`) has a `clear_stale()` call at
+      the point it's regenerated; the render pipeline
+      (`RenderOrchestratorService` and friends) does not, so a
+      `render_result` marked stale by a scene replacement or audio
+      regeneration stays flagged stale even after a successful
+      re-render. Deliberately deferred - the render pipeline is the
+      one subsystem with real checkpoint/resume machinery and higher-
+      risk to touch without a focused pass of its own.
+- [ ] **`AssetPipelineStage` (the render pipeline's own asset-
+      resolution stage, `src/pipeline/asset_stage.py`) does not call
+      `InvalidationService`.** It's the *initial* asset-resolution
+      path for a fresh render run, not a "replace an existing scene"
+      path, so in practice it rarely has anything downstream to
+      invalidate yet - but this hasn't been verified with a test, and
+      the exclusion is a judgment call, not a proven-safe one.
 
 ## Phase 4 - Unified production audio hardening
 

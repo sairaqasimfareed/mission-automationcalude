@@ -47,6 +47,7 @@ class ProductionReadinessService:
             *self._audio_blockers(job),
             *self._render_blockers(job),
             *self._policy_blockers(job),
+            *self._staleness_blockers(job),
         ]
 
         return ProductionReadinessReport(
@@ -269,6 +270,19 @@ class ProductionReadinessService:
             ]
 
         return []
+
+    def _staleness_blockers(self, job: VideoJob) -> list[Blocker]:
+        return [
+            Blocker(
+                code=BlockerCode.ARTIFACT_STALE,
+                stage=record.triggered_by,
+                severity=BlockerSeverity.BLOCKING,
+                message=f"'{record.artifact}' is stale: {record.reason}",
+                affected_artifact=record.artifact,
+                recovery_action=f"Re-run the stage that produces '{record.artifact}'.",
+            )
+            for record in job.stale_artifacts
+        ]
 
     def _resolve_state(self, job: VideoJob, blockers: list[Blocker]) -> ReadinessState:
         blocking = [b for b in blockers if b.severity == BlockerSeverity.BLOCKING]

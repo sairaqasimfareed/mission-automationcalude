@@ -81,6 +81,14 @@ resume point on restart, verified by
 implementation the content-intelligence and audio pipelines should
 eventually match.
 
+**Known Phase 3 gap:** when a scene is replaced or audio is
+regenerated after a render already exists, `InvalidationService` marks
+`VideoJob.render_result` stale (surfaced as a `BLOCKING` blocker in
+Quality Center) - but nothing in the render pipeline calls
+`clear_stale()` when a fresh render completes, so a re-render doesn't
+actually clear that flag. See `docs/ARCHITECTURE.md`'s invalidation
+matrix section and `docs/REMAINING_GAPS.md` Phase 3.
+
 ## Final preview / export
 
 **Current behavior:** No formal final-preview stage exists yet (see

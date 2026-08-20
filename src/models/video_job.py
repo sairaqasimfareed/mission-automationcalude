@@ -21,6 +21,7 @@ from src.models.enums import (
 from src.models.generated_script import GeneratedScript
 from src.models.hook import HookCandidate, HookEvaluation
 from src.models.information_reveal_map import InformationRevealMap
+from src.models.invalidation import StaleArtifact
 from src.models.media_strategy import (
     SceneSourceType,
     VisualStrategy,
@@ -120,6 +121,7 @@ class VideoJob(MissionBaseModel):
     continuity_validation: ContinuityValidationResult | None = None
 
     content_decisions: list[ContentDecisionRecord] = Field(default_factory=list)
+    stale_artifacts: list[StaleArtifact] = Field(default_factory=list)
 
     scenes: list[Scene] = Field(default_factory=list)
     scene_asset_states: list[SceneAssetState] = Field(default_factory=list)
