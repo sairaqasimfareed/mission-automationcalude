@@ -4,6 +4,7 @@ from enum import Enum
 
 from pydantic import Field, model_validator
 
+from src.models.asset_provenance import AssetQCStatus
 from src.models.base import MissionBaseModel
 from src.models.media_strategy import (
     SceneSourceStatus,
@@ -40,6 +41,14 @@ class VideoClip(MissionBaseModel):
 
     source_status: SceneSourceStatus = SceneSourceStatus.PENDING
     status: VideoClipStatus = VideoClipStatus.PENDING
+
+    # Provenance: every other field the production-hardening spec asks
+    # for (asset id, created_at, provider, source) already exists via
+    # MissionBaseModel.id/.created_at plus this model's own provider/
+    # source_type fields - these three are the genuinely missing ones.
+    scene_id: str | None = None
+    checksum: str | None = None
+    qc_status: AssetQCStatus = AssetQCStatus.PENDING
 
     warnings: list[str] = Field(default_factory=list)
     metadata: dict = Field(default_factory=dict)

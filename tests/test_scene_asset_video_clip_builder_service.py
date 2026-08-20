@@ -26,6 +26,7 @@ def _ready_state(
     source_type: SceneSourceType = SceneSourceType.MANUAL_UPLOAD,
 ) -> SceneAssetState:
     state = SceneAssetState.model_construct(
+        scene_id=f"scene-{scene_number}",
         scene_number=scene_number,
         status=Status.READY,
         warnings=[],
@@ -62,6 +63,8 @@ def test_builds_one_clip_per_ready_state() -> None:
 
     assert clips_by_scene[1].local_file == "/uploads/one.mp4"
     assert clips_by_scene[2].local_file == "/uploads/two.mp4"
+    assert clips_by_scene[1].scene_id == "scene-1"
+    assert clips_by_scene[2].scene_id == "scene-2"
 
 
 def test_clip_duration_matches_scene_estimate_not_candidate() -> None:

@@ -157,6 +157,62 @@ Center's existing readiness card.
 
 Render identity was built as part of Phase 5, not a standalone Phase 6
 pass, because Final Preview cannot function without something to bind
-to. The other half of Phase 6 - a unified asset provenance model - was
-not pulled forward, since Final Preview never needed it; it remains a
-separate, not-yet-started gap (`docs/REMAINING_GAPS.md` Phase 6).
+to. The other half of Phase 6 - asset provenance - is covered next.
+
+## Asset provenance (Phase 6)
+
+The spec asks for a unified provenance model with `asset_id`,
+`asset_type`, `source`, `provider`, `original_request`, `project_id`,
+`scene_id`, `created_at`, `source_version`, `checksum`, `qc_status`.
+Building a second model with that shape would have duplicated most of
+it: `asset_id`/`created_at` already exist on every model via
+`MissionBaseModel.id`/`.created_at` (including `VideoClip` itself);
+`provider`/`source` already exist as `VideoClip.provider`/
+`.source_type`; `original_request` is already covered by
+`VideoClip.prompt` (generation-based flows) and
+`SceneAssetState.local_search_query`/`.stock_search_query`
+(search-based flows); `project_id` isn't meaningful per-asset since
+assets are never referenced outside their containing `VideoJob`.
+
+Only three fields were genuinely missing, so those three were added
+directly to `VideoClip` rather than wrapping everything in a
+competing model:
+
+- **`scene_id: str | None`** - links a clip back to the `Scene` it was
+  produced for. Wired into `SceneAssetVideoClipBuilderService.build_clips`
+  (`state.scene_id` is already in scope there - free to thread through,
+  no new lookups needed).
+- **`checksum: str | None`** - SHA-256 of the local file, via the new
+  `AssetProvenanceService.compute_checksum()` (`src/services/asset_provenance_service.py`).
+  Returns `None` for a clip with no local file yet (URL-only, or not
+  yet downloaded) rather than raising - checksumming only applies to
+  content that actually exists on disk.
+- **`qc_status: AssetQCStatus`** - `PENDING`/`PASSED`/`FLAGGED`/
+  `REJECTED` (`src/models/asset_provenance.py`). Defaults `PENDING`;
+  nothing advances it further, since no automated QC pipeline exists
+  yet to set it - the field exists so a future QC pass has somewhere
+  real to write its result, not because QC itself is built.
+
+**`source_version` was deliberately not added.** It would need to
+track how many times a scene's asset has been *replaced* over the
+project's lifetime - state that has to persist across rebuilds. It
+can't live on `VideoClip` itself, because `build_clips()` reconstructs
+the entire clip list from scratch on every call (bulk reassignment,
+scene replacement, ingestion) rather than mutating existing clips in
+place - a freshly-built `VideoClip` has no memory of its own history.
+The natural home would be `SceneAssetState`, which does persist across
+rebuilds, but adding it there was judged separate, additional scope
+rather than something render identity or Final Preview required.
+
+**Checksum computation is deliberately not automatic.** Wiring
+`AssetProvenanceService.annotate()` directly into `build_clips()` was
+considered and rejected: that method rebuilds the *entire* clip list
+from scratch on every bulk reassignment (not just the scene that
+changed), and this desktop app has no background-threading anywhere
+today (every button handler runs synchronously on the GUI thread, see
+Phase 9's project-header/recovery-UX gap) - hashing every ready video
+file on every such call would risk real, noticeable freezes as an
+asset library grows. `AssetProvenanceService` is real and fully tested,
+just not auto-wired into that specific hot path; a future "verify
+asset integrity" action, or a background-threaded rebuild, would be
+the right place to call it from.

@@ -5,6 +5,46 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-08-20 - Phase 6: Asset provenance (reconciled, not duplicated)
+
+Closed the second half of Phase 6 (render identity was already pulled
+forward into Phase 5). Audited every field the spec's unified asset
+provenance model asks for against what already exists, rather than
+building a second model by default: `asset_id`/`created_at` already
+exist on every model via `MissionBaseModel`; `provider`/`source`
+already exist as `VideoClip.provider`/`.source_type`;
+`original_request` is already covered by `VideoClip.prompt` and
+`SceneAssetState.local_search_query`/`.stock_search_query`;
+`project_id` isn't meaningful per-asset. Only three fields were
+genuinely missing - added directly to `VideoClip` instead of a
+competing model that would have duplicated the rest: `scene_id`
+(wired into `SceneAssetVideoClipBuilderService.build_clips`),
+`checksum` (SHA-256 via the new `AssetProvenanceService`), `qc_status`
+(`AssetQCStatus`, `src/models/asset_provenance.py` - defaults
+`PENDING`, no automated QC pipeline exists yet to advance it further).
+
+Deliberately not built: `source_version` (needs session-spanning state
+that would belong on `SceneAssetState`, not a freshly-rebuilt
+`VideoClip` - out of scope for this pass) and automatic checksum
+computation inside `build_clips()` itself (that method rebuilds the
+*entire* clip list from scratch on every bulk reassignment, and this
+desktop app has no background threading anywhere - hashing every ready
+video file synchronously on the GUI thread on every such call risked
+real UI freezes for larger asset libraries). `AssetProvenanceService`
+is real and tested, just callable on demand rather than auto-wired
+into that specific hot path.
+
+Adding `scene_id` as a field `build_clips()` now reads surfaced a
+pre-existing test-fixture gap across 3 files (`test_asset_stage.py`,
+`test_pipeline_adapter_integration.py`,
+`test_scene_asset_video_clip_builder_service.py`): each used
+`SceneAssetState.model_construct()` (which bypasses required-field
+validation) without ever setting `scene_id`, which the real
+constructor has always required. Fixed by adding `scene_id=...` to
+each fixture rather than making the new code defensive - real
+construction paths always provide it; only the fast-construction test
+escape hatch didn't.
+
 ## 2026-08-20 - Phase 5: Final Preview (with render identity pulled forward from Phase 6)
 
 Added `FinalPreview`/`FinalPreviewAction`/`FinalPreviewStatus`

@@ -54,6 +54,7 @@ class SceneAssetVideoClipBuilderService:
             clips.append(
                 VideoClip(
                     scene_number=state.scene_number,
+                    scene_id=state.scene_id,
                     source_type=(state.selected_source or candidate.source_type),
                     duration_seconds=duration_by_scene_number.get(
                         state.scene_number,

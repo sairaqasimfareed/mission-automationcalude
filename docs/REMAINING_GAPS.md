@@ -191,14 +191,40 @@ that file's audio-regeneration row.
       hashing the actual output file's bytes would require file I/O this
       service has no need for; the produced `output_file` is recorded
       separately on `FinalPreview` instead of folded into the hash.
-- [ ] **Unified asset provenance model** (`asset_id`, `asset_type`,
-      `source`, `provider`, `original_request`, `project_id`,
-      `scene_id`, `created_at`, `source_version`, `checksum`,
-      `qc_status`) - reconcile with the fields `Scene`/`VideoClip`/
-      `AssetCandidate` already carry rather than duplicating them. Not
-      started - this is the one half of Phase 6 that render identity
-      didn't require, so it stayed out of scope when render identity
-      was pulled forward into Phase 5.
+- [x] **Unified asset provenance, reconciled rather than duplicated.**
+      Audited every field the spec's provenance model asks for against
+      what already exists: `asset_id`/`created_at` already exist on
+      every model (`MissionBaseModel`); `provider`/`source` already
+      exist as `VideoClip.provider`/`.source_type`; `original_request`
+      is already covered by `VideoClip.prompt` and
+      `SceneAssetState.local_search_query`/`.stock_search_query`.
+      `project_id` isn't needed per-asset (assets aren't referenced
+      outside their containing job). Only 3 fields were genuinely
+      missing, added to `VideoClip`: `scene_id` (wired into
+      `SceneAssetVideoClipBuilderService.build_clips`), `checksum`
+      (`AssetProvenanceService.compute_checksum()`, SHA-256), `qc_status`
+      (`AssetQCStatus`, `src/models/asset_provenance.py` - defaults
+      `PENDING`, nothing sets it further since no automated QC pipeline
+      exists yet). No separate `AssetProvenance` model was built - once
+      the 3 gaps were filled, a second model would only have duplicated
+      fields that already exist, which is exactly what this item asked
+      *not* to do.
+- [ ] **`source_version` was deliberately not added.** Tracking how
+      many times a scene's asset has been replaced needs
+      session-spanning state (it can't live on a freshly-rebuilt
+      `VideoClip`, since `build_clips()` reconstructs the whole list
+      from scratch every call) - it would belong on `SceneAssetState`
+      instead, which already persists across rebuilds. Not built this
+      pass; flagged rather than silently dropped.
+- [ ] **Checksum computation is not automatic.** `build_clips()`
+      rebuilds the *entire* clip list from scratch on every bulk
+      reassignment (not just the changed scene); hashing every ready
+      video file synchronously on the GUI thread on every such call
+      risked real, noticeable freezes for larger asset libraries -
+      there is no background-threading in this desktop app today (see
+      Phase 9). `AssetProvenanceService.compute_checksum()`/`.annotate()`
+      are real and tested but only callable on demand, not wired into
+      the hot path.
 
 ## Phase 7 - Budget gating beyond LLM calls
 

@@ -33,6 +33,7 @@ functionality - see `docs/REMAINING_GAPS.md` for what to do about it.
 | Bulk stock assignment | `BulkStockAssignmentResult` | `BulkStockAssignmentService` | `VideoJob.scene_asset_states`, `.video_clips` | Clip Workspace, scene checkboxes + bulk button | `test_bulk_stock_assignment_service.py`, `test_clip_workspace_bulk_assignment_gui.py` |
 | Bulk manual-file ingestion | `BulkClipIngestionResult` | `BulkClipIngestionService` | same | Clip Workspace, "Ingest clips from folder" | `test_bulk_clip_ingestion_service.py` |
 | Bulk external-generation prompt export | `ScenePromptExportEntry` | `ScenePromptExportService` | (writes a file, no job-state change) | Clip Workspace, "Export prompts" | `test_scene_prompt_export_service.py` |
+| Asset provenance | `AssetQCStatus` (`src/models/asset_provenance.py`), `VideoClip.scene_id`/`.checksum`/`.qc_status` | `AssetProvenanceService` (`.compute_checksum()`, `.annotate()` - callable on demand, not auto-wired into `build_clips()`); `scene_id` alone is wired into `SceneAssetVideoClipBuilderService.build_clips` | `VideoJob.video_clips[*].scene_id`/`.checksum`/`.qc_status` | - (no dedicated GUI surface yet) | `test_asset_provenance_service.py`, `test_scene_asset_video_clip_builder_service.py` |
 
 ## Production audio
 

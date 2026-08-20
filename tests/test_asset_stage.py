@@ -34,9 +34,7 @@ from src.services.scene_asset_workflow_service import (
 )
 
 
-class SyntheticAssetWorkflowService(
-    SceneAssetWorkflowService
-):
+class SyntheticAssetWorkflowService(SceneAssetWorkflowService):
     """
     Deterministic SceneAssetWorkflowService used to isolate the
     AssetPipelineStage adapter.
@@ -48,18 +46,12 @@ class SyntheticAssetWorkflowService(
     def __init__(
         self,
         *,
-        states_by_scene_number: (
-            dict[int, SceneAssetState]
-        ),
+        states_by_scene_number: dict[int, SceneAssetState],
         raise_error: Exception | None = None,
     ) -> None:
-        self._states_by_scene_number = dict(
-            states_by_scene_number
-        )
+        self._states_by_scene_number = dict(states_by_scene_number)
 
-        self._raise_error = (
-            raise_error
-        )
+        self._raise_error = raise_error
 
         self.started_scene_numbers: list[int] = []
 
@@ -67,16 +59,12 @@ class SyntheticAssetWorkflowService(
         self,
         scene: Scene,
     ) -> SceneAssetState:
-        self.started_scene_numbers.append(
-            scene.scene_number
-        )
+        self.started_scene_numbers.append(scene.scene_number)
 
         if self._raise_error is not None:
             raise self._raise_error
 
-        return self._states_by_scene_number[
-            scene.scene_number
-        ]
+        return self._states_by_scene_number[scene.scene_number]
 
 
 def build_scene(
@@ -86,16 +74,9 @@ def build_scene(
 
     return Scene(
         scene_number=scene_number,
-        title=(
-            f"Synthetic Scene {scene_number}"
-        ),
-        narration=(
-            "Synthetic narration for "
-            "asset-stage testing."
-        ),
-        visual_prompt=(
-            "Synthetic asset-stage visual."
-        ),
+        title=(f"Synthetic Scene {scene_number}"),
+        narration=("Synthetic narration for " "asset-stage testing."),
+        visual_prompt=("Synthetic asset-stage visual."),
         estimated_duration_seconds=10,
     )
 
@@ -113,10 +94,7 @@ def build_script() -> Script:
 
     return Script(
         title="Asset stage test script",
-        content=(
-            "Synthetic script content for "
-            "asset pipeline stage testing."
-        ),
+        content=("Synthetic script content for " "asset pipeline stage testing."),
         prompt_version="test-1.0",
         word_count=8,
         estimated_duration_seconds=20,
@@ -142,9 +120,7 @@ def build_job(
         niche="automation",
         topic="Asset pipeline adapter",
         status=JobStatus.RUNNING,
-        current_stage=(
-            WorkflowStage.ASSET_GENERATION
-        ),
+        current_stage=(WorkflowStage.ASSET_GENERATION),
         research=build_research(),
         script=build_script(),
     )
@@ -167,10 +143,7 @@ def build_context(
     return StageContext(
         job=job,
         pipeline_state=PipelineState(
-            current_stage=(
-                PipelineStageName
-                .ASSET_SELECTION
-            ),
+            current_stage=(PipelineStageName.ASSET_SELECTION),
         ),
         dry_run=True,
     )
@@ -191,27 +164,18 @@ def build_state(
     """
 
     return SceneAssetState.model_construct(
+        scene_id=f"scene-{scene_number}",
         scene_number=scene_number,
         status=status,
-        warnings=list(
-            warnings
-            or []
-        ),
-        errors=list(
-            errors
-            or []
-        ),
+        warnings=list(warnings or []),
+        errors=list(errors or []),
     )
 
 
 def build_service(
     *,
-    first_status: AssetWorkflowStatus = (
-        AssetWorkflowStatus.READY
-    ),
-    second_status: AssetWorkflowStatus = (
-        AssetWorkflowStatus.READY
-    ),
+    first_status: AssetWorkflowStatus = (AssetWorkflowStatus.READY),
+    second_status: AssetWorkflowStatus = (AssetWorkflowStatus.READY),
 ) -> SyntheticAssetWorkflowService:
     """Build a deterministic two-scene asset workflow service."""
 
@@ -236,10 +200,7 @@ def test_stage_name() -> None:
         asset_workflow_service=service,
     )
 
-    assert (
-        stage.stage_name
-        == PipelineStageName.ASSET_SELECTION
-    )
+    assert stage.stage_name == PipelineStageName.ASSET_SELECTION
 
 
 def test_missing_scenes_fails() -> None:
@@ -255,39 +216,19 @@ def test_missing_scenes_fails() -> None:
         asset_workflow_service=service,
     )
 
-    result = stage.execute(
-        build_context(
-            job
-        )
-    )
+    result = stage.execute(build_context(job))
 
-    assert (
-        result.status
-        == PipelineStageStatus.FAILED
-    )
+    assert result.status == PipelineStageStatus.FAILED
 
     assert result.errors == [
         "Asset stage requires planned scenes.",
     ]
 
-    assert (
-        result.metadata[
-            "scene_count"
-        ]
-        == 0
-    )
+    assert result.metadata["scene_count"] == 0
 
-    assert (
-        result.metadata[
-            "waiting_for_user"
-        ]
-        is False
-    )
+    assert result.metadata["waiting_for_user"] is False
 
-    assert (
-        job.scene_asset_states
-        == []
-    )
+    assert job.scene_asset_states == []
 
 
 def test_ready_states_complete() -> None:
@@ -299,50 +240,23 @@ def test_ready_states_complete() -> None:
         asset_workflow_service=service,
     )
 
-    result = stage.execute(
-        build_context(
-            job
-        )
-    )
+    result = stage.execute(build_context(job))
 
-    assert (
-        result.status
-        == PipelineStageStatus.COMPLETED
-    )
+    assert result.status == PipelineStageStatus.COMPLETED
 
     assert result.successful is True
 
     assert result.errors == []
 
-    assert (
-        len(
-            job.scene_asset_states
-        )
-        == 2
-    )
+    assert len(job.scene_asset_states) == 2
 
-    assert (
-        result.metadata[
-            "scene_count"
-        ]
-        == 2
-    )
+    assert result.metadata["scene_count"] == 2
 
-    assert (
-        result.metadata[
-            "waiting_for_user"
-        ]
-        is False
-    )
+    assert result.metadata["waiting_for_user"] is False
 
-    assert (
-        result.metadata[
-            "status_counts"
-        ]
-        == {
-            "ready": 2,
-        }
-    )
+    assert result.metadata["status_counts"] == {
+        "ready": 2,
+    }
 
 
 def test_scene_execution_order_is_deterministic() -> None:
@@ -354,24 +268,14 @@ def test_scene_execution_order_is_deterministic() -> None:
         asset_workflow_service=service,
     )
 
-    result = stage.execute(
-        build_context(
-            job
-        )
-    )
+    result = stage.execute(build_context(job))
 
-    assert (
-        result.status
-        == PipelineStageStatus.COMPLETED
-    )
+    assert result.status == PipelineStageStatus.COMPLETED
 
-    assert (
-        service.started_scene_numbers
-        == [
-            1,
-            2,
-        ]
-    )
+    assert service.started_scene_numbers == [
+        1,
+        2,
+    ]
 
 
 def test_asset_states_preserve_scene_numbers() -> None:
@@ -383,21 +287,11 @@ def test_asset_states_preserve_scene_numbers() -> None:
         asset_workflow_service=service,
     )
 
-    result = stage.execute(
-        build_context(
-            job
-        )
-    )
+    result = stage.execute(build_context(job))
 
-    assert (
-        result.status
-        == PipelineStageStatus.COMPLETED
-    )
+    assert result.status == PipelineStageStatus.COMPLETED
 
-    assert [
-        state.scene_number
-        for state in job.scene_asset_states
-    ] == [
+    assert [state.scene_number for state in job.scene_asset_states] == [
         1,
         2,
     ]
@@ -407,114 +301,61 @@ def test_local_results_wait_for_user() -> None:
     job = build_job()
 
     service = build_service(
-        first_status=(
-            AssetWorkflowStatus
-            .LOCAL_RESULTS_AVAILABLE
-        ),
+        first_status=(AssetWorkflowStatus.LOCAL_RESULTS_AVAILABLE),
     )
 
     stage = AssetPipelineStage(
         asset_workflow_service=service,
     )
 
-    result = stage.execute(
-        build_context(
-            job
-        )
-    )
+    result = stage.execute(build_context(job))
 
-    assert (
-        result.status
-        == PipelineStageStatus
-        .WAITING_FOR_USER
-    )
+    assert result.status == PipelineStageStatus.WAITING_FOR_USER
 
     assert result.successful is False
 
-    assert (
-        result.metadata[
-            "waiting_for_user"
-        ]
-        is True
-    )
+    assert result.metadata["waiting_for_user"] is True
 
-    assert (
-        result.metadata[
-            "status_counts"
-        ]
-        == {
-            "local_results_available": 1,
-            "ready": 1,
-        }
-    )
+    assert result.metadata["status_counts"] == {
+        "local_results_available": 1,
+        "ready": 1,
+    }
 
 
 def test_manual_upload_waits_for_user() -> None:
     job = build_job()
 
     service = build_service(
-        first_status=(
-            AssetWorkflowStatus
-            .WAITING_FOR_MANUAL_UPLOAD
-        ),
+        first_status=(AssetWorkflowStatus.WAITING_FOR_MANUAL_UPLOAD),
     )
 
     stage = AssetPipelineStage(
         asset_workflow_service=service,
     )
 
-    result = stage.execute(
-        build_context(
-            job
-        )
-    )
+    result = stage.execute(build_context(job))
 
-    assert (
-        result.status
-        == PipelineStageStatus
-        .WAITING_FOR_USER
-    )
+    assert result.status == PipelineStageStatus.WAITING_FOR_USER
 
-    assert (
-        result.metadata[
-            "waiting_for_user"
-        ]
-        is True
-    )
+    assert result.metadata["waiting_for_user"] is True
 
 
 def test_stock_results_wait_for_user() -> None:
     job = build_job()
 
     service = build_service(
-        second_status=(
-            AssetWorkflowStatus
-            .STOCK_RESULTS_AVAILABLE
-        ),
+        second_status=(AssetWorkflowStatus.STOCK_RESULTS_AVAILABLE),
     )
 
     stage = AssetPipelineStage(
         asset_workflow_service=service,
     )
 
-    result = stage.execute(
-        build_context(
-            job
-        )
-    )
+    result = stage.execute(build_context(job))
 
-    assert (
-        result.status
-        == PipelineStageStatus
-        .WAITING_FOR_USER
-    )
+    assert result.status == PipelineStageStatus.WAITING_FOR_USER
 
-    assert (
-        result.metadata[
-            "waiting_for_user"
-        ]
-        is True
-    )
+    assert result.metadata["waiting_for_user"] is True
 
 
 def test_warnings_are_aggregated_and_deduplicated() -> None:
@@ -549,16 +390,9 @@ def test_warnings_are_aggregated_and_deduplicated() -> None:
         asset_workflow_service=service,
     )
 
-    result = stage.execute(
-        build_context(
-            job
-        )
-    )
+    result = stage.execute(build_context(job))
 
-    assert (
-        result.status
-        == PipelineStageStatus.COMPLETED
-    )
+    assert result.status == PipelineStageStatus.COMPLETED
 
     assert result.warnings == [
         "Shared asset warning.",
@@ -572,10 +406,7 @@ def test_errors_fail_stage() -> None:
 
     first_state = build_state(
         scene_number=1,
-        status=(
-            AssetWorkflowStatus
-            .FAILED_RECOVERABLE
-        ),
+        status=(AssetWorkflowStatus.FAILED_RECOVERABLE),
         errors=[
             "Synthetic asset failure.",
         ],
@@ -597,16 +428,9 @@ def test_errors_fail_stage() -> None:
         asset_workflow_service=service,
     )
 
-    result = stage.execute(
-        build_context(
-            job
-        )
-    )
+    result = stage.execute(build_context(job))
 
-    assert (
-        result.status
-        == PipelineStageStatus.FAILED
-    )
+    assert result.status == PipelineStageStatus.FAILED
 
     assert result.successful is False
 
@@ -614,12 +438,7 @@ def test_errors_fail_stage() -> None:
         "Synthetic asset failure.",
     ]
 
-    assert (
-        len(
-            job.scene_asset_states
-        )
-        == 2
-    )
+    assert len(job.scene_asset_states) == 2
 
 
 def test_errors_are_deduplicated() -> None:
@@ -627,10 +446,7 @@ def test_errors_are_deduplicated() -> None:
 
     first_state = build_state(
         scene_number=1,
-        status=(
-            AssetWorkflowStatus
-            .FAILED_RECOVERABLE
-        ),
+        status=(AssetWorkflowStatus.FAILED_RECOVERABLE),
         errors=[
             "Shared asset failure.",
         ],
@@ -638,10 +454,7 @@ def test_errors_are_deduplicated() -> None:
 
     second_state = build_state(
         scene_number=2,
-        status=(
-            AssetWorkflowStatus
-            .FAILED_RECOVERABLE
-        ),
+        status=(AssetWorkflowStatus.FAILED_RECOVERABLE),
         errors=[
             "Shared asset failure.",
         ],
@@ -658,16 +471,9 @@ def test_errors_are_deduplicated() -> None:
         asset_workflow_service=service,
     )
 
-    result = stage.execute(
-        build_context(
-            job
-        )
-    )
+    result = stage.execute(build_context(job))
 
-    assert (
-        result.status
-        == PipelineStageStatus.FAILED
-    )
+    assert result.status == PipelineStageStatus.FAILED
 
     assert result.errors == [
         "Shared asset failure.",
@@ -679,10 +485,7 @@ def test_errors_take_priority_over_waiting_state() -> None:
 
     failed_state = build_state(
         scene_number=1,
-        status=(
-            AssetWorkflowStatus
-            .FAILED_RECOVERABLE
-        ),
+        status=(AssetWorkflowStatus.FAILED_RECOVERABLE),
         errors=[
             "Synthetic failure.",
         ],
@@ -690,10 +493,7 @@ def test_errors_take_priority_over_waiting_state() -> None:
 
     waiting_state = build_state(
         scene_number=2,
-        status=(
-            AssetWorkflowStatus
-            .WAITING_FOR_MANUAL_UPLOAD
-        ),
+        status=(AssetWorkflowStatus.WAITING_FOR_MANUAL_UPLOAD),
     )
 
     service = SyntheticAssetWorkflowService(
@@ -707,68 +507,37 @@ def test_errors_take_priority_over_waiting_state() -> None:
         asset_workflow_service=service,
     )
 
-    result = stage.execute(
-        build_context(
-            job
-        )
-    )
+    result = stage.execute(build_context(job))
 
-    assert (
-        result.status
-        == PipelineStageStatus.FAILED
-    )
+    assert result.status == PipelineStageStatus.FAILED
 
     assert result.errors == [
         "Synthetic failure.",
     ]
 
-    assert (
-        result.metadata[
-            "waiting_for_user"
-        ]
-        is True
-    )
+    assert result.metadata["waiting_for_user"] is True
 
 
 def test_metadata_counts_multiple_statuses() -> None:
     job = build_job()
 
     service = build_service(
-        first_status=(
-            AssetWorkflowStatus.READY
-        ),
-        second_status=(
-            AssetWorkflowStatus
-            .WAITING_FOR_MANUAL_UPLOAD
-        ),
+        first_status=(AssetWorkflowStatus.READY),
+        second_status=(AssetWorkflowStatus.WAITING_FOR_MANUAL_UPLOAD),
     )
 
     stage = AssetPipelineStage(
         asset_workflow_service=service,
     )
 
-    result = stage.execute(
-        build_context(
-            job
-        )
-    )
+    result = stage.execute(build_context(job))
 
-    assert (
-        result.metadata[
-            "scene_count"
-        ]
-        == 2
-    )
+    assert result.metadata["scene_count"] == 2
 
-    assert (
-        result.metadata[
-            "status_counts"
-        ]
-        == {
-            "ready": 1,
-            "waiting_for_manual_upload": 1,
-        }
-    )
+    assert result.metadata["status_counts"] == {
+        "ready": 1,
+        "waiting_for_manual_upload": 1,
+    }
 
 
 def test_ready_states_with_candidates_build_video_clips() -> None:
@@ -858,20 +627,14 @@ def test_service_exception_propagates() -> None:
         states_by_scene_number={
             1: build_state(
                 scene_number=1,
-                status=(
-                    AssetWorkflowStatus.READY
-                ),
+                status=(AssetWorkflowStatus.READY),
             ),
             2: build_state(
                 scene_number=2,
-                status=(
-                    AssetWorkflowStatus.READY
-                ),
+                status=(AssetWorkflowStatus.READY),
             ),
         },
-        raise_error=RuntimeError(
-            "Synthetic asset exception."
-        ),
+        raise_error=RuntimeError("Synthetic asset exception."),
     )
 
     stage = AssetPipelineStage(
@@ -879,31 +642,16 @@ def test_service_exception_propagates() -> None:
     )
 
     try:
-        stage.execute(
-            build_context(
-                job
-            )
-        )
+        stage.execute(build_context(job))
     except RuntimeError as error:
-        assert (
-            str(error)
-            == (
-                "Synthetic asset "
-                "exception."
-            )
-        )
+        assert str(error) == ("Synthetic asset " "exception.")
     else:
-        raise AssertionError(
-            "Unexpected asset-workflow "
-            "exceptions must propagate."
-        )
+        raise AssertionError("Unexpected asset-workflow " "exceptions must propagate.")
 
 
 def main() -> None:
     print()
-    print(
-        "Running Asset Pipeline Stage tests..."
-    )
+    print("Running Asset Pipeline Stage tests...")
     print()
 
     test_stage_name()
@@ -922,10 +670,7 @@ def main() -> None:
     test_service_exception_propagates()
 
     print()
-    print(
-        "Asset Pipeline Stage tests "
-        "completed successfully."
-    )
+    print("Asset Pipeline Stage tests " "completed successfully.")
 
 
 if __name__ == "__main__":
