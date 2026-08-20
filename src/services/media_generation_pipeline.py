@@ -17,6 +17,7 @@ from src.models.resolved_editing_blueprint import ResolvedSoundEffectInstruction
 from src.models.video_job import VideoJob
 from src.models.video_timeline_item import VideoTimelineItem
 from src.models.voice_generation import VoiceGenerationResult
+from src.services.budget.provider_budget_service import ProviderBudgetService
 from src.services.genre_timeline_pipeline_service import GenreTimelinePipelineService
 from src.services.genre_voice_directive_generation_service import (
     GenreVoiceDirectiveGenerationService,
@@ -48,6 +49,15 @@ class MediaGenerationPipeline:
     them is still deliverable - every stage here raises on failure,
     matching how every other standalone-triggered stage in this
     application surfaces errors to its GUI.
+
+    Budget gating (opt-in): pass `budget_service` plus the relevant
+    `*_profile_id` to gate a stage's provider call against
+    ProviderBudgetService, the same way LLMService already gates every
+    real LLM call. Voice/music/SFX providers have no native per-call
+    cost estimate today (unlike LLM requests), so gating only actually
+    engages when a caller supplies a real `estimated_cost_usd` on the
+    call itself - it defaults to 0.0, which never blocks and never
+    reserves, so existing callers are unaffected unless they opt in.
     """
 
     def __init__(
@@ -61,6 +71,10 @@ class MediaGenerationPipeline:
         music_generation_service: MusicGenerationService | None = None,
         sound_effect_generation_service: SoundEffectGenerationService | None = None,
         invalidation_service: InvalidationService | None = None,
+        budget_service: ProviderBudgetService | None = None,
+        voice_profile_id: str | None = None,
+        music_profile_id: str | None = None,
+        sound_effect_profile_id: str | None = None,
     ) -> None:
         self.voice_directive_generation_service = voice_directive_generation_service
         self.voice_resolution_runtime = voice_resolution_runtime
@@ -70,62 +84,74 @@ class MediaGenerationPipeline:
         self.music_generation_service = music_generation_service
         self.sound_effect_generation_service = sound_effect_generation_service
         self.invalidation_service = invalidation_service or InvalidationService()
+        self.budget_service = budget_service
+        self.voice_profile_id = voice_profile_id
+        self.music_profile_id = music_profile_id
+        self.sound_effect_profile_id = sound_effect_profile_id
 
-    def run_voice(self, job: VideoJob) -> VideoJob:
+    def run_voice(self, job: VideoJob, *, estimated_cost_usd: float = 0.0) -> VideoJob:
         """Stage 1: generate narration for every planned scene."""
 
         if not job.scenes:
             raise RuntimeError("Voice generation requires planned scenes.")
 
-        ordered_scenes = sorted(job.scenes, key=lambda scene: scene.scene_number)
-
-        requests: list[VoiceResolutionRequest] = [
-            (
-                self.voice_directive_generation_service.generate(
-                    scene=scene,
-                    genre_id=job.genre_id,
-                    language=job.language,
-                ),
-                scene.narration,
-                float(scene.estimated_duration_seconds),
-            )
-            for scene in ordered_scenes
-        ]
-
-        blueprints = self.voice_resolution_runtime.resolve_many(requests)
-        results = self.voice_generation_service.generate_many(blueprints)
-
-        failed = next((result for result in results if not result.success), None)
-
-        if failed is not None:
-            job.voice_status = VoiceStatus.FAILED
-            job.voice_file = None
-            job.voice_script_version = None
-
-            message = (
-                failed.failure.message
-                if failed.failure is not None
-                else "Voice generation failed without failure details."
-            )
-
-            raise RuntimeError(
-                f"Voice generation failed for scene {failed.scene_number}: {message}"
-            )
-
-        audio_timeline = job.audio_timeline or AudioTimeline()
-        self.voice_timeline_service.attach_many(
-            audio_timeline, results=results, replace=True
+        self._gate_budget(
+            self.voice_profile_id, estimated_cost_usd, stage="Voice generation"
         )
-        job.audio_timeline = audio_timeline
 
-        job.voice_file = results[0].output_file
-        job.voice_provider = self._single_provider(results)
-        job.voice_status = VoiceStatus.READY
-        job.voice_script_version = (
-            job.script_version_history.current_version.version_number
-            if job.script_version_history is not None
-            else None
-        )
+        try:
+            ordered_scenes = sorted(job.scenes, key=lambda scene: scene.scene_number)
+
+            requests: list[VoiceResolutionRequest] = [
+                (
+                    self.voice_directive_generation_service.generate(
+                        scene=scene,
+                        genre_id=job.genre_id,
+                        language=job.language,
+                    ),
+                    scene.narration,
+                    float(scene.estimated_duration_seconds),
+                )
+                for scene in ordered_scenes
+            ]
+
+            blueprints = self.voice_resolution_runtime.resolve_many(requests)
+            results = self.voice_generation_service.generate_many(blueprints)
+
+            failed = next((result for result in results if not result.success), None)
+
+            if failed is not None:
+                job.voice_status = VoiceStatus.FAILED
+                job.voice_file = None
+                job.voice_script_version = None
+
+                message = (
+                    failed.failure.message
+                    if failed.failure is not None
+                    else "Voice generation failed without failure details."
+                )
+
+                raise RuntimeError(
+                    f"Voice generation failed for scene {failed.scene_number}: {message}"
+                )
+
+            audio_timeline = job.audio_timeline or AudioTimeline()
+            self.voice_timeline_service.attach_many(
+                audio_timeline, results=results, replace=True
+            )
+            job.audio_timeline = audio_timeline
+
+            job.voice_file = results[0].output_file
+            job.voice_provider = self._single_provider(results)
+            job.voice_status = VoiceStatus.READY
+            job.voice_script_version = (
+                job.script_version_history.current_version.version_number
+                if job.script_version_history is not None
+                else None
+            )
+        except Exception:
+            self._release_budget(self.voice_profile_id, estimated_cost_usd)
+            raise
 
         self.invalidation_service.clear_stale(job, "audio_timeline")
         self.invalidation_service.on_audio_regenerated(
@@ -157,7 +183,7 @@ class MediaGenerationPipeline:
 
         return job
 
-    def run_music(self, job: VideoJob) -> VideoJob:
+    def run_music(self, job: VideoJob, *, estimated_cost_usd: float = 0.0) -> VideoJob:
         """Stage 3: generate one whole-video background-music track."""
 
         if self.music_generation_service is None:
@@ -176,30 +202,38 @@ class MediaGenerationPipeline:
                 "This genre has no background music configured for any scene."
             )
 
-        duration_seconds = job.video_timeline.calculate_duration()
-
-        result = self.music_generation_service.generate(
-            instruction_item.editing_blueprint.music,
-            duration_seconds=duration_seconds,
+        self._gate_budget(
+            self.music_profile_id, estimated_cost_usd, stage="Music generation"
         )
 
-        if not result.success or result.audio_track is None:
-            message = (
-                result.failure.message
-                if result.failure is not None
-                else "Music generation failed without failure details."
+        try:
+            duration_seconds = job.video_timeline.calculate_duration()
+
+            result = self.music_generation_service.generate(
+                instruction_item.editing_blueprint.music,
+                duration_seconds=duration_seconds,
             )
 
-            raise RuntimeError(f"Music generation failed: {message}")
+            if not result.success or result.audio_track is None:
+                message = (
+                    result.failure.message
+                    if result.failure is not None
+                    else "Music generation failed without failure details."
+                )
 
-        audio_timeline = job.audio_timeline or AudioTimeline()
-        audio_timeline.tracks = [
-            track
-            for track in audio_timeline.tracks
-            if track.track_type != AudioTrackType.BACKGROUND_MUSIC
-        ]
-        audio_timeline.tracks.append(result.audio_track)
-        job.audio_timeline = audio_timeline
+                raise RuntimeError(f"Music generation failed: {message}")
+
+            audio_timeline = job.audio_timeline or AudioTimeline()
+            audio_timeline.tracks = [
+                track
+                for track in audio_timeline.tracks
+                if track.track_type != AudioTrackType.BACKGROUND_MUSIC
+            ]
+            audio_timeline.tracks.append(result.audio_track)
+            job.audio_timeline = audio_timeline
+        except Exception:
+            self._release_budget(self.music_profile_id, estimated_cost_usd)
+            raise
 
         self.invalidation_service.on_audio_regenerated(
             job, reason="Background music was regenerated."
@@ -207,7 +241,9 @@ class MediaGenerationPipeline:
 
         return job
 
-    def run_sound_effects(self, job: VideoJob) -> VideoJob:
+    def run_sound_effects(
+        self, job: VideoJob, *, estimated_cost_usd: float = 0.0
+    ) -> VideoJob:
         """Stage 4: generate every planned sound-effect cue."""
 
         if self.sound_effect_generation_service is None:
@@ -219,61 +255,71 @@ class MediaGenerationPipeline:
                 "run Timeline first."
             )
 
-        new_tracks: list[AudioTrack] = []
-        failures: list[str] = []
+        self._gate_budget(
+            self.sound_effect_profile_id,
+            estimated_cost_usd,
+            stage="Sound-effect generation",
+        )
 
-        for item in sorted(
-            job.video_timeline.items, key=lambda value: value.scene_number
-        ):
-            if item.editing_blueprint is None:
-                continue
+        try:
+            new_tracks: list[AudioTrack] = []
+            failures: list[str] = []
 
-            for cue in item.editing_blueprint.sound_effects:
-                if not cue.enabled:
+            for item in sorted(
+                job.video_timeline.items, key=lambda value: value.scene_number
+            ):
+                if item.editing_blueprint is None:
                     continue
 
-                start_time_seconds = self._resolve_start_time(item=item, cue=cue)
+                for cue in item.editing_blueprint.sound_effects:
+                    if not cue.enabled:
+                        continue
 
-                result = self.sound_effect_generation_service.generate(
-                    cue,
-                    scene_number=item.scene_number,
-                    start_time_seconds=start_time_seconds,
-                )
+                    start_time_seconds = self._resolve_start_time(item=item, cue=cue)
 
-                if not result.success or result.audio_track is None:
-                    message = (
-                        result.failure.message
-                        if result.failure is not None
-                        else "unknown error"
+                    result = self.sound_effect_generation_service.generate(
+                        cue,
+                        scene_number=item.scene_number,
+                        start_time_seconds=start_time_seconds,
                     )
-                    failures.append(f"Scene {item.scene_number}: {message}")
 
-                    continue
+                    if not result.success or result.audio_track is None:
+                        message = (
+                            result.failure.message
+                            if result.failure is not None
+                            else "unknown error"
+                        )
+                        failures.append(f"Scene {item.scene_number}: {message}")
 
-                new_tracks.append(result.audio_track)
+                        continue
 
-        attached_count = len(new_tracks)
+                    new_tracks.append(result.audio_track)
 
-        if attached_count == 0:
-            # Nothing regenerated successfully - leave any existing
-            # sound-effect tracks on job.audio_timeline untouched
-            # rather than wiping known-good state on a failed attempt.
-            if failures:
+            attached_count = len(new_tracks)
+
+            if attached_count == 0:
+                # Nothing regenerated successfully - leave any existing
+                # sound-effect tracks on job.audio_timeline untouched
+                # rather than wiping known-good state on a failed attempt.
+                if failures:
+                    raise RuntimeError(
+                        "No sound effects were generated: " + "; ".join(failures)
+                    )
+
                 raise RuntimeError(
-                    "No sound effects were generated: " + "; ".join(failures)
+                    "This genre has no sound effects configured for any scene."
                 )
 
-            raise RuntimeError(
-                "This genre has no sound effects configured for any scene."
-            )
-
-        audio_timeline = job.audio_timeline or AudioTimeline()
-        audio_timeline.tracks = [
-            track
-            for track in audio_timeline.tracks
-            if track.track_type != AudioTrackType.SOUND_EFFECT
-        ] + new_tracks
-        job.audio_timeline = audio_timeline
+            audio_timeline = job.audio_timeline or AudioTimeline()
+            audio_timeline.tracks = [
+                track
+                for track in audio_timeline.tracks
+                if track.track_type != AudioTrackType.SOUND_EFFECT
+            ] + new_tracks
+            job.audio_timeline = audio_timeline
+        except Exception:
+            self._release_budget(self.sound_effect_profile_id, estimated_cost_usd)
+            raise
 
         self.invalidation_service.on_audio_regenerated(
             job, reason="Sound effects were regenerated."
@@ -476,6 +522,42 @@ class MediaGenerationPipeline:
         return any(
             track.track_type == track_type for track in job.audio_timeline.tracks
         )
+
+    def _gate_budget(
+        self, profile_id: str | None, estimated_cost_usd: float, *, stage: str
+    ) -> None:
+        """
+        Check and reserve budget for one stage's provider call, if
+        both a profile id and a real (non-zero) cost estimate are
+        configured. A no-op otherwise, so existing callers that never
+        opted into gating see no behavior change.
+        """
+
+        if self.budget_service is None or profile_id is None:
+            return
+
+        if estimated_cost_usd <= 0:
+            return
+
+        check = self.budget_service.check_request(profile_id, estimated_cost_usd)
+
+        if not check.allowed:
+            raise RuntimeError(f"{stage} blocked by budget: {check.reason}")
+
+        self.budget_service.reserve(profile_id, estimated_cost_usd)
+
+    def _release_budget(
+        self, profile_id: str | None, estimated_cost_usd: float
+    ) -> None:
+        """Release a reservation made by _gate_budget when a stage doesn't complete."""
+
+        if self.budget_service is None or profile_id is None:
+            return
+
+        if estimated_cost_usd <= 0:
+            return
+
+        self.budget_service.release(profile_id, estimated_cost_usd)
 
     @staticmethod
     def _record_manual_requirement(

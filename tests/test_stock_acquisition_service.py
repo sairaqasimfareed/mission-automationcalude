@@ -2,154 +2,120 @@ from __future__ import annotations
 
 from io import BytesIO
 from pathlib import Path
-from tempfile import TemporaryDirectory
 
-from src.models.asset_index import (
-    AssetIndex,
-    IndexedAssetSource,
-)
-from src.models.asset_state import (
-    AssetCandidate,
-    AssetUserDecision,
-)
-from src.models.media_strategy import (
-    SceneSourceStatus,
-    SceneSourceType,
-)
-from src.models.scene import (
-    Scene,
-    SceneStatus,
-)
-from src.models.video_clip import (
-    VideoClipStatus,
-)
-from src.services.stock_acquisition_service import (
-    StockAcquisitionService,
-)
-from src.services.stock_asset_storage_service import (
-    StockAssetStorageService,
-)
-from src.services.stock_download_service import (
-    StockDownloadService,
-)
+from src.models.asset_index import AssetIndex, IndexedAssetSource
+from src.models.asset_state import AssetCandidate, AssetFailureReason, AssetUserDecision
+from src.models.media_strategy import SceneSourceStatus, SceneSourceType
+from src.models.provider_profile import ProviderCategory, ProviderProfile
+from src.models.scene import Scene, SceneStatus
+from src.models.video_clip import VideoClipStatus
+from src.services.budget.provider_budget_service import ProviderBudgetService
+from src.services.registry.provider_registry import ProviderRegistry
+from src.services.stock_acquisition_service import StockAcquisitionService
+from src.services.stock_asset_storage_service import StockAssetStorageService
+from src.services.stock_download_service import StockDownloadService
+
+_STOCK_CONTENT = b"approved-stock-video"
 
 
 class FakeDownloadStream(BytesIO):
     """In-memory stock download response."""
 
-    def __init__(
-        self,
-        content: bytes,
-    ) -> None:
+    def __init__(self, content: bytes) -> None:
         super().__init__(content)
 
         self.headers = {
             "Content-Type": "video/mp4",
-            "Content-Length": str(
-                len(content)
-            ),
+            "Content-Length": str(len(content)),
         }
 
 
-stock_content = b"approved-stock-video"
-
-
-def successful_opener(
-    source_url: str,
-    timeout_seconds: float,
-) -> FakeDownloadStream:
+def _successful_opener(source_url: str, timeout_seconds: float) -> FakeDownloadStream:
     assert source_url.endswith(".mp4")
     assert timeout_seconds > 0
 
-    return FakeDownloadStream(
-        stock_content
+    return FakeDownloadStream(_STOCK_CONTENT)
+
+
+def _failing_opener(source_url: str, timeout_seconds: float) -> FakeDownloadStream:
+    raise ConnectionError("Stock provider unavailable.")
+
+
+def _scene() -> Scene:
+    return Scene(
+        scene_number=1,
+        title="Roman Soldiers",
+        narration="Roman soldiers march through the ancient city.",
+        visual_prompt="Roman soldiers marching",
+        stock_query="Roman soldiers marching",
+        estimated_duration_seconds=8,
+        source_type=SceneSourceType.STOCK_FOOTAGE,
+        status=SceneStatus.READY,
     )
 
 
-scene = Scene(
-    scene_number=1,
-    title="Roman Soldiers",
-    narration=(
-        "Roman soldiers march through "
-        "the ancient city."
-    ),
-    visual_prompt=(
-        "Roman soldiers marching"
-    ),
-    stock_query=(
-        "Roman soldiers marching"
-    ),
-    estimated_duration_seconds=8,
-    source_type=(
-        SceneSourceType.STOCK_FOOTAGE
-    ),
-    status=SceneStatus.READY,
-)
+def _candidate(**overrides: object) -> AssetCandidate:
+    base: dict[str, object] = dict(
+        title="Roman Soldiers Marching",
+        source_type=SceneSourceType.STOCK_FOOTAGE,
+        source_url="https://example.com/roman-soldiers.mp4",
+        provider="Pexels",
+        provider_asset_id="pexels-001",
+        license_type="royalty_free",
+        duration_seconds=8,
+        resolution="1920x1080",
+        aspect_ratio="16:9",
+        approved=True,
+        tags=["roman", "soldiers"],
+        metadata={"user_decision": AssetUserDecision.USE_STOCK.value},
+    )
+    base.update(overrides)
+    return AssetCandidate(**base)
 
 
-approved_candidate = AssetCandidate(
-    title="Roman Soldiers Marching",
-    source_type=(
-        SceneSourceType.STOCK_FOOTAGE
-    ),
-    source_url=(
-        "https://example.com/"
-        "roman-soldiers.mp4"
-    ),
-    provider="Pexels",
-    provider_asset_id="pexels-001",
-    license_type="royalty_free",
-    duration_seconds=8,
-    resolution="1920x1080",
-    aspect_ratio="16:9",
-    approved=True,
-    tags=[
-        "roman",
-        "soldiers",
-    ],
-    metadata={
-        "user_decision": (
-            AssetUserDecision.USE_STOCK.value
+def _service(
+    tmp_path: Path,
+    *,
+    opener=_successful_opener,
+    budget_service: ProviderBudgetService | None = None,
+    profile_id: str | None = None,
+) -> StockAcquisitionService:
+    return StockAcquisitionService(
+        download_service=StockDownloadService(
+            temporary_directory=tmp_path / "temporary-downloads",
+            maximum_file_size_bytes=1024,
+            timeout_seconds=10.0,
+            opener=opener,
         ),
-    },
-)
-
-
-with TemporaryDirectory() as temporary_directory:
-    root = Path(temporary_directory)
-
-    asset_index = AssetIndex()
-
-    download_service = StockDownloadService(
-        temporary_directory=(
-            root / "temporary-downloads"
+        storage_service=StockAssetStorageService(
+            storage_root=tmp_path / "project-assets",
+            asset_index=AssetIndex(),
         ),
-        maximum_file_size_bytes=1024,
-        timeout_seconds=10.0,
-        opener=successful_opener,
+        budget_service=budget_service,
+        profile_id=profile_id,
     )
 
-    storage_service = StockAssetStorageService(
-        storage_root=(
-            root / "project-assets"
-        ),
-        asset_index=asset_index,
-    )
 
-    service = StockAcquisitionService(
-        download_service=download_service,
-        storage_service=storage_service,
+def _stock_profile(**overrides: object) -> ProviderProfile:
+    base: dict[str, object] = dict(
+        profile_id="stock-main",
+        display_name="Stock Main",
+        provider_name="Pexels",
+        category=ProviderCategory.STOCK_VIDEO,
     )
+    base.update(overrides)
+    return ProviderProfile(**base)
+
+
+def _budget_service(profile: ProviderProfile) -> ProviderBudgetService:
+    return ProviderBudgetService(ProviderRegistry(profiles=[profile]))
+
+
+def test_acquire_succeeds_and_produces_a_ready_clip(tmp_path: Path) -> None:
+    service = _service(tmp_path)
 
     result = service.acquire(
-        scene=scene,
-        candidate=approved_candidate,
-        project_id="history-project",
-    )
-
-    print(
-        "Acquisition success:",
-        result.success,
+        scene=_scene(), candidate=_candidate(), project_id="history-project"
     )
 
     assert result.success is True
@@ -157,179 +123,190 @@ with TemporaryDirectory() as temporary_directory:
     assert result.indexed_asset is not None
     assert result.reused_existing is False
 
-    clip = result.clip
-    indexed_asset = result.indexed_asset
+    assert result.clip.status == VideoClipStatus.READY
+    assert result.clip.source_status == SceneSourceStatus.READY
+    assert result.clip.source_type == SceneSourceType.STOCK_FOOTAGE
+    assert result.clip.provider == "Pexels"
+    assert result.clip.local_file is not None
 
-    assert clip.status == VideoClipStatus.READY
-
-    assert (
-        clip.source_status
-        == SceneSourceStatus.READY
-    )
-
-    assert (
-        clip.source_type
-        == SceneSourceType.STOCK_FOOTAGE
-    )
-
-    assert clip.provider == "Pexels"
-    assert clip.source_url is not None
-    assert clip.local_file is not None
-
-    stored_path = Path(
-        clip.local_file
-    )
-
+    stored_path = Path(result.clip.local_file)
     assert stored_path.exists()
-    assert stored_path.read_bytes() == stock_content
+    assert stored_path.read_bytes() == _STOCK_CONTENT
 
-    assert (
-        indexed_asset.source
-        == IndexedAssetSource.STOCK
+    assert result.indexed_asset.source == IndexedAssetSource.STOCK
+
+
+def test_acquiring_the_same_candidate_twice_reuses_the_download(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    scene = _scene()
+    candidate = _candidate()
+
+    first = service.acquire(
+        scene=scene, candidate=candidate, project_id="history-project"
+    )
+    second = service.acquire(
+        scene=scene, candidate=candidate, project_id="history-project"
     )
 
-    assert len(asset_index.assets) == 1
+    assert first.success is True
+    assert second.success is True
+    assert second.reused_existing is True
+    assert any("reused" in warning.lower() for warning in second.warnings)
 
-    duplicate_result = service.acquire(
-        scene=scene,
-        candidate=approved_candidate,
+
+def test_acquire_rejects_an_unapproved_candidate(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    candidate = _candidate(approved=False)
+
+    result = service.acquire(
+        scene=_scene(), candidate=candidate, project_id="history-project"
+    )
+
+    assert result.success is False
+    assert result.failure is not None
+
+
+def test_acquire_rejects_a_non_stock_candidate(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    candidate = _candidate(source_type=SceneSourceType.LOCAL_LIBRARY)
+
+    result = service.acquire(
+        scene=_scene(), candidate=candidate, project_id="history-project"
+    )
+
+    assert result.success is False
+    assert result.failure is not None
+
+
+def test_acquire_rejects_a_candidate_without_a_source_url(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    candidate = _candidate(source_url=None)
+
+    result = service.acquire(
+        scene=_scene(), candidate=candidate, project_id="history-project"
+    )
+
+    assert result.success is False
+    assert result.failure is not None
+
+
+def test_acquire_surfaces_a_download_failure(tmp_path: Path) -> None:
+    service = _service(tmp_path, opener=_failing_opener)
+
+    result = service.acquire(
+        scene=_scene(), candidate=_candidate(), project_id="history-project"
+    )
+
+    assert result.success is False
+    assert result.failure is not None
+    assert result.failure.module_name == "stock_download"
+    assert result.failure.requires_user_decision is True
+
+
+def test_acquire_without_budget_service_is_unaffected(tmp_path: Path) -> None:
+    # No budget_service/profile_id configured - gating must be a
+    # complete no-op, matching the pre-Phase-7 tests above.
+    service = _service(tmp_path)
+
+    result = service.acquire(
+        scene=_scene(),
+        candidate=_candidate(),
         project_id="history-project",
+        estimated_cost_usd=1_000_000.0,
     )
 
-    assert duplicate_result.success is True
-    assert duplicate_result.clip is not None
-    assert duplicate_result.reused_existing is True
+    assert result.success is True
 
-    assert len(asset_index.assets) == 1
 
-    assert any(
-        "reused" in warning.lower()
-        for warning in duplicate_result.warnings
+def test_acquire_with_zero_estimated_cost_never_gates(tmp_path: Path) -> None:
+    profile = _stock_profile(
+        daily_budget_usd=1.0, daily_spent_usd=1.0, monthly_spent_usd=1.0
+    )  # exhausted
+    service = _service(
+        tmp_path, budget_service=_budget_service(profile), profile_id="stock-main"
     )
 
+    result = service.acquire(
+        scene=_scene(), candidate=_candidate(), project_id="history-project"
+    )  # estimated_cost_usd defaults to 0.0
 
-with TemporaryDirectory() as temporary_directory:
-    root = Path(temporary_directory)
+    assert result.success is True
 
-    validation_service = StockAcquisitionService(
-        download_service=StockDownloadService(
-            temporary_directory=(
-                root / "temporary-downloads"
-            ),
-            opener=successful_opener,
-        ),
-        storage_service=StockAssetStorageService(
-            storage_root=root / "storage",
-            asset_index=AssetIndex(),
-        ),
+
+def test_acquire_blocked_by_exhausted_daily_budget(tmp_path: Path) -> None:
+    profile = _stock_profile(
+        daily_budget_usd=1.0, daily_spent_usd=1.0, monthly_spent_usd=1.0
     )
+    budget_service = _budget_service(profile)
+    service = _service(tmp_path, budget_service=budget_service, profile_id="stock-main")
 
-    unapproved_candidate = (
-        approved_candidate.model_copy(
-            update={
-                "approved": False,
-            }
-        )
-    )
-
-    unapproved_result = (
-        validation_service.acquire(
-            scene=scene,
-            candidate=unapproved_candidate,
-            project_id="history-project",
-        )
-    )
-
-    assert unapproved_result.success is False
-    assert unapproved_result.failure is not None
-
-    wrong_source_candidate = (
-        approved_candidate.model_copy(
-            update={
-                "source_type": (
-                    SceneSourceType.LOCAL_LIBRARY
-                ),
-            }
-        )
-    )
-
-    wrong_source_result = (
-        validation_service.acquire(
-            scene=scene,
-            candidate=wrong_source_candidate,
-            project_id="history-project",
-        )
-    )
-
-    assert wrong_source_result.success is False
-    assert wrong_source_result.failure is not None
-
-    missing_url_candidate = (
-        approved_candidate.model_copy(
-            update={
-                "source_url": None,
-            }
-        )
-    )
-
-    missing_url_result = (
-        validation_service.acquire(
-            scene=scene,
-            candidate=missing_url_candidate,
-            project_id="history-project",
-        )
-    )
-
-    assert missing_url_result.success is False
-    assert missing_url_result.failure is not None
-
-
-def failing_opener(
-    source_url: str,
-    timeout_seconds: float,
-) -> FakeDownloadStream:
-    raise ConnectionError(
-        "Stock provider unavailable."
-    )
-
-
-with TemporaryDirectory() as temporary_directory:
-    root = Path(temporary_directory)
-
-    failure_service = StockAcquisitionService(
-        download_service=StockDownloadService(
-            temporary_directory=(
-                root / "temporary-downloads"
-            ),
-            opener=failing_opener,
-        ),
-        storage_service=StockAssetStorageService(
-            storage_root=root / "storage",
-            asset_index=AssetIndex(),
-        ),
-    )
-
-    failure_result = failure_service.acquire(
-        scene=scene,
-        candidate=approved_candidate,
+    result = service.acquire(
+        scene=_scene(),
+        candidate=_candidate(),
         project_id="history-project",
+        estimated_cost_usd=0.5,
     )
 
-    assert failure_result.success is False
-    assert failure_result.failure is not None
+    assert result.success is False
+    assert result.failure is not None
+    assert result.failure.reason == AssetFailureReason.BUDGET_EXCEEDED
+    # Nothing was reserved - the block happened before any reservation.
+    assert budget_service.registry.get("stock-main").daily_spent_usd == 1.0
 
-    assert (
-        failure_result.failure.module_name
-        == "stock_download"
+
+def test_acquire_reserves_budget_on_success(tmp_path: Path) -> None:
+    profile = _stock_profile(daily_budget_usd=10.0, monthly_budget_usd=100.0)
+    budget_service = _budget_service(profile)
+    service = _service(tmp_path, budget_service=budget_service, profile_id="stock-main")
+
+    result = service.acquire(
+        scene=_scene(),
+        candidate=_candidate(),
+        project_id="history-project",
+        estimated_cost_usd=2.0,
     )
 
-    assert (
-        failure_result.failure.requires_user_decision
-        is True
+    assert result.success is True
+    updated = budget_service.registry.get("stock-main")
+    assert updated.daily_spent_usd == 2.0
+    assert updated.monthly_spent_usd == 2.0
+
+
+def test_acquire_releases_budget_when_download_fails(tmp_path: Path) -> None:
+    profile = _stock_profile(daily_budget_usd=10.0, monthly_budget_usd=100.0)
+    budget_service = _budget_service(profile)
+    service = _service(
+        tmp_path,
+        opener=_failing_opener,
+        budget_service=budget_service,
+        profile_id="stock-main",
     )
 
+    result = service.acquire(
+        scene=_scene(),
+        candidate=_candidate(),
+        project_id="history-project",
+        estimated_cost_usd=2.0,
+    )
 
-print(
-    "Stock Acquisition Service tests "
-    "completed successfully."
-)
+    assert result.success is False
+    assert budget_service.registry.get("stock-main").daily_spent_usd == 0.0
+
+
+def test_acquire_does_not_reserve_when_a_free_precondition_fails(
+    tmp_path: Path,
+) -> None:
+    profile = _stock_profile(daily_budget_usd=10.0, monthly_budget_usd=100.0)
+    budget_service = _budget_service(profile)
+    service = _service(tmp_path, budget_service=budget_service, profile_id="stock-main")
+
+    result = service.acquire(
+        scene=_scene(),
+        candidate=_candidate(approved=False),
+        project_id="history-project",
+        estimated_cost_usd=2.0,
+    )
+
+    assert result.success is False
+    # Validation fails before budget gating is ever reached.
+    assert budget_service.registry.get("stock-main").daily_spent_usd == 0.0

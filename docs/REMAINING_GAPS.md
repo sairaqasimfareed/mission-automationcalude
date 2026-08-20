@@ -228,12 +228,62 @@ that file's audio-regeneration row.
 
 ## Phase 7 - Budget gating beyond LLM calls
 
-- [ ] Extend `ProviderBudgetService.check_request()`/`.reserve()` gating
-      to voice/music/SFX/stock provider calls, matching the existing
-      LLM-call pattern in `src/services/llm/llm_service.py`.
+- [x] Extend `ProviderBudgetService.check_request()`/`.reserve()`/`.release()`
+      gating to voice/music/SFX/stock provider calls.
+      `MediaGenerationPipeline.run_voice/.run_music/.run_sound_effects`
+      and `StockAcquisitionService.acquire()` all gate the same way:
+      opt-in `budget_service` + a `*_profile_id`/`profile_id` at
+      construction, `estimated_cost_usd` on the call (defaults `0.0` -
+      never blocks, never reserves, so every pre-Phase-7 caller and
+      test is unaffected). Check→reserve before the provider call,
+      release on any failure path, left reserved on success.
+      `StockAcquisitionService` reports a block as a structured
+      `AssetModuleFailure` (new `AssetFailureReason.BUDGET_EXCEEDED`)
+      rather than raising, matching that service's existing
+      typed-result convention; `MediaGenerationPipeline` raises
+      `RuntimeError`, matching its existing convention.
 - [x] ~~Delete the dead empty file `src/services/provider_budget_service.py`~~
       Done in Phase 0 - it was genuinely empty and unimported; the real
       implementation lives in `src/services/budget/`.
+- [ ] **No real cost-estimation source exists yet for any of these four
+      providers.** Gating is real and tested, but it only actually
+      engages when a caller supplies a genuine `estimated_cost_usd` -
+      today, nothing in the codebase computes one (no ElevenLabs
+      character-count pricing, no stock-provider per-download cost).
+      `run_all_audio()` and the GUI's "Generate all audio"/Clip
+      Workspace call sites all still call these methods with the
+      default `0.0`, so budget gating is wired but dormant until a
+      real pricing/estimation layer is built on top - a separate,
+      larger feature this phase didn't attempt.
+- [ ] **`ProviderRegistry`/`ProviderProfile` are not wired to these
+      four services' actual provider objects at all today.** Gating
+      requires a caller to explicitly pass a `profile_id` string; there
+      is no `ProviderSelectionService`-driven resolution from "the
+      voice provider this job is configured to use" to "the matching
+      `ProviderProfile` in the registry" for these categories - that
+      bridge (between the Provider Center's profile system and the
+      simpler `providers: list[...]` abstraction `VoiceGenerationService`/
+      `MusicGenerationService`/`SoundEffectGenerationService`/
+      `StockAcquisitionService` use) doesn't exist. Building it would
+      let a configured budget apply automatically instead of requiring
+      a caller to know and pass the right profile id by hand.
+- [ ] **Found while auditing this area, unrelated to Phase 7's own
+      scope but directly in the files touched:** `tests/test_provider_budget_service.py`
+      and the entire pre-existing stock-acquisition test suite
+      (`tests/test_stock_acquisition_service.py`,
+      `tests/test_scene_stock_acquisition_workflow.py`,
+      `tests/test_stock_acquisition_request.py` - ~716 lines total)
+      were module-level print-scripts with zero `def test_` functions,
+      not real pytest tests - pytest imports and "passes" them
+      trivially regardless of whether their assertions hold, since a
+      failed `assert` during import surfaces as a collection error,
+      not a normal test failure, and nothing distinguishes one
+      scenario from another. `test_stock_acquisition_service.py` was
+      rewritten into 12 real, isolated pytest tests as part of this
+      phase (needed real coverage of the exact service being changed);
+      the other three files are unchanged - `test_provider_budget_service.py`
+      is flagged as a separate task, the two `test_scene_*`/
+      `test_stock_acquisition_request.py` files are not.
 
 ## Phase 8 - Dry-run as an explicit execution mode
 

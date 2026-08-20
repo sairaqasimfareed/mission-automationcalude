@@ -5,6 +5,53 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-08-20 - Phase 7: Budget gating beyond LLM calls
+
+Extended `ProviderBudgetService` gating - previously LLM-only - to
+voice/music/SFX (`MediaGenerationPipeline.run_voice/.run_music/
+.run_sound_effects`) and stock footage (`StockAcquisitionService.acquire()`).
+Opt-in by design: a `budget_service` plus a `*_profile_id`/`profile_id`
+at construction, and `estimated_cost_usd` on the call itself (defaults
+`0.0`, which never blocks and never reserves) - none of these four
+providers has a native per-call cost estimate today, unlike LLM
+requests, so gating only actually engages once a caller supplies a
+real number. Every pre-Phase-7 caller and test is unaffected. Check→
+reserve happens before the provider call; release happens on any
+failure path; a successful call leaves the reservation in place (the
+estimate stands as the recorded spend, since none of these providers
+reports back an actual cost to reconcile against). `StockAcquisitionService`
+reports a budget block as a structured `AssetModuleFailure` (new
+`AssetFailureReason.BUDGET_EXCEEDED`) rather than raising, matching
+that service's existing typed-result convention rather than importing
+`MediaGenerationPipeline`'s exception-based one.
+
+This was flagged earlier in the session (alongside secret encryption)
+as one of the two gaps that actually matter before real API keys get
+added - a misconfigured or runaway voice/music/SFX/stock call
+previously had zero budget safety net, unlike LLM calls.
+
+Two real gaps found while building this, both left open rather than
+expanded into: (1) no cost-estimation source exists yet for any of
+these four providers - gating is wired but dormant until a pricing
+layer is built on top; (2) `ProviderRegistry`/`ProviderProfile` aren't
+wired to these services' actual provider objects - a caller must know
+and pass the right `profile_id` by hand, there's no automatic
+resolution from "the voice provider this job uses" to its budget
+profile.
+
+Also found and partially fixed, unrelated to this phase's own scope
+but directly in the files touched: the entire pre-existing
+stock-acquisition test suite (`test_stock_acquisition_service.py`,
+`test_scene_stock_acquisition_workflow.py`,
+`test_stock_acquisition_request.py`, ~716 lines) and
+`test_provider_budget_service.py` were module-level print-scripts with
+zero real pytest test functions - they "pass" regardless of whether
+their own assertions hold. Rewrote `test_stock_acquisition_service.py`
+into 12 real, isolated tests (needed genuine coverage of the exact
+service being modified); flagged `test_provider_budget_service.py` as
+a separate task; left the other two stock-acquisition files as a known,
+documented gap rather than scope-creeping this phase further.
+
 ## 2026-08-20 - Phase 6: Asset provenance (reconciled, not duplicated)
 
 Closed the second half of Phase 6 (render identity was already pulled

@@ -12,6 +12,7 @@ from src.models.editorial_critique import (
 from src.models.generated_script import GeneratedScript, ScriptSegment
 from src.models.manual_audio_requirement import ManualAudioRequirementType
 from src.models.media_strategy import SceneSourceStatus, SceneSourceType, VoiceStatus
+from src.models.provider_profile import ProviderCategory, ProviderProfile
 from src.models.scene import Scene, SceneStatus
 from src.models.story_blueprint import StoryBeatType
 from src.models.video_clip import VideoClip, VideoClipStatus
@@ -20,6 +21,7 @@ from src.models.voice_profile import VoiceProfile
 from src.providers.dry_run_music_provider import DryRunMusicProvider
 from src.providers.dry_run_sound_effect_provider import DryRunSoundEffectProvider
 from src.providers.dry_run_voice_provider import DryRunVoiceProvider
+from src.services.budget.provider_budget_service import ProviderBudgetService
 from src.services.editing_directive_resolution_service import (
     EditingDirectiveResolutionService,
 )
@@ -34,6 +36,7 @@ from src.services.genre_voice_directive_generation_service import (
 )
 from src.services.media_generation_pipeline import MediaGenerationPipeline
 from src.services.music_generation_service import MusicGenerationService
+from src.services.registry.provider_registry import ProviderRegistry
 from src.services.script_version_service import ScriptVersionService
 from src.services.sound_effect_generation_service import SoundEffectGenerationService
 from src.services.voice_generation_service import VoiceGenerationService
@@ -52,7 +55,13 @@ def _neutral_voice_profile() -> VoiceProfile:
 
 
 def _pipeline(
-    *, with_music: bool = True, with_sound_effects: bool = True
+    *,
+    with_music: bool = True,
+    with_sound_effects: bool = True,
+    budget_service: ProviderBudgetService | None = None,
+    voice_profile_id: str | None = None,
+    music_profile_id: str | None = None,
+    sound_effect_profile_id: str | None = None,
 ) -> MediaGenerationPipeline:
     voice_resolution_runtime = VoiceResolutionRuntimeFactory().build(
         profiles=[_neutral_voice_profile()]
@@ -86,7 +95,26 @@ def _pipeline(
             if with_sound_effects
             else None
         ),
+        budget_service=budget_service,
+        voice_profile_id=voice_profile_id,
+        music_profile_id=music_profile_id,
+        sound_effect_profile_id=sound_effect_profile_id,
     )
+
+
+def _budget_service(profile: ProviderProfile) -> ProviderBudgetService:
+    return ProviderBudgetService(ProviderRegistry(profiles=[profile]))
+
+
+def _voice_profile(**overrides: object) -> ProviderProfile:
+    base: dict[str, object] = dict(
+        profile_id="voice-main",
+        display_name="Voice Main",
+        provider_name="ElevenLabs",
+        category=ProviderCategory.VOICE,
+    )
+    base.update(overrides)
+    return ProviderProfile(**base)
 
 
 def _scene(number: int, duration: int = 8) -> Scene:
@@ -463,3 +491,102 @@ def test_run_all_audio_reports_failures_individually_without_raising() -> None:
     assert voice_result.status == AudioComponentStatus.FAILED
     assert timeline_result.status == AudioComponentStatus.FAILED
     assert not summary.all_succeeded
+
+
+def test_run_voice_without_budget_service_is_unaffected() -> None:
+    # No budget_service/profile_id configured - gating must be a
+    # complete no-op, matching every pre-Phase-7 test in this file.
+    job = _job(_scene(1))
+    pipeline = _pipeline()
+
+    result = pipeline.run_voice(job, estimated_cost_usd=1_000_000.0)
+
+    assert result.voice_status == VoiceStatus.READY
+
+
+def test_run_voice_with_zero_estimated_cost_never_gates() -> None:
+    profile = _voice_profile(
+        daily_budget_usd=1.0, daily_spent_usd=1.0, monthly_spent_usd=1.0
+    )  # exhausted
+    pipeline = _pipeline(
+        budget_service=_budget_service(profile), voice_profile_id="voice-main"
+    )
+    job = _job(_scene(1))
+
+    result = pipeline.run_voice(job)  # estimated_cost_usd defaults to 0.0
+
+    assert result.voice_status == VoiceStatus.READY
+
+
+def test_run_voice_blocked_by_exhausted_daily_budget() -> None:
+    profile = _voice_profile(
+        daily_budget_usd=1.0, daily_spent_usd=1.0, monthly_spent_usd=1.0
+    )
+    budget_service = _budget_service(profile)
+    pipeline = _pipeline(budget_service=budget_service, voice_profile_id="voice-main")
+    job = _job(_scene(1))
+
+    with pytest.raises(RuntimeError, match="blocked by budget"):
+        pipeline.run_voice(job, estimated_cost_usd=0.5)
+
+    # Nothing was reserved - the block happened before any reservation.
+    assert budget_service.registry.get("voice-main").daily_spent_usd == 1.0
+
+
+def test_run_voice_reserves_budget_on_success() -> None:
+    profile = _voice_profile(daily_budget_usd=10.0, monthly_budget_usd=100.0)
+    budget_service = _budget_service(profile)
+    pipeline = _pipeline(budget_service=budget_service, voice_profile_id="voice-main")
+    job = _job(_scene(1))
+
+    pipeline.run_voice(job, estimated_cost_usd=2.0)
+
+    updated = budget_service.registry.get("voice-main")
+    assert updated.daily_spent_usd == 2.0
+    assert updated.monthly_spent_usd == 2.0
+
+
+def test_run_voice_releases_budget_on_failure() -> None:
+    profile = _voice_profile(daily_budget_usd=10.0, monthly_budget_usd=100.0)
+    budget_service = _budget_service(profile)
+    pipeline = _pipeline(budget_service=budget_service, voice_profile_id="voice-main")
+    job = _job()  # no scenes - run_voice fails its own precondition check first
+
+    with pytest.raises(RuntimeError, match="requires planned scenes"):
+        pipeline.run_voice(job, estimated_cost_usd=2.0)
+
+    # The precondition check happens before gating, so nothing was
+    # ever reserved in the first place.
+    assert budget_service.registry.get("voice-main").daily_spent_usd == 0.0
+
+
+def test_run_voice_releases_budget_when_generation_itself_fails() -> None:
+    from src.models.voice_generation import (
+        VoiceGenerationFailure,
+        VoiceGenerationFailureReason,
+        VoiceGenerationResult,
+        VoiceGenerationStatus,
+    )
+
+    profile = _voice_profile(daily_budget_usd=10.0, monthly_budget_usd=100.0)
+    budget_service = _budget_service(profile)
+    pipeline = _pipeline(budget_service=budget_service, voice_profile_id="voice-main")
+    job = _job(_scene(1))
+
+    pipeline.voice_generation_service.generate_many = lambda blueprints: [  # type: ignore[method-assign]
+        VoiceGenerationResult(
+            success=False,
+            scene_number=1,
+            status=VoiceGenerationStatus.FAILED,
+            failure=VoiceGenerationFailure(
+                reason=VoiceGenerationFailureReason.PROVIDER_ERROR,
+                message="Synthetic failure for budget-release test.",
+            ),
+        )
+        for _ in blueprints
+    ]
+
+    with pytest.raises(RuntimeError, match="Voice generation failed"):
+        pipeline.run_voice(job, estimated_cost_usd=2.0)
+
+    assert budget_service.registry.get("voice-main").daily_spent_usd == 0.0

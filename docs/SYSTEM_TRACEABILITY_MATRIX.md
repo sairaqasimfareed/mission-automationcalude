@@ -75,7 +75,8 @@ functionality - see `docs/REMAINING_GAPS.md` for what to do about it.
 
 | Capability | Model | Service | Persistence | GUI | Tests | Gap |
 |---|---|---|---|---|---|---|
-| LLM call budget gating | `ProviderBudgetCheckResult` | `ProviderBudgetService` (called from `LLMService`) | `ProviderProfile.daily_spent_usd/.monthly_spent_usd` | Provider Manager | (covered indirectly via LLM service tests) | Not extended to voice/music/SFX/stock providers |
+| LLM call budget gating | `ProviderBudgetCheckResult` | `ProviderBudgetService` (called from `LLMService`) | `ProviderProfile.daily_spent_usd/.monthly_spent_usd` | Provider Manager | (covered indirectly via LLM service tests) | - |
+| Voice/music/SFX/stock budget gating | `ProviderBudgetCheckResult` | `ProviderBudgetService`, called (opt-in) from `MediaGenerationPipeline.run_voice/.run_music/.run_sound_effects` and `StockAcquisitionService.acquire()` | `ProviderProfile.daily_spent_usd/.monthly_spent_usd` (same as LLM) | - (no dedicated GUI surface for gating status yet) | `test_media_generation_pipeline.py`, `test_stock_acquisition_service.py` | No cost-estimation source exists yet to feed a real `estimated_cost_usd`; no `ProviderRegistry` resolution from a job's configured provider to its `profile_id` |
 
 ---
 

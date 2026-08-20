@@ -26,9 +26,7 @@ class AssetWorkflowStatus(str, Enum):
     SEARCHING_STOCK = "searching_stock"
     STOCK_RESULTS_AVAILABLE = "stock_results_available"
 
-    WAITING_FOR_RECOVERY_DECISION = (
-        "waiting_for_recovery_decision"
-    )
+    WAITING_FOR_RECOVERY_DECISION = "waiting_for_recovery_decision"
 
     RETRYING = "retrying"
     SKIPPED = "skipped"
@@ -75,24 +73,20 @@ class AssetFailureReason(str, Enum):
     """Normalized reasons for recoverable asset failures."""
 
     NO_LOCAL_RESULTS = "no_local_results"
-    MANUAL_UPLOAD_NOT_PROVIDED = (
-        "manual_upload_not_provided"
-    )
+    MANUAL_UPLOAD_NOT_PROVIDED = "manual_upload_not_provided"
     INVALID_MANUAL_UPLOAD = "invalid_manual_upload"
 
     STOCK_NO_RESULTS = "stock_no_results"
     STOCK_API_UNAVAILABLE = "stock_api_unavailable"
     STOCK_API_TIMEOUT = "stock_api_timeout"
-    STOCK_API_QUOTA_EXHAUSTED = (
-        "stock_api_quota_exhausted"
-    )
-    STOCK_API_AUTHENTICATION_FAILED = (
-        "stock_api_authentication_failed"
-    )
+    STOCK_API_QUOTA_EXHAUSTED = "stock_api_quota_exhausted"
+    STOCK_API_AUTHENTICATION_FAILED = "stock_api_authentication_failed"
 
     FILE_NOT_FOUND = "file_not_found"
     INVALID_FILE_TYPE = "invalid_file_type"
     FILE_TOO_LARGE = "file_too_large"
+
+    BUDGET_EXCEEDED = "budget_exceeded"
 
     MODULE_DISABLED = "module_disabled"
     UNKNOWN = "unknown"
@@ -148,9 +142,7 @@ class AssetModuleFailure(MissionBaseModel):
         cleaned = value.strip()
 
         if not cleaned:
-            raise ValueError(
-                "Asset failure text cannot be empty."
-            )
+            raise ValueError("Asset failure text cannot be empty.")
 
         return cleaned
 
@@ -223,9 +215,7 @@ class SceneAssetState(MissionBaseModel):
         ge=1,
     )
 
-    status: AssetWorkflowStatus = (
-        AssetWorkflowStatus.PENDING
-    )
+    status: AssetWorkflowStatus = AssetWorkflowStatus.PENDING
 
     local_search_query: str | None = None
     stock_search_query: str | None = None
@@ -279,9 +269,7 @@ class SceneAssetState(MissionBaseModel):
         """Return whether workflow input is required."""
 
         if self.active_failure is not None:
-            return (
-                self.active_failure.requires_user_decision
-            )
+            return self.active_failure.requires_user_decision
 
         return self.status in {
             AssetWorkflowStatus.LOCAL_RESULTS_AVAILABLE,
@@ -327,14 +315,8 @@ class SceneAssetState(MissionBaseModel):
             else AssetWorkflowStatus.FAILED_FATAL
         )
 
-        if (
-            failure.recoverable
-            and failure.requires_user_decision
-        ):
-            self.status = (
-                AssetWorkflowStatus
-                .WAITING_FOR_RECOVERY_DECISION
-            )
+        if failure.recoverable and failure.requires_user_decision:
+            self.status = AssetWorkflowStatus.WAITING_FOR_RECOVERY_DECISION
 
     def clear_active_failure(self) -> None:
         """Clear the current failure before recovery."""
