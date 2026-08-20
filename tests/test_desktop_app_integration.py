@@ -534,7 +534,7 @@ def test_workspace_views_refresh_without_crashing_on_a_fresh_project(
     window._open_project(job.id)
     workspace = window._detail_view
 
-    for _label, _icon, target in workspace._workspaces:
+    for _label, _icon, _tab_name, target in workspace._workspaces:
         workspace._show_workspace(target)
 
     assert workspace._stack.currentWidget() is workspace.packaging

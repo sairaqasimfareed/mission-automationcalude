@@ -5,6 +5,44 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-08-20 - Unified workspace shell: sidebar nav + Run/Resume
+
+Reshaped `ProjectWorkspaceView`'s top nav row into a left sidebar that
+stays visible beside the working panel, matching the user's "Unified
+Workspace Shell" design doc's framing (an IDE's or video editor's shell,
+not separate windows per function). Before implementing, reviewed the
+doc against the actual codebase and found the persistent header
+(Mode/Stage/Approval/Quality/Automation/Readiness) was already built in
+Phase 9; the two genuine gaps were the sidebar layout itself and a
+"Run / Resume" header action. Also flagged two mismatches between the
+doc's mockup and what's actually buildable: a literal per-project dollar
+budget figure (no per-job spend tracking exists - Phase 7's budget
+gating is per-`ProviderProfile`, global) and the doc's flattened
+12-stage sidebar (that's `ContentIntelligencePipeline`'s own stage list,
+today nested inside one Content Studio tab rather than the legacy
+`ContentPipeline`'s primary flow) - the user picked the lowest-risk
+option: reshape only, keep the current 7 destinations, defer the
+pipeline-unification decision.
+
+`_handle_run_resume()` deliberately reuses `ProductionReadinessService.
+evaluate()` rather than inventing a second "what's next" concept: it
+maps the first blocker's `.stage` (or the readiness state itself, when
+there are no blockers) to the corresponding sidebar tab and switches to
+it. It's navigational only, not an auto-executor - the destination tab
+still owns deciding exactly what to run there, matching the doc's own
+framing that the shell is "primarily the professional GUI/orchestration
+layer," not a new automation layer over existing controllers.
+
+Verification note: one pre-existing timing-sensitive test
+(`test_render_progress_updates_live_and_survives_cross_workspace_refresh`,
+a real-QThread test with two short real `time.sleep()` calls) failed
+once in a full-file run under heavy machine load from this session's own
+background test processes, then passed cleanly in isolation (444s
+wall-clock for ~2s of actual test logic, confirming severe contention at
+that moment) - a pre-existing flakiness class already documented in this
+codebase's own test comments, not a regression from this change; the
+other 9 tests in the same file passed in both runs.
+
 ## 2026-08-20 - Phase 10: CI, pre-commit, and testing gaps
 
 **CI workflow and dependency-list fix.** Added `.github/workflows/ci.yml`

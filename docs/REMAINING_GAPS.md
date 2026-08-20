@@ -384,6 +384,25 @@ that file's audio-regeneration row.
   rewritten into 8 real tests, most gated behind a `skipif` when
   ffmpeg/ffprobe aren't on `PATH`.
 
+## Unified workspace shell (Done - reshape only, one decision deferred)
+
+- [x] Left sidebar nav replacing the top button row + a "Run / Resume"
+      header action that jumps to whatever `ProductionReadinessService`
+      already says is next (`ProjectWorkspaceView`). The persistent
+      header itself was already done in Phase 9.
+- [ ] **Deliberately deferred**: whether `ContentIntelligencePipeline`'s
+      12 stages get promoted to top-level sidebar items (making it the
+      one true content path and demoting the legacy `ContentPipeline`'s
+      GUI flow) or the sidebar instead supports both flows per project.
+      The user explicitly chose the lowest-risk option (reshape only,
+      keep today's 7 destinations) rather than deciding this now - see
+      `PROJECT_PROGRESS.md`'s entry for the full options considered.
+- [ ] Real per-project budget tracking (a genuine dollar figure like the
+      design doc's "$4.20 / $15", not the current `ManualAudioRequirement`
+      -count proxy) - blocked on Phase 7's budget gating being extended
+      from per-`ProviderProfile` spend to per-job spend, which is new
+      backend work, not a GUI change.
+
 ## Explicitly out of scope
 
 - Google Flow, or any browser automation targeting Google Flow's web UI.
