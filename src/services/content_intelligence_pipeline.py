@@ -625,37 +625,61 @@ class ContentIntelligencePipeline:
         needs revision - not an unbounded improve-until-perfect loop,
         just enough to let a genuinely fixable script self-correct
         once before surfacing to a human.
+
+        Idempotent on re-entry: a stage whose output artifact already
+        exists on the job is skipped rather than regenerated, so
+        calling run_all() again after a restart (or after resolving an
+        approval gate) resumes at the first incomplete stage instead
+        of re-spending paid/nondeterministic work redoing what already
+        succeeded. run_scene_planning is the one stage checked against
+        InvalidationService rather than mere presence, since scenes is
+        the only run_all()-produced field that staleness (a script
+        revision) can flag without also clearing to None - every other
+        field here is reset to None by whatever invalidates it (see
+        run_revision), so "already set" and "still valid" coincide for
+        them.
         """
 
-        job = self.run_audience_promise(job)
+        if job.audience_promise is None:
+            job = self.run_audience_promise(job)
         if self.approval_gate_service.is_blocked(job, "content_strategy"):
             return job
 
-        job = self.run_research_plan(job)
-        job = self.run_research(job)
+        if job.research_plan is None:
+            job = self.run_research_plan(job)
+        if job.research is None:
+            job = self.run_research(job)
         if self.approval_gate_service.is_blocked(job, "research"):
             return job
 
-        job = self.run_story_angles(job)
+        if not job.story_angles:
+            job = self.run_story_angles(job)
         if self.approval_gate_service.is_blocked(job, "story_angle"):
             return job
 
-        job = self.run_narrative_architecture(job)
+        if job.story_blueprint is None:
+            job = self.run_narrative_architecture(job)
         if self.approval_gate_service.is_blocked(job, "narrative_architecture"):
             return job
 
-        job = self.run_retention_audit(job)
-        job = self.run_hooks(job)
+        if job.retention_audit is None:
+            job = self.run_retention_audit(job)
+        if not job.hook_candidates:
+            job = self.run_hooks(job)
         if self.approval_gate_service.is_blocked(job, "hook"):
             return job
 
-        job = self.run_script(job)
+        if job.generated_script is None:
+            job = self.run_script(job)
         if self.approval_gate_service.is_blocked(job, "final_script"):
             return job
 
-        job = self.run_continuity_bible(job)
-        job = self.run_editorial_critique(job)
-        job = self.run_quality_gate(job)
+        if job.continuity_bible is None:
+            job = self.run_continuity_bible(job)
+        if job.editorial_critique is None:
+            job = self.run_editorial_critique(job)
+        if job.script_quality_report is None:
+            job = self.run_quality_gate(job)
 
         needs_revision = (
             job.script_quality_report is not None
@@ -681,8 +705,11 @@ class ContentIntelligencePipeline:
                 version_number=job.script_version_history.current_version.version_number,
             )
 
-        job = self.run_packaging_hypothesis(job)
-        job = self.run_scene_planning(job)
+        if job.packaging_hypothesis is None:
+            job = self.run_packaging_hypothesis(job)
+
+        if not job.scenes or self.invalidation_service.is_stale(job, "scenes"):
+            job = self.run_scene_planning(job)
 
         return job
 

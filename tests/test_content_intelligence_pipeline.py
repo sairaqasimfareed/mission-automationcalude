@@ -522,11 +522,60 @@ def test_resolving_a_pending_decision_unblocks_the_next_manual_stage() -> None:
     pipeline.resolve_approval(job, "story_angle", HumanApprovalAction.APPROVE)
     assert ApprovalGateService.is_blocked(job, "story_angle") is False
 
-    # run_all() always restarts from stage one rather than resuming
-    # mid-pipeline (idempotent re-run skipping is deferred, see
-    # docs/REMAINING_GAPS.md Phase 1) - so proving the gate cleared
-    # means calling the next stage directly, the way a GUI "Continue"
-    # action would after a human approves.
-    job = pipeline.run_narrative_architecture(job)
+    # run_all() is idempotent on re-entry (Phase A1): it skips every
+    # stage whose output already exists, so calling it again after
+    # resolving the gate resumes from exactly where it left off rather
+    # than restarting from stage one - this is the real fix for what
+    # used to be documented as a deferred limitation.
+    job = pipeline.run_all(job)
 
     assert job.story_blueprint is not None
+
+
+def test_run_all_is_idempotent_and_makes_no_further_llm_calls_once_complete() -> None:
+    pipeline, stub = _pipeline()
+
+    job = pipeline.run_all(_job())
+    request_count_after_first_run = len(stub.requests)
+
+    job = pipeline.run_all(job)
+
+    assert len(stub.requests) == request_count_after_first_run
+    assert job.generated_script is not None
+
+
+def test_run_all_resumes_from_a_restarted_job_without_regenerating_earlier_stages() -> (
+    None
+):
+    """
+    Simulates a process restart mid-pipeline: run_all() is called on a
+    job that already has audience_promise/research/story_angles set
+    (e.g. reloaded from disk after a crash), and must not re-spend an
+    LLM call regenerating any of them - only stages genuinely missing
+    should run.
+    """
+
+    pipeline, _ = _pipeline()
+    job = pipeline.run_audience_promise(_job())
+    job = pipeline.run_research(job)
+    job = pipeline.run_story_angles(job)
+
+    audience_promise_before = job.audience_promise
+    research_before = job.research
+    selected_angle_before = job.selected_story_angle
+
+    resumed_pipeline, stub = _pipeline()
+    job = resumed_pipeline.run_all(job)
+
+    assert job.audience_promise is audience_promise_before
+    assert job.research is research_before
+    assert job.selected_story_angle is selected_angle_before
+    assert job.generated_script is not None
+
+    # None of the resume calls should have re-requested audience
+    # promise, research, or story-angle generation - only the stages
+    # genuinely still missing (narrative architecture onward).
+    agents_called = {request.metadata.get("agent") for request in stub.requests}
+    assert "AudiencePromiseService" not in agents_called
+    assert "ResearchAgent" not in agents_called
+    assert "StoryAngleGenerationService" not in agents_called
