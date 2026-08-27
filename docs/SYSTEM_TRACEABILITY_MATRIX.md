@@ -102,6 +102,13 @@ functionality - see `docs/REMAINING_GAPS.md` for what to do about it.
 | Invalidation-matrix wiring | - | proven against `ContentIntelligencePipeline.run_revision`, `BulkStockAssignmentService`, `BulkClipIngestionService`, `MediaGenerationPipeline.run_voice/.run_music/.run_sound_effects` (no new service) | `VideoJob.stale_artifacts` | - | `test_invalidation_matrix_wiring.py` |
 | Golden-path end-to-end | - | drives `ContentPipeline` + `RenderOrchestratorService` + `FinalExportService` + `FinalPreviewService` through the real GUI handlers (no new service) | `VideoJob` + every downstream artifact store | `ProjectWorkspaceView` (all 7 tabs) | `test_desktop_app_integration.py::test_full_pipeline_reaches_final_export` |
 
+## Content Studio Redesign
+
+| Capability | Model | Service | Persistence | GUI | Tests | Gap |
+|---|---|---|---|---|---|---|
+| Repository baseline | - | - | `docs/CONTENT_STUDIO_REDESIGN_BASELINE.md` (KEEP/MODIFY/REUSE/REPLACE/MISSING matrix, terminology glossary) | - | Baseline suite confirmed green (ruff/black/mypy/full pytest) | Documentation only, by Phase 0's own design - no behavior change |
+| Canonical artifact lifecycle | `ArtifactType`, `ArtifactLifecycleStatus`, `ArtifactProvenance`, `ArtifactVersionRecord` (`src/models/artifact_lifecycle.py`) | `ArtifactLifecycleService` (state machine: create_version/transition/approve), `ArtifactDependencyGraphService` (compute_downstream_impact/invalidate_dependents) (`src/services/artifact_lifecycle_service.py`) | `VideoJob.artifact_versions: list[ArtifactVersionRecord]` (append-only ledger) | - (not yet wired into any workspace) | `test_artifact_lifecycle_service.py` (27 tests: hash immutability, version numbering, state-transition legality including terminal states, branching dependency traversal, invalidation idempotency, backward-compat round-trip) | Deliberately not yet wired into any real content-intelligence stage - this phase's own exit criteria only require the engine to be "stable and independent of GUI." The ~40 existing per-artifact status enums are untouched and continue governing their own models; this is a second, parallel ledger new artifact types register into as each workspace is migrated, one at a time, in later phases. |
+
 ---
 
 Maintenance: add a row here in the same change that adds a new

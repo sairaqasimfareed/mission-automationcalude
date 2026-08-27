@@ -55,6 +55,20 @@ Status legend: **Done** / **Partial** / **Missing**.
 | Testing strategy | Done | Deep unit/integration coverage (1000+ tests). Restart safety for content-intelligence stages is now proven directly (`tests/test_content_intelligence_pipeline_restart.py`): a real `JsonJobStore` round-trip through a fresh store instance (simulating a process restart, not just a same-instance cache hit) preserves every artifact, lets a fresh pipeline instance resume the next stage correctly, and preserves a pending approval decision's ability to still be resolved. `tests/test_invalidation_matrix_wiring.py` closes the gap `test_invalidation_service.py` left open - that file proves `InvalidationService`'s matrix logic in isolation, this one drives the 4 real call sites (`ContentIntelligencePipeline.run_revision`, `BulkStockAssignmentService`, `BulkClipIngestionService`, `MediaGenerationPipeline.run_voice/.run_music/.run_sound_effects`) end to end and asserts on `job.stale_artifacts` afterward, proving the wiring itself, not just the service. One golden-path end-to-end test (`test_full_pipeline_reaches_final_export`) now also creates and approves a `FinalPreview` bound to the actual render, closing the last named step ("final preview") the spec's golden-path wording called for beyond what it already covered (create→research→script→originality→scenes→render→assets→SEO→thumbnail→export); content-intelligence approval gating is deliberately left out of this one test since it belongs to a separate pipeline stack with its own dedicated coverage - see that test's docstring. Also found and fixed while auditing CI test coverage: `tests/test_ffmpeg_capability_service.py` was a 4th instance of this session's recurring dead-print-script pattern (module-level code, bare asserts, zero real `pytest` test functions) - rewritten into 8 real tests, most gated behind a `skipif` when ffmpeg/ffprobe aren't on `PATH`. |
 | Backward compatibility | Done | New optional `VideoJob` fields with sensible defaults absorb into old project files with no migration code - proven via `JsonJobStore`'s raw `model_dump_json`/`model_validate_json` round-trip, used consistently all session. |
 
+## Content Studio Redesign
+
+A separate, much larger initiative from the production-hardening phases
+above (see `docs/CONTENT_STUDIO_REDESIGN_BASELINE.md` for the full
+Phase 0 audit). Rebuilds Content Studio's information architecture and
+introduces a canonical, cross-artifact-type lifecycle engine - distinct
+from, and layered above, the per-artifact status enums the production-
+hardening phases already use.
+
+| Capability | Status | Notes |
+|---|---|---|
+| Phase 0: Repository reconciliation | Done | `docs/CONTENT_STUDIO_REDESIGN_BASELINE.md` - a KEEP/MODIFY/REUSE/REPLACE/MISSING matrix built by independently verifying every redesign target artifact against the actual code, not the redesign plan's own (unreliable - see that document's "provenance" note) repository-position claims. Confirmed no competing GUI entry point exists; confirmed the single largest missing piece is a unifying artifact-lifecycle engine (~40 independent per-artifact status enums exist today, no shared vocabulary). |
+| Phase 1: Canonical artifact lifecycle, versioning, lineage, dependency graph | Done | `ArtifactLifecycleService` (state machine: DRAFT→GENERATING→GENERATED→UNDER_REVIEW/APPROVED→SUPERSEDED/INVALIDATED, all terminal states final, all transitions return new records rather than mutating) + `ArtifactDependencyGraphService` (breadth-first downstream-impact traversal over `input_version_ids` edges, handles branching dependencies, idempotent invalidation that never re-flags an already-terminal record) persisted as `VideoJob.artifact_versions` - a new, append-only, parallel ledger. Deliberately not wired into any real content-intelligence stage yet - this phase's own exit criteria only require the engine to be "stable and independent of GUI." |
+
 ## How this document is maintained
 
 Every phase of the production-hardening work (see `docs/ARCHITECTURE.md`

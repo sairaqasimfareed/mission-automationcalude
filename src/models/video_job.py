@@ -3,6 +3,7 @@ from __future__ import annotations
 from pydantic import Field, field_validator, model_validator
 
 from src.models.approval import ApprovalPolicyConfig
+from src.models.artifact_lifecycle import ArtifactVersionRecord
 from src.models.asset_state import SceneAssetState
 from src.models.audience_promise import AudiencePromise
 from src.models.audio_timeline import AudioTimeline
@@ -129,6 +130,17 @@ class VideoJob(MissionBaseModel):
 
     content_decisions: list[ContentDecisionRecord] = Field(default_factory=list)
     stale_artifacts: list[StaleArtifact] = Field(default_factory=list)
+
+    # Content Studio Redesign, Phase 1: the canonical artifact-lifecycle
+    # ledger. Append-only, same convention as content_decisions/
+    # stale_artifacts above - a version's status advances by replacing
+    # its entry in this list (matching id, new status), never by
+    # deleting anything. Deliberately not yet wired into any real
+    # content-intelligence stage - see docs/CONTENT_STUDIO_REDESIGN_BASELINE.md;
+    # this field exists so ArtifactLifecycleService/
+    # ArtifactDependencyGraphService have somewhere real to persist to
+    # once a workspace starts registering versions into it.
+    artifact_versions: list[ArtifactVersionRecord] = Field(default_factory=list)
 
     scenes: list[Scene] = Field(default_factory=list)
     scene_asset_states: list[SceneAssetState] = Field(default_factory=list)

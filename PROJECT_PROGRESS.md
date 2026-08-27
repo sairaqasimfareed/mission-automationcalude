@@ -5,6 +5,76 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-08-20 - Content Studio Redesign: Phase 0 baseline + Phase 1 artifact engine
+
+New, separate initiative from the production-hardening phases above -
+started after reviewing two design documents ("Content Studio Redesign"
+and "Post-Script-Approval Production Plan") the user provided. Both
+were reviewed critically rather than accepted at face value: the
+Post-Script-Approval document's own stated baseline
+(`phase10-production-gui-polish`) doesn't correspond to anything in
+this repo's actual git history, and several of its "Implemented"
+claims (a `FinalScriptLock` model, `ProductionSemanticBrief`,
+`CinematicShotPlan`) don't exist anywhere in `src/` - flagged before
+any work started rather than trusted. Google Flow mechanism explicitly
+excluded from scope per the user's instruction. The two documents were
+also sequenced correctly rather than worked in parallel: the Content
+Studio Redesign builds up to Script Lock, which the Post-Script-
+Approval plan explicitly assumes already exists - so Content Studio
+comes first.
+
+**Phase 0 (Repository Reconciliation and Redesign Baseline).**
+`docs/CONTENT_STUDIO_REDESIGN_BASELINE.md` - independently verified
+(via direct `Grep`/`Read` against every model and service, not the
+plan's own claims) a KEEP/MODIFY/REUSE/REPLACE/MISSING matrix for
+every redesign target artifact and workspace. Key findings: no
+competing GUI entry point exists (`ContentStudioView` already contains
+both the legacy and `ContentIntelligencePipeline` workflows in one
+file); ~40 independent per-artifact status enums exist with no shared
+vocabulary - the single largest missing piece is a unifying lifecycle
+engine; Script Lock's real existing equivalent is
+`ScriptVersion.locked` (a plain boolean with real lineage), not a
+`FinalScriptLock` architecture, which was never real; Story
+Architecture and Hook are both close, reusable matches to the
+redesign's target shape already; Reviewer LLM as a general role
+doesn't exist anywhere, but Fallback LLM's mechanical shape already
+does (`LLMService`'s ordered `profile_ids` attempt chain). Baseline
+suite confirmed green with no exclusions: ruff, black, mypy, and the
+full pytest suite (1359 passed, 1 skipped, 0 failed).
+
+**Phase 1 (Canonical Artifact Lifecycle, Versioning, Lineage and
+Dependency Graph).** New `src/models/artifact_lifecycle.py`
+(`ArtifactType`, `ArtifactLifecycleStatus`, `ArtifactProvenance`,
+`ArtifactVersionRecord` with a static SHA-256 `compute_content_hash()`)
+and `src/services/artifact_lifecycle_service.py`
+(`ArtifactLifecycleService.create_version()`/`.transition()`/`.approve()`;
+`ArtifactDependencyGraphService.compute_downstream_impact()`/`.invalidate_dependents()`).
+The state machine enforces DRAFT→GENERATING→GENERATED→(UNDER_REVIEW/
+APPROVED/REVISION_REQUIRED)→...→SUPERSEDED/INVALIDATED, with both
+terminal states final and every transition returning a new record
+rather than mutating the original - matching "revisions never mutate
+approved/reviewed history": a version stuck at REVISION_REQUIRED can
+never transition back to GENERATING, only to SUPERSEDED (once a new
+version supersedes it) or INVALIDATED. `ArtifactDependencyGraphService`
+walks `input_version_ids` edges breadth-first so branching dependencies
+(one upstream version feeding two different downstream artifacts, both
+feeding a third) are all found once, not missed or double-counted, and
+`invalidate_dependents()` is idempotent - an already-SUPERSEDED/
+INVALIDATED dependent is left untouched rather than re-stamped with a
+new reason. Persisted as a new `VideoJob.artifact_versions` field - an
+append-only ledger following the exact convention
+`content_decisions`/`stale_artifacts` already established, deliberately
+kept separate from the ~40 existing per-artifact status enums rather
+than replacing any of them. 27 new tests
+(`tests/test_artifact_lifecycle_service.py`) cover hash immutability,
+version-numbering-per-artifact-id, every legal and illegal state
+transition, the branching-dependency case explicitly, invalidation
+idempotency, and old-JSON backward compatibility (a project file saved
+before this field existed loads with an empty ledger). Deliberately not
+wired into any real content-intelligence stage yet - this phase's own
+exit criteria (an engine "stable and independent of GUI") don't require
+that; migration happens one workspace at a time in later phases.
+
 ## 2026-08-20 - Unified workspace shell: sidebar nav + Run/Resume
 
 Reshaped `ProjectWorkspaceView`'s top nav row into a left sidebar that
