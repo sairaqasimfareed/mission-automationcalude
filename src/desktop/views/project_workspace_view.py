@@ -24,6 +24,7 @@ from src.services.media_generation_pipeline import MediaGenerationPipeline
 from src.services.production_readiness_service import ProductionReadinessService
 from src.services.project_header_service import ProjectHeaderService
 from src.services.project_render_runtime_factory import ProjectRenderRuntimeFactory
+from src.services.reviewer_service import ReviewerService
 from src.services.scene_asset_workflow_service import SceneAssetWorkflowService
 from src.services.seo.seo_package_service import SEOPackageService
 from src.services.thumbnail.thumbnail_package_service import ThumbnailPackageService
@@ -112,6 +113,7 @@ class ProjectWorkspaceView(QWidget):
         final_export_service: FinalExportService,
         seo_package_service: SEOPackageService,
         thumbnail_package_service: ThumbnailPackageService,
+        reviewer_service: ReviewerService,
         on_back: Callable[[], None],
     ) -> None:
         super().__init__()
@@ -154,6 +156,7 @@ class ProjectWorkspaceView(QWidget):
             job_store=job_store,
             content_pipeline=content_pipeline,
             content_intelligence_pipeline=content_intelligence_pipeline,
+            reviewer_service=reviewer_service,
             on_change=self.refresh,
         )
         self.render_workspace = RenderWorkspaceView(

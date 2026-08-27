@@ -31,6 +31,7 @@ from src.services.provider_profile_management_service import (
 from src.services.registry.provider_profile_repository import (
     JsonProviderProfileRepository,
 )
+from src.services.reviewer_service import ReviewerService
 from src.services.runtime_configuration_loader import (
     RuntimeConfiguration,
     RuntimeConfigurationLoader,
@@ -193,6 +194,18 @@ def get_content_intelligence_pipeline() -> ContentIntelligencePipeline:
     """
 
     return get_production_runtime().content_intelligence_pipeline
+
+
+@lru_cache
+def get_reviewer_service() -> ReviewerService:
+    """
+    Return the shared Reviewer LLM service (Content Studio Redesign,
+    Phase 4) - wired to the same LLMService instance every other
+    content-generation service uses, so a reviewer profile is subject
+    to the same budget gating and provider fallback chain.
+    """
+
+    return ReviewerService(llm_service=get_infrastructure().llm_service)
 
 
 @lru_cache

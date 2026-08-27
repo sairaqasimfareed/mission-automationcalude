@@ -75,6 +75,49 @@ wired into any real content-intelligence stage yet - this phase's own
 exit criteria (an engine "stable and independent of GUI") don't require
 that; migration happens one workspace at a time in later phases.
 
+## 2026-08-28 - Content Studio Redesign: Phase 4 Reviewer LLM
+
+**Backend.** New `ReviewerService` (`src/services/reviewer_service.py`)
+generalizes `EditorialCritiqueService`'s established "one batched LLM
+call, labeled-block parsing, critique-never-authors" pattern to work
+across *any* artifact type, not just scripts. `ReviewerResult`/
+`ReviewerIssue` (`src/models/reviewer_result.py`) deliberately reuse
+`FindingSeverity` from `EditorialCritique` (already a generic 4-level
+vocabulary, not script-specific) and `ArtifactType` from Phase 1's
+artifact-lifecycle engine, rather than inventing parallel models.
+`reviewer_profile_id=None` is a first-class, fully supported input -
+`review()` returns `None` immediately with zero LLM calls, matching
+the redesign's own "Reviewer provider/model or None" wording.
+
+**GUI.** A generic "Review" button now sits next to every CI stage's
+existing "Run" button in Content Studio - one wiring point
+(`_CI_STAGE_REVIEW_TARGET`, mapping all 14 granular pipeline stages
+onto the 9 canonical `ArtifactType`s plus the `VideoJob` field holding
+that stage's current content) instead of bespoke reviewer code per
+stage. Results (strengths, issues, an optional suggested revision
+direction) render inline and are kept in a small transient,
+per-stage-keyed dict - never persisted to `VideoJob`, since a review is
+read-only critique, not authorship. Reusing `job.provider_preferences.
+reviewer.reviewer_profile_id` (Phase 2) means a project with no
+Reviewer configured shows the button disabled with an explanatory
+label, rather than failing when clicked.
+
+**Deliberately not built this pass** - and worth being explicit about
+the gap rather than letting Phase 4 read as fully done: the redesign's
+persistent right-side "AI Inspector" panel and its reusable "Standard
+Action Bar" (Return/Regenerate/Save Draft/Review/Approve & Continue)
+applied uniformly across every workspace; "Review All" (only
+"Review [the currently selected stage]" exists); and a real
+context-package builder that walks Phase 1's dependency graph to
+assemble upstream-approved-artifact context - that graph has nothing
+in it yet, since nothing in production code calls
+`ArtifactLifecycleService.create_version()`, so today's "context" is
+just topic/genre/target-audience, not dependency-aware. These are a
+materially larger, higher-risk visual rework touching every workspace
+uniformly; scoping them out here avoided risking Content Studio's
+existing, well-tested layout in the same change that added the
+Reviewer capability itself.
+
 ## 2026-08-20 - Content Studio Redesign: Phase 3 Dashboard + Command Center
 
 **Projects Dashboard.** `DashboardView`'s table gained Platform,

@@ -15,12 +15,14 @@ from src.desktop.views.content_studio_view import (  # noqa: E402
     _CI_STAGES,
     ContentStudioView,
 )
+from src.models.artifact_lifecycle import ArtifactType  # noqa: E402
 from src.models.video_job import VideoJob  # noqa: E402
 from src.services.content_intelligence_pipeline import (  # noqa: E402
     ContentIntelligencePipeline,
 )
 from src.services.content_pipeline import ContentPipeline  # noqa: E402
 from src.services.llm.llm_service import LLMServiceResult  # noqa: E402
+from src.services.reviewer_service import ReviewerService  # noqa: E402
 from src.shared.llm.models import (  # noqa: E402
     LLMCallResult,
     LLMCallStatus,
@@ -85,6 +87,7 @@ def _view(job_store: InMemoryJobStore) -> ContentStudioView:
         content_intelligence_pipeline=ContentIntelligencePipeline(
             llm_service=stub  # type: ignore[arg-type]
         ),
+        reviewer_service=ReviewerService(llm_service=stub),  # type: ignore[arg-type]
         on_change=lambda: None,
     )
 
@@ -142,6 +145,99 @@ def test_run_audience_promise_stage_populates_job(qapp: QApplication) -> None:
 
     assert job.audience_promise is not None
     assert job.editorial_profile_snapshot is not None
+
+
+def test_review_is_a_noop_without_a_configured_reviewer(qapp: QApplication) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    view._handle_run_ci_stage("audience_promise")
+
+    view._handle_review_ci_stage(
+        stage_key="audience_promise",
+        artifact_type=ArtifactType.AUDIENCE_STRATEGY,
+        field_name="audience_promise",
+    )
+
+    assert view._last_review_by_stage == {}
+
+
+def test_review_is_a_noop_when_the_artifact_does_not_exist_yet(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job.provider_preferences.reviewer.reviewer_profile_id = "reviewer-main"
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view._handle_review_ci_stage(
+        stage_key="audience_promise",
+        artifact_type=ArtifactType.AUDIENCE_STRATEGY,
+        field_name="audience_promise",
+    )
+
+    assert view._last_review_by_stage == {}
+
+
+def test_reviewing_a_stage_stores_and_renders_the_result(qapp: QApplication) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job.provider_preferences.reviewer.reviewer_profile_id = "reviewer-main"
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    view._handle_run_ci_stage("audience_promise")
+
+    view._handle_review_ci_stage(
+        stage_key="audience_promise",
+        artifact_type=ArtifactType.AUDIENCE_STRATEGY,
+        field_name="audience_promise",
+    )
+
+    assert "audience_promise" in view._last_review_by_stage
+    result = view._last_review_by_stage["audience_promise"]
+    assert len(result.strengths) == 1
+
+    # Re-rendering the panel (as refresh() already did inside the
+    # handler via on_change) must not raise and must not lose the
+    # stored result.
+    view.refresh(job)
+    assert "audience_promise" in view._last_review_by_stage
+
+
+def test_switching_projects_clears_stale_review_results(qapp: QApplication) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job.provider_preferences.reviewer.reviewer_profile_id = "reviewer-main"
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    view._handle_run_ci_stage("audience_promise")
+
+    view._handle_review_ci_stage(
+        stage_key="audience_promise",
+        artifact_type=ArtifactType.AUDIENCE_STRATEGY,
+        field_name="audience_promise",
+    )
+    assert view._last_review_by_stage
+
+    other_job = _job()
+    job_store.add(other_job)
+    view.set_job(other_job.id)
+
+    assert view._last_review_by_stage == {}
 
 
 def test_running_stages_in_order_reaches_a_generated_script(

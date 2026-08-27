@@ -60,6 +60,7 @@ class MainWindow(QMainWindow):
 
         self._detail_view = ProjectWorkspaceView(
             job_store=self._job_store,
+            reviewer_service=services.get_reviewer_service(),
             content_pipeline=services.get_content_pipeline(),
             content_intelligence_pipeline=(
                 services.get_content_intelligence_pipeline()

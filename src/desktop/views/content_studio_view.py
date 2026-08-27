@@ -33,7 +33,9 @@ from src.desktop.widgets import (
     status_label,
 )
 from src.models.approval import HumanApprovalAction
+from src.models.artifact_lifecycle import ArtifactType
 from src.models.enums import Platform, ProductionMode, WorkflowStage
+from src.models.reviewer_result import ReviewerResult
 from src.models.video_job import VideoJob
 from src.services.approval_gate_service import ApprovalGateService
 from src.services.content_intelligence_pipeline import ContentIntelligencePipeline
@@ -45,6 +47,7 @@ from src.services.content_studio_journey_service import (
 from src.services.genre_profile_registry_service import (
     GenreProfileRegistryService,
 )
+from src.services.reviewer_service import ReviewerService
 
 _LEFT = Qt.AlignmentFlag.AlignLeft
 
@@ -89,6 +92,28 @@ _CI_STAGES: list[tuple[str, str]] = [
     ("scene_planning", "Scene planning"),
 ]
 
+# Maps each of the 14 granular CI stages onto the nearest of the 9
+# canonical ArtifactType values (Content Studio Redesign, Phase 4) and
+# the VideoJob field holding that stage's current artifact - lets one
+# generic "Review this stage" action work across every stage rather
+# than needing its own reviewer wiring per stage.
+_CI_STAGE_REVIEW_TARGET: dict[str, tuple[ArtifactType, str]] = {
+    "audience_promise": (ArtifactType.AUDIENCE_STRATEGY, "audience_promise"),
+    "research_plan": (ArtifactType.RESEARCH_BRIEF, "research_plan"),
+    "research": (ArtifactType.RESEARCH, "research"),
+    "story_angles": (ArtifactType.CREATIVE_DIRECTION, "selected_story_angle"),
+    "narrative_architecture": (ArtifactType.STORY_ARCHITECTURE, "story_blueprint"),
+    "retention_audit": (ArtifactType.STORY_ARCHITECTURE, "retention_audit"),
+    "hooks": (ArtifactType.HOOK, "selected_hook"),
+    "script": (ArtifactType.SCRIPT, "generated_script"),
+    "continuity_bible": (ArtifactType.STORY_ARCHITECTURE, "continuity_bible"),
+    "editorial_critique": (ArtifactType.SCRIPT, "editorial_critique"),
+    "quality_gate": (ArtifactType.QUALITY_GATE, "script_quality_report"),
+    "revision": (ArtifactType.SCRIPT, "generated_script"),
+    "packaging_hypothesis": (ArtifactType.SCRIPT, "packaging_hypothesis"),
+    "scene_planning": (ArtifactType.SCRIPT, "scenes"),
+}
+
 
 class ContentStudioView(QWidget):
     """
@@ -109,6 +134,7 @@ class ContentStudioView(QWidget):
         job_store: JobStore,
         content_pipeline: ContentPipeline,
         content_intelligence_pipeline: ContentIntelligencePipeline,
+        reviewer_service: ReviewerService,
         on_change: Callable[[], None],
     ) -> None:
         super().__init__()
@@ -116,10 +142,17 @@ class ContentStudioView(QWidget):
         self._job_store = job_store
         self._content_pipeline = content_pipeline
         self._content_intelligence_pipeline = content_intelligence_pipeline
+        self._reviewer_service = reviewer_service
         self._journey_service = ContentStudioJourneyService()
         self._on_change = on_change
         self._job_id: UUID | None = None
         self._selected_ci_stage_index = 0
+
+        # Transient - a review is a read-only critique, never persisted
+        # to VideoJob (the Reviewer never becomes the author). Keyed by
+        # stage_key so switching stages doesn't lose a prior result,
+        # cleared only when set_job() moves to a different project.
+        self._last_review_by_stage: dict[str, ReviewerResult] = {}
 
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -138,6 +171,7 @@ class ContentStudioView(QWidget):
 
     def set_job(self, job_id: UUID) -> None:
         self._job_id = job_id
+        self._last_review_by_stage = {}
 
     def refresh(self, job: VideoJob) -> None:
         while self._layout.count():
@@ -300,12 +334,133 @@ class ContentStudioView(QWidget):
 
         can_run = builders[stage_key](layout, job)
 
+        button_row = QHBoxLayout()
+        button_row.setSpacing(8)
+
         run_button = button(
             f"Run {stage_label.lower()}", variant="primary", icon_name="research"
         )
         run_button.setEnabled(can_run)
         run_button.clicked.connect(lambda: self._handle_run_ci_stage(stage_key))
-        layout.addWidget(run_button, alignment=_LEFT)
+        button_row.addWidget(run_button)
+
+        artifact_type, field_name = _CI_STAGE_REVIEW_TARGET[stage_key]
+        artifact = getattr(job, field_name, None)
+        reviewer_profile_id = job.provider_preferences.reviewer.reviewer_profile_id
+
+        review_button = button("Review", variant="ghost", icon_name="shield")
+        review_button.setEnabled(bool(artifact) and reviewer_profile_id is not None)
+        review_button.clicked.connect(
+            lambda: self._handle_review_ci_stage(
+                stage_key=stage_key, artifact_type=artifact_type, field_name=field_name
+            )
+        )
+        button_row.addWidget(review_button)
+        button_row.addStretch()
+
+        layout.addLayout(button_row)
+
+        if reviewer_profile_id is None:
+            layout.addWidget(
+                small_muted(
+                    "No Reviewer configured for this project - set one in "
+                    "Project Setup to enable Review."
+                )
+            )
+
+        self._render_review_result(layout, stage_key)
+
+    def _render_review_result(self, layout: QVBoxLayout, stage_key: str) -> None:
+        result = self._last_review_by_stage.get(stage_key)
+
+        if result is None:
+            return
+
+        layout.addWidget(separator())
+        layout.addWidget(small_muted("Reviewer feedback:"))
+
+        for strength in result.strengths:
+            layout.addWidget(status_label(f"+ {strength}", role="success"))
+
+        for issue in result.issues:
+            role = "error" if issue.severity.value == "blocking" else "warning"
+            text = f"[{issue.severity.value}] {issue.description}"
+
+            if issue.recommendation is not None:
+                text += f" -> {issue.recommendation}"
+
+            layout.addWidget(status_label(text, role=role))
+
+        if result.suggested_revision_direction is not None:
+            layout.addWidget(
+                small_muted(
+                    f"Suggested revision direction: "
+                    f"{result.suggested_revision_direction}"
+                )
+            )
+
+    def _handle_review_ci_stage(
+        self,
+        *,
+        stage_key: str,
+        artifact_type: ArtifactType,
+        field_name: str,
+    ) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        artifact = getattr(job, field_name, None)
+
+        if not artifact:
+            return
+
+        reviewer_profile_id = job.provider_preferences.reviewer.reviewer_profile_id
+
+        if reviewer_profile_id is None:
+            return
+
+        content = self._serialize_artifact_for_review(artifact)
+        context = (
+            f"Topic: {job.topic}\n"
+            f"Genre: {job.genre_id}\n"
+            f"Target audience: {job.target_audience}"
+        )
+
+        try:
+            result = self._reviewer_service.review(
+                artifact_type=artifact_type,
+                content=content,
+                context=context,
+                reviewer_profile_id=reviewer_profile_id,
+            )
+        except (RuntimeError, ValueError) as error:
+            self._record_error(job, f"Review failed: {error}")
+
+            return
+
+        if result is not None:
+            self._last_review_by_stage[stage_key] = result
+
+        self._on_change()
+
+    @staticmethod
+    def _serialize_artifact_for_review(artifact: object) -> str:
+        if isinstance(artifact, list):
+            return "\n\n".join(
+                (
+                    item.model_dump_json()
+                    if hasattr(item, "model_dump_json")
+                    else str(item)
+                )
+                for item in artifact
+            )
+
+        if hasattr(artifact, "model_dump_json"):
+            return str(artifact.model_dump_json())
+
+        return str(artifact)
 
     def _build_approval_history_card(self, job: VideoJob) -> None:
         frame, layout = card("Approval history", icon_name="shield")
