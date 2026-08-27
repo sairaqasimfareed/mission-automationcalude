@@ -47,6 +47,7 @@ from src.models.script_quality_report import ScriptQualityReport
 from src.models.script_version import ScriptVersionHistory
 from src.models.story_angle import StoryAngle, StoryAngleEvaluation
 from src.models.story_blueprint import StoryBlueprint
+from src.models.topic_candidate import TopicCandidate
 from src.models.video_clip import VideoClip
 from src.models.video_timeline import VideoTimeline
 
@@ -125,6 +126,21 @@ class VideoJob(MissionBaseModel):
     # older research/script pipeline stays available until the new
     # engine is proven end-to-end (see ContentIntelligencePipeline).
     editorial_profile_snapshot: EditorialProfile | None = None
+
+    # Content Studio Redesign, Phase 5: Topic Intelligence Workspace.
+    # `topic` above remains the free-text seed idea typed at project
+    # creation; these fields hold the AI-scored candidates generated
+    # from it and whichever one (AI-generated or user-authored via
+    # TopicCandidate.custom()) was actually selected. Deliberately not
+    # wired into ContentIntelligencePipeline.run_all() yet - selecting
+    # a topic candidate does not change `topic` itself, so the
+    # existing pipeline keeps working unchanged whether or not a
+    # project has used this workspace (see content_studio_view.py's
+    # Topic card for the honest-scoping note on why this stays a
+    # standalone panel rather than a new pipeline stage for now).
+    topic_candidates: list[TopicCandidate] = Field(default_factory=list)
+    selected_topic_candidate: TopicCandidate | None = None
+
     audience_promise: AudiencePromise | None = None
     research_plan: ResearchPlan | None = None
     story_angles: list[StoryAngle] = Field(default_factory=list)

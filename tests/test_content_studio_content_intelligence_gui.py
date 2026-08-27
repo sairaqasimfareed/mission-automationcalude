@@ -23,6 +23,9 @@ from src.services.content_intelligence_pipeline import (  # noqa: E402
 from src.services.content_pipeline import ContentPipeline  # noqa: E402
 from src.services.llm.llm_service import LLMServiceResult  # noqa: E402
 from src.services.reviewer_service import ReviewerService  # noqa: E402
+from src.services.topic_candidate_generation_service import (  # noqa: E402
+    TopicCandidateGenerationService,
+)
 from src.shared.llm.models import (  # noqa: E402
     LLMCallResult,
     LLMCallStatus,
@@ -88,6 +91,9 @@ def _view(job_store: InMemoryJobStore) -> ContentStudioView:
             llm_service=stub  # type: ignore[arg-type]
         ),
         reviewer_service=ReviewerService(llm_service=stub),  # type: ignore[arg-type]
+        topic_candidate_generation_service=TopicCandidateGenerationService(
+            llm_service=stub  # type: ignore[arg-type]
+        ),
         on_change=lambda: None,
     )
 
@@ -425,3 +431,128 @@ def test_resolve_approval_with_no_pending_decision_is_a_noop(
     view._handle_resolve_approval(HumanApprovalAction.APPROVE)  # must not raise
 
     assert job.content_decisions == []
+
+
+def test_generate_topic_candidates_populates_job(qapp: QApplication) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view._handle_generate_topic_candidates(replace_existing=False)
+
+    assert len(job.topic_candidates) == 3
+    assert all(
+        candidate.overall_score is not None for candidate in job.topic_candidates
+    )
+
+
+def test_generate_more_topic_candidates_appends_rather_than_replaces(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view._handle_generate_topic_candidates(replace_existing=False)
+    view._handle_generate_topic_candidates(replace_existing=False)
+
+    assert len(job.topic_candidates) == 6
+
+
+def test_regenerate_all_topic_candidates_replaces_the_existing_list(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view._handle_generate_topic_candidates(replace_existing=False)
+    view._handle_generate_topic_candidates(replace_existing=True)
+
+    assert len(job.topic_candidates) == 3
+
+
+def test_selecting_a_topic_candidate_records_it_as_selected(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view._handle_generate_topic_candidates(replace_existing=False)
+    candidate = job.topic_candidates[0]
+    view._handle_select_topic_candidate(candidate)
+
+    assert job.selected_topic_candidate is candidate
+
+
+def test_using_a_custom_topic_adds_it_unscored_and_selects_it(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    from PySide6.QtWidgets import QLineEdit
+
+    text_input = QLineEdit("The lighthouse keeper who vanished")
+    view._handle_use_custom_topic(text_input)
+
+    assert job.selected_topic_candidate is not None
+    assert job.selected_topic_candidate.is_custom is True
+    assert job.selected_topic_candidate.overall_score is None
+    assert job.topic_candidates[-1] is job.selected_topic_candidate
+
+
+def test_using_a_blank_custom_topic_is_a_noop(qapp: QApplication) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    from PySide6.QtWidgets import QLineEdit
+
+    text_input = QLineEdit("   ")
+    view._handle_use_custom_topic(text_input)
+
+    assert job.topic_candidates == []
+    assert job.selected_topic_candidate is None
+
+
+def test_topic_card_builds_without_error_after_generation_and_selection(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view._handle_generate_topic_candidates(replace_existing=False)
+    view._handle_select_topic_candidate(job.topic_candidates[0])
+    view.refresh(job)  # must not raise with a populated topic card

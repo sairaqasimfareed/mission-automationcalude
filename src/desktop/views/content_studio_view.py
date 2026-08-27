@@ -36,6 +36,7 @@ from src.models.approval import HumanApprovalAction
 from src.models.artifact_lifecycle import ArtifactType
 from src.models.enums import Platform, ProductionMode, WorkflowStage
 from src.models.reviewer_result import ReviewerResult
+from src.models.topic_candidate import TopicCandidate
 from src.models.video_job import VideoJob
 from src.services.approval_gate_service import ApprovalGateService
 from src.services.content_intelligence_pipeline import ContentIntelligencePipeline
@@ -48,6 +49,9 @@ from src.services.genre_profile_registry_service import (
     GenreProfileRegistryService,
 )
 from src.services.reviewer_service import ReviewerService
+from src.services.topic_candidate_generation_service import (
+    TopicCandidateGenerationService,
+)
 
 _LEFT = Qt.AlignmentFlag.AlignLeft
 
@@ -135,6 +139,7 @@ class ContentStudioView(QWidget):
         content_pipeline: ContentPipeline,
         content_intelligence_pipeline: ContentIntelligencePipeline,
         reviewer_service: ReviewerService,
+        topic_candidate_generation_service: TopicCandidateGenerationService,
         on_change: Callable[[], None],
     ) -> None:
         super().__init__()
@@ -143,6 +148,7 @@ class ContentStudioView(QWidget):
         self._content_pipeline = content_pipeline
         self._content_intelligence_pipeline = content_intelligence_pipeline
         self._reviewer_service = reviewer_service
+        self._topic_candidate_generation_service = topic_candidate_generation_service
         self._journey_service = ContentStudioJourneyService()
         self._on_change = on_change
         self._job_id: UUID | None = None
@@ -186,6 +192,7 @@ class ContentStudioView(QWidget):
                 widget.deleteLater()
 
         self._build_journey_card(job)
+        self._build_topic_card(job)
         self._build_settings_card(job)
         self._build_content_intelligence_card(job)
         self._build_approval_history_card(job)
@@ -225,6 +232,166 @@ class ContentStudioView(QWidget):
         layout.addLayout(strip)
 
         self._layout.addWidget(frame)
+
+    def _build_topic_card(self, job: VideoJob) -> None:
+        """
+        Content Studio Redesign, Phase 5: Topic Intelligence Workspace.
+
+        Deliberately a standalone panel, not one of the _CI_STAGES
+        rotation - Topic precedes AudienceProfile/ChannelStyleProfile
+        (nothing to compose an EditorialProfile from yet at this
+        point), and selecting a candidate here does not change
+        `job.topic` itself or feed ContentIntelligencePipeline.run_all()
+        - that full pipeline-sequencing change is out of scope for this
+        phase (see the honest-scoping note on VideoJob.topic_candidates).
+        This panel only lets a project explore and record scored topic
+        alternatives to the seed idea already typed at project creation.
+        """
+
+        frame, layout = card("Topic intelligence", icon_name="research")
+
+        layout.addWidget(
+            small_muted(
+                f"Seed idea: {job.topic}\n"
+                "Generate scored topic alternatives, or enter your own."
+            )
+        )
+
+        if job.selected_topic_candidate is not None:
+            selected = job.selected_topic_candidate
+            label = "Custom topic" if selected.is_custom else "Selected topic"
+            layout.addWidget(status_label(f"{label}: {selected.title}", role="success"))
+
+        for candidate in job.topic_candidates:
+            layout.addWidget(separator())
+            is_selected = job.selected_topic_candidate is candidate
+            title_text = candidate.title + (" (selected)" if is_selected else "")
+            layout.addWidget(badge(title_text))
+
+            if candidate.overall_score is not None:
+                layout.addWidget(
+                    small_muted(
+                        f"Overall: {candidate.overall_score:.0f} · "
+                        f"Audience: {candidate.audience_potential} · "
+                        f"Specificity: {candidate.specificity} · "
+                        f"Novelty: {candidate.novelty} · "
+                        f"Story potential: {candidate.story_potential} · "
+                        f"Researchability: {candidate.researchability} · "
+                        f"Platform fit: {candidate.platform_fit}"
+                    )
+                )
+
+            if candidate.ai_recommendation is not None:
+                layout.addWidget(small_muted(candidate.ai_recommendation))
+
+            if not is_selected:
+                select_button = button("Select this topic", variant="ghost")
+                select_button.clicked.connect(
+                    lambda _checked=False, c=candidate: self._handle_select_topic_candidate(
+                        c
+                    )
+                )
+                layout.addWidget(select_button, alignment=_LEFT)
+
+        layout.addWidget(separator())
+
+        generation_row = QHBoxLayout()
+        generation_row.setSpacing(8)
+
+        generate_more_button = button(
+            "Generate more", variant="primary", icon_name="research"
+        )
+        generate_more_button.clicked.connect(
+            lambda: self._handle_generate_topic_candidates(replace_existing=False)
+        )
+        generation_row.addWidget(generate_more_button)
+
+        regenerate_button = button("Regenerate all", variant="ghost")
+        regenerate_button.clicked.connect(
+            lambda: self._handle_generate_topic_candidates(replace_existing=True)
+        )
+        generation_row.addWidget(regenerate_button)
+        generation_row.addStretch()
+
+        layout.addLayout(generation_row)
+
+        custom_topic_input = QLineEdit()
+        custom_topic_input.setPlaceholderText("Enter your own topic")
+
+        custom_row = QHBoxLayout()
+        custom_row.setSpacing(8)
+        custom_row.addWidget(custom_topic_input)
+
+        use_custom_button = button("Use my own topic", variant="ghost")
+        use_custom_button.clicked.connect(
+            lambda: self._handle_use_custom_topic(custom_topic_input)
+        )
+        custom_row.addWidget(use_custom_button)
+
+        layout.addLayout(custom_row)
+
+        self._layout.addWidget(frame)
+
+    def _handle_generate_topic_candidates(self, *, replace_existing: bool) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        try:
+            candidates = self._topic_candidate_generation_service.generate(
+                seed_idea=job.topic,
+                genre_id=job.genre_id,
+                platform=job.platform,
+            )
+        except (RuntimeError, ValueError) as error:
+            self._record_error(
+                job,
+                f"Topic candidate generation failed: {error}",
+                on_retry=lambda: self._handle_generate_topic_candidates(
+                    replace_existing=replace_existing
+                ),
+            )
+
+            return
+
+        if replace_existing:
+            job.topic_candidates = candidates
+        else:
+            job.topic_candidates = job.topic_candidates + candidates
+
+        self._on_change()
+
+    def _handle_select_topic_candidate(self, candidate: TopicCandidate) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        job.selected_topic_candidate = candidate
+        self._on_change()
+
+    def _handle_use_custom_topic(self, text_input: QLineEdit) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        title = text_input.text().strip()
+
+        if not title:
+            return
+
+        try:
+            candidate = TopicCandidate.custom(title)
+        except ValueError as error:
+            self._record_error(job, f"Could not use custom topic: {error}")
+
+            return
+
+        job.topic_candidates = job.topic_candidates + [candidate]
+        job.selected_topic_candidate = candidate
+        self._on_change()
 
     def _build_settings_card(self, job: VideoJob) -> None:
         frame, layout = card("Project settings", icon_name="settings")

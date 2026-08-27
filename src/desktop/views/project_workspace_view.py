@@ -28,6 +28,9 @@ from src.services.reviewer_service import ReviewerService
 from src.services.scene_asset_workflow_service import SceneAssetWorkflowService
 from src.services.seo.seo_package_service import SEOPackageService
 from src.services.thumbnail.thumbnail_package_service import ThumbnailPackageService
+from src.services.topic_candidate_generation_service import (
+    TopicCandidateGenerationService,
+)
 
 # Which workspace tab a ProductionReadinessService blocker's `.stage`
 # corresponds to - lets "Run / Resume" jump straight to whatever the
@@ -114,6 +117,7 @@ class ProjectWorkspaceView(QWidget):
         seo_package_service: SEOPackageService,
         thumbnail_package_service: ThumbnailPackageService,
         reviewer_service: ReviewerService,
+        topic_candidate_generation_service: TopicCandidateGenerationService,
         on_back: Callable[[], None],
     ) -> None:
         super().__init__()
@@ -157,6 +161,7 @@ class ProjectWorkspaceView(QWidget):
             content_pipeline=content_pipeline,
             content_intelligence_pipeline=content_intelligence_pipeline,
             reviewer_service=reviewer_service,
+            topic_candidate_generation_service=topic_candidate_generation_service,
             on_change=self.refresh,
         )
         self.render_workspace = RenderWorkspaceView(

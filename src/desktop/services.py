@@ -60,6 +60,9 @@ from src.services.thumbnail.thumbnail_concept_generation_service import (
 from src.services.thumbnail.thumbnail_package_service import (
     ThumbnailPackageService,
 )
+from src.services.topic_candidate_generation_service import (
+    TopicCandidateGenerationService,
+)
 from src.shared.logger import logger
 
 CHECKPOINT_STORAGE_ROOT = Path("data/checkpoints")
@@ -206,6 +209,18 @@ def get_reviewer_service() -> ReviewerService:
     """
 
     return ReviewerService(llm_service=get_infrastructure().llm_service)
+
+
+@lru_cache
+def get_topic_candidate_generation_service() -> TopicCandidateGenerationService:
+    """
+    Return the shared Topic Intelligence generation service (Content
+    Studio Redesign, Phase 5) - wired to the same LLMService instance
+    every other content-generation service uses, so topic generation
+    is subject to the same budget gating and provider fallback chain.
+    """
+
+    return TopicCandidateGenerationService(llm_service=get_infrastructure().llm_service)
 
 
 @lru_cache

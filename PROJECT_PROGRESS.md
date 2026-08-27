@@ -5,6 +5,58 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-08-28 - Content Studio Redesign: Phase 5 Topic Intelligence Workspace
+
+**Backend.** New `TopicCandidate` (`src/models/topic_candidate.py`) -
+title plus six 0-100 scored dimensions (audience potential,
+specificity, novelty, story potential, researchability, platform fit)
+and an `ai_recommendation`, all bundled onto one model in a single
+generation call, per the redesign's own Topic schema - unlike
+`StoryAngle`/`StoryAngleEvaluation`, which are generated and scored in
+two separate passes. A user-authored topic (`TopicCandidate.custom()`,
+the "Enter My Own Topic" path) leaves every score `None` rather than
+faking a number the AI never produced; `overall_score` returns `None`
+whenever any dimension is unset, instead of averaging over a partial
+set. New `TopicCandidateGenerationService` mirrors
+`StoryAngleGenerationService`'s batched-call/labeled-block pattern, but
+deliberately takes only a raw seed idea plus genre/platform - Topic is
+the first real stage in the redesign's own pipeline order, before an
+`AudienceProfile`/`ChannelStyleProfile` exists for a project, so there
+is nothing yet to compose a full `EditorialProfile` from. `VideoJob`
+gained `topic_candidates: list[TopicCandidate]` and
+`selected_topic_candidate: TopicCandidate | None`, both new and
+backward-compatible (an old project JSON missing these keys loads with
+empty/`None` defaults).
+
+**GUI.** A new standalone "Topic intelligence" card in Content Studio,
+above the existing settings card: shows the project's free-text seed
+idea, lets a user Generate more (append) or Regenerate all (replace)
+scored candidates, Select any candidate, or type and select a custom
+topic. Each candidate's scores and AI recommendation render inline.
+Wired via `get_topic_candidate_generation_service()`
+(`src/desktop/services.py`), threaded through
+`main_window.py`→`ProjectWorkspaceView`→`ContentStudioView` the same
+way `reviewer_service` was threaded through in Phase 4.
+
+**Deliberately not built this pass.** This card is intentionally *not*
+one of the `_CI_STAGES` rotation, and selecting a candidate does not
+change `job.topic` itself or feed
+`ContentIntelligencePipeline.run_all()` - the redesign's own pipeline-
+sequencing question of exactly where Topic selection should gate the
+rest of the pipeline is a materially larger design decision than this
+phase's own scope. Also deferred: adding Topic to the Phase 3 journey
+strip (it still shows no checkpoint, as noted in that phase's own
+entry below), and Reviewer-driven comparison/ranking of candidates
+(the redesign's "Reviewer compares candidates, recommends
+improvements" deliverable) - `ArtifactType.TOPIC` already exists from
+Phase 1 for exactly this, but wiring it in is left to a later pass.
+
+Quality gates: mypy (362 source files), ruff, and black all clean
+across the full repo; new tests - `test_topic_candidate.py` (6),
+`test_topic_candidate_generation_service.py` (12), and 7 new cases in
+`test_content_studio_content_intelligence_gui.py` - all passing, full
+suite re-run for regression.
+
 ## 2026-08-20 - Content Studio Redesign: Phase 0 baseline + Phase 1 artifact engine
 
 New, separate initiative from the production-hardening phases above -
