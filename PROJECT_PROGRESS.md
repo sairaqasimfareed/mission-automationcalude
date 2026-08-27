@@ -75,6 +75,47 @@ wired into any real content-intelligence stage yet - this phase's own
 exit criteria (an engine "stable and independent of GUI") don't require
 that; migration happens one workspace at a time in later phases.
 
+## 2026-08-20 - Content Studio Redesign: Phase 3 Dashboard + Command Center
+
+**Projects Dashboard.** `DashboardView`'s table gained Platform,
+Current stage, Readiness, Progress, Last modified, and Automation
+columns (previously just Project/Topic/Stage/Status), plus the "Open
+selected" action renamed to "Continue Production." Every new column
+is computed via `ProjectHeaderService.summarize()` - the exact same
+service `ProjectWorkspaceView`'s own persistent header already uses -
+so the dashboard's answer to "what's next" can never drift from what a
+user sees once they actually open the project. Progress is a
+deliberately coarse, honest 4-step proxy over
+`ProductionReadinessService`'s own states (blocked/ready-for-render/
+ready-for-final-export/completed → 10/55/80/100%) rather than a
+fabricated fine-grained percentage nothing in the backend actually
+tracks.
+
+**Content Studio production journey.** New
+`ContentStudioJourneyService` (`src/services/content_studio_journey_service.py`)
+condenses `ContentIntelligencePipeline`'s 14 granular stages into an
+8-checkpoint strip (Audience→Research→Angle→Story→Hook→Script→
+Quality→Script Lock), each showing Not started/Waiting/Needs
+revision/Approved, wired as a new "Production journey" card at the top
+of Content Studio. Two deliberate departures from the redesign
+document worth recording: the checkpoints are ordered to match the
+pipeline's *actual* execution order, not the document's own listed
+order - research genuinely runs before angle selection in this
+pipeline (angles are generated from research findings), so showing
+Angle before Research would misrepresent what really happens; and
+Topic has no checkpoint at all, since there's no real per-project
+topic-approval concept yet (Topic Intelligence is Phase 5, not built)
+- showing a permanently-"done" checkmark for state that doesn't
+genuinely exist would be dishonest rather than just incomplete.
+
+**Deliberately not built this pass**: a dashboard-level "Run/Resume
+Automation" control for Fully Automatic projects. The existing
+workspace-level Run/Resume button (built during the earlier Unified
+Workspace Shell work) already covers this once a project is opened;
+promoting it to the dashboard row itself would need real background
+execution with live progress reporting from a screen that currently
+has none, meaningfully more scope than this phase's other pieces.
+
 ## 2026-08-20 - Content Studio Redesign: Phase 2 Project Setup + AI configuration
 
 **Backend.** `ProviderPreferences` gains `ReviewerConfiguration`/

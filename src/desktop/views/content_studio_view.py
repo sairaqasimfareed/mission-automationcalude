@@ -38,6 +38,10 @@ from src.models.video_job import VideoJob
 from src.services.approval_gate_service import ApprovalGateService
 from src.services.content_intelligence_pipeline import ContentIntelligencePipeline
 from src.services.content_pipeline import ContentPipeline
+from src.services.content_studio_journey_service import (
+    ContentStudioJourneyService,
+    JourneyCheckpointStatus,
+)
 from src.services.genre_profile_registry_service import (
     GenreProfileRegistryService,
 )
@@ -49,6 +53,20 @@ _GENRE_IDS = [
     for profile in GenreProfileRegistryService.with_default_profiles().list_all()
 ]
 
+
+_JOURNEY_STATUS_ROLE: dict[JourneyCheckpointStatus, str | None] = {
+    JourneyCheckpointStatus.NOT_STARTED: None,
+    JourneyCheckpointStatus.WAITING: "warning",
+    JourneyCheckpointStatus.NEEDS_REVISION: "warning",
+    JourneyCheckpointStatus.APPROVED: "success",
+}
+
+_JOURNEY_STATUS_LABEL: dict[JourneyCheckpointStatus, str] = {
+    JourneyCheckpointStatus.NOT_STARTED: "Not started",
+    JourneyCheckpointStatus.WAITING: "Waiting",
+    JourneyCheckpointStatus.NEEDS_REVISION: "Needs revision",
+    JourneyCheckpointStatus.APPROVED: "Approved",
+}
 
 # (stage key, display label) in pipeline order. Each stage gets its
 # own dedicated panel - selecting one shows only that stage's content
@@ -98,6 +116,7 @@ class ContentStudioView(QWidget):
         self._job_store = job_store
         self._content_pipeline = content_pipeline
         self._content_intelligence_pipeline = content_intelligence_pipeline
+        self._journey_service = ContentStudioJourneyService()
         self._on_change = on_change
         self._job_id: UUID | None = None
         self._selected_ci_stage_index = 0
@@ -132,6 +151,7 @@ class ContentStudioView(QWidget):
             if widget is not None:
                 widget.deleteLater()
 
+        self._build_journey_card(job)
         self._build_settings_card(job)
         self._build_content_intelligence_card(job)
         self._build_approval_history_card(job)
@@ -140,6 +160,37 @@ class ContentStudioView(QWidget):
         self._build_script_card(job)
         self._build_originality_card(job)
         self._build_scenes_card(job)
+
+    def _build_journey_card(self, job: VideoJob) -> None:
+        """
+        Content Studio Redesign, Phase 3: a condensed, at-a-glance
+        strip over ContentIntelligencePipeline's 14 granular stages -
+        Audience/Research/Angle/Story/Hook/Script/Quality/Script Lock,
+        in the order they actually run (not the redesign document's
+        own listed order - research runs before angle selection here,
+        so showing Angle first would misrepresent the real pipeline).
+        Purely a read-only overview; every checkpoint's underlying
+        artifact is still edited through its own stage panel below.
+        """
+
+        frame, layout = card("Production journey", icon_name="dashboard")
+
+        strip = QHBoxLayout()
+        strip.setSpacing(10)
+
+        for checkpoint in self._journey_service.compute(job):
+            role = _JOURNEY_STATUS_ROLE[checkpoint.status]
+            text = f"{checkpoint.label}: {_JOURNEY_STATUS_LABEL[checkpoint.status]}"
+
+            if role is None:
+                strip.addWidget(small_muted(text))
+            else:
+                strip.addWidget(status_label(text, role=role))
+
+        strip.addStretch()
+        layout.addLayout(strip)
+
+        self._layout.addWidget(frame)
 
     def _build_settings_card(self, job: VideoJob) -> None:
         frame, layout = card("Project settings", icon_name="settings")
