@@ -17,6 +17,7 @@ from src.models.enums import (
     JobStatus,
     Platform,
     ProductionMode,
+    ScriptOrigin,
     WorkflowStage,
 )
 from src.models.final_preview import FinalPreview
@@ -34,6 +35,7 @@ from src.models.media_strategy import (
 from src.models.originality import OriginalityResult
 from src.models.packaging_hypothesis import PackagingHypothesis
 from src.models.policy import PolicyComplianceReport
+from src.models.provider_preferences import ProviderPreferences
 from src.models.re_hook import ReHookPlan
 from src.models.render_result import RenderResult
 from src.models.research import ResearchResult, ResearchStatus
@@ -72,6 +74,21 @@ class VideoJob(MissionBaseModel):
     approval_policy: ApprovalPolicyConfig = Field(
         default_factory=ApprovalPolicyConfig.review_critical_stages
     )
+
+    # Content Studio Redesign, Phase 2: project-level Primary/Reviewer/
+    # Fallback LLM roles and per-category provider preferences.
+    # ProjectSpecification already carried a ProviderPreferences value
+    # at creation time, but ProjectSpecificationJobMapper silently
+    # discarded it - VideoJob never actually persisted it before this
+    # field existed.
+    provider_preferences: ProviderPreferences = Field(
+        default_factory=ProviderPreferences
+    )
+
+    # How this project's script was (or will be) obtained - see
+    # ScriptOrigin. Every project defaults to INTERNAL until the
+    # "Import Approved Script" alternate path (Phase 15) exists.
+    script_origin: ScriptOrigin = ScriptOrigin.INTERNAL
 
     genre_id: str = "genre.default"
 

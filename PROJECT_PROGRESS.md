@@ -75,6 +75,55 @@ wired into any real content-intelligence stage yet - this phase's own
 exit criteria (an engine "stable and independent of GUI") don't require
 that; migration happens one workspace at a time in later phases.
 
+## 2026-08-20 - Content Studio Redesign: Phase 2 Project Setup + AI configuration
+
+**Backend.** `ProviderPreferences` gains `ReviewerConfiguration`/
+`ReviewerMode` (ON_DEMAND / AUTOMATIC_AT_APPROVAL_GATES) - the one
+genuinely new AI role the redesign asks for; Primary and Fallback
+already existed as `ProviderPreference.preferred_profile_id`/
+`.fallback_profile_ids` on the `llm` category and needed no new model.
+Found and fixed a real pre-existing bug while wiring this up:
+`ProjectSpecificationJobMapper` never read `ProjectSpecification.
+providers` at all - a project's provider preferences were silently
+discarded at creation time, and `VideoJob` had no field to hold them
+even if it had. Added `VideoJob.provider_preferences: ProviderPreferences`
+and fixed the mapper to actually copy `specification.providers` onto
+it. Also added `ScriptOrigin` (INTERNAL/EXTERNAL,
+`src/models/enums.py`) as `VideoJob.script_origin`, defaulting
+INTERNAL until the alternate Import Approved Script path (Phase 15)
+exists to ever set it to EXTERNAL.
+
+**GUI.** `ProjectFormView` gains a Platform selector (previously
+entirely absent from project creation despite `VideoJob.platform`
+existing since early in this project), an Approval mode selector
+(reusing the existing `APPROVAL_MODE_PRESETS`/`approval_mode_label()`
+extracted during Phase 9's workspace-shell work, so project creation
+and Content Studio's settings panel describe approval policy
+identically), and a new "AI configuration" card with Primary/Reviewer/
+Fallback LLM pickers populated from `ProviderProfileManagementService.
+list_profiles()` filtered to the LLM category. Every role defaults to
+"System default" (unconfigured) - matching the redesign's own explicit
+"Reviewer provider/model or None, Fallback provider/model or None"
+wording, so a project remains creatable with zero provider
+configuration, consistent with this project having no real API keys
+configured yet.
+
+**Deliberately not built this pass**: the "Starting Point" selector
+(Create from Idea / Import Approved Script) with its dynamic form-swap
+- building it now would be premature since the Script Intake path
+itself doesn't exist until Phase 15; finer per-decision-point gate
+configuration in the creation form beyond the 3 named presets, since
+that already exists later in Content Studio's own settings panel.
+
+**Also fixed while touching this area**: `tests/test_provider_preferences.py`
+was another dead print-script (5th this session) directly in scope
+since `ProviderPreferences` was being modified - rewritten into 9 real
+tests. `tests/test_video_job.py` was a 6th instance, flagged via a
+background task the user then started independently in a separate
+session - fixed directly in this session before that task's result
+arrived (7 real tests); the user was told about the duplication so
+they can discard the other session's now-redundant work.
+
 ## 2026-08-20 - Unified workspace shell: sidebar nav + Run/Resume
 
 Reshaped `ProjectWorkspaceView`'s top nav row into a left sidebar that

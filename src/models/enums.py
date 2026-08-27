@@ -38,3 +38,19 @@ class SourceMode(str, Enum):
     STOCK = "stock"
     LICENSED = "licensed"
     ORIGINAL = "original"
+
+
+class ScriptOrigin(str, Enum):
+    """
+    How a project's script was obtained (Content Studio Redesign,
+    Phase 2). INTERNAL means it will be (or was) produced through
+    Content Studio's own generation pipeline; EXTERNAL means it
+    arrived through the alternate "Import Approved Script" path (see
+    docs/CONTENT_STUDIO_REDESIGN_BASELINE.md) - a path that doesn't
+    exist yet. Every project defaults to INTERNAL until that path is
+    built; this field exists now so downstream code has a real,
+    stable place to check it once the import path lands.
+    """
+
+    INTERNAL = "internal"
+    EXTERNAL = "external"

@@ -52,6 +52,9 @@ class MainWindow(QMainWindow):
 
         self._form_view = ProjectFormView(
             job_store=self._job_store,
+            provider_profile_management_service=(
+                services.get_provider_profile_management_service()
+            ),
             on_created=self._open_project,
         )
 

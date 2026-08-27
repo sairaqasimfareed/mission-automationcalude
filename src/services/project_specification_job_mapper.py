@@ -79,6 +79,7 @@ class ProjectSpecificationJobMapper:
             voice_status=(self._initial_voice_status(specification)),
             voice_file=(specification.voice.manual_voice_file),
             voice_provider=(specification.voice.preferred_provider_profile_id),
+            provider_preferences=specification.providers,
         )
 
     @staticmethod

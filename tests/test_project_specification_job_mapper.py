@@ -58,6 +58,7 @@ def build_specification(
     ),
     manual_voice_file: str | None = None,
     preferred_voice_provider_profile_id: str | None = None,
+    providers: ProviderPreferences | None = None,
 ) -> ProjectSpecification:
     return ProjectSpecification(
         general=GeneralSettings(
@@ -97,7 +98,7 @@ def build_specification(
             preferred_provider_profile_id=(preferred_voice_provider_profile_id),
         ),
         music=MusicSettings(),
-        providers=ProviderPreferences(),
+        providers=providers or ProviderPreferences(),
         upload=UploadSettings(
             platform=platform,
         ),
@@ -135,6 +136,41 @@ def test_maps_basic_project_fields() -> None:
     assert job.production_mode == ProductionMode.PREMIUM
 
     assert job.maximum_visual_budget == 2.5
+
+
+def test_maps_provider_preferences_onto_the_job() -> None:
+    """
+    ProjectSpecification always carried a ProviderPreferences value at
+    creation time, but the mapper silently discarded it - VideoJob
+    never persisted project-level Primary/Reviewer/Fallback provider
+    selection before this field existed.
+    """
+
+    mapper = ProjectSpecificationJobMapper()
+    preferences = ProviderPreferences()
+    preferences.llm.preferred_profile_id = "openai-primary"
+    preferences.llm.fallback_profile_ids = ["anthropic-fallback"]
+    preferences.reviewer.reviewer_profile_id = "anthropic-reviewer"
+    specification = build_specification(providers=preferences)
+
+    job = mapper.map(specification, niche="History Documentary")
+
+    assert job.provider_preferences.llm.preferred_profile_id == "openai-primary"
+    assert job.provider_preferences.llm.fallback_profile_ids == ["anthropic-fallback"]
+    assert job.provider_preferences.reviewer.reviewer_profile_id == (
+        "anthropic-reviewer"
+    )
+
+
+def test_maps_default_provider_preferences_when_unset() -> None:
+    mapper = ProjectSpecificationJobMapper()
+    specification = build_specification()
+
+    job = mapper.map(specification, niche="History Documentary")
+
+    assert job.provider_preferences.llm.preferred_profile_id is None
+    assert job.provider_preferences.reviewer.reviewer_profile_id is None
+    assert job.script_origin.value == "internal"
 
 
 @pytest.mark.parametrize(
