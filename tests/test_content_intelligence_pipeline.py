@@ -532,6 +532,80 @@ def test_resolving_a_pending_decision_unblocks_the_next_manual_stage() -> None:
     assert job.story_blueprint is not None
 
 
+def test_research_plan_auto_approves_and_does_not_block_research() -> None:
+    """
+    Content Studio Redesign, Phase 7: research_plan defaults to AUTO
+    (like topic/research/hook) - confidence=None resolves immediately
+    to APPROVED, so a plain full_auto()/review_critical_stages()
+    project's run_all() reaches research unchanged from before this
+    phase (see the module's own test_run_all_stops_at_the_first_
+    review_gated_stage, which already asserts job.research is not
+    None under review_critical_stages()).
+    """
+    from src.services.approval_gate_service import ApprovalGateService
+
+    pipeline, _ = _pipeline()
+    job = pipeline.run_research_plan(pipeline.run_audience_promise(_job()))
+
+    assert ApprovalGateService.is_blocked(job, "research_plan") is False
+
+    research_plan_records = [
+        record
+        for record in job.content_decisions
+        if record.approval is not None
+        and record.approval.decision_point == "research_plan"
+    ]
+    assert len(research_plan_records) == 1
+    assert research_plan_records[0].approval is not None
+    assert research_plan_records[0].approval.state.value == "approved"
+
+
+def test_run_all_stops_before_research_when_research_plan_requires_review() -> None:
+    """
+    "No retrieval job starts until brief approval/start action" -
+    setting research_plan to REVIEW makes run_all() stop right after
+    planning, before any research executes.
+    """
+    from src.models.approval import ApprovalPolicy
+    from src.services.approval_gate_service import ApprovalGateService
+
+    pipeline, _ = _pipeline()
+    job = _job(
+        approval_policy=ApprovalPolicyConfig(research_plan=ApprovalPolicy.REVIEW)
+    )
+
+    job = pipeline.run_all(job)
+
+    assert job.research_plan is not None
+    assert job.research is None
+
+    pending = ApprovalGateService.latest_pending(job)
+    assert pending is not None
+    assert pending.approval is not None
+    assert pending.approval.decision_point == "research_plan"
+
+
+def test_resolving_research_plan_approval_unblocks_research() -> None:
+    from src.models.approval import ApprovalPolicy, HumanApprovalAction
+    from src.services.approval_gate_service import ApprovalGateService
+
+    pipeline, _ = _pipeline()
+    job = _job(
+        approval_policy=ApprovalPolicyConfig(research_plan=ApprovalPolicy.REVIEW)
+    )
+
+    job = pipeline.run_all(job)
+    assert ApprovalGateService.is_blocked(job, "research_plan") is True
+    assert job.research is None
+
+    pipeline.resolve_approval(job, "research_plan", HumanApprovalAction.APPROVE)
+    assert ApprovalGateService.is_blocked(job, "research_plan") is False
+
+    job = pipeline.run_all(job)
+
+    assert job.research is not None
+
+
 def test_run_all_is_idempotent_and_makes_no_further_llm_calls_once_complete() -> None:
     pipeline, stub = _pipeline()
 

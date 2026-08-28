@@ -4,7 +4,7 @@ import re
 
 from src.models.audience_promise import AudiencePromise
 from src.models.editorial_profile import EditorialProfile
-from src.models.research_plan import ResearchPlan
+from src.models.research_plan import ResearchPlan, ResearchQuestion
 from src.services.llm.llm_service import LLMService
 from src.shared.llm.models import LLMProvider
 from src.shared.llm.request import LLMRequest
@@ -108,6 +108,7 @@ class ResearchPlanningService:
         return ResearchPlan(
             topic=normalized_topic,
             research_questions=questions,
+            structured_questions=[ResearchQuestion(text=q) for q in questions],
             prompt_version=request.prompt_version,
         )
 

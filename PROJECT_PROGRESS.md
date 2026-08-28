@@ -5,6 +5,87 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-08-28 - Content Studio Redesign: Phase 7 Research Center (Research Brief and Retrieval Foundation)
+
+**Backend.** New `ResearchQuestion` (`src/models/research_plan.py`)
+gives each research question a stable identity - `id` is inherited
+from `MissionBaseModel` and never changes across an edit, only across
+a removal, exactly what the spec's "Research questions have stable
+IDs" asks for. `ResearchPlan` gained `structured_questions` (the new
+stable-ID list the GUI edits), `research_policy_override:
+ResearchPolicy | None` (a per-brief override of the genre's default),
+and `user_constraints` - all additive; the existing flat
+`research_questions: list[str]` field is untouched and every existing
+caller/test that reads it keeps working unmodified.
+`ResearchPolicy` (`src/models/genre_profile.py`, already existed as a
+genre-level rigor policy - depth/minimum sources/primary-source
+requirement/etc.) gained `preferred_source_types`, `excluded_sources`,
+`freshness_requirement`, `geographic_scope` - the brief-level policy
+fields the redesign's spec asks for, layered onto the same model
+rather than inventing a second "research policy" concept.
+
+New `ApprovalPolicyConfig.research_plan` decision point, defaulting to
+AUTO like `topic`/`research`/`hook` (cheap, reversible, no retrieval
+has happened yet). `ContentIntelligencePipeline.run_research_plan()`
+now gates on this point right after generating the plan;
+`run_all()` checks `is_blocked(job, "research_plan")` before calling
+`run_research()`. Under AUTO, `confidence=None` resolves immediately
+to APPROVED, so this is a complete no-op for every existing AUTO/
+full_auto()/review_critical_stages() project - proven by a new test
+mirroring the existing `test_run_all_stops_at_the_first_review_gated_
+stage`. Setting `research_plan` to REVIEW or MANUAL makes "Approve
+Brief & Start Research" a real, required action - this is the redesign's
+"No retrieval job starts until brief approval/start action" exit
+criterion, genuinely enforced for the automated `run_all()` path.
+
+**GUI.** The "Research plan" panel - previously a bare read-only list
+of question strings - gained a Save/Remove button per question, an
+"Add question" row, an approval-status badge ("Pending brief approval"
+/ "Brief approved"), and an "Approve Brief & Start Research" button
+that appears only while the decision is actually pending. The
+"Research" panel's Run button is now disabled while the brief's
+approval is pending, showing "Waiting on Research Brief approval."
+instead. A research plan saved before this phase (empty
+`structured_questions`, non-empty `research_questions`) is lazily
+backfilled with fresh stable-ID `ResearchQuestion` objects the first
+time its panel renders - text and order stay identical, only the IDs
+are new.
+
+**Deliberately not built this pass**, documented rather than silently
+skipped: `run_research()` itself carries no defensive precondition
+requiring an approved (or even present) `research_plan` - the hard
+gate lives entirely in `run_all()`'s orchestration and the GUI's
+disabled Run button, not inside the method. This was a deliberate
+choice, not an oversight: 13 existing unit tests call `run_research()`
+directly and standalone, by design, to test it in isolation without
+ever setting a research plan first (one of them explicitly resumes a
+job straight from `run_audience_promise()` into `run_research()` to
+prove restart-safety) - retrofitting a hard requirement into the
+method itself would have broken that established, intentional testing
+contract for no production benefit, since nothing outside `run_all()`
+or the GUI button calls it in practice. Also deferred: the full
+multi-tab "Research Center" shell (Brief / Research Document /
+Evidence Ledger / Key Facts / Gaps tabs) - Evidence Ledger, Key Facts,
+and Gaps are Phase 8's own deliverables and don't exist yet, so
+building empty placeholder tabs now would be premature scaffolding
+with nothing real to show; "Research plan" and "Research" remain two
+panels in the existing `_CI_STAGES` rotation, which already covers
+"Brief" and part of "Research Document." No dedicated settings UI yet
+for `research_policy_override`/`user_constraints` - backend-only this
+pass, tested for persistence rather than exposed for editing.
+
+Quality gates: mypy, ruff, and black all clean across every touched
+file (verified zero new mypy errors introduced into the two test files
+that already carried 59 pre-existing, unrelated typing issues - fully
+diffed against the pre-change baseline to confirm). New/updated tests:
+`test_research_plan_model.py` (+7), `test_research_policy.py` (5 new),
+`test_research_planning_service.py` (+1), 3 new cases in
+`test_content_intelligence_pipeline.py` (auto-approval, REVIEW-mode
+blocking, resolving unblocks research), 7 new cases in
+`test_content_studio_content_intelligence_gui.py` (add/edit/remove
+questions including the last-question-rejected guard, brief
+auto-approval, and the Approve Brief button unblocking Research).
+
 ## 2026-08-28 - Content Studio Redesign: Phase 6 Audience & Creative Strategy Workspace
 
 **Backend.** `AudiencePromise` extended with 7 new optional fields the

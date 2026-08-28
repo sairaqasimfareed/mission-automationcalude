@@ -93,6 +93,21 @@ def test_plan_parses_dash_prefixed_questions() -> None:
     assert plan.research_questions[0] == "What was the ship's last confirmed position?"
 
 
+def test_plan_populates_structured_questions_matching_the_flat_list() -> None:
+    stub = _StubLLMService(content=_DASH_QUESTIONS)
+
+    service = ResearchPlanningService(llm_service=stub)  # type: ignore[arg-type]
+
+    plan = service.plan("The Mary Celeste", _promise(), _editorial_profile())
+
+    assert len(plan.structured_questions) == len(plan.research_questions)
+    assert [q.text for q in plan.structured_questions] == plan.research_questions
+    # Each question has its own stable id.
+    assert len({q.id for q in plan.structured_questions}) == len(
+        plan.structured_questions
+    )
+
+
 def test_plan_parses_numbered_and_asterisk_questions() -> None:
     content = (
         "1. What was the ship's last confirmed position?\n"

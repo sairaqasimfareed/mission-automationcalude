@@ -219,8 +219,26 @@ class ContentIntelligencePipeline:
             self.resolve_editorial_profile(job)
         )
 
-        job.research_plan = self.research_planning_service.plan(
+        plan = self.research_planning_service.plan(
             job.topic, job.audience_promise, editorial_profile
+        )
+        job.research_plan = plan
+
+        # Content Studio Redesign, Phase 7: "No retrieval job starts
+        # until brief approval/start action." confidence=None under
+        # AUTO (this decision point's default - see
+        # ApprovalPolicyConfig.research_plan) resolves immediately to
+        # APPROVED, so this is a no-op for every existing AUTO/
+        # full_auto() project; REVIEW/MANUAL modes make "Approve Brief
+        # & Start Research" a real required GUI action instead.
+        self.approval_gate_service.gate(
+            job=job,
+            decision_point="research_plan",
+            stage="research_plan",
+            summary=(
+                f"Research brief planned for '{job.topic}' "
+                f"({len(plan.research_questions)} question(s))."
+            ),
         )
 
         return job
@@ -647,6 +665,9 @@ class ContentIntelligencePipeline:
 
         if job.research_plan is None:
             job = self.run_research_plan(job)
+        if self.approval_gate_service.is_blocked(job, "research_plan"):
+            return job
+
         if job.research is None:
             job = self.run_research(job)
         if self.approval_gate_service.is_blocked(job, "research"):

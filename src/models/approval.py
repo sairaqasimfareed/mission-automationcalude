@@ -105,6 +105,11 @@ class ApprovalPolicyConfig(MissionBaseModel):
 
     topic: ApprovalPolicy = ApprovalPolicy.AUTO
     content_strategy: ApprovalPolicy = ApprovalPolicy.AUTO
+    # Content Studio Redesign, Phase 7: the Research Brief is cheap and
+    # reversible (no retrieval has happened yet), so it defaults to
+    # AUTO like topic/research/hook - REVIEW/MANUAL modes make
+    # "Approve Brief & Start Research" a real, required GUI action.
+    research_plan: ApprovalPolicy = ApprovalPolicy.AUTO
     research: ApprovalPolicy = ApprovalPolicy.AUTO
     story_angle: ApprovalPolicy = ApprovalPolicy.REVIEW
     narrative_architecture: ApprovalPolicy = ApprovalPolicy.REVIEW
@@ -127,6 +132,7 @@ class ApprovalPolicyConfig(MissionBaseModel):
         mapping: dict[str, ApprovalPolicy] = {
             "topic": self.topic,
             "content_strategy": self.content_strategy,
+            "research_plan": self.research_plan,
             "research": self.research,
             "story_angle": self.story_angle,
             "narrative_architecture": self.narrative_architecture,
@@ -153,6 +159,7 @@ class ApprovalPolicyConfig(MissionBaseModel):
         return cls(
             topic=ApprovalPolicy.AUTO,
             content_strategy=ApprovalPolicy.AUTO,
+            research_plan=ApprovalPolicy.AUTO,
             research=ApprovalPolicy.AUTO,
             story_angle=ApprovalPolicy.AUTO,
             narrative_architecture=ApprovalPolicy.AUTO,
@@ -185,6 +192,7 @@ class ApprovalPolicyConfig(MissionBaseModel):
         return cls(
             topic=ApprovalPolicy.MANUAL,
             content_strategy=ApprovalPolicy.MANUAL,
+            research_plan=ApprovalPolicy.MANUAL,
             research=ApprovalPolicy.MANUAL,
             story_angle=ApprovalPolicy.MANUAL,
             narrative_architecture=ApprovalPolicy.MANUAL,

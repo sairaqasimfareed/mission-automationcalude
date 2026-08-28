@@ -36,6 +36,7 @@ from src.models.approval import HumanApprovalAction
 from src.models.artifact_lifecycle import ArtifactType
 from src.models.creative_direction import CreativeDirection
 from src.models.enums import Platform, ProductionMode, WorkflowStage
+from src.models.research_plan import ResearchQuestion
 from src.models.reviewer_result import ReviewerResult
 from src.models.story_angle import StoryAngle, StoryAngleStyle
 from src.models.topic_candidate import TopicCandidate
@@ -393,6 +394,104 @@ class ContentStudioView(QWidget):
 
         job.topic_candidates = job.topic_candidates + [candidate]
         job.selected_topic_candidate = candidate
+        self._on_change()
+
+    def _handle_add_research_question(self, text_input: QLineEdit) -> None:
+        job = self._current_job()
+
+        if job is None or job.research_plan is None:
+            return
+
+        text = text_input.text().strip()
+
+        if not text:
+            return
+
+        try:
+            question = ResearchQuestion(text=text)
+        except ValueError as error:
+            self._record_error(job, f"Could not add research question: {error}")
+
+            return
+
+        job.research_plan.structured_questions = (
+            job.research_plan.structured_questions + [question]
+        )
+        job.research_plan.research_questions = job.research_plan.research_questions + [
+            text
+        ]
+        self._on_change()
+
+    def _handle_edit_research_question(
+        self, question_id: UUID, text_input: QLineEdit
+    ) -> None:
+        job = self._current_job()
+
+        if job is None or job.research_plan is None:
+            return
+
+        new_text = text_input.text().strip()
+
+        if not new_text:
+            return
+
+        updated_questions: list[ResearchQuestion] = []
+
+        for question in job.research_plan.structured_questions:
+            if question.id != question_id:
+                updated_questions.append(question)
+
+                continue
+
+            try:
+                updated_questions.append(
+                    ResearchQuestion(id=question.id, text=new_text)
+                )
+            except ValueError as error:
+                self._record_error(job, f"Could not edit research question: {error}")
+
+                return
+
+        job.research_plan.structured_questions = updated_questions
+        job.research_plan.research_questions = [q.text for q in updated_questions]
+        self._on_change()
+
+    def _handle_remove_research_question(self, question_id: UUID) -> None:
+        job = self._current_job()
+
+        if job is None or job.research_plan is None:
+            return
+
+        remaining = [
+            question
+            for question in job.research_plan.structured_questions
+            if question.id != question_id
+        ]
+
+        if not remaining:
+            self._record_error(job, "A research brief requires at least one question.")
+
+            return
+
+        job.research_plan.structured_questions = remaining
+        job.research_plan.research_questions = [q.text for q in remaining]
+        self._on_change()
+
+    def _handle_approve_research_brief(self) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        try:
+            self._content_intelligence_pipeline.resolve_approval(
+                job, "research_plan", HumanApprovalAction.APPROVE
+            )
+        except ValueError as error:
+            self._record_error(job, f"Could not approve research brief: {error}")
+
+            return
+
         self._on_change()
 
     def _handle_select_story_angle(self, angle: StoryAngle) -> None:
@@ -850,6 +949,14 @@ class ContentStudioView(QWidget):
         return True
 
     def _render_research_plan_panel(self, layout: QVBoxLayout, job: VideoJob) -> bool:
+        """
+        Content Studio Redesign, Phase 7 (Research Center): the
+        Research Brief tab. Editable per-question Add/Edit/Remove
+        (stable IDs via ResearchQuestion) and an explicit "Approve
+        Brief & Start Research" action once the brief's approval
+        policy requires one - see ApprovalPolicyConfig.research_plan.
+        """
+
         plan = job.research_plan
 
         if plan is None:
@@ -863,13 +970,87 @@ class ContentStudioView(QWidget):
 
             return job.audience_promise is not None
 
-        for question in plan.research_questions:
-            layout.addWidget(small_muted(f"- {question}"))
+        # Lazily backfill stable-ID questions for a plan saved before
+        # this phase existed - text stays identical, only
+        # structured_questions goes from empty to populated.
+        if not plan.structured_questions and plan.research_questions:
+            plan.structured_questions = [
+                ResearchQuestion(text=text) for text in plan.research_questions
+            ]
+
+        is_pending = ApprovalGateService.is_blocked(job, "research_plan")
+        layout.addWidget(
+            status_label(
+                "Pending brief approval" if is_pending else "Brief approved",
+                role="warning" if is_pending else "success",
+            )
+        )
+
+        for question in plan.structured_questions:
+            question_row = QHBoxLayout()
+            question_row.setSpacing(6)
+
+            question_input = QLineEdit(question.text)
+            question_row.addWidget(question_input)
+
+            save_button = button("Save", variant="ghost")
+            save_button.clicked.connect(
+                lambda _checked=False, qid=question.id, inp=question_input: (
+                    self._handle_edit_research_question(qid, inp)
+                )
+            )
+            question_row.addWidget(save_button)
+
+            remove_button = button("Remove", variant="ghost")
+            remove_button.clicked.connect(
+                lambda _checked=False, qid=question.id: (
+                    self._handle_remove_research_question(qid)
+                )
+            )
+            question_row.addWidget(remove_button)
+
+            layout.addLayout(question_row)
+
+        layout.addWidget(separator())
+
+        new_question_input = QLineEdit()
+        new_question_input.setPlaceholderText("New research question")
+
+        add_row = QHBoxLayout()
+        add_row.setSpacing(6)
+        add_row.addWidget(new_question_input)
+
+        add_button = button("Add question", variant="ghost")
+        add_button.clicked.connect(
+            lambda: self._handle_add_research_question(new_question_input)
+        )
+        add_row.addWidget(add_button)
+        layout.addLayout(add_row)
+
+        if is_pending:
+            layout.addWidget(separator())
+
+            approve_button = button(
+                "Approve Brief & Start Research", variant="primary", icon_name="check"
+            )
+            approve_button.clicked.connect(self._handle_approve_research_brief)
+            layout.addWidget(approve_button, alignment=_LEFT)
 
         return True
 
     def _render_ci_research_panel(self, layout: QVBoxLayout, job: VideoJob) -> bool:
         research = job.research
+
+        # Content Studio Redesign, Phase 7: "No retrieval job starts
+        # until brief approval/start action" - blocks the Run button
+        # (not just a soft warning) while the brief's approval is
+        # still pending.
+        if job.research_plan is not None and ApprovalGateService.is_blocked(
+            job, "research_plan"
+        ):
+            layout.addWidget(small_muted("Waiting on Research Brief approval."))
+
+            return False
 
         if research is None:
             layout.addWidget(small_muted("Not started."))

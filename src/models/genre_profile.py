@@ -196,6 +196,36 @@ class ResearchPolicy(MissionBaseModel):
         ConflictingSourcePolicy.PRESENT_BOTH
     )
 
+    # Content Studio Redesign, Phase 7 (Research Center): the
+    # redesign's own Research Brief spec calls for these alongside the
+    # rigor fields above. All optional/empty-default and additive - a
+    # genre profile predating this phase, or an old project JSON,
+    # loads unchanged. Distinct from the fields above in that those
+    # describe fixed genre-level rigor requirements, while these are
+    # meant to be overridable per research brief (see
+    # ResearchPlan.research_policy_override).
+    preferred_source_types: list[str] = Field(default_factory=list)
+    excluded_sources: list[str] = Field(default_factory=list)
+    freshness_requirement: str | None = None
+    geographic_scope: str | None = None
+
+    @field_validator("preferred_source_types", "excluded_sources")
+    @classmethod
+    def clean_source_lists(cls, value: list[str]) -> list[str]:
+        cleaned = [item.strip() for item in value]
+
+        return [item for item in cleaned if item]
+
+    @field_validator("freshness_requirement", "geographic_scope")
+    @classmethod
+    def clean_optional_policy_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+
+        cleaned = value.strip()
+
+        return cleaned or None
+
 
 class CharacterPolicy(MissionBaseModel):
     """

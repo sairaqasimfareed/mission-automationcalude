@@ -792,3 +792,166 @@ def test_story_angles_panel_builds_without_error_with_creative_direction_set(
         thesis_input=thesis_input, constraints_input=constraints_input
     )
     view.refresh(job)  # must not raise with a populated creative direction section
+
+
+def test_adding_a_research_question_appends_a_stable_id_question(
+    qapp: QApplication,
+) -> None:
+    from PySide6.QtWidgets import QLineEdit
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view._handle_run_ci_stage("audience_promise")
+    view._handle_run_ci_stage("research_plan")
+    assert job.research_plan is not None
+
+    original_count = len(job.research_plan.structured_questions)
+    text_input = QLineEdit("What became of the lifeboat?")
+
+    view._handle_add_research_question(text_input)
+
+    assert len(job.research_plan.structured_questions) == original_count + 1
+    assert job.research_plan.structured_questions[-1].text == (
+        "What became of the lifeboat?"
+    )
+    assert job.research_plan.research_questions[-1] == "What became of the lifeboat?"
+
+
+def test_adding_a_blank_research_question_is_a_noop(qapp: QApplication) -> None:
+    from PySide6.QtWidgets import QLineEdit
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view._handle_run_ci_stage("audience_promise")
+    view._handle_run_ci_stage("research_plan")
+    assert job.research_plan is not None
+
+    original_count = len(job.research_plan.structured_questions)
+
+    view._handle_add_research_question(QLineEdit("   "))
+
+    assert len(job.research_plan.structured_questions) == original_count
+
+
+def test_editing_a_research_question_preserves_its_id(qapp: QApplication) -> None:
+    from PySide6.QtWidgets import QLineEdit
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view._handle_run_ci_stage("audience_promise")
+    view._handle_run_ci_stage("research_plan")
+    assert job.research_plan is not None
+
+    target = job.research_plan.structured_questions[0]
+    original_id = target.id
+
+    view._handle_edit_research_question(original_id, QLineEdit("A revised question?"))
+
+    updated = job.research_plan.structured_questions[0]
+    assert updated.id == original_id
+    assert updated.text == "A revised question?"
+    assert job.research_plan.research_questions[0] == "A revised question?"
+
+
+def test_removing_the_last_research_question_records_an_error_not_a_crash(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "src.desktop.views.content_studio_view.show_recoverable_error",
+        lambda *args, **kwargs: None,
+    )
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view._handle_run_ci_stage("audience_promise")
+    view._handle_run_ci_stage("research_plan")
+    assert job.research_plan is not None
+
+    # Remove every question one at a time - all but the last must
+    # succeed, and the last removal must be rejected rather than
+    # leaving an empty, unusable brief.
+    question_ids = [q.id for q in job.research_plan.structured_questions]
+
+    for question_id in question_ids[:-1]:
+        view._handle_remove_research_question(question_id)
+
+    assert len(job.research_plan.structured_questions) == 1
+
+    view._handle_remove_research_question(question_ids[-1])
+
+    assert len(job.research_plan.structured_questions) == 1
+    assert job.errors
+
+
+def test_research_plan_auto_approves_and_research_stage_is_runnable(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view._handle_run_ci_stage("audience_promise")
+    view._handle_run_ci_stage("research_plan")
+    view._handle_run_ci_stage("research")
+
+    assert job.research is not None
+
+
+def test_approve_research_brief_unblocks_the_research_stage(
+    qapp: QApplication,
+) -> None:
+    from src.models.approval import ApprovalPolicy, ApprovalPolicyConfig
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job.approval_policy = ApprovalPolicyConfig(research_plan=ApprovalPolicy.REVIEW)
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view._handle_run_ci_stage("audience_promise")
+    view._handle_run_ci_stage("research_plan")
+    view.refresh(job)
+
+    from src.services.approval_gate_service import ApprovalGateService
+
+    assert ApprovalGateService.is_blocked(job, "research_plan") is True
+
+    view._handle_approve_research_brief()
+
+    assert ApprovalGateService.is_blocked(job, "research_plan") is False
+
+    view._handle_run_ci_stage("research")
+
+    assert job.research is not None
