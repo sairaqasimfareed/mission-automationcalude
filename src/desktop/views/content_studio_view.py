@@ -34,8 +34,10 @@ from src.desktop.widgets import (
 )
 from src.models.approval import HumanApprovalAction
 from src.models.artifact_lifecycle import ArtifactType
+from src.models.creative_direction import CreativeDirection
 from src.models.enums import Platform, ProductionMode, WorkflowStage
 from src.models.reviewer_result import ReviewerResult
+from src.models.story_angle import StoryAngle, StoryAngleStyle
 from src.models.topic_candidate import TopicCandidate
 from src.models.video_job import VideoJob
 from src.services.approval_gate_service import ApprovalGateService
@@ -393,6 +395,105 @@ class ContentStudioView(QWidget):
         job.selected_topic_candidate = candidate
         self._on_change()
 
+    def _handle_select_story_angle(self, angle: StoryAngle) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        job.selected_story_angle = angle
+        self._on_change()
+
+    def _handle_write_custom_angle(
+        self,
+        *,
+        style_select: QComboBox,
+        title_input: QLineEdit,
+        description_input: QLineEdit,
+    ) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        try:
+            angle = StoryAngle(
+                style=StoryAngleStyle(style_select.currentText()),
+                title=title_input.text(),
+                description=description_input.text(),
+            )
+        except ValueError as error:
+            self._record_error(job, f"Could not save custom story angle: {error}")
+
+            return
+
+        job.story_angles = job.story_angles + [angle]
+        job.selected_story_angle = angle
+        self._on_change()
+
+    def _handle_combine_story_angles(self, other_angle: StoryAngle) -> None:
+        job = self._current_job()
+
+        if job is None or job.selected_story_angle is None:
+            return
+
+        base_angle = job.selected_story_angle
+
+        if other_angle.title == base_angle.title:
+            return
+
+        note = (
+            f"Combines '{base_angle.title}' ({base_angle.style.value}) with "
+            f"'{other_angle.title}' ({other_angle.style.value}): "
+            f"{other_angle.description}"
+        )
+        existing = job.creative_direction
+
+        try:
+            job.creative_direction = CreativeDirection(
+                selected_angle=base_angle,
+                combined_angle_note=note,
+                narrative_thesis=(
+                    existing.narrative_thesis if existing else base_angle.description
+                ),
+                constraints=existing.constraints if existing else [],
+            )
+        except ValueError as error:
+            self._record_error(job, f"Could not combine story angles: {error}")
+
+            return
+
+        self._on_change()
+
+    def _handle_save_creative_direction(
+        self, *, thesis_input: QLineEdit, constraints_input: QLineEdit
+    ) -> None:
+        job = self._current_job()
+
+        if job is None or job.selected_story_angle is None:
+            return
+
+        constraints = [
+            item.strip() for item in constraints_input.text().split(",") if item.strip()
+        ]
+        existing = job.creative_direction
+
+        try:
+            job.creative_direction = CreativeDirection(
+                selected_angle=job.selected_story_angle,
+                combined_angle_note=(
+                    existing.combined_angle_note if existing else None
+                ),
+                narrative_thesis=thesis_input.text(),
+                constraints=constraints,
+            )
+        except ValueError as error:
+            self._record_error(job, f"Could not save creative direction: {error}")
+
+            return
+
+        self._on_change()
+
     def _build_settings_card(self, job: VideoJob) -> None:
         frame, layout = card("Project settings", icon_name="settings")
 
@@ -721,6 +822,26 @@ class ContentStudioView(QWidget):
         layout.addWidget(muted(f"Primary question: {promise.primary_question}"))
         layout.addWidget(muted(f"Expected payoff: {promise.expected_payoff}"))
 
+        # Content Studio Redesign, Phase 6: Audience Strategy fields.
+        # Display-only, matching every other CI stage panel's current
+        # convention - none of these panels support inline field
+        # editing yet (a pre-existing, repo-wide gap already flagged
+        # in Phase 4's own documented deferrals, not specific to this
+        # phase).
+        strategy_fields = [
+            ("Persona", promise.persona),
+            ("Viewer intent", promise.viewer_intent),
+            ("Viewer promise", promise.viewer_promise),
+            ("Tone/treatment", promise.tone_treatment),
+            ("Platform strategy", promise.platform_strategy),
+            ("Audience pain/desire", promise.audience_pain_or_desire),
+            ("Knowledge assumption", promise.knowledge_assumption),
+        ]
+
+        for label, value in strategy_fields:
+            if value is not None:
+                layout.addWidget(small_muted(f"{label}: {value}"))
+
         if promise.weakness_reasons:
             layout.addWidget(
                 small_muted("Weaknesses: " + ", ".join(promise.weakness_reasons))
@@ -796,7 +917,114 @@ class ContentStudioView(QWidget):
             layout.addWidget(muted(f"{angle.title}{score_text}"))
             layout.addWidget(small_muted(angle.description))
 
+            angle_action_row = QHBoxLayout()
+            angle_action_row.setSpacing(6)
+
+            if not is_selected:
+                select_button = button("Select", variant="ghost")
+                select_button.clicked.connect(
+                    lambda _checked=False, a=angle: self._handle_select_story_angle(a)
+                )
+                angle_action_row.addWidget(select_button)
+
+            if job.selected_story_angle is not None and not is_selected:
+                combine_button = button("Combine with selected", variant="ghost")
+                combine_button.clicked.connect(
+                    lambda _checked=False, a=angle: self._handle_combine_story_angles(a)
+                )
+                angle_action_row.addWidget(combine_button)
+
+            angle_action_row.addStretch()
+            layout.addLayout(angle_action_row)
+
+        layout.addWidget(separator())
+        layout.addWidget(small_muted("Write my own angle:"))
+
+        custom_style_select = QComboBox()
+        custom_style_select.addItems([style.value for style in StoryAngleStyle])
+
+        custom_title_input = QLineEdit()
+        custom_title_input.setPlaceholderText("Angle title")
+
+        custom_description_input = QLineEdit()
+        custom_description_input.setPlaceholderText("Angle description")
+
+        custom_form = QFormLayout()
+        custom_form.addRow("Style", custom_style_select)
+        custom_form.addRow("Title", custom_title_input)
+        custom_form.addRow("Description", custom_description_input)
+        layout.addLayout(custom_form)
+
+        write_own_button = button("Write my own angle", variant="ghost")
+        write_own_button.clicked.connect(
+            lambda: self._handle_write_custom_angle(
+                style_select=custom_style_select,
+                title_input=custom_title_input,
+                description_input=custom_description_input,
+            )
+        )
+        layout.addWidget(write_own_button, alignment=_LEFT)
+
+        layout.addWidget(separator())
+        self._render_creative_direction_section(layout, job)
+
         return True
+
+    def _render_creative_direction_section(
+        self, layout: QVBoxLayout, job: VideoJob
+    ) -> None:
+        """
+        Content Studio Redesign, Phase 6: Creative Direction is a
+        separate artifact from the selected StoryAngle above - see
+        CreativeDirection's own docstring for why - versioned/approved
+        independently even though it shares this GUI section.
+        """
+
+        layout.addWidget(small_muted("Creative direction:"))
+
+        direction = job.creative_direction
+
+        if direction is not None:
+            layout.addWidget(status_label("Saved", role="success"))
+            layout.addWidget(muted(f"Narrative thesis: {direction.narrative_thesis}"))
+
+            if direction.combined_angle_note is not None:
+                layout.addWidget(
+                    small_muted(f"Combined: {direction.combined_angle_note}")
+                )
+
+            if direction.constraints:
+                layout.addWidget(
+                    small_muted("Constraints: " + ", ".join(direction.constraints))
+                )
+
+        if job.selected_story_angle is None:
+            layout.addWidget(
+                small_muted("Select or write an angle above to set a narrative thesis.")
+            )
+
+            return
+
+        thesis_input = QLineEdit(direction.narrative_thesis if direction else "")
+        thesis_input.setPlaceholderText("Narrative thesis")
+
+        constraints_input = QLineEdit(
+            ", ".join(direction.constraints) if direction else ""
+        )
+        constraints_input.setPlaceholderText("Constraints, comma-separated")
+
+        thesis_form = QFormLayout()
+        thesis_form.addRow("Narrative thesis", thesis_input)
+        thesis_form.addRow("Constraints", constraints_input)
+        layout.addLayout(thesis_form)
+
+        save_button = button("Save creative direction", variant="primary")
+        save_button.clicked.connect(
+            lambda: self._handle_save_creative_direction(
+                thesis_input=thesis_input, constraints_input=constraints_input
+            )
+        )
+        layout.addWidget(save_button, alignment=_LEFT)
 
     def _render_narrative_architecture_panel(
         self, layout: QVBoxLayout, job: VideoJob

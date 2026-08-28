@@ -556,3 +556,239 @@ def test_topic_card_builds_without_error_after_generation_and_selection(
     view._handle_generate_topic_candidates(replace_existing=False)
     view._handle_select_topic_candidate(job.topic_candidates[0])
     view.refresh(job)  # must not raise with a populated topic card
+
+
+def test_selecting_a_story_angle_overrides_the_pipelines_auto_selection(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view._handle_run_ci_stage("audience_promise")
+    view._handle_run_ci_stage("research_plan")
+    view._handle_run_ci_stage("research")
+    view._handle_run_ci_stage("story_angles")
+
+    assert len(job.story_angles) > 1
+    auto_selected = job.selected_story_angle
+    assert auto_selected is not None
+    other_angle = next(a for a in job.story_angles if a.title != auto_selected.title)
+
+    view._handle_select_story_angle(other_angle)
+
+    assert job.selected_story_angle is other_angle
+
+
+def test_writing_a_custom_angle_appends_and_selects_it(qapp: QApplication) -> None:
+    from PySide6.QtWidgets import QComboBox, QLineEdit
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    from src.models.story_angle import StoryAngleStyle
+
+    style_select = QComboBox()
+    style_select.addItems([style.value for style in StoryAngleStyle])
+    style_select.setCurrentText(StoryAngleStyle.HORROR.value)
+
+    title_input = QLineEdit("The Dread Below")
+    description_input = QLineEdit("A horror-focused framing of the disappearance.")
+
+    original_count = len(job.story_angles)
+
+    view._handle_write_custom_angle(
+        style_select=style_select,
+        title_input=title_input,
+        description_input=description_input,
+    )
+
+    assert len(job.story_angles) == original_count + 1
+    assert job.selected_story_angle is not None
+    assert job.selected_story_angle.title == "The Dread Below"
+
+
+def test_writing_a_custom_angle_with_blank_title_records_an_error_not_a_crash(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # show_recoverable_error() opens a real modal dialog and blocks
+    # forever under the offscreen Qt platform - same guard as
+    # test_running_a_stage_out_of_order_records_an_error_not_a_crash.
+    monkeypatch.setattr(
+        "src.desktop.views.content_studio_view.show_recoverable_error",
+        lambda *args, **kwargs: None,
+    )
+
+    from PySide6.QtWidgets import QComboBox, QLineEdit
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    from src.models.story_angle import StoryAngleStyle
+
+    style_select = QComboBox()
+    style_select.addItems([style.value for style in StoryAngleStyle])
+
+    title_input = QLineEdit("")
+    description_input = QLineEdit("A description without a title.")
+
+    view._handle_write_custom_angle(
+        style_select=style_select,
+        title_input=title_input,
+        description_input=description_input,
+    )
+
+    assert job.story_angles == []
+    assert job.errors
+
+
+def test_combining_two_story_angles_creates_a_creative_direction(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view._handle_run_ci_stage("audience_promise")
+    view._handle_run_ci_stage("research_plan")
+    view._handle_run_ci_stage("research")
+    view._handle_run_ci_stage("story_angles")
+
+    base_angle = job.selected_story_angle
+    assert base_angle is not None
+    other_angle = next(a for a in job.story_angles if a.title != base_angle.title)
+
+    view._handle_combine_story_angles(other_angle)
+
+    assert job.creative_direction is not None
+    combined_note = job.creative_direction.combined_angle_note
+    assert combined_note is not None
+    assert job.creative_direction.selected_angle.title == base_angle.title
+    assert other_angle.title in combined_note
+    assert base_angle.title in combined_note
+
+
+def test_combining_without_a_selected_angle_is_a_noop(qapp: QApplication) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    from src.models.story_angle import StoryAngle, StoryAngleStyle
+
+    other_angle = StoryAngle(
+        style=StoryAngleStyle.HORROR,
+        title="An angle",
+        description="A description.",
+    )
+
+    view._handle_combine_story_angles(other_angle)
+
+    assert job.creative_direction is None
+
+
+def test_saving_creative_direction_records_thesis_and_constraints(
+    qapp: QApplication,
+) -> None:
+    from PySide6.QtWidgets import QLineEdit
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view._handle_run_ci_stage("audience_promise")
+    view._handle_run_ci_stage("research_plan")
+    view._handle_run_ci_stage("research")
+    view._handle_run_ci_stage("story_angles")
+
+    thesis_input = QLineEdit("The crew's fate was sealed by the missing logbook.")
+    constraints_input = QLineEdit("No supernatural framing, Keep under 8 minutes")
+
+    view._handle_save_creative_direction(
+        thesis_input=thesis_input, constraints_input=constraints_input
+    )
+
+    assert job.creative_direction is not None
+    assert job.creative_direction.narrative_thesis == (
+        "The crew's fate was sealed by the missing logbook."
+    )
+    assert job.creative_direction.constraints == [
+        "No supernatural framing",
+        "Keep under 8 minutes",
+    ]
+
+
+def test_saving_creative_direction_without_a_selected_angle_is_a_noop(
+    qapp: QApplication,
+) -> None:
+    from PySide6.QtWidgets import QLineEdit
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    thesis_input = QLineEdit("A thesis.")
+    constraints_input = QLineEdit("")
+
+    view._handle_save_creative_direction(
+        thesis_input=thesis_input, constraints_input=constraints_input
+    )
+
+    assert job.creative_direction is None
+
+
+def test_story_angles_panel_builds_without_error_with_creative_direction_set(
+    qapp: QApplication,
+) -> None:
+    from PySide6.QtWidgets import QLineEdit
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view._handle_run_ci_stage("audience_promise")
+    view._handle_run_ci_stage("research_plan")
+    view._handle_run_ci_stage("research")
+    view._handle_run_ci_stage("story_angles")
+
+    thesis_input = QLineEdit("A thesis.")
+    constraints_input = QLineEdit("")
+
+    view._handle_save_creative_direction(
+        thesis_input=thesis_input, constraints_input=constraints_input
+    )
+    view.refresh(job)  # must not raise with a populated creative direction section

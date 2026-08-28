@@ -5,6 +5,65 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-08-28 - Content Studio Redesign: Phase 6 Audience & Creative Strategy Workspace
+
+**Backend.** `AudiencePromise` extended with 7 new optional fields the
+redesign's Audience artifact schema calls for and the existing model
+didn't yet have: `persona`, `viewer_intent`, `viewer_promise`,
+`tone_treatment`, `platform_strategy`, `audience_pain_or_desire`,
+`knowledge_assumption` (target_audience and central_curiosity already
+covered "primary audience" and "central curiosity"). All optional,
+defaulting to `None` - every existing `AudiencePromise` construction
+site across the pipeline and its tests is untouched. New
+`CreativeDirection` (`src/models/creative_direction.py`) - a genuinely
+new artifact, not a StoryAngle extension: Phase 0's own baseline
+classified Creative Direction as "PARTIAL REUSE + MISSING" precisely
+because nothing today captures a *combined* framing, an explicit
+Narrative Thesis, or production constraints. Wraps
+`selected_angle: StoryAngle` so the artifact stays self-contained,
+plus an optional `combined_angle_note`, `narrative_thesis`, and
+`constraints`. Versioned and approved independently of `AudiencePromise`
+even though both are edited in one GUI workspace, per the redesign's
+explicit requirement - `CreativeDirection` carries no reference back
+to the audience artifact at all. `VideoJob.creative_direction` is new
+and optional.
+
+**GUI.** The existing "Story angles" CI stage panel - previously pure
+read-only display, like every other CI stage panel - gained real
+interactivity: a "Select" button per candidate that overrides the
+pipeline's own auto-selected `selected_story_angle` (this was
+previously impossible from the GUI at all; `run_story_angles()` always
+auto-picks the highest-scoring evaluation), a "Combine with selected"
+button that merges the currently selected angle with another candidate
+into a `combined_angle_note`, a "Write my own angle" form (style +
+title + description), and a "Creative direction" section below all of
+that where a narrative thesis and comma-separated constraints can be
+entered and saved. The "Audience promise" panel now displays the 7 new
+Phase 6 fields inline whenever they're present.
+
+**Deliberately not built this pass**, documented rather than silently
+skipped: inline field-by-field editing of `AudiencePromise` itself -
+this is a pre-existing, repo-wide gap already flagged in Phase 4's own
+entry (no CI stage panel supports inline editing yet, not something
+this phase introduces); a distinct "Review Strategy" action separate
+from the existing generic per-stage "Review" button (which already
+covers `audience_promise`); an incremental "Generate More" for angles
+that adds candidates without discarding the existing set (today,
+re-running the "Story angles" stage regenerates the whole candidate
+set from scratch); and a dedicated `ArtifactLifecycleService`-backed
+version/approval trail specifically for Creative Direction - it rides
+the same generic `ContentDecisionRecord`/`ApprovalGateService` gate
+every other CI stage uses today, since Phase 1's parallel ledger
+remains unwired into any real stage (true of every phase so far).
+
+Quality gates: mypy, ruff, and black all clean across the touched
+files. New tests: `test_audience_promise_model.py` (+4),
+`test_creative_direction.py` (8 new), and 9 new cases in
+`test_content_studio_content_intelligence_gui.py` covering Select
+(overriding auto-selection), Write My Own (including the blank-title
+error path), Combine (including the no-selection no-op), and Save
+Creative Direction (including the no-selection no-op) - all passing.
+
 ## 2026-08-28 - Content Studio Redesign: Phase 5 Topic Intelligence Workspace
 
 **Backend.** New `TopicCandidate` (`src/models/topic_candidate.py`) -

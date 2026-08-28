@@ -10,6 +10,7 @@ from src.models.audio_timeline import AudioTimeline
 from src.models.base import MissionBaseModel
 from src.models.content_decision_record import ContentDecisionRecord
 from src.models.continuity_bible import ContinuityBible, ContinuityValidationResult
+from src.models.creative_direction import CreativeDirection
 from src.models.editing_directives import SceneEditingDirectives
 from src.models.editorial_critique import EditorialCritique
 from src.models.editorial_profile import EditorialProfile
@@ -146,6 +147,15 @@ class VideoJob(MissionBaseModel):
     story_angles: list[StoryAngle] = Field(default_factory=list)
     story_angle_evaluations: list[StoryAngleEvaluation] = Field(default_factory=list)
     selected_story_angle: StoryAngle | None = None
+
+    # Content Studio Redesign, Phase 6: Audience & Creative Strategy
+    # Workspace. Separate from selected_story_angle above (which the
+    # pipeline still auto-picks via story angle evaluation scoring) -
+    # creative_direction is only set once a human explicitly confirms
+    # (or overrides via Select/Combine/Write My Own) a narrative
+    # thesis and constraints for that choice, and is versioned/
+    # approved independently per the redesign's own requirement.
+    creative_direction: CreativeDirection | None = None
     reveal_map: InformationRevealMap | None = None
     story_blueprint: StoryBlueprint | None = None
     retention_audit: RetentionAuditReport | None = None

@@ -70,3 +70,55 @@ def test_confidence_score_and_is_weak_per_strength(
 def test_required_text_fields_reject_empty_string() -> None:
     with pytest.raises(ValidationError):
         AudiencePromise(**_kwargs(central_curiosity=""))
+
+
+def test_phase_6_strategy_fields_default_to_none() -> None:
+    promise = AudiencePromise(**_kwargs())
+
+    assert promise.persona is None
+    assert promise.viewer_intent is None
+    assert promise.viewer_promise is None
+    assert promise.tone_treatment is None
+    assert promise.platform_strategy is None
+    assert promise.audience_pain_or_desire is None
+    assert promise.knowledge_assumption is None
+
+
+def test_phase_6_strategy_fields_can_be_set() -> None:
+    promise = AudiencePromise(
+        **_kwargs(
+            persona="A curious armchair detective",
+            viewer_intent="Understand what really happened",
+            viewer_promise="A satisfying, evidence-backed answer",
+            tone_treatment="Measured, investigative",
+            platform_strategy="Long-form YouTube deep dive",
+            audience_pain_or_desire="Frustrated by shallow retellings",
+            knowledge_assumption="Has heard of the ship, knows no details",
+        )
+    )
+
+    assert promise.persona == "A curious armchair detective"
+    assert promise.knowledge_assumption == "Has heard of the ship, knows no details"
+
+
+def test_phase_6_strategy_fields_normalize_blank_strings_to_none() -> None:
+    promise = AudiencePromise(**_kwargs(persona="   ", viewer_intent=""))
+
+    assert promise.persona is None
+    assert promise.viewer_intent is None
+
+
+def test_backward_compatible_round_trip_without_phase_6_fields() -> None:
+    """
+    A VideoJob JSON file saved before Phase 6 has no persona/
+    viewer_intent/etc. keys on its AudiencePromise at all - Pydantic's
+    defaults must absorb that silently rather than raising.
+    """
+
+    promise = AudiencePromise(**_kwargs())
+    raw = promise.model_dump_json()
+
+    reloaded = AudiencePromise.model_validate_json(raw)
+
+    assert reloaded.persona is None
+    assert reloaded.viewer_promise is None

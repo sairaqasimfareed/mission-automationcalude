@@ -42,6 +42,40 @@ class AudiencePromise(MissionBaseModel):
 
     prompt_version: str = Field(min_length=1)
 
+    # Content Studio Redesign, Phase 6 (Audience & Creative Strategy
+    # Workspace): the redesign's Audience artifact schema calls for
+    # these fields alongside the ones above (target_audience already
+    # covers "primary audience", central_curiosity is already
+    # captured). All optional and default None/empty - an old project
+    # JSON predating this phase loads unchanged, and every existing
+    # AudiencePromise construction site across the pipeline and its
+    # tests keeps working without modification.
+    persona: str | None = None
+    viewer_intent: str | None = None
+    viewer_promise: str | None = None
+    tone_treatment: str | None = None
+    platform_strategy: str | None = None
+    audience_pain_or_desire: str | None = None
+    knowledge_assumption: str | None = None
+
+    @field_validator(
+        "persona",
+        "viewer_intent",
+        "viewer_promise",
+        "tone_treatment",
+        "platform_strategy",
+        "audience_pain_or_desire",
+        "knowledge_assumption",
+    )
+    @classmethod
+    def clean_optional_strategy_field(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+
+        cleaned = value.strip()
+
+        return cleaned or None
+
     @field_validator("genre_id")
     @classmethod
     def validate_genre_id(cls, value: str) -> str:
