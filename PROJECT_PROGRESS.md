@@ -5,6 +5,95 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-08-28 - Content Studio Redesign: Phase 8 Research Execution, Evidence Ledger and Fact Integrity
+
+**Backend.** New `src/models/research_evidence.py`: `EvidenceRecord`
+(source_id + confidence + support type + contradiction status) binds
+one piece of evidence to the source that backs it; `ResearchFact`
+wraps `text` + a list of `EvidenceRecord`s, using one stable `id`
+(inherited from `MissionBaseModel`) as both "Claim ID" and "Fact ID" -
+a deliberate simplification over the spec's two-ID wording, since this
+codebase has no existing two-stage claim-then-fact promotion concept
+to build on and inventing one would be materially more machinery than
+the actual requirement (a stable identifier downstream Story
+Development can reference) needs; `ManualResearchEdit.is_verified`
+only ever becomes `True` via an explicit fact-check pass, never
+automatically on creation or edit - "Manual research edits do not
+automatically become verified facts."
+
+`ResearchSource` gained `date`, `retrieved_at`, and a new
+`SourceStatus` (ACCEPTED/REJECTED) - rejecting a source flips its
+status rather than removing it from the list, so "User can add/reject
+sources without deleting audit history" falls out of the model for
+free, no separate rejected-sources list needed. `ResearchResult`
+gained `structured_facts`, `research_gaps`, `manual_edits` - all
+additive alongside the existing flat `key_facts: list[str]`, which 6
+production services (`ScriptAgent`, `ResearchReviewService`,
+`ScriptGenerationService`, SEO context/keyword generation,
+`StoryAngleGenerationService`) keep reading completely unmodified -
+the exact same "add a parallel structured field, never touch the
+broadly-consumed flat one" pattern Phase 7 already established for
+`ResearchPlan.research_questions`.
+
+New `FactCheckService` (`src/services/fact_check_service.py`) mirrors
+every other content service's batched-call/labeled-block pattern.
+Deliberately checks a claim against a project's *already-gathered,
+accepted* sources only - never performs new retrieval - matching
+"Research retrieval/search and LLM analysis/synthesis are separate
+layers." Rejected sources are excluded from what the LLM sees, so a
+rejected source can't silently keep backing a claim. "LLM is forbidden
+from treating pretrained memory as evidence" is enforced via an
+explicit system-prompt instruction - documented honestly here as a
+prompt-level safeguard, not a technically-enforced guarantee, since
+this is an LLM-based system without a real retrieval-grounding
+infrastructure layer that could verify the model actually complied.
+
+`ReviewerService` gained one additive dict entry mapping
+`ArtifactType.RESEARCH` to extra focus guidance injected into the
+existing generic review prompt - "Reviewer findings highlight
+unsupported claims, weak sources, contradictions, unanswered
+questions and missing perspectives" - reusing the exact same
+mechanism every other artifact type already uses rather than building
+a second, bespoke research critic. Zero risk to any other artifact
+type's review prompt, proven by a test asserting the guidance text is
+absent when reviewing a script.
+
+**GUI.** The "Research" CI stage panel gained an Evidence Ledger
+section beneath the existing summary display: sources shown with an
+accepted/rejected status badge and a Reject/Restore toggle, plus an
+"Add source" form; evidence-bound facts shown read-only (support type,
+confidence, contradiction status per evidence record); manual research
+notes with a verified/unverified badge, an "Add note" form, and a
+"Fact Check Again" button on every unverified note that calls
+`FactCheckService` and either promotes the note to a verified
+`ResearchFact` (on a supported result) or records the reviewer's
+reasoning as `verification_notes` (on an unsupported one, leaving the
+note unverified); and a research-gaps Add/Remove list mirroring Phase
+7's question-editing pattern.
+
+**Deliberately not built this pass**, documented rather than silently
+skipped: no separate multi-tab shell - Evidence/Facts/Gaps live as
+sections within the existing single "Research" panel, the same
+honest-scoping call Phase 7 made for the Research Brief; no GUI-side
+direct authoring of `EvidenceRecord`/`ResearchFact` - facts are only
+ever created through "Fact Check Again," never hand-entered, so a fact
+in the ledger always has a real (even if unsupported) fact-check
+behind it; "Regenerate Section" and "Edit Research" (in-place rewrites
+of `research_summary` itself) are out of scope this pass - only
+additive Evidence Ledger actions exist.
+
+Quality gates: mypy clean across 365 source files, ruff clean, black
+clean repo-wide (680 files). `tests/test_research_model.py` was
+rewritten from a dead print-script (the session's 7th such fix) into
+11 real tests covering both the pre-existing fields and the new Phase
+8 additions. New/updated tests: `test_research_model.py` (11),
+`test_fact_check_service.py` (10 new), 2 new cases in
+`test_reviewer_service.py` (research-focus guidance present for
+RESEARCH, absent for SCRIPT), 7 new cases in
+`test_content_studio_content_intelligence_gui.py` (add/reject source,
+manual-edit add, fact-check-again both supported and unsupported
+paths, research-gap add/remove).
+
 ## 2026-08-28 - Content Studio Redesign: Phase 7 Research Center (Research Brief and Retrieval Foundation)
 
 **Backend.** New `ResearchQuestion` (`src/models/research_plan.py`)

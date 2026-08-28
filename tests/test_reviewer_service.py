@@ -201,3 +201,42 @@ def test_dry_run_response_is_itself_parseable() -> None:
 
     assert result is not None
     assert len(result.strengths) == 1
+
+
+def test_research_artifacts_get_additional_focus_guidance_in_the_prompt() -> None:
+    """
+    Content Studio Redesign, Phase 8: "Reviewer findings highlight
+    unsupported claims, weak sources, contradictions, unanswered
+    questions and missing perspectives" - additive prompt guidance for
+    ArtifactType.RESEARCH specifically, reusing the same generic
+    review() mechanism rather than a separate research-specific critic.
+    """
+
+    stub = _StubLLMService(content=_FULL_RESPONSE)
+    service = ReviewerService(llm_service=stub)  # type: ignore[arg-type]
+
+    service.review(
+        artifact_type=ArtifactType.RESEARCH,
+        content="content",
+        context="context",
+        reviewer_profile_id="anthropic-reviewer",
+    )
+
+    assert stub.last_request is not None
+    assert "unsupported claims" in stub.last_request.prompt.lower()
+    assert "contradictions" in stub.last_request.prompt.lower()
+
+
+def test_non_research_artifacts_do_not_get_research_focus_guidance() -> None:
+    stub = _StubLLMService(content=_FULL_RESPONSE)
+    service = ReviewerService(llm_service=stub)  # type: ignore[arg-type]
+
+    service.review(
+        artifact_type=ArtifactType.SCRIPT,
+        content="content",
+        context="context",
+        reviewer_profile_id="anthropic-reviewer",
+    )
+
+    assert stub.last_request is not None
+    assert "weak or low-credibility sources" not in stub.last_request.prompt

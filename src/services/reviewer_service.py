@@ -12,6 +12,21 @@ _ISSUE_LABELS = ("DESCRIPTION", "SEVERITY", "RECOMMENDATION")
 _VALID_SEVERITIES = {severity.value for severity in FindingSeverity}
 _PROMPT_VERSION = "reviewer_service_prompt_v1.0.0"
 
+# Content Studio Redesign, Phase 8: research-specific review focus,
+# additive to the generic prompt below - "Reviewer findings highlight
+# unsupported claims, weak sources, contradictions, unanswered
+# questions and missing perspectives." No other artifact type gets
+# special-cased guidance; this stays a plain dict lookup so adding a
+# future artifact-specific focus never touches the parsing contract.
+_ARTIFACT_FOCUS_GUIDANCE: dict[ArtifactType, str] = {
+    ArtifactType.RESEARCH: (
+        "Pay particular attention to: unsupported claims (asserted "
+        "without a cited source), weak or low-credibility sources, "
+        "unresolved contradictions between sources, research questions "
+        "left unanswered, and missing perspectives or counter-evidence."
+    ),
+}
+
 
 class ReviewerService:
     """
@@ -134,12 +149,15 @@ class ReviewerService:
         *, artifact_type: ArtifactType, content: str, context: str
     ) -> str:
         valid_severities = ", ".join(sorted(_VALID_SEVERITIES))
+        focus_guidance = _ARTIFACT_FOCUS_GUIDANCE.get(artifact_type)
+        focus_section = f"{focus_guidance}\n\n" if focus_guidance else ""
 
         return (
             f"Artifact type: {artifact_type.value}\n\n"
             f"Context (upstream approved material, project settings):\n"
             f"{context}\n\n"
             f"Artifact content to review:\n{content}\n\n"
+            f"{focus_section}"
             "First, return exactly one block with one line per genuine "
             "strength you find:\n"
             "STRENGTH: <what is good about this, specifically>\n\n"

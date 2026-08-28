@@ -13,6 +13,7 @@ from src.services.application_infrastructure_factory import (
 )
 from src.services.content_intelligence_pipeline import ContentIntelligencePipeline
 from src.services.content_pipeline import ContentPipeline
+from src.services.fact_check_service import FactCheckService
 from src.services.factory.provider_adapter_factory import ProviderAdapterFactory
 from src.services.final_export.final_export_service import FinalExportService
 from src.services.media_generation_pipeline import MediaGenerationPipeline
@@ -221,6 +222,18 @@ def get_topic_candidate_generation_service() -> TopicCandidateGenerationService:
     """
 
     return TopicCandidateGenerationService(llm_service=get_infrastructure().llm_service)
+
+
+@lru_cache
+def get_fact_check_service() -> FactCheckService:
+    """
+    Return the shared fact-check service (Content Studio Redesign,
+    Phase 8) - wired to the same LLMService instance every other
+    content-generation service uses, so a "Fact Check Again" call is
+    subject to the same budget gating and provider fallback chain.
+    """
+
+    return FactCheckService(llm_service=get_infrastructure().llm_service)
 
 
 @lru_cache

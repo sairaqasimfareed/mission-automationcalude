@@ -21,6 +21,7 @@ from src.services.content_intelligence_pipeline import (  # noqa: E402
     ContentIntelligencePipeline,
 )
 from src.services.content_pipeline import ContentPipeline  # noqa: E402
+from src.services.fact_check_service import FactCheckService  # noqa: E402
 from src.services.llm.llm_service import LLMServiceResult  # noqa: E402
 from src.services.reviewer_service import ReviewerService  # noqa: E402
 from src.services.topic_candidate_generation_service import (  # noqa: E402
@@ -94,6 +95,7 @@ def _view(job_store: InMemoryJobStore) -> ContentStudioView:
         topic_candidate_generation_service=TopicCandidateGenerationService(
             llm_service=stub  # type: ignore[arg-type]
         ),
+        fact_check_service=FactCheckService(llm_service=stub),  # type: ignore[arg-type]
         on_change=lambda: None,
     )
 
@@ -955,3 +957,192 @@ def test_approve_research_brief_unblocks_the_research_stage(
     view._handle_run_ci_stage("research")
 
     assert job.research is not None
+
+
+def _run_through_research(view: ContentStudioView, job: VideoJob) -> None:
+    view._handle_run_ci_stage("audience_promise")
+    view._handle_run_ci_stage("research_plan")
+    view._handle_run_ci_stage("research")
+    assert job.research is not None
+
+
+def test_adding_a_research_source_appends_it_accepted(qapp: QApplication) -> None:
+    from PySide6.QtWidgets import QLineEdit
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_research(view, job)
+    assert job.research is not None
+
+    original_count = len(job.research.sources)
+
+    view._handle_add_research_source(
+        title_input=QLineEdit("A new primary source"),
+        url_input=QLineEdit("https://example.com/source"),
+    )
+
+    assert len(job.research.sources) == original_count + 1
+    added = job.research.sources[-1]
+    assert added.title == "A new primary source"
+    from src.models.research import SourceStatus
+
+    assert added.status == SourceStatus.ACCEPTED
+
+
+def test_toggling_a_source_status_rejects_then_restores(qapp: QApplication) -> None:
+    from src.models.research import SourceStatus
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_research(view, job)
+    assert job.research is not None
+
+    source = job.research.sources[0]
+    assert source.status == SourceStatus.ACCEPTED
+
+    view._handle_toggle_source_status(source.id)
+    assert job.research.sources[0].status == SourceStatus.REJECTED
+
+    view._handle_toggle_source_status(source.id)
+    assert job.research.sources[0].status == SourceStatus.ACCEPTED
+
+
+def test_adding_a_manual_research_edit_starts_unverified(qapp: QApplication) -> None:
+    from PySide6.QtWidgets import QLineEdit
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_research(view, job)
+    assert job.research is not None
+
+    view._handle_add_manual_research_edit(QLineEdit("A note I typed myself."))
+
+    assert len(job.research.manual_edits) == 1
+    assert job.research.manual_edits[0].is_verified is False
+
+
+def test_fact_check_again_on_a_supported_claim_adds_a_structured_fact(
+    qapp: QApplication,
+) -> None:
+    from PySide6.QtWidgets import QLineEdit
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_research(view, job)
+    assert job.research is not None
+
+    view._handle_add_manual_research_edit(QLineEdit("The ship was seaworthy."))
+    edit_id = job.research.manual_edits[0].id
+
+    # The shared echo stub always returns the dry-run fact-check
+    # response, which is a supported result - see FactCheckService's
+    # own _DRY_RUN_RESPONSE.
+    view._handle_fact_check_again(edit_id)
+
+    assert job.research.manual_edits[0].is_verified is True
+    assert job.research.manual_edits[0].verification_notes is not None
+    assert len(job.research.structured_facts) == 1
+    assert job.research.structured_facts[0].is_supported is True
+
+
+def test_fact_check_again_on_an_unsupported_claim_leaves_it_unverified(
+    qapp: QApplication,
+) -> None:
+    from PySide6.QtWidgets import QLineEdit
+
+    from src.models.research_evidence import FactCheckResult
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_research(view, job)
+    assert job.research is not None
+
+    view._handle_add_manual_research_edit(QLineEdit("An unverifiable claim."))
+    edit_id = job.research.manual_edits[0].id
+
+    view._fact_check_service.check = lambda **kwargs: FactCheckResult(  # type: ignore[method-assign]
+        claim_text=kwargs["claim_text"],
+        is_supported=False,
+        confidence=10,
+        matched_source_ids=[],
+        reasoning="No source supports this.",
+    )
+
+    view._handle_fact_check_again(edit_id)
+
+    assert job.research.manual_edits[0].is_verified is False
+    assert job.research.manual_edits[0].verification_notes == "No source supports this."
+    assert job.research.structured_facts == []
+
+
+def test_adding_and_removing_a_research_gap(qapp: QApplication) -> None:
+    from PySide6.QtWidgets import QLineEdit
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_research(view, job)
+    assert job.research is not None
+
+    view._handle_add_research_gap(QLineEdit("No information on the lifeboat's fate."))
+
+    assert job.research.research_gaps == ["No information on the lifeboat's fate."]
+
+    view._handle_remove_research_gap("No information on the lifeboat's fate.")
+
+    assert job.research.research_gaps == []
+
+
+def test_research_panel_builds_without_error_with_evidence_ledger_populated(
+    qapp: QApplication,
+) -> None:
+    from PySide6.QtWidgets import QLineEdit
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_research(view, job)
+    assert job.research is not None
+
+    view._handle_add_research_source(
+        title_input=QLineEdit("Another source"), url_input=QLineEdit("")
+    )
+    view._handle_add_manual_research_edit(QLineEdit("A claim to check."))
+    edit_id = job.research.manual_edits[0].id
+    view._handle_fact_check_again(edit_id)
+    view._handle_add_research_gap(QLineEdit("A remaining gap."))
+
+    view.refresh(job)  # must not raise with a fully populated evidence ledger

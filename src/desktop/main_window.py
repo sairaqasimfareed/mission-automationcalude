@@ -64,6 +64,7 @@ class MainWindow(QMainWindow):
             topic_candidate_generation_service=(
                 services.get_topic_candidate_generation_service()
             ),
+            fact_check_service=services.get_fact_check_service(),
             content_pipeline=services.get_content_pipeline(),
             content_intelligence_pipeline=(
                 services.get_content_intelligence_pipeline()

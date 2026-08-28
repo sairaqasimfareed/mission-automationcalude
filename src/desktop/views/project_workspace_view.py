@@ -19,6 +19,7 @@ from src.models.production_readiness import ReadinessState
 from src.models.video_job import VideoJob
 from src.services.content_intelligence_pipeline import ContentIntelligencePipeline
 from src.services.content_pipeline import ContentPipeline
+from src.services.fact_check_service import FactCheckService
 from src.services.final_export.final_export_service import FinalExportService
 from src.services.media_generation_pipeline import MediaGenerationPipeline
 from src.services.production_readiness_service import ProductionReadinessService
@@ -118,6 +119,7 @@ class ProjectWorkspaceView(QWidget):
         thumbnail_package_service: ThumbnailPackageService,
         reviewer_service: ReviewerService,
         topic_candidate_generation_service: TopicCandidateGenerationService,
+        fact_check_service: FactCheckService,
         on_back: Callable[[], None],
     ) -> None:
         super().__init__()
@@ -162,6 +164,7 @@ class ProjectWorkspaceView(QWidget):
             content_intelligence_pipeline=content_intelligence_pipeline,
             reviewer_service=reviewer_service,
             topic_candidate_generation_service=topic_candidate_generation_service,
+            fact_check_service=fact_check_service,
             on_change=self.refresh,
         )
         self.render_workspace = RenderWorkspaceView(

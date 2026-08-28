@@ -36,6 +36,13 @@ from src.models.approval import HumanApprovalAction
 from src.models.artifact_lifecycle import ArtifactType
 from src.models.creative_direction import CreativeDirection
 from src.models.enums import Platform, ProductionMode, WorkflowStage
+from src.models.research import ResearchResult, ResearchSource, SourceStatus
+from src.models.research_evidence import (
+    EvidenceRecord,
+    EvidenceSupportType,
+    ManualResearchEdit,
+    ResearchFact,
+)
 from src.models.research_plan import ResearchQuestion
 from src.models.reviewer_result import ReviewerResult
 from src.models.story_angle import StoryAngle, StoryAngleStyle
@@ -48,6 +55,7 @@ from src.services.content_studio_journey_service import (
     ContentStudioJourneyService,
     JourneyCheckpointStatus,
 )
+from src.services.fact_check_service import FactCheckService
 from src.services.genre_profile_registry_service import (
     GenreProfileRegistryService,
 )
@@ -143,6 +151,7 @@ class ContentStudioView(QWidget):
         content_intelligence_pipeline: ContentIntelligencePipeline,
         reviewer_service: ReviewerService,
         topic_candidate_generation_service: TopicCandidateGenerationService,
+        fact_check_service: FactCheckService,
         on_change: Callable[[], None],
     ) -> None:
         super().__init__()
@@ -152,6 +161,7 @@ class ContentStudioView(QWidget):
         self._content_intelligence_pipeline = content_intelligence_pipeline
         self._reviewer_service = reviewer_service
         self._topic_candidate_generation_service = topic_candidate_generation_service
+        self._fact_check_service = fact_check_service
         self._journey_service = ContentStudioJourneyService()
         self._on_change = on_change
         self._job_id: UUID | None = None
@@ -492,6 +502,157 @@ class ContentStudioView(QWidget):
 
             return
 
+        self._on_change()
+
+    def _handle_add_research_source(
+        self, *, title_input: QLineEdit, url_input: QLineEdit
+    ) -> None:
+        job = self._current_job()
+
+        if job is None or job.research is None:
+            return
+
+        title = title_input.text().strip()
+
+        if not title:
+            return
+
+        url = url_input.text().strip() or None
+
+        try:
+            source = ResearchSource(title=title, url=url)
+        except ValueError as error:
+            self._record_error(job, f"Could not add research source: {error}")
+
+            return
+
+        job.research.sources = job.research.sources + [source]
+        self._on_change()
+
+    def _handle_toggle_source_status(self, source_id: UUID) -> None:
+        job = self._current_job()
+
+        if job is None or job.research is None:
+            return
+
+        for source in job.research.sources:
+            if source.id == source_id:
+                source.status = (
+                    SourceStatus.REJECTED
+                    if source.status == SourceStatus.ACCEPTED
+                    else SourceStatus.ACCEPTED
+                )
+
+                break
+
+        self._on_change()
+
+    def _handle_add_manual_research_edit(self, text_input: QLineEdit) -> None:
+        job = self._current_job()
+
+        if job is None or job.research is None:
+            return
+
+        text = text_input.text().strip()
+
+        if not text:
+            return
+
+        try:
+            edit = ManualResearchEdit(text=text)
+        except ValueError as error:
+            self._record_error(job, f"Could not add manual research note: {error}")
+
+            return
+
+        job.research.manual_edits = job.research.manual_edits + [edit]
+        self._on_change()
+
+    def _handle_fact_check_again(self, edit_id: UUID) -> None:
+        job = self._current_job()
+
+        if job is None or job.research is None:
+            return
+
+        target = next(
+            (edit for edit in job.research.manual_edits if edit.id == edit_id), None
+        )
+
+        if target is None:
+            return
+
+        try:
+            result = self._fact_check_service.check(
+                claim_text=target.text, sources=job.research.sources
+            )
+        except (RuntimeError, ValueError) as error:
+            self._record_error(
+                job,
+                f"Fact check failed: {error}",
+                on_retry=lambda: self._handle_fact_check_again(edit_id),
+            )
+
+            return
+
+        updated_edits: list[ManualResearchEdit] = []
+
+        for edit in job.research.manual_edits:
+            if edit.id != edit_id:
+                updated_edits.append(edit)
+
+                continue
+
+            updated_edits.append(
+                ManualResearchEdit(
+                    id=edit.id,
+                    text=edit.text,
+                    is_verified=result.is_supported,
+                    verification_notes=result.reasoning,
+                )
+            )
+
+        job.research.manual_edits = updated_edits
+
+        if result.is_supported:
+            job.research.structured_facts = job.research.structured_facts + [
+                ResearchFact(
+                    text=target.text,
+                    evidence=[
+                        EvidenceRecord(
+                            source_id=source_id,
+                            confidence=result.confidence,
+                            support_type=EvidenceSupportType.DIRECT,
+                        )
+                        for source_id in result.matched_source_ids
+                    ],
+                )
+            ]
+
+        self._on_change()
+
+    def _handle_add_research_gap(self, text_input: QLineEdit) -> None:
+        job = self._current_job()
+
+        if job is None or job.research is None:
+            return
+
+        text = text_input.text().strip()
+
+        if not text:
+            return
+
+        job.research.research_gaps = job.research.research_gaps + [text]
+        self._on_change()
+
+    def _handle_remove_research_gap(self, gap: str) -> None:
+        job = self._current_job()
+
+        if job is None or job.research is None:
+            return
+
+        job.research.research_gaps = [
+            existing for existing in job.research.research_gaps if existing != gap
+        ]
         self._on_change()
 
     def _handle_select_story_angle(self, angle: StoryAngle) -> None:
@@ -1060,7 +1221,154 @@ class ContentStudioView(QWidget):
         layout.addWidget(badge(research.status.value))
         layout.addWidget(muted(research.research_summary))
 
+        self._render_evidence_ledger_section(layout, job, research)
+
         return True
+
+    def _render_evidence_ledger_section(
+        self, layout: QVBoxLayout, job: VideoJob, research: ResearchResult
+    ) -> None:
+        """
+        Content Studio Redesign, Phase 8 (Research Execution, Evidence
+        Ledger and Fact Integrity): sources with accept/reject status,
+        evidence-bound facts, manual research edits with fact-check-
+        again, and research gaps - all as sections within the existing
+        "Research" panel rather than separate tabs (see this phase's
+        own honest-scoping note on why the multi-tab shell is deferred
+        to Phase 8's own docs entry).
+        """
+
+        layout.addWidget(separator())
+        layout.addWidget(small_muted("Sources:"))
+
+        for source in research.sources:
+            source_row = QHBoxLayout()
+            source_row.setSpacing(6)
+
+            label = source.title + (
+                f" ({source.publisher})" if source.publisher else ""
+            )
+            role = "success" if source.status == SourceStatus.ACCEPTED else "warning"
+            source_row.addWidget(
+                status_label(f"{label} · {source.status.value}", role=role)
+            )
+            source_row.addStretch()
+
+            toggle_button = button(
+                "Reject" if source.status == SourceStatus.ACCEPTED else "Restore",
+                variant="ghost",
+            )
+            toggle_button.clicked.connect(
+                lambda _checked=False, sid=source.id: self._handle_toggle_source_status(
+                    sid
+                )
+            )
+            source_row.addWidget(toggle_button)
+
+            layout.addLayout(source_row)
+
+        source_title_input = QLineEdit()
+        source_title_input.setPlaceholderText("Source title")
+        source_url_input = QLineEdit()
+        source_url_input.setPlaceholderText("Source URL (optional)")
+
+        add_source_row = QHBoxLayout()
+        add_source_row.setSpacing(6)
+        add_source_row.addWidget(source_title_input)
+        add_source_row.addWidget(source_url_input)
+
+        add_source_button = button("Add source", variant="ghost")
+        add_source_button.clicked.connect(
+            lambda: self._handle_add_research_source(
+                title_input=source_title_input, url_input=source_url_input
+            )
+        )
+        add_source_row.addWidget(add_source_button)
+        layout.addLayout(add_source_row)
+
+        if research.structured_facts:
+            layout.addWidget(separator())
+            layout.addWidget(small_muted("Key facts (evidence-bound):"))
+
+            for fact in research.structured_facts:
+                role = "success" if fact.is_supported else "warning"
+                layout.addWidget(status_label(fact.text, role=role))
+
+                for record in fact.evidence:
+                    layout.addWidget(
+                        small_muted(
+                            f"  - {record.support_type.value} · "
+                            f"confidence {record.confidence} · "
+                            f"{record.contradiction_status.value}"
+                        )
+                    )
+
+        layout.addWidget(separator())
+        layout.addWidget(small_muted("Manual research notes:"))
+
+        for edit in research.manual_edits:
+            edit_row_text = (
+                f"{edit.text} · {'verified' if edit.is_verified else 'unverified'}"
+            )
+            layout.addWidget(
+                status_label(
+                    edit_row_text, role="success" if edit.is_verified else "warning"
+                )
+            )
+
+            if edit.verification_notes is not None:
+                layout.addWidget(small_muted(edit.verification_notes))
+
+            if not edit.is_verified:
+                fact_check_button = button("Fact Check Again", variant="ghost")
+                fact_check_button.clicked.connect(
+                    lambda _checked=False, eid=edit.id: self._handle_fact_check_again(
+                        eid
+                    )
+                )
+                layout.addWidget(fact_check_button, alignment=_LEFT)
+
+        manual_edit_input = QLineEdit()
+        manual_edit_input.setPlaceholderText("Add a manual research note")
+
+        add_edit_row = QHBoxLayout()
+        add_edit_row.setSpacing(6)
+        add_edit_row.addWidget(manual_edit_input)
+
+        add_edit_button = button("Add note", variant="ghost")
+        add_edit_button.clicked.connect(
+            lambda: self._handle_add_manual_research_edit(manual_edit_input)
+        )
+        add_edit_row.addWidget(add_edit_button)
+        layout.addLayout(add_edit_row)
+
+        layout.addWidget(separator())
+        layout.addWidget(small_muted("Research gaps:"))
+
+        for gap in research.research_gaps:
+            gap_row = QHBoxLayout()
+            gap_row.setSpacing(6)
+            gap_row.addWidget(small_muted(f"- {gap}"))
+            gap_row.addStretch()
+
+            remove_gap_button = button("Remove", variant="ghost")
+            remove_gap_button.clicked.connect(
+                lambda _checked=False, g=gap: self._handle_remove_research_gap(g)
+            )
+            gap_row.addWidget(remove_gap_button)
+            layout.addLayout(gap_row)
+
+        gap_input = QLineEdit()
+        gap_input.setPlaceholderText("Add a research gap")
+
+        add_gap_row = QHBoxLayout()
+        add_gap_row.setSpacing(6)
+        add_gap_row.addWidget(gap_input)
+
+        add_gap_button = button("Add gap", variant="ghost")
+        add_gap_button.clicked.connect(lambda: self._handle_add_research_gap(gap_input))
+        add_gap_row.addWidget(add_gap_button)
+        layout.addLayout(add_gap_row)
 
     def _render_story_angles_panel(self, layout: QVBoxLayout, job: VideoJob) -> bool:
         if not job.story_angles:
