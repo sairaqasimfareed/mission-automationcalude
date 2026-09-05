@@ -1146,3 +1146,53 @@ def test_research_panel_builds_without_error_with_evidence_ledger_populated(
     view._handle_add_research_gap(QLineEdit("A remaining gap."))
 
     view.refresh(job)  # must not raise with a fully populated evidence ledger
+
+
+def test_regenerating_narrative_architecture_with_instructions(
+    qapp: QApplication,
+) -> None:
+    from PySide6.QtWidgets import QLineEdit
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view._handle_run_ci_stage("audience_promise")
+    view._handle_run_ci_stage("research_plan")
+    view._handle_run_ci_stage("research")
+    view._handle_run_ci_stage("story_angles")
+    view._handle_run_ci_stage("narrative_architecture")
+
+    assert job.story_blueprint is not None
+    research_before = job.research
+
+    view._handle_regenerate_narrative_architecture(
+        QLineEdit("Compress the slow middle section.")
+    )
+
+    assert job.story_blueprint is not None
+    assert job.research is research_before
+
+
+def test_narrative_architecture_panel_builds_without_error_with_evidence_bound(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view._handle_run_ci_stage("audience_promise")
+    view._handle_run_ci_stage("research_plan")
+    view._handle_run_ci_stage("research")
+    view._handle_run_ci_stage("story_angles")
+    view._handle_run_ci_stage("narrative_architecture")
+
+    view.refresh(job)  # must not raise with beats + reveal map populated

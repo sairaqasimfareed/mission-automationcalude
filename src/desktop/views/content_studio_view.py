@@ -655,6 +655,41 @@ class ContentStudioView(QWidget):
         ]
         self._on_change()
 
+    def _handle_regenerate_narrative_architecture(
+        self, instruction_input: QLineEdit
+    ) -> None:
+        """
+        Content Studio Redesign, Phase 9: a targeted regeneration
+        outside the generic _handle_run_ci_stage dispatch, since that
+        dispatch has no way to pass stage-specific keyword arguments -
+        this is the "AI instruction example: compress slow middle
+        section" GUI action.
+        """
+
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        instructions = instruction_input.text().strip() or None
+
+        try:
+            self._content_intelligence_pipeline.run_narrative_architecture(
+                job, additional_instructions=instructions
+            )
+        except (RuntimeError, ValueError) as error:
+            self._record_error(
+                job,
+                f"Narrative architecture regeneration failed: {error}",
+                on_retry=lambda: self._handle_regenerate_narrative_architecture(
+                    instruction_input
+                ),
+            )
+
+            return
+
+        self._on_change()
+
     def _handle_select_story_angle(self, angle: StoryAngle) -> None:
         job = self._current_job()
 
@@ -1539,6 +1574,17 @@ class ContentStudioView(QWidget):
                 )
             )
 
+            beat_detail_parts = []
+
+            if beat.evidence_fact_ids:
+                beat_detail_parts.append(f"{len(beat.evidence_fact_ids)} fact(s) cited")
+
+            if beat.curiosity_loop_question is not None:
+                beat_detail_parts.append(f"advances: {beat.curiosity_loop_question}")
+
+            if beat_detail_parts:
+                layout.addWidget(small_muted("  " + " · ".join(beat_detail_parts)))
+
         if job.reveal_map is not None:
             layout.addWidget(
                 small_muted(
@@ -1546,6 +1592,29 @@ class ContentStudioView(QWidget):
                     f"{len(job.reveal_map.reveals)} reveal(s) planned."
                 )
             )
+
+        if job.story_blueprint.research_id is not None:
+            layout.addWidget(
+                small_muted(f"Grounded in research {job.story_blueprint.research_id}")
+            )
+
+        layout.addWidget(separator())
+
+        instruction_input = QLineEdit()
+        instruction_input.setPlaceholderText(
+            "AI instruction, e.g. 'compress the slow middle section'"
+        )
+
+        instruction_row = QHBoxLayout()
+        instruction_row.setSpacing(6)
+        instruction_row.addWidget(instruction_input)
+
+        regenerate_button = button("Regenerate with instructions", variant="ghost")
+        regenerate_button.clicked.connect(
+            lambda: self._handle_regenerate_narrative_architecture(instruction_input)
+        )
+        instruction_row.addWidget(regenerate_button)
+        layout.addLayout(instruction_row)
 
         return True
 

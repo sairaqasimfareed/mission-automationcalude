@@ -25,6 +25,12 @@ _ARTIFACT_FOCUS_GUIDANCE: dict[ArtifactType, str] = {
         "unresolved contradictions between sources, research questions "
         "left unanswered, and missing perspectives or counter-evidence."
     ),
+    ArtifactType.STORY_ARCHITECTURE: (
+        "Pay particular attention to: pacing, use of the available "
+        "evidence, premature reveals, weak escalation, missing "
+        "payoffs, duration mismatch against the target runtime, and "
+        "redundant beats."
+    ),
 }
 
 

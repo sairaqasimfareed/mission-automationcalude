@@ -172,3 +172,51 @@ def test_has_tension_variation_true_for_a_single_beat() -> None:
     )
 
     assert blueprint.has_tension_variation is True
+
+
+def test_phase_9_beat_fields_default_to_empty() -> None:
+    beat = _beat()
+
+    assert beat.evidence_fact_ids == []
+    assert beat.curiosity_loop_question is None
+
+
+def test_phase_9_blueprint_field_defaults_to_none() -> None:
+    blueprint = _blueprint()
+
+    assert blueprint.research_id is None
+
+
+def test_beat_curiosity_loop_question_normalizes_blank_to_none() -> None:
+    beat = _beat(curiosity_loop_question="   ")
+
+    assert beat.curiosity_loop_question is None
+
+
+def test_beat_can_carry_evidence_fact_ids() -> None:
+    from uuid import uuid4
+
+    fact_id = uuid4()
+    beat = _beat(evidence_fact_ids=[fact_id])
+
+    assert beat.evidence_fact_ids == [fact_id]
+
+
+def test_blueprint_can_carry_research_id() -> None:
+    from uuid import uuid4
+
+    research_id = uuid4()
+    blueprint = _blueprint(research_id=research_id)
+
+    assert blueprint.research_id == research_id
+
+
+def test_backward_compatible_round_trip_without_phase_9_fields() -> None:
+    blueprint = _blueprint()
+    raw = blueprint.model_dump_json()
+
+    reloaded = StoryBlueprint.model_validate_json(raw)
+
+    assert reloaded.research_id is None
+    assert all(beat.evidence_fact_ids == [] for beat in reloaded.beats)
+    assert all(beat.curiosity_loop_question is None for beat in reloaded.beats)

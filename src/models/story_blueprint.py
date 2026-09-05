@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
+from uuid import UUID
 
 from pydantic import Field, field_validator, model_validator
 
@@ -45,6 +46,23 @@ class StoryBeat(MissionBaseModel):
     purpose: str = Field(min_length=1)
     tension_level: int = Field(ge=0, le=100)
 
+    # Content Studio Redesign, Phase 9 (Story Development): "Evidence
+    # Allocation" - which ResearchFact entries (Phase 8's evidence
+    # ledger) this beat draws on, populated by
+    # StoryBlueprintGenerationService when research is supplied. Empty
+    # for a blueprint generated without research context (or one
+    # predating this phase) - never fabricated after the fact.
+    evidence_fact_ids: list[UUID] = Field(default_factory=list)
+
+    # "curiosity/reveal role" - which tracked curiosity loop (matched
+    # by CuriosityLoop.question, this codebase's existing
+    # match-by-text convention) this beat advances, assigned
+    # deterministically by position after both the reveal map and
+    # blueprint exist (see ContentIntelligencePipeline's own binding
+    # step) - no LLM judgment involved, since loop and beat positions
+    # are already committed facts by that point.
+    curiosity_loop_question: str | None = None
+
     @field_validator("purpose")
     @classmethod
     def clean_purpose(cls, value: str) -> str:
@@ -54,6 +72,16 @@ class StoryBeat(MissionBaseModel):
             raise ValueError("Story beat purpose cannot be empty.")
 
         return cleaned
+
+    @field_validator("curiosity_loop_question")
+    @classmethod
+    def clean_curiosity_loop_question(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+
+        cleaned = value.strip()
+
+        return cleaned or None
 
     @model_validator(mode="after")
     def validate_timing(self) -> StoryBeat:
@@ -77,6 +105,13 @@ class StoryBlueprint(MissionBaseModel):
     target_duration_seconds: int = Field(gt=0)
     beats: list[StoryBeat] = Field(min_length=1)
     prompt_version: str = Field(min_length=1)
+
+    # Content Studio Redesign, Phase 9: "Architecture references
+    # approved Research version" - a concrete pointer to exactly which
+    # ResearchResult (by its own stable id) this blueprint was built
+    # from. None when generated without research context, or for a
+    # blueprint predating this phase.
+    research_id: UUID | None = None
 
     @field_validator("genre_id")
     @classmethod

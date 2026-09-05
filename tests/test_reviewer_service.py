@@ -240,3 +240,25 @@ def test_non_research_artifacts_do_not_get_research_focus_guidance() -> None:
 
     assert stub.last_request is not None
     assert "weak or low-credibility sources" not in stub.last_request.prompt
+
+
+def test_story_architecture_artifacts_get_pacing_focus_guidance() -> None:
+    """
+    Content Studio Redesign, Phase 9: Reviewer checks "pacing,
+    evidence use, premature reveals, weak escalation, missing payoffs,
+    duration mismatch and redundancy" for Story Architecture.
+    """
+
+    stub = _StubLLMService(content=_FULL_RESPONSE)
+    service = ReviewerService(llm_service=stub)  # type: ignore[arg-type]
+
+    service.review(
+        artifact_type=ArtifactType.STORY_ARCHITECTURE,
+        content="content",
+        context="context",
+        reviewer_profile_id="anthropic-reviewer",
+    )
+
+    assert stub.last_request is not None
+    assert "premature reveals" in stub.last_request.prompt.lower()
+    assert "duration mismatch" in stub.last_request.prompt.lower()

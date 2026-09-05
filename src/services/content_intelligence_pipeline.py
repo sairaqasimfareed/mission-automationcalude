@@ -4,8 +4,9 @@ from src.agents.research_agent.agent import ResearchAgent
 from src.agents.scene_planner.agent import ScenePlannerAgent
 from src.models.approval import ApprovalDecision, HumanApprovalAction
 from src.models.editorial_profile import EditorialProfile
+from src.models.information_reveal_map import InformationRevealMap
 from src.models.script_quality_report import ScriptQualityStatus
-from src.models.story_blueprint import StoryBeatType
+from src.models.story_blueprint import StoryBeatType, StoryBlueprint
 from src.models.video_job import VideoJob
 from src.services.approval_gate_service import ApprovalGateService
 from src.services.audience_promise_service import AudiencePromiseService
@@ -312,8 +313,20 @@ class ContentIntelligencePipeline:
 
         return job
 
-    def run_narrative_architecture(self, job: VideoJob) -> VideoJob:
-        """Stage 5: plan the reveal map and story blueprint."""
+    def run_narrative_architecture(
+        self, job: VideoJob, *, additional_instructions: str | None = None
+    ) -> VideoJob:
+        """
+        Stage 5: plan the reveal map and story blueprint.
+
+        additional_instructions is optional free-text guidance for a
+        targeted regeneration (Content Studio Redesign, Phase 9's "AI
+        instruction example: compress slow middle section") - passed
+        straight through to the blueprint generator, never mutating
+        job.research (read-only input here, exactly as before this
+        phase - "Architecture-only regeneration must not mutate
+        Research").
+        """
 
         if (
             job.selected_story_angle is None
@@ -343,7 +356,11 @@ class ContentIntelligencePipeline:
             target_duration_seconds=job.target_duration_seconds,
             story_angle=job.selected_story_angle,
             audience_promise=job.audience_promise,
+            research=job.research,
+            additional_instructions=additional_instructions,
         )
+
+        self._bind_curiosity_roles(job.story_blueprint, job.reveal_map)
 
         self.approval_gate_service.gate(
             job=job,
@@ -353,6 +370,41 @@ class ContentIntelligencePipeline:
         )
 
         return job
+
+    @staticmethod
+    def _bind_curiosity_roles(
+        blueprint: StoryBlueprint, reveal_map: InformationRevealMap
+    ) -> None:
+        """
+        Content Studio Redesign, Phase 9: assign each StoryBeat's
+        curiosity_loop_question ("curiosity/reveal role") by matching a
+        loop's opened_at_position (normalized 0-1 across the whole
+        story) against which beat's real-seconds time range contains
+        that point. Deterministic position arithmetic, not narrative
+        judgment - both the reveal map's positions and the blueprint's
+        timings are already committed by the time this runs, so there
+        is nothing for an LLM to decide here. Only the first
+        not-yet-assigned beat containing a given loop's position is
+        bound, so one beat is never silently overwritten by a second
+        loop that happens to open at the same point.
+        """
+
+        if blueprint.target_duration_seconds <= 0:
+            return
+
+        ordered_beats = sorted(blueprint.beats, key=lambda beat: beat.start_seconds)
+
+        for loop in reveal_map.curiosity_loops:
+            loop_seconds = loop.opened_at_position * blueprint.target_duration_seconds
+
+            for beat in ordered_beats:
+                if beat.curiosity_loop_question is not None:
+                    continue
+
+                if beat.start_seconds <= loop_seconds < beat.end_seconds:
+                    beat.curiosity_loop_question = loop.question
+
+                    break
 
     def run_retention_audit(self, job: VideoJob) -> VideoJob:
         """

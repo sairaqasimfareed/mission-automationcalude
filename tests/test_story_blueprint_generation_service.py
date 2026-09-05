@@ -4,6 +4,8 @@ import pytest
 
 from src.models.audience_promise import AudiencePromise, PromiseStrength
 from src.models.editorial_profile import EditorialProfile
+from src.models.research import ResearchResult
+from src.models.research_evidence import ResearchFact
 from src.models.story_angle import StoryAngle, StoryAngleStyle
 from src.services.editorial_profile_composition_service import (
     EditorialProfileCompositionService,
@@ -293,3 +295,123 @@ def test_dry_run_response_is_itself_parseable() -> None:
 
     assert len(blueprint.beats) == 4
     assert blueprint.has_tension_variation is True
+
+
+def _research_with_facts() -> ResearchResult:
+    return ResearchResult(
+        topic="The Mary Celeste",
+        research_summary="A summary.",
+        prompt_version="research_prompt_v1.0.0",
+        structured_facts=[
+            ResearchFact(text="The ship was found seaworthy."),
+            ResearchFact(text="The crew was never found."),
+        ],
+    )
+
+
+def test_generate_without_research_behaves_exactly_as_before() -> None:
+    stub = _StubLLMService(content=_FOUR_BEAT_RESPONSE)
+
+    service = StoryBlueprintGenerationService(llm_service=stub)  # type: ignore[arg-type]
+
+    blueprint = service.generate(
+        topic="The Mary Celeste",
+        editorial_profile=_editorial_profile(),
+        target_duration_seconds=30,
+        story_angle=_angle(),
+        audience_promise=_promise(),
+    )
+
+    assert blueprint.research_id is None
+    assert all(beat.evidence_fact_ids == [] for beat in blueprint.beats)
+    assert "EVIDENCE_FACT_IDS" not in (
+        stub.last_request.prompt if stub.last_request else ""
+    )
+
+
+def test_generate_with_research_sets_research_id() -> None:
+    research = _research_with_facts()
+    stub = _StubLLMService(content=_FOUR_BEAT_RESPONSE)
+
+    service = StoryBlueprintGenerationService(llm_service=stub)  # type: ignore[arg-type]
+
+    blueprint = service.generate(
+        topic="The Mary Celeste",
+        editorial_profile=_editorial_profile(),
+        target_duration_seconds=30,
+        story_angle=_angle(),
+        audience_promise=_promise(),
+        research=research,
+    )
+
+    assert blueprint.research_id == research.id
+
+
+def test_generate_binds_evidence_fact_ids_from_labeled_response() -> None:
+    research = _research_with_facts()
+    content = (
+        "BEAT_TYPE: hook\nSTART: 0\nEND: 7\nPURPOSE: Open cold.\nTENSION: 60\n"
+        "EVIDENCE_FACT_IDS: 1\n"
+        "---\n"
+        "BEAT_TYPE: payoff\nSTART: 7\nEND: 30\nPURPOSE: Resolve it.\nTENSION: 50\n"
+        "EVIDENCE_FACT_IDS: 1, 2"
+    )
+    stub = _StubLLMService(content=content)
+
+    service = StoryBlueprintGenerationService(llm_service=stub)  # type: ignore[arg-type]
+
+    blueprint = service.generate(
+        topic="The Mary Celeste",
+        editorial_profile=_editorial_profile(),
+        target_duration_seconds=30,
+        story_angle=_angle(),
+        audience_promise=_promise(),
+        research=research,
+    )
+
+    hook_beat = next(b for b in blueprint.beats if b.beat_type.value == "hook")
+    payoff_beat = next(b for b in blueprint.beats if b.beat_type.value == "payoff")
+
+    assert hook_beat.evidence_fact_ids == [research.structured_facts[0].id]
+    assert payoff_beat.evidence_fact_ids == [
+        research.structured_facts[0].id,
+        research.structured_facts[1].id,
+    ]
+
+
+def test_generate_prompt_lists_facts_and_asks_for_evidence_fact_ids() -> None:
+    research = _research_with_facts()
+    stub = _StubLLMService(content=_FOUR_BEAT_RESPONSE)
+
+    service = StoryBlueprintGenerationService(llm_service=stub)  # type: ignore[arg-type]
+
+    service.generate(
+        topic="The Mary Celeste",
+        editorial_profile=_editorial_profile(),
+        target_duration_seconds=30,
+        story_angle=_angle(),
+        audience_promise=_promise(),
+        research=research,
+    )
+
+    assert stub.last_request is not None
+    assert "The ship was found seaworthy." in stub.last_request.prompt
+    assert "EVIDENCE_FACT_IDS" in stub.last_request.prompt
+
+
+def test_generate_prompt_includes_additional_instructions() -> None:
+    stub = _StubLLMService(content=_FOUR_BEAT_RESPONSE)
+
+    service = StoryBlueprintGenerationService(llm_service=stub)  # type: ignore[arg-type]
+
+    service.generate(
+        topic="The Mary Celeste",
+        editorial_profile=_editorial_profile(),
+        target_duration_seconds=30,
+        story_angle=_angle(),
+        audience_promise=_promise(),
+        additional_instructions="Compress the slow middle section.",
+    )
+
+    assert stub.last_request is not None
+    assert "Compress the slow middle section." in stub.last_request.prompt

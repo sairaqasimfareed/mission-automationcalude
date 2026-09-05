@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from uuid import UUID
+
 from src.models.audience_promise import AudiencePromise
 from src.models.editorial_profile import EditorialProfile
+from src.models.research import ResearchResult
+from src.models.research_evidence import ResearchFact
 from src.models.story_angle import StoryAngle
 from src.models.story_blueprint import StoryBeat, StoryBeatType, StoryBlueprint
 from src.services.llm.labeled_block_parser import extract_labeled_field, split_blocks
@@ -82,13 +86,29 @@ class StoryBlueprintGenerationService:
         target_duration_seconds: int,
         story_angle: StoryAngle,
         audience_promise: AudiencePromise,
+        research: ResearchResult | None = None,
+        additional_instructions: str | None = None,
     ) -> StoryBlueprint:
-        """Generate a duration- and genre-aware structural blueprint."""
+        """
+        Generate a duration- and genre-aware structural blueprint.
+
+        research is optional and additive - when supplied and it has
+        structured_facts (Phase 8's evidence ledger), each beat can be
+        bound to the facts it draws on ("Evidence Allocation") and the
+        blueprint records research.id ("Architecture references
+        approved Research version"). Without research, behavior is
+        identical to before this phase existed. additional_instructions
+        is free-text guidance appended to the prompt (e.g. "compress
+        the slow middle section") for a targeted regeneration rather
+        than a from-scratch one.
+        """
 
         normalized_topic = topic.strip()
 
         if not normalized_topic:
             raise ValueError("Story blueprint topic cannot be empty.")
+
+        facts = list(research.structured_facts) if research is not None else []
 
         request = LLMRequest(
             provider=LLMProvider.OPENAI,
@@ -99,6 +119,8 @@ class StoryBlueprintGenerationService:
                 target_duration_seconds=target_duration_seconds,
                 story_angle=story_angle,
                 audience_promise=audience_promise,
+                facts=facts,
+                additional_instructions=additional_instructions,
             ),
             system_prompt=(
                 "You are an expert story structure editor for "
@@ -136,7 +158,7 @@ class StoryBlueprintGenerationService:
         if not content:
             raise RuntimeError("Story blueprint provider returned empty content.")
 
-        beats = self._parse_beats(content)
+        beats = self._parse_beats(content, facts=facts)
 
         if not beats:
             raise RuntimeError("Story blueprint provider returned no usable beats.")
@@ -147,6 +169,7 @@ class StoryBlueprintGenerationService:
             target_duration_seconds=target_duration_seconds,
             beats=beats,
             prompt_version=request.prompt_version,
+            research_id=research.id if research is not None else None,
         )
 
     @staticmethod
@@ -157,6 +180,8 @@ class StoryBlueprintGenerationService:
         target_duration_seconds: int,
         story_angle: StoryAngle,
         audience_promise: AudiencePromise,
+        facts: list[ResearchFact],
+        additional_instructions: str | None,
     ) -> str:
         available_types = ", ".join(beat_type.value for beat_type in StoryBeatType)
         content_intelligence = editorial_profile.content_intelligence
@@ -180,6 +205,26 @@ class StoryBlueprintGenerationService:
             else ""
         )
 
+        facts_section = ""
+
+        if facts:
+            fact_lines = "\n".join(
+                f"FACT_{index}: {fact.text}"
+                for index, fact in enumerate(facts, start=1)
+            )
+            facts_section = (
+                f"\nVerified facts available to draw on:\n{fact_lines}\n"
+                "For each beat, if it relies on any of these facts, add "
+                "a line EVIDENCE_FACT_IDS: <comma-separated fact "
+                "numbers, or 'none'>.\n"
+            )
+
+        instructions_section = (
+            f"\nAdditional instruction: {additional_instructions}\n"
+            if additional_instructions
+            else ""
+        )
+
         return (
             f"Topic: {topic}\n"
             f"Genre: {editorial_profile.genre_id}\n"
@@ -188,7 +233,9 @@ class StoryBlueprintGenerationService:
             f"{story_angle.description}\n"
             f"Expected payoff: {audience_promise.expected_payoff}\n"
             f"{architecture_hint}"
-            f"{pacing_hint}\n"
+            f"{pacing_hint}"
+            f"{facts_section}"
+            f"{instructions_section}\n"
             f"Design a beat-by-beat structure covering the full "
             f"{target_duration_seconds} seconds. Available beat "
             f"types: {available_types}. Use only the beats that fit "
@@ -205,7 +252,9 @@ class StoryBlueprintGenerationService:
         )
 
     @classmethod
-    def _parse_beats(cls, content: str) -> list[StoryBeat]:
+    def _parse_beats(
+        cls, content: str, *, facts: list[ResearchFact]
+    ) -> list[StoryBeat]:
         beats: list[StoryBeat] = []
 
         for block in split_blocks(content):
@@ -232,6 +281,8 @@ class StoryBlueprintGenerationService:
             if start is None or end is None or tension is None:
                 continue
 
+            evidence_fact_ids = cls._parse_evidence_fact_ids(block, facts=facts)
+
             try:
                 beats.append(
                     StoryBeat(
@@ -240,12 +291,40 @@ class StoryBlueprintGenerationService:
                         end_seconds=end,
                         purpose=purpose,
                         tension_level=int(tension),
+                        evidence_fact_ids=evidence_fact_ids,
                     )
                 )
             except ValueError:
                 continue
 
         return beats
+
+    @staticmethod
+    def _parse_evidence_fact_ids(
+        block: str, *, facts: list[ResearchFact]
+    ) -> list[UUID]:
+        if not facts:
+            return []
+
+        raw = extract_labeled_field(block, "EVIDENCE_FACT_IDS")
+
+        if raw is None or raw.strip().lower() == "none":
+            return []
+
+        fact_ids: list[UUID] = []
+
+        for token in raw.split(","):
+            token = token.strip()
+
+            if not token.isdigit():
+                continue
+
+            index = int(token)
+
+            if 1 <= index <= len(facts):
+                fact_ids.append(facts[index - 1].id)
+
+        return fact_ids
 
     @staticmethod
     def _parse_number(raw: str) -> float | None:

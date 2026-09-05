@@ -176,6 +176,125 @@ def test_run_narrative_architecture_produces_blueprint_and_reveal_map() -> None:
     assert job.story_blueprint.genre_id == "genre.mystery"
 
 
+def test_run_narrative_architecture_sets_research_id_and_does_not_mutate_research() -> (
+    None
+):
+    """
+    Content Studio Redesign, Phase 9: "Architecture-only regeneration
+    must not mutate Research" - job.research is read-only input to
+    this stage, before and after, even across a second regeneration.
+    """
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_audience_promise(_job())
+    job = pipeline.run_research(job)
+    job = pipeline.run_story_angles(job)
+
+    research_before = job.research
+    assert research_before is not None
+
+    job = pipeline.run_narrative_architecture(job)
+
+    assert job.research is research_before
+    assert job.story_blueprint is not None
+    assert job.story_blueprint.research_id == research_before.id
+
+    # Regenerate with an instruction - still must not touch research.
+    job = pipeline.run_narrative_architecture(
+        job, additional_instructions="Compress the slow middle section."
+    )
+
+    assert job.research is research_before
+
+
+def test_bind_curiosity_roles_assigns_the_loop_to_its_containing_beat() -> None:
+    from src.models.information_reveal_map import CuriosityLoop, InformationRevealMap
+    from src.models.story_blueprint import StoryBeat, StoryBeatType, StoryBlueprint
+
+    blueprint = StoryBlueprint(
+        topic="The Mary Celeste",
+        genre_id="genre.mystery",
+        target_duration_seconds=30,
+        beats=[
+            StoryBeat(
+                beat_type=StoryBeatType.HOOK,
+                start_seconds=0,
+                end_seconds=10,
+                purpose="Open cold.",
+                tension_level=60,
+            ),
+            StoryBeat(
+                beat_type=StoryBeatType.CLIMAX,
+                start_seconds=10,
+                end_seconds=30,
+                purpose="Reveal the truth.",
+                tension_level=90,
+            ),
+        ],
+        prompt_version="story_blueprint_prompt_v1.0.0",
+    )
+    reveal_map = InformationRevealMap(
+        topic="The Mary Celeste",
+        curiosity_loops=[
+            CuriosityLoop(
+                question="What happened to the crew?",
+                opened_at_position=0.1,  # 3s -> first beat
+            ),
+            CuriosityLoop(
+                question="Why was the ship abandoned mid-voyage?",
+                opened_at_position=0.6,  # 18s -> second beat
+            ),
+        ],
+        prompt_version="reveal_map_prompt_v1.0.0",
+    )
+
+    ContentIntelligencePipeline._bind_curiosity_roles(blueprint, reveal_map)
+
+    hook_beat = blueprint.beats[0]
+    climax_beat = blueprint.beats[1]
+
+    assert hook_beat.curiosity_loop_question == "What happened to the crew?"
+    assert climax_beat.curiosity_loop_question == (
+        "Why was the ship abandoned mid-voyage?"
+    )
+
+
+def test_bind_curiosity_roles_never_overwrites_an_already_assigned_beat() -> None:
+    from src.models.information_reveal_map import CuriosityLoop, InformationRevealMap
+    from src.models.story_blueprint import StoryBeat, StoryBeatType, StoryBlueprint
+
+    blueprint = StoryBlueprint(
+        topic="The Mary Celeste",
+        genre_id="genre.mystery",
+        target_duration_seconds=10,
+        beats=[
+            StoryBeat(
+                beat_type=StoryBeatType.HOOK,
+                start_seconds=0,
+                end_seconds=10,
+                purpose="Open cold.",
+                tension_level=60,
+            ),
+        ],
+        prompt_version="story_blueprint_prompt_v1.0.0",
+    )
+    reveal_map = InformationRevealMap(
+        topic="The Mary Celeste",
+        curiosity_loops=[
+            CuriosityLoop(question="First question?", opened_at_position=0.1),
+            CuriosityLoop(question="Second question?", opened_at_position=0.5),
+        ],
+        prompt_version="reveal_map_prompt_v1.0.0",
+    )
+
+    ContentIntelligencePipeline._bind_curiosity_roles(blueprint, reveal_map)
+
+    # Only the single beat exists, so only the first loop to be
+    # processed claims it - the second is left unbound rather than
+    # overwriting the first.
+    assert blueprint.beats[0].curiosity_loop_question == "First question?"
+
+
 def test_run_hooks_selects_a_winner() -> None:
     pipeline, _ = _pipeline()
 

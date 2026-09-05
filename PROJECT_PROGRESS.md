@@ -5,6 +5,90 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-08-28 - Content Studio Redesign: Phase 9 Story Development (Architecture, Evidence Allocation and Retention)
+
+**Backend.** `StoryBeat` gained `evidence_fact_ids` - "Evidence
+Allocation," one of this phase's five named deliverables - which
+Phase 8 `ResearchFact` entries a beat draws on, populated by the LLM
+only when research with `structured_facts` is actually supplied
+(never fabricated). `curiosity_loop_question` - "curiosity/reveal
+role" from the beat schema - is bound deterministically instead: a
+new `ContentIntelligencePipeline._bind_curiosity_roles()` matches each
+tracked `CuriosityLoop`'s normalized `opened_at_position` against
+whichever beat's real-seconds time range contains that point, with no
+LLM call at all, since both the reveal map's positions and the
+blueprint's timings are already-committed facts by the time this runs
+- there's nothing left for an LLM to judge. `StoryBlueprint` gained
+`research_id` - "Architecture references approved Research version" -
+a direct pointer to the `ResearchResult.id` a blueprint was built
+from, since Phase 1's artifact-lifecycle ledger remains unwired into
+any real stage (true of every phase so far, not new to this one).
+
+`StoryBlueprintGenerationService.generate()` gained two optional
+parameters: `research` (when supplied with facts, the prompt lists
+them and asks for a per-beat `EVIDENCE_FACT_IDS` line, reusing
+`FactCheckService`'s own index-based source-matching trick rather than
+inventing a new one; omitting `research` entirely reproduces this
+service's exact prior behavior, proven by a dedicated regression test)
+and `additional_instructions` (free-text guidance appended to the
+prompt - this phase's own example is literally "compress the slow
+middle section," so that's the example a new test checks for
+verbatim). `ContentIntelligencePipeline.run_narrative_architecture()`
+now threads `job.research` through to the generator and gained its own
+`additional_instructions` passthrough - and is proven, via a dedicated
+test that regenerates twice (once plain, once with instructions), to
+never mutate `job.research`'s object identity, directly satisfying
+"Architecture-only regeneration must not mutate Research."
+
+`ReviewerService` gained one more additive `ArtifactType.
+STORY_ARCHITECTURE` focus-guidance entry - pacing, evidence use,
+premature reveals, weak escalation, missing payoffs, duration
+mismatch, and redundancy - via the exact same dict-lookup mechanism
+Phase 8 introduced for research, extended without touching any other
+artifact type's prompt.
+
+**What already existed and needed no changes**, confirmed by directly
+inspecting the code rather than assumed: `RetentionAuditReport`/
+`RetentionAuditService` (this phase's "Retention Plan" deliverable -
+already a rule-based audit of reveal spacing and tension variation)
+and `InformationRevealMap`/`CuriosityLoop`/`InformationReveal` (the
+"Curiosity & Reveal Plan" deliverable - already tracks open/
+partial-answer/resolved states and payoff positions) both predate this
+session's Phase 9 work entirely and already satisfy their named
+deliverables as-is.
+
+**GUI.** The "Narrative architecture" panel now shows, per beat, how
+many facts it cites and which curiosity question it advances (when
+either is set), plus the blueprint's grounding research id when
+present. A new "AI instruction" text input and "Regenerate with
+instructions" button sit below the beat list - implemented as a
+dedicated handler outside the generic `_handle_run_ci_stage` dispatch,
+since that dispatch has no mechanism for passing stage-specific
+keyword arguments through to a specific stage's runner.
+
+**Deliberately not built this pass**, documented rather than silently
+skipped: no timeline-aware drag-based beat editing - a real custom
+timeline widget is a materially larger UI engineering effort than
+every other addition in this phase combined, and was scoped out
+rather than attempted partially; no direct field-by-field editing of
+individual beat properties (the same pre-existing, repo-wide gap
+already noted in Phase 4 and Phase 6 - no CI stage panel supports
+inline editing yet); "Single Review Story Architecture action" needed
+zero new work - the existing generic per-stage "Review" button has
+targeted this stage's `story_blueprint` via `_CI_STAGE_REVIEW_TARGET`
+since Phase 4, so this exit criterion was already met before this
+phase began.
+
+Quality gates: mypy clean across 365 source files, ruff clean, black
+clean repo-wide (680 files). New/updated tests: `test_story_blueprint_
+model.py` (+6), `test_story_blueprint_generation_service.py` (+5), 2
+new cases in `test_content_intelligence_pipeline.py` (curiosity-role
+binding including the never-overwrite guarantee, and the
+no-research-mutation regression across two regenerations), 1 new case
+in `test_reviewer_service.py`, 2 new cases in
+`test_content_studio_content_intelligence_gui.py` - 127 tests across
+the five touched test files, all passing.
+
 ## 2026-08-28 - Content Studio Redesign: Phase 8 Research Execution, Evidence Ledger and Fact Integrity
 
 **Backend.** New `src/models/research_evidence.py`: `EvidenceRecord`
