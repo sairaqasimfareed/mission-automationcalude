@@ -31,6 +31,11 @@ _ARTIFACT_FOCUS_GUIDANCE: dict[ArtifactType, str] = {
         "payoffs, duration mismatch against the target runtime, and "
         "redundant beats."
     ),
+    ArtifactType.HOOK: (
+        "Compare the candidate hooks directly against each other. Pay "
+        "particular attention to: unsupported claims the research does "
+        "not back, and premature disclosure of the story's payoff."
+    ),
 }
 
 

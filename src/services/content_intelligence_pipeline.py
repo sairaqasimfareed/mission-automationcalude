@@ -387,6 +387,13 @@ class ContentIntelligencePipeline:
         not-yet-assigned beat containing a given loop's position is
         bound, so one beat is never silently overwritten by a second
         loop that happens to open at the same point.
+
+        The interval check is half-open ([start, end)) for every beat
+        except the last, which is closed on both ends - otherwise a
+        loop opening at the very end of the story (opened_at_position
+        == 1.0, landing exactly on the final beat's end_seconds) would
+        satisfy no beat's range at all and silently go unbound (found
+        via external audit).
         """
 
         if blueprint.target_duration_seconds <= 0:
@@ -401,7 +408,11 @@ class ContentIntelligencePipeline:
                 if beat.curiosity_loop_question is not None:
                     continue
 
-                if beat.start_seconds <= loop_seconds < beat.end_seconds:
+                is_last_beat = beat is ordered_beats[-1]
+                in_range = beat.start_seconds <= loop_seconds < beat.end_seconds
+                at_final_edge = is_last_beat and loop_seconds >= beat.end_seconds
+
+                if in_range or at_final_edge:
                     beat.curiosity_loop_question = loop.question
 
                     break
@@ -431,8 +442,17 @@ class ContentIntelligencePipeline:
 
         return job
 
-    def run_hooks(self, job: VideoJob) -> VideoJob:
-        """Stage 6: generate/score hooks and plan any scheduled re-hooks."""
+    def run_hooks(
+        self, job: VideoJob, *, additional_instructions: str | None = None
+    ) -> VideoJob:
+        """
+        Stage 6: generate/score hooks and plan any scheduled re-hooks.
+
+        additional_instructions is optional free-text guidance for a
+        targeted regeneration ("Rewrite with Instructions" in the
+        redesign's Hook Lab GUI), passed straight through to hook
+        generation.
+        """
 
         if (
             job.selected_story_angle is None
@@ -455,6 +475,7 @@ class ContentIntelligencePipeline:
             audience_promise=job.audience_promise,
             research=job.research,
             editorial_profile=editorial_profile,
+            additional_instructions=additional_instructions,
         )
         job.hook_candidates = hooks
 

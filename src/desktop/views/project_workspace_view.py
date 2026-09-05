@@ -44,6 +44,12 @@ from src.services.topic_candidate_generation_service import (
 _BLOCKER_STAGE_TAB = {
     "content_intelligence": "content_studio",
     "audience_promise": "content_studio",
+    # Regression fix (found via external audit): Phase 7's research_plan
+    # approval gate (ApprovalGateService.gate(..., stage="research_plan"))
+    # produces a Blocker with this exact stage value - without an entry
+    # here, Run/Resume silently did nothing while a project was blocked
+    # on "Approve Brief & Start Research."
+    "research_plan": "content_studio",
     "research": "content_studio",
     "story_angles": "content_studio",
     "narrative_architecture": "content_studio",

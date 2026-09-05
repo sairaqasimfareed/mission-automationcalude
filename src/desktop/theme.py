@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QStyleFactory
 
 # Dark, cinematic palette - a video-production tool spends most of its
 # life next to a real editor/preview, so a bright default theme would
@@ -48,7 +48,22 @@ RADIUS_SM = 6
 
 
 def apply_theme(app: QApplication) -> None:
-    """Apply the shared font and stylesheet to the whole application."""
+    """Apply the shared font and stylesheet to the whole application.
+
+    Explicitly selects the "Fusion" style before applying the
+    stylesheet - found via user report: on Windows, the default
+    native ("windowsvista") style only partially honors QSS colors on
+    QLineEdit/QComboBox, painting its own light native frame under the
+    QSS-declared text color and producing near-invisible pale-on-pale
+    text. Fusion is the one built-in Qt style that fully respects
+    QSS-declared colors on every widget, so the dark theme actually
+    renders as designed instead of half-applying.
+    """
+
+    if (
+        "Fusion" in QStyleFactory.keys()
+    ):  # noqa: SIM118 - QStyleFactory.keys() is not a dict
+        app.setStyle(QStyleFactory.create("Fusion"))
 
     font = QFont(FONT_FAMILY, SIZE_BODY)
     app.setFont(font)

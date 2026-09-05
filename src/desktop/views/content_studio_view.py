@@ -36,6 +36,7 @@ from src.models.approval import HumanApprovalAction
 from src.models.artifact_lifecycle import ArtifactType
 from src.models.creative_direction import CreativeDirection
 from src.models.enums import Platform, ProductionMode, WorkflowStage
+from src.models.hook import HookCandidate, HookEvaluation
 from src.models.research import ResearchResult, ResearchSource, SourceStatus
 from src.models.research_evidence import (
     EvidenceRecord,
@@ -594,6 +595,28 @@ class ContentStudioView(QWidget):
 
             return
 
+        # Regression fix (found via external audit): is_verified must
+        # agree with whether the resulting ResearchFact actually shows
+        # as supported (ResearchFact.is_supported checks len(evidence)
+        # > 0) - a result.is_supported=True with no parseable
+        # matched_source_ids used to mark the note "verified" (green)
+        # while the fact it created showed "unsupported" (amber), a
+        # visible contradiction from one click. Treat that ambiguous
+        # case as not verified, honestly, rather than trusting an
+        # is_supported flag the evidence itself doesn't back up.
+        has_matched_evidence = bool(result.matched_source_ids)
+        is_actually_verified = result.is_supported and has_matched_evidence
+        verification_notes = (
+            result.reasoning
+            if is_actually_verified
+            else (
+                f"{result.reasoning} (Reviewer marked this supported but "
+                "named no specific source - treated as unverified.)"
+                if result.is_supported and not has_matched_evidence
+                else result.reasoning
+            )
+        )
+
         updated_edits: list[ManualResearchEdit] = []
 
         for edit in job.research.manual_edits:
@@ -606,14 +629,14 @@ class ContentStudioView(QWidget):
                 ManualResearchEdit(
                     id=edit.id,
                     text=edit.text,
-                    is_verified=result.is_supported,
-                    verification_notes=result.reasoning,
+                    is_verified=is_actually_verified,
+                    verification_notes=verification_notes,
                 )
             )
 
         job.research.manual_edits = updated_edits
 
-        if result.is_supported:
+        if is_actually_verified:
             job.research.structured_facts = job.research.structured_facts + [
                 ResearchFact(
                     text=target.text,
@@ -682,6 +705,119 @@ class ContentStudioView(QWidget):
                 job,
                 f"Narrative architecture regeneration failed: {error}",
                 on_retry=lambda: self._handle_regenerate_narrative_architecture(
+                    instruction_input
+                ),
+            )
+
+            return
+
+        self._on_change()
+
+    def _handle_select_hook(self, hook: HookCandidate) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        evaluation = next(
+            (e for e in job.hook_evaluations if e.hook_text == hook.text), None
+        )
+
+        if evaluation is None:
+            return
+
+        job.selected_hook = evaluation
+        self._on_change()
+
+    def _handle_write_custom_hook(self, text_input: QLineEdit) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        text = text_input.text().strip()
+
+        if not text:
+            return
+
+        try:
+            candidate = HookCandidate(text=text)
+            evaluation = HookEvaluation.custom(text)
+        except ValueError as error:
+            self._record_error(job, f"Could not save custom hook: {error}")
+
+            return
+
+        job.hook_candidates = job.hook_candidates + [candidate]
+        job.hook_evaluations = job.hook_evaluations + [evaluation]
+        job.selected_hook = evaluation
+        self._on_change()
+
+    def _handle_generate_more_hooks(self) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        if (
+            job.selected_story_angle is None
+            or job.audience_promise is None
+            or job.research is None
+        ):
+            return
+
+        pipeline = self._content_intelligence_pipeline
+        editorial_profile = job.editorial_profile_snapshot or (
+            pipeline.resolve_editorial_profile(job)
+        )
+
+        try:
+            new_hooks = pipeline.hook_generation_service.generate(
+                topic=job.topic,
+                story_angle=job.selected_story_angle,
+                audience_promise=job.audience_promise,
+                research=job.research,
+                editorial_profile=editorial_profile,
+            )
+            combined_hooks = job.hook_candidates + new_hooks
+            evaluations = pipeline.hook_evaluation_service.evaluate(
+                topic=job.topic,
+                hooks=combined_hooks,
+                research=job.research,
+                editorial_profile=editorial_profile,
+            )
+        except (RuntimeError, ValueError) as error:
+            self._record_error(
+                job,
+                f"Generating more hooks failed: {error}",
+                on_retry=self._handle_generate_more_hooks,
+            )
+
+            return
+
+        job.hook_candidates = combined_hooks
+        job.hook_evaluations = evaluations
+        self._on_change()
+
+    def _handle_rewrite_hooks_with_instructions(
+        self, instruction_input: QLineEdit
+    ) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        instructions = instruction_input.text().strip() or None
+
+        try:
+            self._content_intelligence_pipeline.run_hooks(
+                job, additional_instructions=instructions
+            )
+        except (RuntimeError, ValueError) as error:
+            self._record_error(
+                job,
+                f"Hook rewrite failed: {error}",
+                on_retry=lambda: self._handle_rewrite_hooks_with_instructions(
                     instruction_input
                 ),
             )
@@ -908,7 +1044,7 @@ class ContentStudioView(QWidget):
         button_row.addWidget(run_button)
 
         artifact_type, field_name = _CI_STAGE_REVIEW_TARGET[stage_key]
-        artifact = getattr(job, field_name, None)
+        artifact = self._resolve_review_artifact(job, stage_key, field_name)
         reviewer_profile_id = job.provider_preferences.reviewer.reviewer_profile_id
 
         review_button = button("Review", variant="ghost", icon_name="shield")
@@ -974,7 +1110,7 @@ class ContentStudioView(QWidget):
         if job is None:
             return
 
-        artifact = getattr(job, field_name, None)
+        artifact = self._resolve_review_artifact(job, stage_key, field_name)
 
         if not artifact:
             return
@@ -1007,6 +1143,30 @@ class ContentStudioView(QWidget):
             self._last_review_by_stage[stage_key] = result
 
         self._on_change()
+
+    @staticmethod
+    def _resolve_review_artifact(
+        job: VideoJob, stage_key: str, field_name: str
+    ) -> object | None:
+        """
+        Return what the Reviewer should actually see for one stage.
+
+        Fixes an undisclosed Phase 6 gap (found via external audit):
+        _CI_STAGE_REVIEW_TARGET maps "story_angles" to the field
+        "selected_story_angle" so the generic per-stage wiring has one
+        artifact to fetch, but Phase 6 added CreativeDirection
+        (narrative thesis, constraints, combined-angle note) as a
+        richer wrapper around that same selected angle - reviewing only
+        the bare StoryAngle meant the Reviewer never saw any of it.
+        When creative_direction exists, review that instead - it
+        already embeds the selected angle via its own selected_angle
+        field, so nothing is lost, only added.
+        """
+
+        if stage_key == "story_angles" and job.creative_direction is not None:
+            return job.creative_direction
+
+        return getattr(job, field_name, None)
 
     @staticmethod
     def _serialize_artifact_for_review(artifact: object) -> str:
@@ -1681,6 +1841,27 @@ class ContentStudioView(QWidget):
 
             layout.addWidget(small_muted(f"{hook.text}{score_text}"))
 
+            detail_parts = []
+
+            if hook.type is not None:
+                detail_parts.append(f"type: {hook.type.value}")
+
+            if hook.fact_ids:
+                detail_parts.append(f"{len(hook.fact_ids)} fact(s) cited")
+
+            if evaluation is not None:
+                detail_parts.append(f"reveal risk: {evaluation.spoiler_risk}")
+
+            if detail_parts:
+                layout.addWidget(small_muted("  " + " · ".join(detail_parts)))
+
+            if not is_selected:
+                select_button = button("Select", variant="ghost")
+                select_button.clicked.connect(
+                    lambda _checked=False, h=hook: self._handle_select_hook(h)
+                )
+                layout.addWidget(select_button, alignment=_LEFT)
+
         if job.re_hook_plan is not None:
             for re_hook in job.re_hook_plan.re_hooks:
                 layout.addWidget(
@@ -1689,6 +1870,45 @@ class ContentStudioView(QWidget):
                         f"[{re_hook.re_hook_type.value}]: {re_hook.text}"
                     )
                 )
+
+        layout.addWidget(separator())
+        layout.addWidget(small_muted("Write my own hook:"))
+
+        custom_hook_input = QLineEdit()
+        custom_hook_input.setPlaceholderText("Hook text")
+
+        custom_row = QHBoxLayout()
+        custom_row.setSpacing(6)
+        custom_row.addWidget(custom_hook_input)
+
+        write_own_button = button("Write my own hook", variant="ghost")
+        write_own_button.clicked.connect(
+            lambda: self._handle_write_custom_hook(custom_hook_input)
+        )
+        custom_row.addWidget(write_own_button)
+        layout.addLayout(custom_row)
+
+        layout.addWidget(separator())
+
+        instruction_input = QLineEdit()
+        instruction_input.setPlaceholderText(
+            "AI instruction, e.g. 'make it more suspenseful'"
+        )
+
+        instruction_row = QHBoxLayout()
+        instruction_row.setSpacing(6)
+        instruction_row.addWidget(instruction_input)
+
+        generate_more_button = button("Generate more", variant="ghost")
+        generate_more_button.clicked.connect(lambda: self._handle_generate_more_hooks())
+        instruction_row.addWidget(generate_more_button)
+
+        rewrite_button = button("Rewrite with instructions", variant="ghost")
+        rewrite_button.clicked.connect(
+            lambda: self._handle_rewrite_hooks_with_instructions(instruction_input)
+        )
+        instruction_row.addWidget(rewrite_button)
+        layout.addLayout(instruction_row)
 
         return True
 

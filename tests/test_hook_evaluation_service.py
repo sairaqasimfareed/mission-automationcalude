@@ -359,3 +359,77 @@ def test_select_winning_hook_raises_when_all_rejected() -> None:
 def test_select_winning_hook_raises_on_empty_list() -> None:
     with pytest.raises(ValueError, match="No eligible hook evaluations"):
         select_winning_hook([])
+
+
+def test_evaluate_parses_retention_potential_and_tone_fit_when_present() -> None:
+    content = (
+        "HOOK_TEXT: The crew vanished without a trace.\n"
+        "IMMEDIATE_CURIOSITY: 85\n"
+        "SPECIFICITY: 80\n"
+        "STAKES: 75\n"
+        "CLARITY: 80\n"
+        "EMOTIONAL_IMPACT: 70\n"
+        "NOVELTY: 75\n"
+        "RELEVANCE: 85\n"
+        "AUDIENCE_FIT: 80\n"
+        "FACTUAL_SUPPORT: 90\n"
+        "SPOILER_RISK: 10\n"
+        "RETENTION_POTENTIAL: 88\n"
+        "TONE_FIT: 92\n"
+        "REJECTED: no\n"
+        "REJECTION_REASONS: none\n"
+        "REASONING: Strong hook."
+    )
+    stub = _StubLLMService(content=content)
+
+    service = HookEvaluationService(llm_service=stub)  # type: ignore[arg-type]
+
+    evaluations = service.evaluate(
+        topic="The Mary Celeste",
+        hooks=[HookCandidate(text="The crew vanished without a trace.")],
+        research=_research(),
+        editorial_profile=_editorial_profile(),
+    )
+
+    assert evaluations[0].retention_potential == 88
+    assert evaluations[0].tone_fit == 92
+
+
+def test_evaluate_leaves_retention_potential_and_tone_fit_none_when_absent() -> None:
+    """
+    _score_block() (this file's own fixture) never includes
+    RETENTION_POTENTIAL/TONE_FIT - proving every pre-Phase-10 test
+    fixture in this file still parses, with the two new dimensions
+    simply absent rather than causing a parse failure.
+    """
+
+    stub = _StubLLMService(content=_TWO_EVALUATION_BLOCKS)
+
+    service = HookEvaluationService(llm_service=stub)  # type: ignore[arg-type]
+
+    evaluations = service.evaluate(
+        topic="The Mary Celeste",
+        hooks=_hooks(),
+        research=_research(),
+        editorial_profile=_editorial_profile(),
+    )
+
+    assert all(e.retention_potential is None for e in evaluations)
+    assert all(e.tone_fit is None for e in evaluations)
+
+
+def test_evaluate_prompt_asks_for_retention_potential_and_tone_fit() -> None:
+    stub = _StubLLMService(content=_TWO_EVALUATION_BLOCKS)
+
+    service = HookEvaluationService(llm_service=stub)  # type: ignore[arg-type]
+
+    service.evaluate(
+        topic="The Mary Celeste",
+        hooks=_hooks(),
+        research=_research(),
+        editorial_profile=_editorial_profile(),
+    )
+
+    assert stub.last_request is not None
+    assert "RETENTION_POTENTIAL" in stub.last_request.prompt
+    assert "TONE_FIT" in stub.last_request.prompt

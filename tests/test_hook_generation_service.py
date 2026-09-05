@@ -5,6 +5,7 @@ import pytest
 from src.models.audience_promise import AudiencePromise, PromiseStrength
 from src.models.editorial_profile import EditorialProfile
 from src.models.research import ResearchResult, ResearchSource, ResearchStatus
+from src.models.research_evidence import ResearchFact
 from src.models.story_angle import StoryAngle, StoryAngleStyle
 from src.services.editorial_profile_composition_service import (
     EditorialProfileCompositionService,
@@ -271,3 +272,112 @@ def test_dry_run_response_is_itself_parseable() -> None:
     )
 
     assert len(hooks) == 5
+
+
+def _research_with_facts() -> ResearchResult:
+    research = _research()
+    research.structured_facts = [
+        ResearchFact(text="The ship was found seaworthy."),
+        ResearchFact(text="The crew was never found."),
+    ]
+    return research
+
+
+def test_generate_without_facts_leaves_fact_ids_empty() -> None:
+    stub = _StubLLMService(content=_THREE_HOOK_BLOCK)
+
+    service = HookGenerationService(llm_service=stub)  # type: ignore[arg-type]
+
+    hooks = service.generate(
+        topic="The Mary Celeste",
+        story_angle=_angle(),
+        audience_promise=_promise(),
+        research=_research(),
+        editorial_profile=_editorial_profile(),
+    )
+
+    assert all(hook.fact_ids == [] for hook in hooks)
+    assert stub.last_request is not None
+    assert "FACT_IDS" not in stub.last_request.prompt
+
+
+def test_generate_binds_fact_ids_from_labeled_response() -> None:
+    research = _research_with_facts()
+    content = (
+        "TEXT: The crew vanished without a trace.\nFACT_IDS: 1\n"
+        "---\n"
+        "TEXT: What the investigators found made no sense.\nFACT_IDS: 1, 2"
+    )
+    stub = _StubLLMService(content=content)
+
+    service = HookGenerationService(llm_service=stub)  # type: ignore[arg-type]
+
+    hooks = service.generate(
+        topic="The Mary Celeste",
+        story_angle=_angle(),
+        audience_promise=_promise(),
+        research=research,
+        editorial_profile=_editorial_profile(),
+    )
+
+    assert hooks[0].fact_ids == [research.structured_facts[0].id]
+    assert hooks[1].fact_ids == [
+        research.structured_facts[0].id,
+        research.structured_facts[1].id,
+    ]
+
+
+def test_generate_parses_hook_archetype() -> None:
+    content = "TEXT: The crew vanished without a trace.\nHOOK_ARCHETYPE: mystery"
+    stub = _StubLLMService(content=content)
+
+    service = HookGenerationService(llm_service=stub)  # type: ignore[arg-type]
+
+    hooks = service.generate(
+        topic="The Mary Celeste",
+        story_angle=_angle(),
+        audience_promise=_promise(),
+        research=_research(),
+        editorial_profile=_editorial_profile(),
+    )
+
+    from src.models.genre_profile import HookArchetype
+
+    assert hooks[0].type == HookArchetype.MYSTERY
+
+
+def test_generate_ignores_an_unrecognized_archetype() -> None:
+    content = (
+        "TEXT: The crew vanished without a trace.\nHOOK_ARCHETYPE: not_a_real_type"
+    )
+    stub = _StubLLMService(content=content)
+
+    service = HookGenerationService(llm_service=stub)  # type: ignore[arg-type]
+
+    hooks = service.generate(
+        topic="The Mary Celeste",
+        story_angle=_angle(),
+        audience_promise=_promise(),
+        research=_research(),
+        editorial_profile=_editorial_profile(),
+    )
+
+    assert hooks[0].type is None
+
+
+def test_generate_prompt_includes_additional_instructions() -> None:
+    stub = _StubLLMService(content=_THREE_HOOK_BLOCK)
+
+    service = HookGenerationService(llm_service=stub)  # type: ignore[arg-type]
+
+    service.generate(
+        topic="The Mary Celeste",
+        story_angle=_angle(),
+        audience_promise=_promise(),
+        research=_research(),
+        editorial_profile=_editorial_profile(),
+        additional_instructions="Make it more suspenseful.",
+    )
+
+    assert stub.last_request is not None
+    assert "Make it more suspenseful." in stub.last_request.prompt

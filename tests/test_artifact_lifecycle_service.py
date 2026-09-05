@@ -409,6 +409,47 @@ def test_invalidate_dependents_does_not_double_invalidate_a_terminal_record() ->
     assert hook_after.invalidation_reason is None
 
 
+@pytest.mark.parametrize(
+    "status",
+    [
+        ArtifactLifecycleStatus.DRAFT,
+        ArtifactLifecycleStatus.GENERATING,
+        ArtifactLifecycleStatus.GENERATED,
+        ArtifactLifecycleStatus.UNDER_REVIEW,
+        ArtifactLifecycleStatus.REVISION_REQUIRED,
+        ArtifactLifecycleStatus.APPROVED,
+    ],
+)
+def test_invalidate_dependents_works_regardless_of_the_dependents_own_status(
+    status: ArtifactLifecycleStatus,
+) -> None:
+    """
+    Regression test (found via external audit): invalidate_dependents()
+    unconditionally calls transition(..., INVALIDATED) on every
+    non-terminal downstream record - before this fix, ALLOWED_TRANSITIONS
+    only permitted ->INVALIDATED from APPROVED/REVISION_REQUIRED, so a
+    dependent still in DRAFT/GENERATING/GENERATED/UNDER_REVIEW raised
+    ValueError. Every dependent status short of the two terminal ones
+    must now invalidate cleanly.
+    """
+    research = _record(
+        artifact_id="research-1", status=ArtifactLifecycleStatus.APPROVED
+    )
+    dependent = _record(
+        artifact_id="hook-1",
+        status=status,
+        input_version_ids=[str(research.id)],
+    )
+    ledger = [research, dependent]
+
+    updated = ArtifactDependencyGraphService().invalidate_dependents(
+        ledger, str(research.id), reason="Research was revised."
+    )
+
+    dependent_after = next(r for r in updated if r.artifact_id == "hook-1")
+    assert dependent_after.status == ArtifactLifecycleStatus.INVALIDATED
+
+
 def test_invalidate_dependents_is_a_noop_when_nothing_depends_on_it() -> None:
     leaf = _record()
 

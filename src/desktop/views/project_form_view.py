@@ -8,8 +8,10 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QFormLayout,
+    QFrame,
     QLineEdit,
     QMessageBox,
+    QScrollArea,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -19,6 +21,7 @@ from src.desktop.approval_mode_labels import APPROVAL_MODE_PRESETS
 from src.desktop.job_store import JobStore
 from src.desktop.widgets import button, card, heading, muted
 from src.models.advanced_settings import AdvancedSettings
+from src.models.approval import ApprovalPolicy, ApprovalPolicyConfig
 from src.models.audience_settings import AudienceSettings
 from src.models.budget_settings import BudgetSettings
 from src.models.duration_config import DurationConfig, DurationMode
@@ -60,6 +63,35 @@ _NO_PROVIDER_CHOICE = "System default"
 
 _LEFT = Qt.AlignmentFlag.AlignLeft
 
+# Every ApprovalPolicyConfig decision point, in the pipeline order a
+# project actually reaches them, paired with a human-readable label -
+# what "Custom Approval" actually configures. Previously this option
+# silently reused the same fixed review_critical_stages() preset as
+# its own default with no way to change any individual decision point
+# despite its name implying otherwise (found via user report) - this
+# panel is what makes the name true.
+_DECISION_POINT_FIELDS: list[tuple[str, str]] = [
+    ("topic", "Topic"),
+    ("content_strategy", "Content strategy"),
+    ("research_plan", "Research brief"),
+    ("research", "Research"),
+    ("story_angle", "Story angle"),
+    ("narrative_architecture", "Narrative architecture"),
+    ("hook", "Hook"),
+    ("final_script", "Final script"),
+    ("production_plan", "Production plan"),
+    ("budget", "Budget"),
+    ("final_preview", "Final preview"),
+    ("publishing", "Publishing"),
+]
+
+_POLICY_LABELS: dict[ApprovalPolicy, str] = {
+    ApprovalPolicy.AUTO: "Auto-continue",
+    ApprovalPolicy.REVIEW: "Review if uncertain",
+    ApprovalPolicy.MANUAL: "Always require approval",
+}
+_LABEL_TO_POLICY = {label: policy for policy, label in _POLICY_LABELS.items()}
+
 
 class ProjectFormView(QWidget):
     """
@@ -87,7 +119,22 @@ class ProjectFormView(QWidget):
         self._on_created = on_created
         self._job_mapper = ProjectSpecificationJobMapper()
 
-        layout = QVBoxLayout(self)
+        # Scrollable, matching ContentStudioView's own established
+        # pattern - found via user report: this form's total content
+        # (Project details + the new 12-row Custom Approval panel + AI
+        # configuration) now exceeds a fixed window's height, and
+        # without a scroll area Qt's layout engine compresses/clips
+        # rows silently instead of showing them, rather than any
+        # widget actually failing to render.
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+
+        content_container = QWidget()
+        layout = QVBoxLayout(content_container)
         layout.setContentsMargins(24, 20, 24, 20)
         layout.setSpacing(16)
 
@@ -143,11 +190,43 @@ class ProjectFormView(QWidget):
         self._approval_mode = QComboBox()
         self._approval_mode.addItems(list(APPROVAL_MODE_PRESETS))
         self._approval_mode.setCurrentText("Custom Approval")
+        self._approval_mode.currentTextChanged.connect(
+            self._handle_approval_mode_changed
+        )
         form.addRow("Approval mode", self._approval_mode)
 
         card_layout.addLayout(form)
 
         layout.addWidget(frame)
+
+        self._custom_approval_frame, custom_approval_layout = card(
+            "Custom approval - per stage", icon_name="settings"
+        )
+        custom_approval_layout.addWidget(
+            muted(
+                "Choose how much human review each stage requires. "
+                "'Review if uncertain' still auto-continues when the "
+                "generated result looks confident."
+            )
+        )
+
+        custom_approval_form = QFormLayout()
+        custom_approval_form.setSpacing(10)
+        custom_approval_form.setLabelAlignment(_LEFT)
+
+        defaults = ApprovalPolicyConfig.review_critical_stages()
+        self._decision_point_selects: dict[str, QComboBox] = {}
+
+        for field_name, field_label in _DECISION_POINT_FIELDS:
+            select = QComboBox()
+            select.addItems(list(_POLICY_LABELS.values()))
+            select.setCurrentText(_POLICY_LABELS[getattr(defaults, field_name)])
+            custom_approval_form.addRow(field_label, select)
+            self._decision_point_selects[field_name] = select
+
+        custom_approval_layout.addLayout(custom_approval_form)
+        layout.addWidget(self._custom_approval_frame)
+        self._handle_approval_mode_changed(self._approval_mode.currentText())
 
         ai_frame, ai_card_layout = card("AI configuration", icon_name="settings")
         ai_form = QFormLayout()
@@ -189,6 +268,38 @@ class ProjectFormView(QWidget):
 
         layout.addStretch()
 
+        scroll_area.setWidget(content_container)
+        outer_layout.addWidget(scroll_area)
+
+    def _handle_approval_mode_changed(self, mode: str) -> None:
+        self._custom_approval_frame.setVisible(mode == "Custom Approval")
+
+    def _build_approval_policy(self) -> ApprovalPolicyConfig:
+        mode = self._approval_mode.currentText()
+
+        if mode != "Custom Approval":
+            return APPROVAL_MODE_PRESETS[mode]()
+
+        def policy_for(field_name: str) -> ApprovalPolicy:
+            return _LABEL_TO_POLICY[
+                self._decision_point_selects[field_name].currentText()
+            ]
+
+        return ApprovalPolicyConfig(
+            topic=policy_for("topic"),
+            content_strategy=policy_for("content_strategy"),
+            research_plan=policy_for("research_plan"),
+            research=policy_for("research"),
+            story_angle=policy_for("story_angle"),
+            narrative_architecture=policy_for("narrative_architecture"),
+            hook=policy_for("hook"),
+            final_script=policy_for("final_script"),
+            production_plan=policy_for("production_plan"),
+            budget=policy_for("budget"),
+            final_preview=policy_for("final_preview"),
+            publishing=policy_for("publishing"),
+        )
+
     def reset(self) -> None:
         """Clear all fields for a fresh project."""
 
@@ -208,6 +319,11 @@ class ProjectFormView(QWidget):
 
         self._platform.setCurrentIndex(0)
         self._approval_mode.setCurrentText("Custom Approval")
+
+        defaults = ApprovalPolicyConfig.review_critical_stages()
+        for field_name, select in self._decision_point_selects.items():
+            select.setCurrentText(_POLICY_LABELS[getattr(defaults, field_name)])
+
         self._primary_llm.setCurrentIndex(0)
         self._reviewer_llm.setCurrentIndex(0)
         self._fallback_llm.setCurrentIndex(0)
@@ -271,9 +387,7 @@ class ProjectFormView(QWidget):
 
             job = self._job_mapper.map(specification, niche=self._niche.text())
             job.genre_id = self._genre.currentText()
-            job.approval_policy = APPROVAL_MODE_PRESETS[
-                self._approval_mode.currentText()
-            ]()
+            job.approval_policy = self._build_approval_policy()
         except (ValidationError, ValueError) as error:
             QMessageBox.warning(
                 self,

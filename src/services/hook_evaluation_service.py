@@ -23,6 +23,14 @@ _SCORE_LABELS = (
     "SPOILER_RISK",
 )
 
+# Content Studio Redesign, Phase 10 additions: "retention potential...
+# and tone fit." Parsed the same way as every other dimension above,
+# but kept in their own tuple since they're optional in the resulting
+# HookEvaluation (None rather than a parse failure when a block omits
+# them) and are never folded into overall_score - see
+# HookEvaluation's own docstring for why.
+_OPTIONAL_SCORE_LABELS = ("RETENTION_POTENTIAL", "TONE_FIT")
+
 _REQUIRED_LABELS = (
     "HOOK_TEXT",
     *_SCORE_LABELS,
@@ -50,10 +58,12 @@ class _ParsedScores(NamedTuple):
 
 def _dry_run_block(text: str) -> str:
     scores = "\n".join(f"{label}: 70" for label in _SCORE_LABELS)
+    optional_scores = "\n".join(f"{label}: 70" for label in _OPTIONAL_SCORE_LABELS)
 
     return (
         f"HOOK_TEXT: {text}\n"
         f"{scores}\n"
+        f"{optional_scores}\n"
         "REJECTED: no\n"
         "REJECTION_REASONS: none\n"
         "REASONING: Dry-run evaluation reasoning for development and "
@@ -177,6 +187,9 @@ class HookEvaluationService:
     ) -> str:
         hook_lines = "\n".join(f"- {hook.text}" for hook in hooks)
         score_label_lines = "\n".join(f"{label}: <0-100>" for label in _SCORE_LABELS)
+        optional_score_label_lines = "\n".join(
+            f"{label}: <0-100>" for label in _OPTIONAL_SCORE_LABELS
+        )
         valid_reasons = ", ".join(sorted(_VALID_REJECTION_REASONS))
 
         return (
@@ -188,6 +201,7 @@ class HookEvaluationService:
             "exactly these labeled lines:\n"
             "HOOK_TEXT: <must exactly match one candidate hook above>\n"
             f"{score_label_lines}\n"
+            f"{optional_score_label_lines}\n"
             "REJECTED: <yes or no>\n"
             f"REJECTION_REASONS: <comma-separated from: {valid_reasons} - "
             "or 'none' if not rejected>\n"
@@ -253,10 +267,31 @@ class HookEvaluationService:
                         fields.get("REJECTION_REASONS")
                     ),
                     reasoning=fields["REASONING"] or "",
+                    retention_potential=cls._parse_optional_score(
+                        block, "RETENTION_POTENTIAL"
+                    ),
+                    tone_fit=cls._parse_optional_score(block, "TONE_FIT"),
                 )
             )
 
         return evaluations
+
+    @staticmethod
+    def _parse_optional_score(block: str, label: str) -> int | None:
+        raw = extract_labeled_field(block, label)
+
+        if raw is None:
+            return None
+
+        try:
+            score = int(float(raw.strip()))
+        except ValueError:
+            return None
+
+        if not 0 <= score <= 100:
+            return None
+
+        return score
 
     @staticmethod
     def _parse_scores(fields: dict[str, str | None]) -> _ParsedScores | None:

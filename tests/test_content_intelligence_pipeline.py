@@ -259,6 +259,51 @@ def test_bind_curiosity_roles_assigns_the_loop_to_its_containing_beat() -> None:
     )
 
 
+def test_bind_curiosity_roles_binds_a_loop_opening_at_the_very_end() -> None:
+    """
+    Regression test (found via external audit): a loop with
+    opened_at_position == 1.0 lands exactly on the final beat's
+    end_seconds, which the half-open [start, end) check used to
+    exclude, leaving it silently unbound.
+    """
+    from src.models.information_reveal_map import CuriosityLoop, InformationRevealMap
+    from src.models.story_blueprint import StoryBeat, StoryBeatType, StoryBlueprint
+
+    blueprint = StoryBlueprint(
+        topic="The Mary Celeste",
+        genre_id="genre.mystery",
+        target_duration_seconds=30,
+        beats=[
+            StoryBeat(
+                beat_type=StoryBeatType.HOOK,
+                start_seconds=0,
+                end_seconds=20,
+                purpose="Open cold.",
+                tension_level=60,
+            ),
+            StoryBeat(
+                beat_type=StoryBeatType.PAYOFF,
+                start_seconds=20,
+                end_seconds=30,
+                purpose="Resolve it.",
+                tension_level=90,
+            ),
+        ],
+        prompt_version="story_blueprint_prompt_v1.0.0",
+    )
+    reveal_map = InformationRevealMap(
+        topic="The Mary Celeste",
+        curiosity_loops=[
+            CuriosityLoop(question="What was the final truth?", opened_at_position=1.0),
+        ],
+        prompt_version="reveal_map_prompt_v1.0.0",
+    )
+
+    ContentIntelligencePipeline._bind_curiosity_roles(blueprint, reveal_map)
+
+    assert blueprint.beats[1].curiosity_loop_question == "What was the final truth?"
+
+
 def test_bind_curiosity_roles_never_overwrites_an_already_assigned_beat() -> None:
     from src.models.information_reveal_map import CuriosityLoop, InformationRevealMap
     from src.models.story_blueprint import StoryBeat, StoryBeatType, StoryBlueprint
@@ -308,6 +353,29 @@ def test_run_hooks_selects_a_winner() -> None:
     assert len(job.hook_evaluations) == len(job.hook_candidates)
     assert job.selected_hook is not None
     assert job.selected_hook.rejected is False
+
+
+def test_run_hooks_accepts_additional_instructions() -> None:
+    """
+    Content Studio Redesign, Phase 10: "Rewrite with Instructions" -
+    run_hooks passes additional_instructions straight through to hook
+    generation without changing anything else about the stage.
+    """
+    pipeline, stub = _pipeline()
+
+    job = pipeline.run_audience_promise(_job())
+    job = pipeline.run_research(job)
+    job = pipeline.run_story_angles(job)
+    job = pipeline.run_narrative_architecture(job)
+    job = pipeline.run_hooks(job, additional_instructions="Make it more suspenseful.")
+
+    hook_request = next(
+        r
+        for r in reversed(stub.requests)
+        if r.metadata.get("agent") == "HookGenerationService"
+    )
+    assert "Make it more suspenseful." in hook_request.prompt
+    assert job.selected_hook is not None
 
 
 def test_run_script_requires_upstream_stages() -> None:

@@ -223,6 +223,52 @@ def test_reviewing_a_stage_stores_and_renders_the_result(qapp: QApplication) -> 
     assert "audience_promise" in view._last_review_by_stage
 
 
+def test_resolve_review_artifact_prefers_creative_direction_over_bare_angle(
+    qapp: QApplication,
+) -> None:
+    """
+    Regression test (found via external audit): reviewing the
+    "story_angles" stage previously always fed the Reviewer the bare
+    selected StoryAngle, even after Phase 6 added CreativeDirection
+    (narrative thesis, constraints, combined-angle note) as a richer
+    wrapper - so that data was never actually reviewable.
+    """
+    from src.models.creative_direction import CreativeDirection
+    from src.models.story_angle import StoryAngle, StoryAngleStyle
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+
+    angle = StoryAngle(
+        style=StoryAngleStyle.MYSTERY,
+        title="The Missing Logbook",
+        description="Told through the ship's missing final log entry.",
+    )
+    job.selected_story_angle = angle
+
+    # Before Creative Direction exists, the bare angle is still what
+    # gets reviewed - nothing regresses for a project that hasn't used
+    # the Phase 6 workflow yet.
+    resolved = view._resolve_review_artifact(
+        job, "story_angles", "selected_story_angle"
+    )
+    assert resolved is angle
+
+    job.creative_direction = CreativeDirection(
+        selected_angle=angle,
+        narrative_thesis="The crew's fate was sealed by the missing logbook.",
+        constraints=["No supernatural framing"],
+    )
+
+    resolved = view._resolve_review_artifact(
+        job, "story_angles", "selected_story_angle"
+    )
+    assert resolved is job.creative_direction
+
+
 def test_switching_projects_clears_stale_review_results(qapp: QApplication) -> None:
     job_store = InMemoryJobStore()
     job = _job()
@@ -1100,6 +1146,49 @@ def test_fact_check_again_on_an_unsupported_claim_leaves_it_unverified(
     assert job.research.structured_facts == []
 
 
+def test_fact_check_supported_with_no_matched_sources_stays_unverified(
+    qapp: QApplication,
+) -> None:
+    """
+    Regression test (found via external audit): a FactCheckResult that
+    says is_supported=True but names no matched_source_ids used to mark
+    the manual edit "verified" (green) while creating a ResearchFact
+    with empty evidence, which itself shows as unsupported (amber) -
+    a visible contradiction from one click. Both must now agree: not
+    verified, and no phantom fact created.
+    """
+
+    from PySide6.QtWidgets import QLineEdit
+
+    from src.models.research_evidence import FactCheckResult
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_research(view, job)
+    assert job.research is not None
+
+    view._handle_add_manual_research_edit(QLineEdit("An ambiguously-supported claim."))
+    edit_id = job.research.manual_edits[0].id
+
+    view._fact_check_service.check = lambda **kwargs: FactCheckResult(  # type: ignore[method-assign]
+        claim_text=kwargs["claim_text"],
+        is_supported=True,
+        confidence=60,
+        matched_source_ids=[],
+        reasoning="This seems generally true.",
+    )
+
+    view._handle_fact_check_again(edit_id)
+
+    assert job.research.manual_edits[0].is_verified is False
+    assert job.research.structured_facts == []
+
+
 def test_adding_and_removing_a_research_gap(qapp: QApplication) -> None:
     from PySide6.QtWidgets import QLineEdit
 
@@ -1196,3 +1285,148 @@ def test_narrative_architecture_panel_builds_without_error_with_evidence_bound(
     view._handle_run_ci_stage("narrative_architecture")
 
     view.refresh(job)  # must not raise with beats + reveal map populated
+
+
+def _run_through_hooks(view: ContentStudioView, job: VideoJob) -> None:
+    view._handle_run_ci_stage("audience_promise")
+    view._handle_run_ci_stage("research_plan")
+    view._handle_run_ci_stage("research")
+    view._handle_run_ci_stage("story_angles")
+    view._handle_run_ci_stage("narrative_architecture")
+    view._handle_run_ci_stage("hooks")
+
+
+def test_selecting_a_hook_overrides_the_pipelines_auto_selection(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_hooks(view, job)
+
+    assert job.selected_hook is not None
+    auto_selected_text = job.selected_hook.hook_text
+    other_hook = next(h for h in job.hook_candidates if h.text != auto_selected_text)
+
+    view._handle_select_hook(other_hook)
+
+    assert job.selected_hook is not None
+    assert job.selected_hook.hook_text == other_hook.text
+
+
+def test_writing_a_custom_hook_appends_and_selects_it_unscored(
+    qapp: QApplication,
+) -> None:
+    from PySide6.QtWidgets import QLineEdit
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_hooks(view, job)
+
+    original_count = len(job.hook_candidates)
+
+    view._handle_write_custom_hook(QLineEdit("The night the lighthouse went dark."))
+
+    assert len(job.hook_candidates) == original_count + 1
+    assert job.selected_hook is not None
+    assert job.selected_hook.hook_text == "The night the lighthouse went dark."
+    assert job.selected_hook.is_custom is True
+
+
+def test_writing_a_blank_custom_hook_is_a_noop(qapp: QApplication) -> None:
+    from PySide6.QtWidgets import QLineEdit
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_hooks(view, job)
+
+    original_count = len(job.hook_candidates)
+
+    view._handle_write_custom_hook(QLineEdit("   "))
+
+    assert len(job.hook_candidates) == original_count
+
+
+def test_generate_more_hooks_appends_and_reevaluates_all_candidates(
+    qapp: QApplication,
+) -> None:
+    from src.models.hook import HookCandidate
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_hooks(view, job)
+
+    original_count = len(job.hook_candidates)
+
+    # The shared echo-stub always returns the same 5 canned dry-run
+    # hook texts, which HookEvaluationService's legitimate text-based
+    # dedup would then collapse - stub generation directly here so
+    # "Generate more" produces genuinely distinct text, the way a real
+    # LLM call would.
+    view._content_intelligence_pipeline.hook_generation_service.generate = (  # type: ignore[method-assign]
+        lambda **kwargs: [HookCandidate(text="A brand new hook candidate.")]
+    )
+
+    view._handle_generate_more_hooks()
+
+    assert len(job.hook_candidates) > original_count
+    assert len(job.hook_evaluations) == len(job.hook_candidates)
+
+
+def test_rewrite_hooks_with_instructions_regenerates_the_candidate_set(
+    qapp: QApplication,
+) -> None:
+    from PySide6.QtWidgets import QLineEdit
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_hooks(view, job)
+
+    view._handle_rewrite_hooks_with_instructions(QLineEdit("Make it more suspenseful."))
+
+    assert job.selected_hook is not None
+    assert len(job.hook_evaluations) == len(job.hook_candidates)
+
+
+def test_hooks_panel_builds_without_error_after_generate_more_and_custom_hook(
+    qapp: QApplication,
+) -> None:
+    from PySide6.QtWidgets import QLineEdit
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_hooks(view, job)
+
+    view._handle_generate_more_hooks()
+    view._handle_write_custom_hook(QLineEdit("A hook I wrote myself."))
+
+    view.refresh(job)  # must not raise with a mixed generated+custom hook set

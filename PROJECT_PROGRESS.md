@@ -5,6 +5,198 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-05 - Content Studio Redesign: Phase 10 Hook Lab
+
+**Backend.** `HookCandidate` (already existed) gained `type:
+HookArchetype | None` - reuses the existing genre-level `HookArchetype`
+enum (already used for `preferred_hook_archetypes`/
+`forbidden_hook_archetypes` in genre profiles) as the per-candidate
+"type" the redesign's schema asks for, rather than inventing a
+parallel vocabulary - and `fact_ids: list[UUID]`, this phase's own
+"Evidence Allocation" for hooks, LLM-populated only when research has
+`structured_facts`, mirroring `StoryBeat.evidence_fact_ids` from Phase
+9 exactly.
+
+`HookEvaluation` (already existed) gained `retention_potential`/
+`tone_fit: int | None` - both optional and deliberately never folded
+into the established `overall_score` formula; a proof test confirms
+setting them to 100 changes nothing about the score, since retroactively
+changing that formula was judged a materially bigger, riskier change
+than adding two informational dimensions. Also gained `is_custom: bool`
+and a `.custom()` classmethod for the "Write My Own" GUI path - every
+numeric field set to 0 with `reasoning="User-written hook; not
+independently scored."`, honestly representing "never scored" rather
+than a fake neutral number.
+
+`HookGenerationService.generate()` gained two optional parameters:
+`research`-driven fact-binding (when `research.structured_facts` is
+non-empty, the prompt lists them and asks for a per-hook `FACT_IDS`
+line, reusing `FactCheckService`'s own index-based source-matching
+trick rather than inventing a new one) and `additional_instructions`
+(free-text guidance, e.g. "make it more suspenseful," for a targeted
+rewrite). `HookEvaluationService.evaluate()` gained the two new score
+labels (`RETENTION_POTENTIAL`, `TONE_FIT`), parsed independently of the
+existing required-label set so every pre-existing test fixture in that
+file - none of which include these new labels - still parses exactly
+as before.
+
+`ReviewerService` gained one more additive `ArtifactType.HOOK` focus-
+guidance entry (unsupported claims, premature payoff disclosure) via
+the same dict-lookup mechanism Phases 8-9 introduced.
+
+**Confirmed already complete, via direct code inspection rather than
+assumed:** `ContentIntelligencePipeline.run_script()` already
+hard-requires `job.selected_hook is not None` (raises `RuntimeError`
+otherwise) and passes it as `winning_hook` into
+`ScriptGenerationService.generate()`. This means "Approved Hook becomes
+a required input to Script Generation Package" and "Script generator
+cannot silently replace or ignore it" - two of this phase's own named
+exit criteria - were already fully satisfied before any Phase 10 work
+started. Zero changes were needed for them; this was verified by
+reading the code, not assumed from the phase's own wording.
+
+**GUI.** The "Hooks" panel - previously read-only display, like every
+other CI stage panel before its own phase's work - gained a "Select"
+button per candidate (overrides the pipeline's own auto-selected
+`selected_hook`, previously impossible from the GUI), a "Write my own
+hook" form, a "Generate more" button (appends new candidates to the
+existing set and re-evaluates the full combined set together, so
+scores stay comparable), and "Rewrite with instructions" (a full
+regeneration via `run_hooks(additional_instructions=...)`). Each
+candidate now also shows its type, cited-fact count, and reveal risk
+(spoiler_risk) inline.
+
+**Deliberately not built this pass:** no dedicated "Edit" action on an
+existing candidate's text - Select plus Write My Own together already
+cover the practical need (pick an existing hook, or replace it with
+your own wording) without a third, overlapping mechanism; no direct
+field-by-field editing of evaluation scores (the same repo-wide
+inline-editing gap noted since Phase 4).
+
+**Test-infra note.** One new test (`test_generate_more_hooks_appends_
+and_reevaluates_all_candidates`) initially failed because the shared
+echo-stub used across GUI tests always returns the same 5 canned
+dry-run hook texts regardless of call count - "Generate more" therefore
+produced 5 duplicate-text candidates, which `HookEvaluationService`'s
+legitimate text-based dedup then correctly collapsed to 5 evaluations
+for 10 candidates. This was a test-fixture artifact, not a production
+bug: fixed by stubbing `hook_generation_service.generate` directly in
+that one test to return genuinely distinct text, the way a real LLM
+call would.
+
+Quality gates: mypy clean across 365 source files, ruff clean, black
+clean repo-wide (682 files). New/updated tests: `test_hook_model.py`
+(+7), `test_hook_generation_service.py` (+5), `test_hook_evaluation_
+service.py` (+3), 1 new case in `test_reviewer_service.py`, 6 new cases
+in `test_content_studio_content_intelligence_gui.py` - 108 tests across
+the five touched test files, all passing.
+
+## 2026-09-05 - Audit-driven fixes (Phases 1, 6, 7, 8, 9) and GUI usability fixes
+
+An external audit re-verified Phases 0-9 directly against the code
+(not trusting this log) and reported 5 confirmed defects plus 2 GUI
+usability reports came in separately from the user. Every claim was
+independently re-verified against the actual code before any fix was
+made - none were taken on trust.
+
+**1. Phase 1 (Blocker, confirmed).** `ArtifactLifecycleService.
+ALLOWED_TRANSITIONS` only permitted ->INVALIDATED from APPROVED/
+REVISION_REQUIRED, but `ArtifactDependencyGraphService.
+invalidate_dependents()` calls `transition(..., INVALIDATED)`
+unconditionally on every non-terminal downstream dependent it finds -
+a dependent still in DRAFT/GENERATING/GENERATED/UNDER_REVIEW would
+raise `ValueError`. Untested: every existing `invalidate_dependents()`
+test fixture used `status=APPROVED`. Fixed by extending
+`ALLOWED_TRANSITIONS` so INVALIDATED is reachable from every
+non-terminal status, matching the real intent (an upstream change can
+invalidate a downstream artifact regardless of how far along its own
+generation/review cycle is) - a parametrized regression test now
+covers every non-terminal starting status.
+
+**2. Phase 6 (Minor, confirmed).** `_CI_STAGE_REVIEW_TARGET["story_
+angles"]` maps to field `"selected_story_angle"`, so reviewing that
+stage only ever showed the Reviewer the bare `StoryAngle` - Phase 6's
+`CreativeDirection` (narrative thesis, constraints, combined-angle
+note) was never actually fed to the Reviewer. Fixed with a new
+`_resolve_review_artifact()` helper: when `creative_direction` exists,
+review that instead (it already embeds the selected angle, so nothing
+is lost, only added); falls back to the bare angle for a project that
+hasn't used the Phase 6 workflow yet.
+
+**3. Phase 8 (Minor, confirmed).** `_handle_fact_check_again` set
+`is_verified=result.is_supported` independently of whether `result.
+matched_source_ids` was non-empty, while the new `ResearchFact`'s
+evidence list was built only from those same IDs - a `FactCheckResult`
+saying "supported" with no parseable matched source produced a green
+"verified" note next to an amber "unsupported" fact from one click.
+Fixed: `is_verified` (and whether a fact is created at all) now
+requires both `is_supported` AND at least one matched source; the
+ambiguous case is treated as honestly unverified, with a note
+explaining why, rather than trusting a flag the evidence didn't back
+up.
+
+**4. Phase 9 (Minor, confirmed).** `_bind_curiosity_roles`'s half-open
+`[start, end)` interval check meant a curiosity loop opening at
+`opened_at_position == 1.0` (landing exactly on the final beat's
+`end_seconds`) satisfied no beat's range and silently never bound.
+Fixed by closing the interval on both ends for the last beat only.
+
+**5. Cross-cutting (Major, confirmed on re-verification).**
+`project_workspace_view.py`'s `_BLOCKER_STAGE_TAB` had no
+`"research_plan"` entry, even though Phase 7's own `run_research_plan()`
+gates with `stage="research_plan"` and `ProductionReadinessService`
+surfaces that as a `Blocker(stage="research_plan")` - so "Run/Resume"
+silently did nothing while a project was blocked on "Approve Brief &
+Start Research," with no error and no navigation. Fixed by adding the
+missing entry alongside its sibling content-intelligence stages, plus
+a new dedicated test file asserting every content-intelligence stage
+(including research_plan) routes to the content_studio tab.
+
+**GUI usability (user-reported, unrelated to the audit).** Three real
+defects surfaced from actually running the app:
+
+- Input fields in Project Setup rendered as pale-on-pale, barely
+  legible text. Root cause: on Windows, the default native
+  ("windowsvista") Qt style only partially honors QSS-declared colors
+  on `QLineEdit`/`QComboBox` - it paints its own light native frame
+  underneath the QSS text color instead of the QSS background,
+  producing the pale-on-pale look. Fixed by explicitly selecting the
+  "Fusion" style (the one built-in Qt style that fully respects
+  QSS-declared colors on every widget) in `apply_theme()`, before the
+  stylesheet is applied.
+- Selecting "Custom Approval" in the New Project form showed nothing
+  further, because it never was custom - it silently mapped to the
+  same fixed `review_critical_stages()` preset as a name-only label,
+  with no per-stage configuration ever built despite what the name
+  implied. Fixed with a real per-decision-point panel: 12 dropdowns
+  (Auto-continue / Review if uncertain / Always require approval),
+  one per `ApprovalPolicyConfig` field, defaulting to
+  `review_critical_stages()`'s own values, shown only when "Custom
+  Approval" is selected and hidden for the other two (still genuinely
+  fixed) presets. A new `tests/test_project_form_view.py` covers the
+  default state, preset-switching visibility, per-field overrides,
+  reset behavior, and the full create-project flow persisting a custom
+  override onto the resulting job.
+- After the Custom Approval panel shipped, a second user report showed
+  "Project details" and "Custom approval" rendering as empty cards -
+  headers visible, no rows. Root cause: `ProjectFormView` had no scroll
+  area at all (unlike `ContentStudioView`, which already wraps itself
+  in one), and it sits directly inside `MainWindow`'s `QStackedWidget`
+  with no other scrolling ancestor either. Adding the new 12-row Custom
+  Approval panel roughly doubled the form's total content height, past
+  what the fixed window could show - with nothing to scroll, Qt's
+  layout engine compressed/clipped rows rather than rendering them.
+  Fixed by wrapping the form's content in a `QScrollArea`, the same
+  pattern `ContentStudioView` already uses.
+
+Quality gates: mypy, ruff, and black all clean across every touched
+file. New tests: `test_artifact_lifecycle_service.py` (+1
+parametrized, 6 cases), `test_content_studio_content_intelligence_gui.py`
+(+1), `test_content_intelligence_pipeline.py` (+1), new
+`tests/test_project_workspace_view_run_resume.py` (2 tests), new
+`tests/test_project_form_view.py` (7 tests) - all passing. Full repo
+pytest suite re-run for regression after every fix.
+
 ## 2026-08-28 - Content Studio Redesign: Phase 9 Story Development (Architecture, Evidence Allocation and Retention)
 
 **Backend.** `StoryBeat` gained `evidence_fact_ids` - "Evidence

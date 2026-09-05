@@ -36,21 +36,39 @@ class ArtifactLifecycleService:
     ALLOWED_TRANSITIONS: dict[
         ArtifactLifecycleStatus, frozenset[ArtifactLifecycleStatus]
     ] = {
-        ArtifactLifecycleStatus.DRAFT: frozenset({ArtifactLifecycleStatus.GENERATING}),
+        # INVALIDATED is reachable from every non-terminal status, not
+        # just APPROVED/REVISION_REQUIRED - an upstream change can
+        # invalidate a downstream artifact regardless of how far along
+        # that artifact's own generation/review cycle currently is
+        # (found via external audit: invalidate_dependents() already
+        # calls transition(..., INVALIDATED) unconditionally on every
+        # non-terminal dependent it finds, so a dependent sitting in
+        # DRAFT/GENERATING/GENERATED/UNDER_REVIEW would otherwise raise
+        # ValueError the first time this engine is wired into a real
+        # workflow with a dependent artifact not yet approved).
+        ArtifactLifecycleStatus.DRAFT: frozenset(
+            {ArtifactLifecycleStatus.GENERATING, ArtifactLifecycleStatus.INVALIDATED}
+        ),
         ArtifactLifecycleStatus.GENERATING: frozenset(
-            {ArtifactLifecycleStatus.GENERATED, ArtifactLifecycleStatus.DRAFT}
+            {
+                ArtifactLifecycleStatus.GENERATED,
+                ArtifactLifecycleStatus.DRAFT,
+                ArtifactLifecycleStatus.INVALIDATED,
+            }
         ),
         ArtifactLifecycleStatus.GENERATED: frozenset(
             {
                 ArtifactLifecycleStatus.UNDER_REVIEW,
                 ArtifactLifecycleStatus.APPROVED,
                 ArtifactLifecycleStatus.REVISION_REQUIRED,
+                ArtifactLifecycleStatus.INVALIDATED,
             }
         ),
         ArtifactLifecycleStatus.UNDER_REVIEW: frozenset(
             {
                 ArtifactLifecycleStatus.APPROVED,
                 ArtifactLifecycleStatus.REVISION_REQUIRED,
+                ArtifactLifecycleStatus.INVALIDATED,
             }
         ),
         # REVISION_REQUIRED never transitions back to GENERATING for the

@@ -262,3 +262,24 @@ def test_story_architecture_artifacts_get_pacing_focus_guidance() -> None:
     assert stub.last_request is not None
     assert "premature reveals" in stub.last_request.prompt.lower()
     assert "duration mismatch" in stub.last_request.prompt.lower()
+
+
+def test_hook_artifacts_get_unsupported_claim_and_spoiler_focus_guidance() -> None:
+    """
+    Content Studio Redesign, Phase 10: "Reviewer compares Primary hooks
+    and detects unsupported claims or premature payoff disclosure."
+    """
+
+    stub = _StubLLMService(content=_FULL_RESPONSE)
+    service = ReviewerService(llm_service=stub)  # type: ignore[arg-type]
+
+    service.review(
+        artifact_type=ArtifactType.HOOK,
+        content="content",
+        context="context",
+        reviewer_profile_id="anthropic-reviewer",
+    )
+
+    assert stub.last_request is not None
+    assert "unsupported claims" in stub.last_request.prompt.lower()
+    assert "premature disclosure" in stub.last_request.prompt.lower()
