@@ -979,6 +979,97 @@ def test_run_script_lock_stays_internal_for_a_generated_script() -> None:
     assert job.script_lock.provenance == ScriptProvenance.INTERNAL
 
 
+def test_run_production_ambiguity_detection_requires_a_script() -> None:
+    pipeline, _ = _pipeline()
+
+    with pytest.raises(RuntimeError, match="requires a generated script"):
+        pipeline.run_production_ambiguity_detection(_job())
+
+
+def test_run_production_ambiguity_detection_appends_to_the_job() -> None:
+    pipeline, job = _job_with_script()
+
+    job = pipeline.run_production_ambiguity_detection(job)
+
+    assert len(job.production_ambiguities) >= 1
+
+    # Running it again appends rather than replacing.
+    job = pipeline.run_production_ambiguity_detection(job)
+    assert len(job.production_ambiguities) >= 2
+
+
+def test_run_resolve_ambiguity_manually_updates_the_matching_entry() -> None:
+    pipeline, job = _job_with_script()
+    job = pipeline.run_production_ambiguity_detection(job)
+    target_id = job.production_ambiguities[0].id
+
+    job = pipeline.run_resolve_ambiguity_manually(
+        job, ambiguity_id=target_id, note="Confirmed by the editor."
+    )
+
+    resolved = next(a for a in job.production_ambiguities if a.id == target_id)
+    assert resolved.status.value == "resolved_manually"
+    assert resolved.resolution_note == "Confirmed by the editor."
+
+
+def test_run_resolve_ambiguity_by_ai_updates_the_matching_entry() -> None:
+    pipeline, job = _job_with_script()
+    job = pipeline.run_production_ambiguity_detection(job)
+    target_id = job.production_ambiguities[0].id
+
+    job = pipeline.run_resolve_ambiguity_by_ai(job, ambiguity_id=target_id)
+
+    resolved = next(a for a in job.production_ambiguities if a.id == target_id)
+    assert resolved.status.value == "resolved_by_ai"
+    assert resolved.resolution_note is not None
+
+
+def test_run_resolve_ambiguity_by_ai_raises_for_an_unknown_id() -> None:
+    pipeline, job = _job_with_script()
+
+    with pytest.raises(ValueError, match="No production ambiguity"):
+        pipeline.run_resolve_ambiguity_by_ai(job, ambiguity_id=uuid4())
+
+
+def test_compute_script_production_readiness_reflects_real_job_state() -> None:
+    pipeline, job = _job_with_script()
+
+    not_ready = pipeline.compute_script_production_readiness(job)
+    assert not_ready.is_ready is False
+
+    job = pipeline.run_continuity_bible(job)
+    job = pipeline.run_scene_planning(job)
+
+    ready = pipeline.compute_script_production_readiness(job)
+    assert ready.has_continuity_bible is True
+    assert ready.has_scenes is True
+    assert ready.is_ready is True
+
+
+def test_run_script_lock_raises_with_unresolved_continuity_critical_ambiguity() -> None:
+    from src.models.production_ambiguity import (
+        AmbiguityResolutionStatus,
+        ProductionAmbiguity,
+    )
+
+    pipeline, job = _job_with_script()
+    job.production_ambiguities = [
+        ProductionAmbiguity(description="Unclear identity.", continuity_critical=True)
+    ]
+
+    with pytest.raises(ValueError, match="unresolved continuity-critical"):
+        pipeline.run_script_lock(job)
+
+    job.production_ambiguities[0] = job.production_ambiguities[0].model_copy(
+        update={
+            "status": AmbiguityResolutionStatus.RESOLVED_MANUALLY,
+            "resolution_note": "Confirmed.",
+        }
+    )
+    job = pipeline.run_script_lock(job)
+    assert job.script_lock is not None
+
+
 def test_run_packaging_hypothesis_requires_script_and_hook() -> None:
     pipeline, _ = _pipeline()
 

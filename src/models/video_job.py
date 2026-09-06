@@ -36,6 +36,7 @@ from src.models.media_strategy import (
 from src.models.originality import OriginalityResult
 from src.models.packaging_hypothesis import PackagingHypothesis
 from src.models.policy import PolicyComplianceReport
+from src.models.production_ambiguity import ProductionAmbiguity
 from src.models.provider_preferences import ProviderPreferences
 from src.models.re_hook import ReHookPlan
 from src.models.render_result import RenderResult
@@ -190,6 +191,10 @@ class VideoJob(MissionBaseModel):
     # entered via Script Intake (paste/upload) rather than Content
     # Production - None means no external script was ever imported.
     script_intake_result: ScriptIntakeResult | None = None
+    # Content Studio Redesign, Phase 16: production-relevant questions
+    # the script's own text does not settle - append-only, like every
+    # other audit trail in this codebase.
+    production_ambiguities: list[ProductionAmbiguity] = Field(default_factory=list)
     continuity_bible: ContinuityBible | None = None
     continuity_validation: ContinuityValidationResult | None = None
 

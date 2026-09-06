@@ -117,6 +117,7 @@ _CI_STAGES: list[tuple[str, str]] = [
     ("revision", "Revision"),
     ("packaging_hypothesis", "Packaging hypothesis"),
     ("scene_planning", "Scene planning"),
+    ("production_readiness", "Production readiness"),
 ]
 
 # Maps each of the 14 granular CI stages onto the nearest of the 9
@@ -140,6 +141,7 @@ _CI_STAGE_REVIEW_TARGET: dict[str, tuple[ArtifactType, str]] = {
     "revision": (ArtifactType.SCRIPT, "generated_script"),
     "packaging_hypothesis": (ArtifactType.SCRIPT, "packaging_hypothesis"),
     "scene_planning": (ArtifactType.SCRIPT, "scenes"),
+    "production_readiness": (ArtifactType.SCRIPT, "generated_script"),
 }
 
 # Content Studio Redesign, Phase 12: the fixed selection-edit action
@@ -1120,6 +1122,7 @@ class ContentStudioView(QWidget):
             "revision": self._render_revision_panel,
             "packaging_hypothesis": self._render_packaging_hypothesis_panel,
             "scene_planning": self._render_scene_planning_panel,
+            "production_readiness": self._render_production_readiness_panel,
         }
 
         can_run = builders[stage_key](layout, job)
@@ -2767,6 +2770,135 @@ class ContentStudioView(QWidget):
 
         return True
 
+    def _render_production_readiness_panel(
+        self, layout: QVBoxLayout, job: VideoJob
+    ) -> bool:
+        """
+        Content Studio Redesign, Phase 16: "Production Enrichment
+        review screen" - most of this phase's directive-generation
+        deliverables already run identically for any script via the
+        pre-existing continuity bible / scene planning / genre
+        directive machinery; this panel is specifically the
+        ambiguity-registry + readiness-summary piece that's genuinely
+        new. "Run production readiness" (the generic per-stage button
+        below) triggers ambiguity detection.
+        """
+
+        if job.generated_script is None:
+            layout.addWidget(small_muted("Requires a generated script first."))
+
+            return False
+
+        readiness = (
+            self._content_intelligence_pipeline.compute_script_production_readiness(job)
+        )
+
+        layout.addWidget(
+            status_label(
+                "Ready for production" if readiness.is_ready else "Not yet ready",
+                role="success" if readiness.is_ready else "warning",
+            )
+        )
+        layout.addWidget(
+            small_muted(
+                f"Continuity bible: {'yes' if readiness.has_continuity_bible else 'no'} "
+                f"· Scenes: {readiness.scene_count}"
+            )
+        )
+
+        if not job.production_ambiguities:
+            layout.addWidget(
+                small_muted(
+                    "No ambiguities detected yet - run production readiness "
+                    "to check."
+                )
+            )
+
+            return True
+
+        for ambiguity in job.production_ambiguities:
+            critical_tag = (
+                " [continuity-critical]" if ambiguity.continuity_critical else ""
+            )
+
+            if ambiguity.status.value != "unresolved":
+                layout.addWidget(
+                    small_muted(
+                        f"[{ambiguity.status.value}]{critical_tag} "
+                        f"{ambiguity.description} -> {ambiguity.resolution_note}"
+                    )
+                )
+
+                continue
+
+            layout.addWidget(small_muted(f"{critical_tag} {ambiguity.description}"))
+
+            resolve_row = QHBoxLayout()
+            note_input = QLineEdit()
+            note_input.setPlaceholderText("Resolution note...")
+            resolve_row.addWidget(note_input)
+
+            resolve_manually_button = button("Resolve manually", variant="ghost")
+            resolve_manually_button.clicked.connect(
+                lambda _checked=False, aid=ambiguity.id, inp=note_input: (
+                    self._handle_resolve_ambiguity_manually(aid, inp)
+                )
+            )
+            resolve_row.addWidget(resolve_manually_button)
+
+            let_ai_decide_button = button("Let AI decide", variant="ghost")
+            let_ai_decide_button.clicked.connect(
+                lambda _checked=False, aid=ambiguity.id: (
+                    self._handle_resolve_ambiguity_by_ai(aid)
+                )
+            )
+            resolve_row.addWidget(let_ai_decide_button)
+
+            layout.addLayout(resolve_row)
+
+        return True
+
+    def _handle_resolve_ambiguity_manually(
+        self, ambiguity_id: UUID, note_input: QLineEdit
+    ) -> None:
+        note = note_input.text().strip()
+
+        if not note:
+            return
+
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        try:
+            self._content_intelligence_pipeline.run_resolve_ambiguity_manually(
+                job, ambiguity_id=ambiguity_id, note=note
+            )
+        except ValueError as error:
+            self._record_error(job, f"Could not resolve ambiguity: {error}")
+
+            return
+
+        self._on_change()
+
+    def _handle_resolve_ambiguity_by_ai(self, ambiguity_id: UUID) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        try:
+            self._content_intelligence_pipeline.run_resolve_ambiguity_by_ai(
+                job, ambiguity_id=ambiguity_id
+            )
+        except (RuntimeError, ValueError) as error:
+            self._record_error(job, f"Could not resolve ambiguity: {error}")
+
+            return
+
+        self._on_change()
+
     def _handle_select_ci_stage(self, index: int) -> None:
         self._selected_ci_stage_index = index
         job = self._current_job()
@@ -2804,6 +2936,9 @@ class ContentStudioView(QWidget):
                 self._content_intelligence_pipeline.run_packaging_hypothesis
             ),
             "scene_planning": self._content_intelligence_pipeline.run_scene_planning,
+            "production_readiness": (
+                self._content_intelligence_pipeline.run_production_ambiguity_detection
+            ),
         }
 
         try:

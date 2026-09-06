@@ -5,6 +5,78 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-06 - Content Studio Redesign: Phase 16 Imported Script Production Enrichment and Automatic Directive Extraction
+
+**REUSE confirmed by inspection before writing anything new.** This
+phase's deliverable list is exhaustive, but most of it already worked
+for any script regardless of origin: `ContinuityBibleExtractionService`
+already extracts characters/locations/timeline/facts from any
+`GeneratedScript`; `ScenePlannerAgent.plan_from_generated_script()`
+already derives genre-aware scenes/clip boundaries from any script;
+the pre-existing `GenreDirectiveGenerationService`/
+`GenreVoiceDirectiveGenerationService` (already wired into the
+downstream render pipeline) already produce visual/voice/editing
+directives per scene from genre profiles alone - deterministic rule
+lookups, no LLM call, no dependency on how the script was produced.
+None of that needed new code, only confirming it already applied.
+
+**What's genuinely new: the ambiguity registry and readiness report.**
+New `ProductionAmbiguity` (`continuity_critical` flag, `is_blocking`
+property - true only while unresolved *and* continuity-critical, so a
+cosmetic ambiguity never blocks anything) and
+`ScriptProductionReadinessReport` (pure aggregation, no invented
+score). `ProductionAmbiguityService.detect()` is one LLM call reusing
+the continuity bible's own entries as context so it doesn't re-flag
+already-established facts; `resolve_manually()` takes a person's own
+note; `resolve_by_ai()` is a distinct, explicit, separately-logged
+action - "Let AI Decide" is never an automatic default nobody asked
+for.
+
+**A near-miss caught immediately, not shipped.** The first pass at
+the readiness report used the name `ProductionReadinessReport` -
+already taken by a pre-existing, unrelated, much larger model/service
+(whole-project render/export readiness with a full `Blocker` taxonomy,
+from an earlier PDF-1 phase). `Write`-ing the new file overwrote both
+the pre-existing model and its 350-line service. Caught immediately
+via `git status` showing `M` instead of the expected `A` on both
+files before anything was committed; restored losslessly with
+`git restore --source=HEAD --staged --worktree`, verified with that
+service's own pre-existing test suite (still 17/17 passing
+afterward), and the new Phase 16 concept re-implemented under
+non-colliding names (`ScriptProductionReadinessReport`/
+`ScriptProductionReadinessService`, `compute_script_production_readiness()`
+on the pipeline) with zero further changes to the pre-existing files.
+
+**One consistent lock policy, not two.** `ScriptLockService.build_lock()`
+now also refuses to lock over an unresolved continuity-critical
+ambiguity, using the exact same `override_reason` mechanism Phase 13's
+quality-finding check already established - "unresolved blocking
+[X] prevent lock... unless an explicitly designed override policy
+allows it" is now one policy shape, applied twice, not two different
+ones.
+
+**GUI.** A new "Production readiness" stage appended to the end of
+the `_CI_STAGES` rotation (appended, not inserted, so no existing
+hard-coded stage index in any prior test shifted) shows the readiness
+verdict, continuity-bible/scene-count status, and one row per
+ambiguity with "Resolve manually" (note input) and "Let AI decide."
+"Reviewer checks whether directives faithfully represent the script"
+needed no new service - the existing generic "Review" button already
+reaches this stage.
+
+**Tests:** `test_production_ambiguity_model.py` (7),
+`test_script_production_readiness_model.py` (4), `test_production_ambiguity_service.py`
+(12), 8 new pipeline cases, 5 new GUI cases. mypy/ruff/black clean.
+
+**Deliberately not built this pass:** no per-artifact
+`locked_script_id`/hash stamping on Scene/directive models themselves
+(same deferral Phase 14 already documented); no separate source-span/
+confidence model for LLM-detected ambiguities - continuity facts
+already carry `first_mentioned_segment`, and genre-preset directives
+are deterministic lookups with no meaningful "confidence" to model.
+
+---
+
 ## 2026-09-06 - Content Studio Redesign: Phase 15 Alternate Path - Import Approved Script Intake
 
 **The bypass path.** New `ScriptIntakeService.normalize_text_to_script()`

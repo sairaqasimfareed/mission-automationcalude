@@ -9,6 +9,7 @@ from src.models.editorial_profile import EditorialProfile
 from src.models.information_reveal_map import InformationRevealMap
 from src.models.script_intake import ScriptIntakeMode
 from src.models.script_lock import ScriptProvenance
+from src.models.script_production_readiness import ScriptProductionReadinessReport
 from src.models.script_quality_report import ScriptQualityStatus
 from src.models.script_selection_edit import SelectionEditRequest
 from src.models.story_blueprint import StoryBeatType, StoryBlueprint
@@ -38,12 +39,16 @@ from src.services.invalidation_service import InvalidationService
 from src.services.llm.llm_service import LLMService
 from src.services.narrative_compression_service import NarrativeCompressionService
 from src.services.packaging_hypothesis_service import PackagingHypothesisService
+from src.services.production_ambiguity_service import ProductionAmbiguityService
 from src.services.re_hook_planning_service import ReHookPlanningService
 from src.services.research_planning_service import ResearchPlanningService
 from src.services.retention_audit_service import RetentionAuditService
 from src.services.script_generation_service import ScriptGenerationService
 from src.services.script_intake_service import ScriptIntakeService
 from src.services.script_lock_service import ScriptLockService
+from src.services.script_production_readiness_service import (
+    ScriptProductionReadinessService,
+)
 from src.services.script_quality_gate_service import ScriptQualityGateService
 from src.services.script_revision_service import ScriptRevisionService
 from src.services.script_selection_edit_service import ScriptSelectionEditService
@@ -179,6 +184,12 @@ class ContentIntelligencePipeline:
             profile_ids=profile_ids,
             estimated_cost_usd=estimated_cost_usd,
         )
+        self.production_ambiguity_service = ProductionAmbiguityService(
+            llm_service=llm_service,
+            profile_ids=profile_ids,
+            estimated_cost_usd=estimated_cost_usd,
+        )
+        self.script_production_readiness_service = ScriptProductionReadinessService()
         self.continuity_bible_extraction_service = ContinuityBibleExtractionService(
             llm_service=llm_service,
             profile_ids=profile_ids,
@@ -1033,6 +1044,92 @@ class ContentIntelligencePipeline:
         self.invalidation_service.clear_stale(job, "scenes")
 
         return job
+
+    def run_production_ambiguity_detection(self, job: VideoJob) -> VideoJob:
+        """
+        Content Studio Redesign, Phase 16: "Production Semantic
+        analysis" / "Production ambiguity registry." Most of this
+        phase's other deliverables (video/voice/editing directives)
+        already work identically for any script regardless of origin
+        via the pre-existing ContinuityBibleExtractionService,
+        ScenePlannerAgent, and GenreDirectiveGenerationService/
+        GenreVoiceDirectiveGenerationService - this method covers the
+        one genuinely new piece: surfacing what the script's text
+        leaves genuinely unresolved, rather than letting anything
+        downstream silently invent an answer.
+        """
+
+        if job.generated_script is None:
+            raise RuntimeError("Ambiguity detection requires a generated script.")
+
+        new_ambiguities = self.production_ambiguity_service.detect(
+            script=job.generated_script,
+            continuity_bible=job.continuity_bible,
+        )
+        job.production_ambiguities = [
+            *job.production_ambiguities,
+            *new_ambiguities,
+        ]
+
+        return job
+
+    def run_resolve_ambiguity_manually(
+        self,
+        job: VideoJob,
+        *,
+        ambiguity_id: UUID,
+        note: str,
+    ) -> VideoJob:
+        job.production_ambiguities = [
+            (
+                self.production_ambiguity_service.resolve_manually(
+                    ambiguity=ambiguity, note=note
+                )
+                if ambiguity.id == ambiguity_id
+                else ambiguity
+            )
+            for ambiguity in job.production_ambiguities
+        ]
+
+        return job
+
+    def run_resolve_ambiguity_by_ai(
+        self,
+        job: VideoJob,
+        *,
+        ambiguity_id: UUID,
+    ) -> VideoJob:
+        if job.generated_script is None:
+            raise RuntimeError("Resolving an ambiguity requires a generated script.")
+
+        matched = next(
+            (a for a in job.production_ambiguities if a.id == ambiguity_id), None
+        )
+
+        if matched is None:
+            raise ValueError(f"No production ambiguity {ambiguity_id} exists.")
+
+        resolved = self.production_ambiguity_service.resolve_by_ai(
+            ambiguity=matched, script=job.generated_script
+        )
+
+        job.production_ambiguities = [
+            resolved if a.id == ambiguity_id else a for a in job.production_ambiguities
+        ]
+
+        return job
+
+    def compute_script_production_readiness(
+        self, job: VideoJob
+    ) -> ScriptProductionReadinessReport:
+        """
+        Content Studio Redesign, Phase 16. Distinct from the
+        pre-existing, broader ProductionReadinessService (whole-project
+        render/export readiness) - see ScriptProductionReadinessReport's
+        docstring.
+        """
+
+        return self.script_production_readiness_service.evaluate(job)
 
     def run_all(self, job: VideoJob) -> VideoJob:
         """

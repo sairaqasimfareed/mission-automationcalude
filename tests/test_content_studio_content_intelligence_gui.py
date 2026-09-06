@@ -2336,3 +2336,110 @@ def test_upload_script_file_cancelled_is_a_noop(
 
     assert view._script_intake_editor is not None
     assert view._script_intake_editor.toPlainText() == ""
+
+
+def _select_production_readiness_stage(view: ContentStudioView) -> None:
+    index = next(
+        i for i, (key, _label) in enumerate(_CI_STAGES) if key == "production_readiness"
+    )
+    view._handle_select_ci_stage(index)
+
+
+def test_production_readiness_panel_renders_before_any_ambiguities(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_script(view, job)
+    _select_production_readiness_stage(view)
+    view.refresh(job)  # must not raise
+
+
+def test_run_production_readiness_stage_detects_ambiguities(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_script(view, job)
+    _select_production_readiness_stage(view)
+    view.refresh(job)
+
+    view._handle_run_ci_stage("production_readiness")
+
+    assert len(job.production_ambiguities) >= 1
+
+
+def test_resolve_ambiguity_manually_from_the_panel(qapp: QApplication) -> None:
+    from PySide6.QtWidgets import QLineEdit
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_script(view, job)
+    _select_production_readiness_stage(view)
+    view.refresh(job)
+    view._handle_run_ci_stage("production_readiness")
+
+    target_id = job.production_ambiguities[0].id
+    view._handle_resolve_ambiguity_manually(
+        target_id, QLineEdit("Confirmed by the editor.")
+    )
+
+    resolved = next(a for a in job.production_ambiguities if a.id == target_id)
+    assert resolved.status.value == "resolved_manually"
+
+
+def test_resolve_ambiguity_by_ai_from_the_panel(qapp: QApplication) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_script(view, job)
+    _select_production_readiness_stage(view)
+    view.refresh(job)
+    view._handle_run_ci_stage("production_readiness")
+
+    target_id = job.production_ambiguities[0].id
+    view._handle_resolve_ambiguity_by_ai(target_id)
+
+    resolved = next(a for a in job.production_ambiguities if a.id == target_id)
+    assert resolved.status.value == "resolved_by_ai"
+    assert resolved.resolution_note is not None
+
+
+def test_production_readiness_panel_renders_after_resolving_ambiguities(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_script(view, job)
+    _select_production_readiness_stage(view)
+    view.refresh(job)
+    view._handle_run_ci_stage("production_readiness")
+
+    target_id = job.production_ambiguities[0].id
+    view._handle_resolve_ambiguity_by_ai(target_id)
+
+    view.refresh(job)  # must not raise while rendering a resolved ambiguity

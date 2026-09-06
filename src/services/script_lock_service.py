@@ -46,6 +46,19 @@ class ScriptLockService:
                 "override_reason to lock anyway."
             )
 
+        blocking_ambiguities = [
+            ambiguity
+            for ambiguity in job.production_ambiguities
+            if ambiguity.is_blocking
+        ]
+
+        if blocking_ambiguities and not has_override:
+            raise ValueError(
+                "Cannot lock: unresolved continuity-critical production "
+                "ambiguities exist. Resolve them, or provide a non-empty "
+                "override_reason to lock anyway."
+            )
+
         current = job.script_version_history.current_version
         cleaned_override_reason = (
             override_reason.strip() if override_reason is not None else None
