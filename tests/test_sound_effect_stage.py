@@ -323,6 +323,32 @@ def test_execute_attaches_multiple_enabled_cues_per_scene() -> None:
     )
 
 
+def test_execute_warns_on_repetitive_sfx_via_audio_cue_policy() -> None:
+    """
+    Post-Script-Approval Production Plan, Phase 10: "Prevent
+    duplicate/repetitive SFX" - two cues resolving to the same preset
+    at (near-)identical start times should surface a warning, not
+    silently attach both.
+    """
+
+    stage = SoundEffectPipelineStage(
+        generation_service=SoundEffectGenerationService(
+            providers=[FakeSoundEffectProvider()]
+        ),
+    )
+    job = _job_with_timeline(
+        sound_effects=[
+            _cue(resolved_preset_id="sfx.door_creak"),
+            _cue(resolved_preset_id="sfx.door_creak"),
+        ],
+    )
+
+    result = stage.execute(_context(job))
+
+    assert result.metadata["attached_count"] == 2
+    assert any("Audio cue policy" in warning for warning in result.warnings)
+
+
 def test_execute_is_non_fatal_when_one_cue_fails() -> None:
     stage = SoundEffectPipelineStage(
         generation_service=SoundEffectGenerationService(

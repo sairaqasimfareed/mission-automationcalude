@@ -5,6 +5,71 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-06 - Post-Script-Approval Production Plan: Phase 10 Music and SFX Acquisition
+
+**Most of this phase was already built, under different names than the
+PDF's own touch-points name.** None of `audio_acquisition_service.py`,
+`audio_asset_resolver_service.py`, or `audio_workspace_service.py`
+exist in this repository - but `AudioTrack` (an existing model)
+already carries everything this phase asks for per-cue: exact
+placement (`start_time_seconds`/`duration_seconds`), energy/transition
+handling (`volume`/`fade_in_seconds`/`fade_out_seconds`/`loop_enabled`/
+`duck_under_voice`), and provenance (`provider`/`license_type`).
+`MusicGenerationService` and `SoundEffectGenerationService` already
+generate these tracks with real fallback behavior. The PDF's own
+"audio acquisition/resolution services exist" was accurate; its
+"directive integration must be verified/completed" undersold how much
+already worked.
+
+**The one real gap, found by reading the aggregation point directly,
+not assumed from the phase description.** `SoundEffectPipelineStage.execute()`
+loops over every scene's resolved cues, generates each one
+independently, and appends the result to `AudioTimeline.tracks` -
+with zero cross-cue checking. That's exactly this phase's own named
+requirement, "prevent duplicate/repetitive SFX and uncontrolled
+loudness accumulation," and nothing anywhere in this codebase checked
+either one.
+
+**A coarse heuristic, honestly labeled as one.** New
+`AudioCuePolicyService.evaluate()` checks two things across an
+already-built set of `AudioTrack` entries: the same SFX preset (or
+source file) appearing twice within a short time window
+(REPETITIVE_SFX), and any two time-overlapping tracks whose summed
+volume crosses a fixed ceiling (LOUDNESS_ACCUMULATION). This codebase
+has no real LUFS/perceptual-loudness measurement, and building one is
+a materially larger effort than this phase's scope - the service's
+own docstring says so plainly rather than letting the check's name
+imply more rigor than it has. It exists to catch an obviously
+excessive stack of simultaneous cues, not to guarantee broadcast-
+standard loudness compliance.
+
+**Wired live, default-on - a different posture from Phase 8's gate,
+deliberately.** `SoundEffectPipelineStage` gained an
+`AudioCuePolicyService` dependency that defaults to a real, active
+instance rather than `None`. This is safe where Phase 8's ffprobe gate
+wasn't: this check only ever *appends warnings* to the stage's
+existing `StageResult.warnings` - it never blocks generation or
+changes `attached_count` - so there's no existing accept/reject
+behavior for a default-off posture to protect. Conflicts show up the
+exact same way a failed cue generation already does.
+
+**Tests:** `test_audio_cue_policy_model.py` (3),
+`test_audio_cue_policy_service.py` (9: distinct/well-spaced cues
+clean, same-preset-within-window flagged, same-preset-outside-window
+clean, different-presets-close-together clean, overlapping-loud-tracks
+flagged, non-overlapping-loud-tracks clean, constructor validation,
+empty-tracks clean), 1 new case in `test_sound_effect_stage.py`
+proving the wiring actually fires. Broader audio-path regression (35
+cases): all green. mypy/ruff/black clean.
+
+**Deliberately not built this pass:** an Audio Workspace GUI (VO/
+music/SFX lane visualization doesn't exist anywhere in this codebase -
+a materially larger UI build than this phase's own policy-checking
+scope; deferred until a concrete need for the full workspace, not just
+its underlying check, is identified).
+
+---
+
 ## 2026-09-06 - Post-Script-Approval Production Plan: Phase 9 Voice Directive Resolution and ElevenLabs Generation
 
 **The PDF's own "rich blueprint... exists" claim was accurate; "mapping

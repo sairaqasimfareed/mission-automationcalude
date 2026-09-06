@@ -10,6 +10,7 @@ from src.pipeline.base_stage import BasePipelineStage
 from src.pipeline.pipeline_stage import PipelineStageName, PipelineStageStatus
 from src.pipeline.stage_context import StageContext
 from src.pipeline.stage_result import StageResult
+from src.services.audio_cue_policy_service import AudioCuePolicyService
 from src.services.sound_effect_generation_service import (
     SoundEffectGenerationService,
 )
@@ -36,6 +37,7 @@ class SoundEffectPipelineStage(BasePipelineStage):
         *,
         generation_service: SoundEffectGenerationService,
         provider_name: str | None = None,
+        cue_policy_service: AudioCuePolicyService | None = None,
     ) -> None:
         self._generation_service = generation_service
 
@@ -44,6 +46,14 @@ class SoundEffectPipelineStage(BasePipelineStage):
         )
 
         self._provider_name = normalized_provider or None
+        # Post-Script-Approval Production Plan, Phase 10: "Prevent
+        # duplicate/repetitive SFX and uncontrolled loudness
+        # accumulation." Defaults to a real, active instance rather
+        # than None - unlike Phase 8's technical-validation gate, this
+        # check only ever appends warnings, it never blocks or changes
+        # attached_count, so there is no existing behavior for a
+        # default-off posture to protect.
+        self._cue_policy_service = cue_policy_service or AudioCuePolicyService()
 
     @property
     def stage_name(self) -> PipelineStageName:
@@ -106,6 +116,11 @@ class SoundEffectPipelineStage(BasePipelineStage):
                 attached_count += 1
 
         context.job.audio_timeline = audio_timeline
+
+        policy_result = self._cue_policy_service.evaluate(audio_timeline.tracks)
+
+        for conflict in policy_result.conflicts:
+            warnings.append(f"Audio cue policy: {conflict.detail}")
 
         return StageResult(
             stage=self.stage_name,
