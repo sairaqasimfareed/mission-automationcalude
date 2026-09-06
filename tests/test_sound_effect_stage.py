@@ -131,6 +131,12 @@ def _job_with_timeline(
         ),
         scenes=[scene],
         video_clips=[clip],
+        # Required by VideoJob's own validator whenever audio_timeline is
+        # set: "Audio timeline requires a voiceover file." Only exercised
+        # here by the re-run regression tests below, which re-construct a
+        # StageContext (triggering revalidation) after a first execute()
+        # has already populated job.audio_timeline.
+        voice_file="assets/voice.mp3",
     )
 
     if not include_timeline:
@@ -372,3 +378,79 @@ def test_execute_is_non_fatal_when_one_cue_fails() -> None:
     assert result.metadata["attached_count"] == 1
     assert job.audio_timeline is not None
     assert len(job.audio_timeline.tracks) == 1
+
+
+def test_execute_does_not_duplicate_cues_on_a_second_run() -> None:
+    """
+    External audit finding: AdvancedSettings.resume_previous_pipeline=True
+    combined with skip_completed_stages=False (both real, reachable
+    settings) re-executes an already-completed stage. Before this fix,
+    calling execute() twice on the same job unconditionally appended
+    every cue a second time, silently doubling every SFX. A second run
+    over the same, unchanged blueprint must attach nothing new and
+    report every cue as already-attached.
+    """
+
+    stage = SoundEffectPipelineStage(
+        generation_service=SoundEffectGenerationService(
+            providers=[FakeSoundEffectProvider()]
+        ),
+    )
+    job = _job_with_timeline(
+        sound_effects=[
+            _cue(resolved_preset_id="sfx.door_creak"),
+            _cue(resolved_preset_id="sfx.heartbeat_low"),
+        ],
+    )
+
+    first_result = stage.execute(_context(job))
+
+    assert first_result.metadata["attached_count"] == 2
+    assert first_result.metadata["skipped_existing_count"] == 0
+    assert job.audio_timeline is not None
+    assert len(job.audio_timeline.tracks) == 2
+
+    second_result = stage.execute(_context(job))
+
+    assert second_result.metadata["attached_count"] == 0
+    assert second_result.metadata["skipped_existing_count"] == 2
+    assert any(
+        "already attached from a previous run" in warning
+        for warning in second_result.warnings
+    )
+    assert job.audio_timeline is not None
+    assert len(job.audio_timeline.tracks) == 2
+
+
+def test_execute_still_attaches_both_repetitive_cues_within_one_run_after_second_pass() -> (  # noqa: E501
+    None
+):
+    """
+    The dedup fix must not confuse "a sibling cue from this same pass"
+    (which the repetitive-SFX policy test relies on both attaching)
+    with "a cue an earlier pass already created." Running the
+    repetitive-cue scenario twice should still attach both cues on the
+    first run, then skip both (not one) on the second run.
+    """
+
+    stage = SoundEffectPipelineStage(
+        generation_service=SoundEffectGenerationService(
+            providers=[FakeSoundEffectProvider()]
+        ),
+    )
+    job = _job_with_timeline(
+        sound_effects=[
+            _cue(resolved_preset_id="sfx.door_creak"),
+            _cue(resolved_preset_id="sfx.door_creak"),
+        ],
+    )
+
+    first_result = stage.execute(_context(job))
+    assert first_result.metadata["attached_count"] == 2
+
+    second_result = stage.execute(_context(job))
+
+    assert second_result.metadata["attached_count"] == 0
+    assert second_result.metadata["skipped_existing_count"] == 2
+    assert job.audio_timeline is not None
+    assert len(job.audio_timeline.tracks) == 2

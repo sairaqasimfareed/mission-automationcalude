@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import time
+from collections import Counter
 
 from src.models.audio_timeline import AudioTimeline
+from src.models.audio_track import AudioTrackType
 from src.models.editing_directives import DirectiveTimingMode
 from src.models.resolved_editing_blueprint import ResolvedSoundEffectInstruction
 from src.models.video_timeline_item import VideoTimelineItem
@@ -78,6 +80,30 @@ class SoundEffectPipelineStage(BasePipelineStage):
         audio_timeline = context.job.audio_timeline or AudioTimeline()
         warnings: list[str] = []
         attached_count = 0
+        skipped_existing_count = 0
+
+        # Found via external audit: a full pipeline re-run
+        # (resume_previous_pipeline=True + skip_completed_stages=False,
+        # a real, reachable AdvancedSettings combination) re-executes
+        # this stage even when it already completed, and this loop
+        # used to append every cue unconditionally - silently
+        # double-generating and double-attaching every SFX cue on
+        # each re-run. This mirrors VoiceTimelineService's own
+        # duplicate-scene guard: (scene_number, resolved start time)
+        # is exactly what makes two cues "the same cue" here, since
+        # start-time resolution is itself deterministic from the same
+        # editing blueprint. A Counter, not a set, because two
+        # genuinely distinct cues within one planning pass can
+        # legitimately share a key (e.g. the repetitive-cue case
+        # AudioCuePolicyService itself is meant to flag) - a snapshot
+        # taken once, before this run attaches anything, so it only
+        # ever matches tracks a *previous* run already created, never
+        # a sibling cue from this same pass.
+        remaining_existing_counts = Counter(
+            (track.metadata.get("scene_number"), track.start_time_seconds)
+            for track in audio_timeline.tracks
+            if track.track_type == AudioTrackType.SOUND_EFFECT
+        )
 
         for item in sorted(timeline.items, key=lambda value: value.scene_number):
             if item.editing_blueprint is None:
@@ -88,6 +114,13 @@ class SoundEffectPipelineStage(BasePipelineStage):
                     continue
 
                 start_time_seconds = self._resolve_start_time(item=item, cue=cue)
+
+                cue_key = (item.scene_number, start_time_seconds)
+
+                if remaining_existing_counts[cue_key] > 0:
+                    remaining_existing_counts[cue_key] -= 1
+                    skipped_existing_count += 1
+                    continue
 
                 result = self._generation_service.generate(
                     cue,
@@ -115,6 +148,12 @@ class SoundEffectPipelineStage(BasePipelineStage):
                 audio_timeline.tracks.append(result.audio_track)
                 attached_count += 1
 
+        if skipped_existing_count:
+            warnings.append(
+                f"Skipped {skipped_existing_count} sound-effect cue(s) "
+                "already attached from a previous run."
+            )
+
         context.job.audio_timeline = audio_timeline
 
         policy_result = self._cue_policy_service.evaluate(audio_timeline.tracks)
@@ -129,7 +168,10 @@ class SoundEffectPipelineStage(BasePipelineStage):
             progress_percent=100,
             warnings=warnings,
             errors=[],
-            metadata={"attached_count": attached_count},
+            metadata={
+                "attached_count": attached_count,
+                "skipped_existing_count": skipped_existing_count,
+            },
         )
 
     @staticmethod

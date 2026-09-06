@@ -122,6 +122,12 @@ def _job_with_timeline(
         ),
         scenes=scenes,
         video_clips=clips,
+        # Required by VideoJob's own validator whenever audio_timeline is
+        # set: "Audio timeline requires a voiceover file." Only exercised
+        # here by the re-run regression test below, which re-constructs a
+        # StageContext (triggering revalidation) after a first execute()
+        # has already populated job.audio_timeline.
+        voice_file="assets/voice.mp3",
     )
 
     if not include_timeline:
@@ -224,3 +230,36 @@ def test_execute_is_non_fatal_when_generation_fails() -> None:
     assert not result.errors
     assert result.warnings
     assert job.audio_timeline is None
+
+
+def test_execute_skips_regeneration_when_background_music_already_attached() -> None:
+    """
+    External audit finding: AdvancedSettings.resume_previous_pipeline=True
+    combined with skip_completed_stages=False (both real, reachable
+    settings) re-executes an already-completed stage. Before this fix,
+    calling execute() twice on the same job unconditionally regenerated
+    and re-attached background music, double-paying for generation and
+    leaving two overlapping music tracks. A second run over a job that
+    already has a BACKGROUND_MUSIC track must skip regeneration
+    entirely.
+    """
+
+    stage = MusicPipelineStage(
+        generation_service=MusicGenerationService(providers=[FakeMusicProvider()]),
+    )
+    job = _job_with_timeline(scene_count=3, music_enabled=True)
+
+    first_result = stage.execute(_context(job))
+
+    assert first_result.metadata["attached"] is True
+    assert job.audio_timeline is not None
+    assert len(job.audio_timeline.tracks) == 1
+
+    second_result = stage.execute(_context(job))
+
+    assert second_result.status == PipelineStageStatus.COMPLETED
+    assert second_result.metadata["attached"] is False
+    assert second_result.metadata["reason"] == "background_music_already_attached"
+    assert not second_result.warnings
+    assert job.audio_timeline is not None
+    assert len(job.audio_timeline.tracks) == 1

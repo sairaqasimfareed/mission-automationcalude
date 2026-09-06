@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 
 from src.models.audio_timeline import AudioTimeline
+from src.models.audio_track import AudioTrackType
 from src.models.video_timeline_item import VideoTimelineItem
 from src.pipeline.base_stage import BasePipelineStage
 from src.pipeline.pipeline_stage import PipelineStageName, PipelineStageStatus
@@ -60,6 +61,27 @@ class MusicPipelineStage(BasePipelineStage):
                 warning="Music stage requires a built video timeline.",
             )
 
+        audio_timeline = context.job.audio_timeline or AudioTimeline()
+
+        # Found via external audit: a full pipeline re-run
+        # (resume_previous_pipeline=True + skip_completed_stages=False,
+        # a real, reachable AdvancedSettings combination) re-executes
+        # this stage even when it already completed, and this stage
+        # used to regenerate and re-attach background music
+        # unconditionally - double-paying for generation and leaving
+        # two overlapping music tracks. Background music is one
+        # continuous track for the whole video, so "already handled"
+        # is exactly "a BACKGROUND_MUSIC track already exists."
+        if any(
+            track.track_type == AudioTrackType.BACKGROUND_MUSIC
+            for track in audio_timeline.tracks
+        ):
+            return self._skipped_result(
+                started_at=started_at,
+                warning=None,
+                metadata={"reason": "background_music_already_attached"},
+            )
+
         instruction_item = self._first_enabled_music_item(timeline.items)
 
         if instruction_item is None:
@@ -94,7 +116,6 @@ class MusicPipelineStage(BasePipelineStage):
 
         assert result.audio_track is not None
 
-        audio_timeline = context.job.audio_timeline or AudioTimeline()
         audio_timeline.tracks.append(result.audio_track)
         context.job.audio_timeline = audio_timeline
 
