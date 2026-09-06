@@ -531,7 +531,13 @@ def test_render_promotes_staged_output_to_final_path(tmp_path: Path) -> None:
 
 def test_render_cleans_up_staging_file_on_failure(tmp_path: Path) -> None:
     target_output_file = tmp_path / "render.mp4"
-    staging_output_file = tmp_path / "render.mp4.part"
+    # ProductionRenderService computes its own internal staging path
+    # from target_output_file (".part" inserted before the real
+    # extension, so FFmpegCommandBuilderService's container check
+    # still sees ".mp4") and cleans up exactly that path on failure -
+    # independent of whatever execution_result.output_file the mocked
+    # execution service happens to report.
+    staging_output_file = tmp_path / "render.part.mp4"
 
     staging_output_file.write_bytes(b"")
 
@@ -581,7 +587,7 @@ def test_render_cleans_up_staging_file_when_execution_raises(
     tmp_path: Path,
 ) -> None:
     target_output_file = tmp_path / "render.mp4"
-    staging_output_file = tmp_path / "render.mp4.part"
+    staging_output_file = tmp_path / "render.part.mp4"
 
     staging_output_file.write_bytes(b"partial data from a crashed attempt")
 

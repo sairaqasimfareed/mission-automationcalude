@@ -199,7 +199,7 @@ class ProductionRenderService:
 
         target_output_file = self._resolve_output_file(output_file)
 
-        staging_output_file = f"{target_output_file}.part"
+        staging_output_file = self._staging_output_file(target_output_file)
 
         master_plan = self._master_edit_plan_service.build(
             video_timeline=video_timeline,
@@ -431,6 +431,28 @@ class ProductionRenderService:
             value = getattr(resolved_config, attribute_name, None)
 
         return value if isinstance(value, str) else None
+
+    @staticmethod
+    def _staging_output_file(
+        target_output_file: str,
+    ) -> str:
+        """
+        Return the staging path FFmpeg actually writes to for one
+        target output path.
+
+        The ".part" marker goes *before* the real extension
+        ("final_video.mp4" -> "final_video.part.mp4"), not appended
+        after it - FFmpegCommandBuilderService validates that the
+        output filename's extension matches the configured container
+        (e.g. requires ".mp4"), so a naive "final_video.mp4.part"
+        staging path would fail that check before FFmpeg ever runs.
+        """
+
+        target_path = Path(target_output_file)
+
+        return str(
+            target_path.with_name(f"{target_path.stem}.part{target_path.suffix}")
+        )
 
     @staticmethod
     def _promote_staged_output(
