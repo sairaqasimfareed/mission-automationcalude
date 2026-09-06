@@ -720,3 +720,36 @@ def test_generate_seo_stays_under_review_by_default_policy(
 
     assert package is not None
     assert package.status == SEOStatus.UNDER_REVIEW
+
+
+def test_thumbnail_card_does_not_crash_when_file_is_missing(
+    qapp: QApplication,
+    tmp_path: Path,
+) -> None:
+    """
+    Step 2, SEO-9: "corrupt/missing thumbnail" recovery. The card only
+    ever displays the stored file_path as text - it never touches the
+    filesystem to render a preview - so a thumbnail whose file has
+    since been deleted or moved must still refresh cleanly rather than
+    raising or leaving the card half-built.
+    """
+
+    view = _view(export_root=tmp_path / "exports")
+    job = _job_with_approved_script()
+
+    view._job_store.add(job)
+    view.set_job(job.id)
+    view._job_store.set_thumbnail(
+        job.id,
+        _thumbnail_artifact().model_copy(
+            update={
+                "file_path": str(tmp_path / "this_file_does_not_exist.png"),
+            },
+        ),
+    )
+
+    view.refresh(job)
+
+    labels = [label.text() for label in view.findChildren(QLabel)]
+
+    assert any("this_file_does_not_exist.png" in text for text in labels)

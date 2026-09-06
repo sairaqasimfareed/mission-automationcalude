@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from uuid import uuid4
 
@@ -404,3 +405,153 @@ def test_json_store_corrupt_job_file_raises(tmp_path: Path) -> None:
 
     with pytest.raises(JobStoreError):
         fresh_store.get(job.id)
+
+
+def test_json_store_seo_package_round_trips_all_step_2_provenance_fields(
+    tmp_path: Path,
+) -> None:
+    """
+    Step 2 (SEO, Thumbnail & Publishing Reconciliation), SEO-9: prove
+    persistence, not just the model's own serialization - every new
+    field added across SEO-2/SEO-3/SEO-4/SEO-6 survives a real write
+    then a fresh-instance read, matching the existing round-trip
+    tests' own established pattern.
+    """
+
+    store = JsonJobStore(storage_root=tmp_path)
+    job = _job()
+
+    seo_package = SEOPackage(
+        video_job_id=job.id,
+        title_candidates=[TitleCandidate(text="Great Video")],
+        selected_title="Great Video",
+        description="A description.",
+        platform_metadata=SEOPlatformMetadata(platform=Platform.YOUTUBE),
+        prompt_version="seo_prompt_v1.0.0",
+        version_number=3,
+        source_script_lock_hash="abc123",
+        source_script_version_number=2,
+        source_genre_id="genre.documentary",
+        source_target_country="United States",
+        source_language="English",
+        source_scene_count=4,
+    )
+
+    store.set_seo_package(job.id, seo_package)
+
+    fresh_store = JsonJobStore(storage_root=tmp_path)
+    restored = fresh_store.get_seo_package(job.id)
+
+    assert restored == seo_package
+    assert restored is not None
+    assert restored.version_number == 3
+    assert restored.source_script_lock_hash == "abc123"
+    assert restored.source_genre_id == "genre.documentary"
+    assert restored.source_target_country == "United States"
+    assert restored.source_language == "English"
+    assert restored.source_scene_count == 4
+
+
+def test_json_store_loads_a_legacy_seo_package_json_missing_new_fields(
+    tmp_path: Path,
+) -> None:
+    """
+    Step 2, SEO-9: "Migrate conservatively; never invent SEO/genre/
+    audience authority... Historical and interrupted projects recover
+    without hidden regeneration or authority drift." Hand-writes the
+    exact on-disk shape a pre-SEO-2/3/4/6 project would have (no
+    version_number, no source_* fields at all) and proves it still
+    loads - Pydantic's own default-filling, not any migration code
+    this repo would need to maintain - with every new field honestly
+    unset rather than guessed.
+    """
+
+    store = JsonJobStore(storage_root=tmp_path)
+    job = _job()
+
+    legacy_payload = {
+        "id": str(uuid4()),
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z",
+        "video_job_id": str(job.id),
+        "title_candidates": [{"text": "A Legacy Title"}],
+        "selected_title": "A Legacy Title",
+        "description": "A legacy description.",
+        "hook_summary": "",
+        "keywords": {
+            "primary_keywords": [],
+            "secondary_keywords": [],
+            "long_tail_keywords": [],
+        },
+        "tags": [],
+        "hashtags": [],
+        "platform_metadata": {
+            "platform": "youtube",
+            "category": None,
+            "language": "English",
+            "language_code": "en",
+            "extra": {},
+        },
+        "prompt_version": "seo_prompt_v1.0.0",
+        "status": "approved",
+        "metadata": {},
+    }
+
+    artifact_path = tmp_path / f"{job.id}.seo_package.json"
+    artifact_path.write_text(json.dumps(legacy_payload), encoding="utf-8")
+
+    restored = store.get_seo_package(job.id)
+
+    assert restored is not None
+    assert restored.selected_title == "A Legacy Title"
+    # Migration never invents authority it wasn't given - every
+    # Step 2 field defaults to unset/1, not guessed from context.
+    assert restored.version_number == 1
+    assert restored.source_script_lock_hash is None
+    assert restored.source_genre_id is None
+    assert restored.source_target_country is None
+    assert restored.source_language is None
+    assert restored.source_scene_count is None
+    # A legacy project's existing approval state is not disturbed by
+    # migration - "stale approvals/reviews cannot become current by
+    # migration" holds trivially here since nothing rewrites it.
+    assert restored.status.value == "approved"
+
+
+def test_json_store_thumbnail_round_trips_all_step_2_provenance_fields(
+    tmp_path: Path,
+) -> None:
+    store = JsonJobStore(storage_root=tmp_path)
+    job = _job()
+
+    thumbnail = ThumbnailArtifact(
+        video_job_id=job.id,
+        concept=ThumbnailConcept(
+            concept_summary="A summary.",
+            hook_text="HOOK",
+            visual_prompt="A prompt.",
+        ),
+        layout=ThumbnailLayout(width=1280, height=720),
+        image_source_type=ThumbnailImageSourceType.AI_GENERATED,
+        provider_name="dry_run",
+        file_path="dry-run://thumbnail/1280x720.png",
+        file_size_bytes=0,
+        version_number=2,
+        source_script_lock_hash="abc123",
+        source_script_version_number=1,
+        source_genre_id="genre.documentary",
+        source_target_country="United States",
+        source_language="English",
+        source_scene_count=3,
+    )
+
+    store.set_thumbnail(job.id, thumbnail)
+
+    fresh_store = JsonJobStore(storage_root=tmp_path)
+    restored = fresh_store.get_thumbnail(job.id)
+
+    assert restored == thumbnail
+    assert restored is not None
+    assert restored.version_number == 2
+    assert restored.source_genre_id == "genre.documentary"
+    assert restored.source_scene_count == 3

@@ -9,6 +9,11 @@ from src.models.scene import Scene
 from src.models.script import Script, ScriptStatus
 from src.models.script_lock import ScriptLock, ScriptProvenance
 from src.models.video_job import VideoJob
+from src.models.visual_continuity import (
+    CanonicalEntityIdentity,
+    CanonicalEntityType,
+    VisualContinuityBible,
+)
 from src.services.genre_profile_registry_service import (
     GenreProfileRegistryService,
 )
@@ -238,3 +243,45 @@ def test_build_resolves_genre_seo_and_thumbnail_profiles() -> None:
     # consulted rather than always falling back to a neutral default.
     assert context.genre_seo_profile != default_context.genre_seo_profile
     assert context.genre_thumbnail_profile != default_context.genre_thumbnail_profile
+
+
+def test_build_defaults_canonical_visual_identities_to_empty() -> None:
+    job = _job_with_approved_script()
+
+    context = SEOContextBuilder().build(
+        job,
+        genre_id="genre.documentary",
+        target_audience="Ocean enthusiasts",
+    )
+
+    assert context.canonical_visual_identities == []
+
+
+def test_build_carries_canonical_visual_identities_when_present() -> None:
+    job = _job_with_approved_script()
+    job.visual_continuity_bible = VisualContinuityBible(
+        script_lock_hash="deadbeef" * 4,
+        identities=[
+            CanonicalEntityIdentity(
+                entity_type=CanonicalEntityType.PERSON,
+                name="Captain Briggs",
+                canonical_description="Captain of the Mary Celeste.",
+            ),
+            CanonicalEntityIdentity(
+                entity_type=CanonicalEntityType.LOCATION,
+                name="The Mary Celeste",
+                canonical_description="A weathered brigantine ship.",
+            ),
+        ],
+    )
+
+    context = SEOContextBuilder().build(
+        job,
+        genre_id="genre.documentary",
+        target_audience="Ocean enthusiasts",
+    )
+
+    assert context.canonical_visual_identities == [
+        "Captain Briggs: Captain of the Mary Celeste.",
+        "The Mary Celeste: A weathered brigantine ship.",
+    ]

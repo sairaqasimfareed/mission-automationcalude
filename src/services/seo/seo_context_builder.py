@@ -67,6 +67,16 @@ class SEOContext:
         default_factory=GenreThumbnailProfile
     )
 
+    # Step 2, SEO-6: "Consume canonical subjects/visual identities...
+    # Do not mutate continuity/shot/prompt/render authority." Plain
+    # description strings rather than the full CanonicalEntityIdentity
+    # model - this context stays a read-only projection for prompt
+    # text, never a second place that could drift from
+    # VisualContinuityBible's own authoritative record. Empty when the
+    # job has no continuity bible yet (thumbnail generation does not
+    # require one).
+    canonical_visual_identities: list[str] = field(default_factory=list)
+
 
 class SEOContextBuilder:
     """
@@ -178,4 +188,15 @@ class SEOContextBuilder:
             ),
             genre_seo_profile=genre_seo_profile,
             genre_thumbnail_profile=genre_thumbnail_profile,
+            canonical_visual_identities=self._canonical_visual_identities(job),
         )
+
+    @staticmethod
+    def _canonical_visual_identities(job: VideoJob) -> list[str]:
+        if job.visual_continuity_bible is None:
+            return []
+
+        return [
+            f"{identity.name}: {identity.canonical_description}"
+            for identity in job.visual_continuity_bible.identities
+        ]

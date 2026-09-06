@@ -142,6 +142,14 @@ class ThumbnailConceptGenerationService:
             else "does not need to feature a human face"
         )
 
+        identity_line = (
+            "Known visual identities (depict consistently, do not "
+            "invent an alternate appearance): "
+            f"{'; '.join(context.canonical_visual_identities)}\n"
+            if context.canonical_visual_identities
+            else ""
+        )
+
         return (
             f"Propose {concept_count} distinct thumbnail concepts for "
             "the following video.\n\n"
@@ -152,6 +160,7 @@ class ThumbnailConceptGenerationService:
             f"Color mood: {thumbnail_profile.color_mood}\n"
             f"Text style: {thumbnail_profile.text_style}\n"
             f"The visual concept {face_guidance}.\n"
+            f"{identity_line}"
             f"{title_line}"
             f"Script title: {context.script_title}\n\n"
             f"Script content:\n{context.script_content}\n\n"

@@ -240,6 +240,35 @@ def test_dry_run_response_is_itself_parseable() -> None:
     assert all(concept.hook_text for concept in concepts)
 
 
+def test_generate_includes_canonical_visual_identities_in_prompt() -> None:
+    stub = _StubLLMService(content=_TWO_CONCEPT_BLOCK)
+
+    service = ThumbnailConceptGenerationService(llm_service=stub)  # type: ignore[arg-type]
+
+    context = _context(
+        canonical_visual_identities=[
+            "Captain Briggs: Captain of the Mary Celeste.",
+        ],
+    )
+
+    service.generate(context, concept_count=1)
+
+    assert stub.last_request is not None
+    assert "Captain Briggs: Captain of the Mary Celeste." in stub.last_request.prompt
+    assert "do not invent an alternate appearance" in stub.last_request.prompt
+
+
+def test_generate_omits_identity_guidance_when_none_are_known() -> None:
+    stub = _StubLLMService(content=_TWO_CONCEPT_BLOCK)
+
+    service = ThumbnailConceptGenerationService(llm_service=stub)  # type: ignore[arg-type]
+
+    service.generate(_context(), concept_count=1)
+
+    assert stub.last_request is not None
+    assert "Known visual identities" not in stub.last_request.prompt
+
+
 def test_constructor_rejects_negative_estimated_cost() -> None:
     stub = _StubLLMService(content=_TWO_CONCEPT_BLOCK)
 
