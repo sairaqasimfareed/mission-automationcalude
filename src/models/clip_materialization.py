@@ -44,9 +44,40 @@ class ClipMaterializationStatus(MissionBaseModel):
     target_duration_seconds: float = Field(ge=0.0)
     total_estimated_cost: float = Field(ge=0.0)
 
+    # Post-Script-Approval Production Plan, Phase 6: "Estimate
+    # generation cost before batch execution and enforce hard budget
+    # thresholds." <= 0.0 means no cap was ever configured for this
+    # project (VideoJob.maximum_visual_budget's own default) - not a
+    # zero-tolerance budget, matching how every other optional numeric
+    # limit in this codebase treats its zero/unset default.
+    maximum_visual_budget: float = Field(default=0.0, ge=0.0)
+
     @property
     def duration_delta_seconds(self) -> float:
         return self.planned_duration_seconds - self.target_duration_seconds
+
+    @property
+    def has_budget_cap(self) -> bool:
+        return self.maximum_visual_budget > 0.0
+
+    @property
+    def remaining_budget(self) -> float | None:
+        if not self.has_budget_cap:
+            return None
+
+        return self.maximum_visual_budget - self.total_estimated_cost
+
+    @property
+    def is_over_budget(self) -> bool:
+        """
+        "Batch generation cannot exceed hard budget without explicit
+        action" - checked mechanically against the already-summed
+        Scene.estimated_cost total, not a separate re-estimate.
+        """
+
+        remaining = self.remaining_budget
+
+        return remaining is not None and remaining < 0.0
 
     @property
     def is_fully_traced(self) -> bool:

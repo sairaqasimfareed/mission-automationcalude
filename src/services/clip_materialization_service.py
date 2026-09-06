@@ -27,6 +27,7 @@ class ClipMaterializationService:
         script_lock: ScriptLock | None,
         cinematic_prompt_package: CinematicPromptPackage | None,
         target_duration_seconds: float,
+        maximum_visual_budget: float = 0.0,
     ) -> ClipMaterializationStatus:
         ready_clips = sum(
             1 for scene in scenes if scene.source_status == SceneSourceStatus.READY
@@ -71,4 +72,5 @@ class ClipMaterializationService:
             ),
             target_duration_seconds=target_duration_seconds,
             total_estimated_cost=sum(scene.estimated_cost for scene in scenes),
+            maximum_visual_budget=maximum_visual_budget,
         )

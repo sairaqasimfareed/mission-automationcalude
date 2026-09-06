@@ -5,6 +5,55 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-06 - Post-Script-Approval Production Plan: Phase 6 Fulfillment Routing and Budget Gate
+
+**The leanest phase yet, and appropriately so - REUSE covered almost
+all of it.** `Scene.source_type` (manual upload/stock footage/local
+library/image-to-video, plus a reserved AI_GENERATE the codebase
+already keeps disabled in the real workflow) already is the per-clip
+route, set once during scene planning and persisted for restart/
+resume. `Scene.fallback_sources` already covers systemic fallback
+policy. Two of this phase's three named exit criteria - "every clip
+has a route before acquisition," "completed clips are never
+regenerated on resume" - already held, confirmed by reading the code,
+not assumed from the source plan's own framing. AI_GENERATE staying
+reserved/disabled happens to align exactly with this whole
+implementation's own Google Flow exclusion, for free.
+
+**The one real gap, found by grepping every reference to a field that
+already existed.** `VideoJob.maximum_visual_budget` has existed since
+before this whole initiative, mapped in from project specification -
+but nothing anywhere in the codebase ever checked a project's actual
+scene costs against it. Not a missing model, a missing enforcement
+point.
+
+**A visibility gate, honestly described as exactly that, not
+oversold as a hard stop.** `ClipMaterializationStatus` gained
+`maximum_visual_budget`/`has_budget_cap`/`remaining_budget`/
+`is_over_budget` (`<= 0.0` means no cap was ever configured, matching
+this codebase's existing convention for optional numeric limits
+elsewhere). This is shown and warned about, but there is no single
+"Generate All" execution call site in this codebase for stock/manual
+routes to hook a blocking exception into the way the existing,
+separate `ProviderBudgetService` enforces hard stops for LLM-provider
+spend - a materially different kind of spend with a materially
+different execution shape. Documented as a real, current limitation
+rather than quietly narrowing the phase's own claim to match what got
+built.
+
+**Tests:** 4 new cases in `test_clip_materialization_model.py` (zero-
+budget-means-uncapped, within-budget, over-budget, exactly-at-budget
+boundary), 2 new cases in `test_clip_materialization_service.py`, 1
+new GUI case. Full combined regression green. mypy/ruff/black clean.
+
+**Deliberately not built this pass:** a hard block on a batch
+execution step (none exists yet for stock/manual routes to gate);
+separate "spent" and "retry" cost tracking distinct from estimated
+cost - this codebase has no per-attempt visual-asset spend ledger to
+draw those numbers from.
+
+---
+
 ## 2026-09-06 - Post-Script-Approval Production Plan: Phase 5 Clip Workspace Canonical Materialization
 
 **The REUSE finding that reframed the whole phase.** Before writing

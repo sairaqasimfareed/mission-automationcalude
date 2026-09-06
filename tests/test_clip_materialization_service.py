@@ -151,3 +151,31 @@ def test_compute_sums_duration_and_cost() -> None:
     assert status.planned_duration_seconds == 18.0
     assert status.total_estimated_cost == 3.5
     assert status.duration_delta_seconds == -2.0
+
+
+def test_compute_passes_through_the_configured_budget() -> None:
+    scenes = [_scene(1, estimated_cost=50.0)]
+
+    status = ClipMaterializationService.compute(
+        scenes=scenes,
+        script_lock=_lock(),
+        cinematic_prompt_package=None,
+        target_duration_seconds=8.0,
+        maximum_visual_budget=100.0,
+    )
+
+    assert status.maximum_visual_budget == 100.0
+    assert status.remaining_budget == 50.0
+
+
+def test_compute_defaults_to_no_budget_cap() -> None:
+    scenes = [_scene(1)]
+
+    status = ClipMaterializationService.compute(
+        scenes=scenes,
+        script_lock=_lock(),
+        cinematic_prompt_package=None,
+        target_duration_seconds=8.0,
+    )
+
+    assert status.has_budget_cap is False

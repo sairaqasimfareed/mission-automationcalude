@@ -1353,11 +1353,11 @@ class ContentIntelligencePipeline:
         self, job: VideoJob
     ) -> ClipMaterializationStatus:
         """
-        Post-Script-Approval Production Plan, Phase 5: "Top summary
+        Post-Script-Approval Production Plan, Phases 5-6: "Top summary
         includes total/ready/missing, route counts, duration
-        integrity and estimated generation budget." Pure read of
-        already-persisted state, same convention as every other
-        compute_*() method.
+        integrity and estimated generation budget" / "Show estimated
+        cost... and remaining budget." Pure read of already-persisted
+        state, same convention as every other compute_*() method.
 
         REUSE note: this codebase's Scene already IS the Clip
         Workspace's per-clip slot (routing/readiness fields, asset
@@ -1365,7 +1365,9 @@ class ContentIntelligencePipeline:
         "workspace is a projection, not a parallel planner" already
         hold by construction via run_scene_planning(). This status is
         the one genuinely missing summary over that existing
-        workspace.
+        workspace, plus (Phase 6) the budget-cap check
+        VideoJob.maximum_visual_budget never had an enforcement point
+        for before this.
         """
 
         return self.clip_materialization_service.compute(
@@ -1373,6 +1375,7 @@ class ContentIntelligencePipeline:
             script_lock=job.script_lock,
             cinematic_prompt_package=job.cinematic_prompt_package,
             target_duration_seconds=float(job.target_duration_seconds),
+            maximum_visual_budget=job.maximum_visual_budget,
         )
 
     def run_packaging_hypothesis(self, job: VideoJob) -> VideoJob:

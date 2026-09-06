@@ -1646,9 +1646,23 @@ class ContentStudioView(QWidget):
                 f"({delta_text})."
             )
         )
-        layout.addWidget(
-            small_muted(f"Estimated cost: ${status.total_estimated_cost:.2f}.")
-        )
+        if status.has_budget_cap:
+            budget_text = (
+                f"Estimated cost: ${status.total_estimated_cost:.2f} of "
+                f"${status.maximum_visual_budget:.2f} budget "
+                f"(${status.remaining_budget:.2f} remaining)."
+            )
+            if status.is_over_budget:
+                layout.addWidget(status_label(budget_text, role="warning"))
+            else:
+                layout.addWidget(small_muted(budget_text))
+        else:
+            layout.addWidget(
+                small_muted(
+                    f"Estimated cost: ${status.total_estimated_cost:.2f} "
+                    "(no budget cap configured)."
+                )
+            )
 
     def _build_ci_stage_panel(
         self,

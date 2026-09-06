@@ -3007,3 +3007,27 @@ def test_clip_materialization_section_absent_without_scenes(
     view = _view(job_store)
     view.set_job(job.id)
     view.refresh(job)  # must not raise; no scenes yet
+
+
+# --- Post-Script-Approval Production Plan, Phase 6: Fulfillment Budget Gate ---
+
+
+def test_clip_materialization_shows_budget_when_configured(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job.approval_policy = ApprovalPolicyConfig.full_auto()
+    job.maximum_visual_budget = 100.0
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    view._handle_run_automation()
+    view.refresh(job)  # must not raise while the budget banner renders
+
+    status = view._content_intelligence_pipeline.compute_clip_materialization_status(
+        job
+    )
+    assert status.has_budget_cap is True
