@@ -108,6 +108,15 @@ class ThumbnailArtifact(MissionBaseModel):
 
     status: ThumbnailArtifactStatus = ThumbnailArtifactStatus.DRAFT
 
+    # Step 2 (SEO, Thumbnail & Publishing Reconciliation), SEO-6:
+    # "Persist candidate/selection versions... and stale reasons."
+    # Mirrors SEOPackage's own three provenance fields exactly - see
+    # that model's docstring for the staleness-comparison pattern this
+    # binds to.
+    version_number: int = Field(default=1, ge=1)
+    source_script_lock_hash: str | None = None
+    source_script_version_number: int | None = Field(default=None, ge=1)
+
     warnings: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 

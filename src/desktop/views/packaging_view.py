@@ -25,6 +25,8 @@ from src.desktop.widgets import (
     subheading,
 )
 from src.models.final_export import FinalExportPackage
+from src.models.seo import SEOPackage
+from src.models.thumbnail import ThumbnailArtifact
 from src.models.video_job import VideoJob
 from src.services.final_export.final_export_service import FinalExportService
 from src.services.seo.seo_context_builder import SEOContextBuilder
@@ -103,12 +105,38 @@ class PackagingView(QWidget):
 
         seo_package = self._job_store.get_seo_package(self._job_id)
 
+        script_approved = job.script is not None and job.script.status.value == (
+            "approved"
+        )
+
         if seo_package is not None:
             layout.addWidget(subheading(seo_package.selected_title or ""))
             layout.addWidget(muted(seo_package.description))
             layout.addWidget(small_muted(f"Tags: {', '.join(seo_package.tags)}"))
             layout.addWidget(small_muted(f"Hashtags: {' '.join(seo_package.hashtags)}"))
-        elif job.script is not None and job.script.status.value == "approved":
+            layout.addWidget(
+                small_muted(f"Version {seo_package.version_number}"),
+            )
+
+            self._build_script_lock_staleness_banner(
+                layout,
+                job=job,
+                source_script_lock_hash=seo_package.source_script_lock_hash,
+            )
+
+            if script_approved:
+                audience_input = QLineEdit("General audience")
+                layout.addWidget(audience_input)
+
+                regenerate_button = button("Regenerate SEO package", icon_name="tag")
+                regenerate_button.clicked.connect(
+                    lambda: self._handle_generate_seo(
+                        audience_input.text(),
+                        previous_package=seo_package,
+                    ),
+                )
+                layout.addWidget(regenerate_button, alignment=_LEFT)
+        elif script_approved:
             layout.addWidget(small_muted("Not generated yet."))
 
             audience_input = QLineEdit("General audience")
@@ -133,13 +161,39 @@ class PackagingView(QWidget):
 
         thumbnail = self._job_store.get_thumbnail(self._job_id)
 
+        script_approved = job.script is not None and job.script.status.value == (
+            "approved"
+        )
+
         if thumbnail is not None:
             layout.addWidget(subheading(thumbnail.concept.hook_text))
             layout.addWidget(
                 small_muted(f"Source: {thumbnail.image_source_type.value}")
             )
             layout.addWidget(small_muted(f"File: {thumbnail.file_path}"))
-        elif job.script is not None and job.script.status.value == "approved":
+            layout.addWidget(
+                small_muted(f"Version {thumbnail.version_number}"),
+            )
+
+            self._build_script_lock_staleness_banner(
+                layout,
+                job=job,
+                source_script_lock_hash=thumbnail.source_script_lock_hash,
+            )
+
+            if script_approved:
+                audience_input = QLineEdit("General audience")
+                layout.addWidget(audience_input)
+
+                regenerate_button = button("Regenerate thumbnail", icon_name="image")
+                regenerate_button.clicked.connect(
+                    lambda: self._handle_generate_thumbnail(
+                        audience_input.text(),
+                        previous_artifact=thumbnail,
+                    ),
+                )
+                layout.addWidget(regenerate_button, alignment=_LEFT)
+        elif script_approved:
             layout.addWidget(small_muted("Not generated yet."))
 
             audience_input = QLineEdit("General audience")
@@ -156,6 +210,48 @@ class PackagingView(QWidget):
             layout.addWidget(small_muted("Requires an approved script."))
 
         self._layout.addWidget(frame)
+
+    @staticmethod
+    def _build_script_lock_staleness_banner(
+        layout: QVBoxLayout,
+        *,
+        job: VideoJob,
+        source_script_lock_hash: str | None,
+    ) -> None:
+        """
+        Step 2 (SEO, Thumbnail & Publishing Reconciliation), SEO-4:
+        precise, dependency-aware staleness rather than a global flag -
+        mirrors the same script_lock_hash-comparison pattern already
+        used for ProductionSemanticBrief/VisualContinuityBible.
+
+        Silent when the job has no lock yet (nothing to compare
+        against) or the hashes genuinely match.
+        """
+
+        if job.script_lock is None:
+            return
+
+        current_hash = job.script_lock.script_content_hash
+
+        if source_script_lock_hash is None:
+            layout.addWidget(
+                status_label(
+                    "Built before the script was locked - "
+                    "regenerate to bind it to the current script.",
+                    role="warning",
+                )
+            )
+
+            return
+
+        if source_script_lock_hash != current_hash:
+            layout.addWidget(
+                status_label(
+                    "Stale: the script has changed since this was "
+                    "built. Regenerate to match the current script.",
+                    role="warning",
+                )
+            )
 
     def _build_final_export_card(self, job: VideoJob) -> None:
         frame, layout = card("Final export", icon_name="export")
@@ -276,7 +372,12 @@ class PackagingView(QWidget):
         if clipboard is not None:
             clipboard.setText(final_export.manifest_path)
 
-    def _handle_generate_seo(self, target_audience: str) -> None:
+    def _handle_generate_seo(
+        self,
+        target_audience: str,
+        *,
+        previous_package: SEOPackage | None = None,
+    ) -> None:
         job = self._current_job()
 
         if job is None:
@@ -287,12 +388,16 @@ class PackagingView(QWidget):
                 job,
                 genre_id=job.genre_id,
                 target_audience=target_audience,
+                previous_package=previous_package,
             )
         except (RuntimeError, ValueError) as error:
             self._record_error(
                 job,
                 f"SEO generation failed: {error}",
-                on_retry=lambda: self._handle_generate_seo(target_audience),
+                on_retry=lambda: self._handle_generate_seo(
+                    target_audience,
+                    previous_package=previous_package,
+                ),
             )
 
             return
@@ -301,7 +406,12 @@ class PackagingView(QWidget):
         self._job_store.set_seo_package(self._job_id, result.package)
         self._on_change()
 
-    def _handle_generate_thumbnail(self, target_audience: str) -> None:
+    def _handle_generate_thumbnail(
+        self,
+        target_audience: str,
+        *,
+        previous_artifact: ThumbnailArtifact | None = None,
+    ) -> None:
         job = self._current_job()
 
         if job is None:
@@ -317,12 +427,16 @@ class PackagingView(QWidget):
             result = self._thumbnail_package_service.build(
                 context,
                 project_id=job.project_name,
+                previous_artifact=previous_artifact,
             )
         except (RuntimeError, ValueError) as error:
             self._record_error(
                 job,
                 f"Thumbnail generation failed: {error}",
-                on_retry=lambda: self._handle_generate_thumbnail(target_audience),
+                on_retry=lambda: self._handle_generate_thumbnail(
+                    target_audience,
+                    previous_artifact=previous_artifact,
+                ),
             )
 
             return

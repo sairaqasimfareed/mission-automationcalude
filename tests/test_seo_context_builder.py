@@ -6,6 +6,7 @@ from src.models.enums import Platform
 from src.models.research import ResearchResult, ResearchStatus
 from src.models.scene import Scene
 from src.models.script import Script, ScriptStatus
+from src.models.script_lock import ScriptLock, ScriptProvenance
 from src.models.video_job import VideoJob
 from src.services.seo.seo_context_builder import (
     SEOContext,
@@ -91,6 +92,26 @@ def test_build_returns_seo_context_with_expected_fields() -> None:
     assert context.key_facts == ["Fact one.", "Fact two."]
     assert context.scene_count == 3
     assert context.estimated_duration_seconds == 600
+    assert context.script_lock_hash is None
+    assert context.script_lock_version_number is None
+
+
+def test_build_carries_script_lock_identity_when_locked() -> None:
+    job = _job_with_approved_script(scene_count=1)
+    job.script_lock = ScriptLock(
+        script_version_number=2,
+        script_content_hash="deadbeef" * 4,
+        provenance=ScriptProvenance.INTERNAL,
+    )
+
+    context = SEOContextBuilder().build(
+        job,
+        genre_id="genre.documentary",
+        target_audience="Ocean enthusiasts",
+    )
+
+    assert context.script_lock_hash == "deadbeef" * 4
+    assert context.script_lock_version_number == 2
 
 
 def test_build_raises_without_script() -> None:

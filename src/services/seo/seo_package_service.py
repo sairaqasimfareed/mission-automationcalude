@@ -102,8 +102,17 @@ class SEOPackageService:
         title_candidate_count: int = 5,
         max_tags: int = 15,
         max_hashtags: int = 8,
+        previous_package: SEOPackage | None = None,
     ) -> SEOPackageBuildResult:
-        """Build one complete, validated SEOPackage for a VideoJob."""
+        """
+        Build one complete, validated SEOPackage for a VideoJob.
+
+        previous_package is optional (Step 2, SEO-3) - a caller that
+        passes the package this one replaces gets a package numbered
+        one higher, so a regenerated package is traceable as "version
+        N" rather than a silent, unversioned overwrite; omitting it
+        reproduces this method's exact prior behavior (version 1).
+        """
 
         context = self.context_builder.build(
             job,
@@ -159,6 +168,11 @@ class SEOPackageService:
             platform_metadata=platform_metadata,
             prompt_version=_SEO_PACKAGE_PROMPT_VERSION,
             status=SEOStatus.UNDER_REVIEW,
+            version_number=(
+                previous_package.version_number + 1 if previous_package else 1
+            ),
+            source_script_lock_hash=context.script_lock_hash,
+            source_script_version_number=context.script_lock_version_number,
         )
 
         constraints = self.platform_metadata_service.constraints_for(

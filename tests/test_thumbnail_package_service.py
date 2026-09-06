@@ -36,7 +36,11 @@ _TWO_CONCEPT_BLOCK = (
 )
 
 
-def _context() -> SEOContext:
+def _context(
+    *,
+    script_lock_hash: str | None = None,
+    script_lock_version_number: int | None = None,
+) -> SEOContext:
     return SEOContext(
         video_job_id=uuid4(),
         topic="Deep sea creatures",
@@ -53,6 +57,8 @@ def _context() -> SEOContext:
         key_facts=["Fact one."],
         scene_count=1,
         estimated_duration_seconds=600,
+        script_lock_hash=script_lock_hash,
+        script_lock_version_number=script_lock_version_number,
     )
 
 
@@ -164,3 +170,68 @@ def test_build_propagates_concept_generation_failure(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="Thumbnail concept generation failed"):
         service.build(_context(), project_id="deep-sea-doc")
+
+
+def test_build_defaults_to_version_one_with_no_script_lock(tmp_path: Path) -> None:
+    service = ThumbnailPackageService(
+        concept_generation_service=ThumbnailConceptGenerationService(
+            llm_service=_StubLLMService(  # type: ignore[arg-type]
+                content=_TWO_CONCEPT_BLOCK,
+            ),
+        ),
+        image_provider=DryRunThumbnailImageProvider(),
+        storage_root=tmp_path / "storage",
+    )
+
+    result = service.build(_context(), project_id="deep-sea-doc")
+
+    assert result.artifact.version_number == 1
+    assert result.artifact.source_script_lock_hash is None
+    assert result.artifact.source_script_version_number is None
+
+
+def test_build_increments_version_when_given_a_previous_artifact(
+    tmp_path: Path,
+) -> None:
+    service = ThumbnailPackageService(
+        concept_generation_service=ThumbnailConceptGenerationService(
+            llm_service=_StubLLMService(  # type: ignore[arg-type]
+                content=_TWO_CONCEPT_BLOCK,
+            ),
+        ),
+        image_provider=DryRunThumbnailImageProvider(),
+        storage_root=tmp_path / "storage",
+    )
+
+    first = service.build(_context(), project_id="deep-sea-doc").artifact
+    second = service.build(
+        _context(),
+        project_id="deep-sea-doc",
+        previous_artifact=first,
+    ).artifact
+
+    assert first.version_number == 1
+    assert second.version_number == 2
+
+
+def test_build_carries_script_lock_identity_when_locked(tmp_path: Path) -> None:
+    service = ThumbnailPackageService(
+        concept_generation_service=ThumbnailConceptGenerationService(
+            llm_service=_StubLLMService(  # type: ignore[arg-type]
+                content=_TWO_CONCEPT_BLOCK,
+            ),
+        ),
+        image_provider=DryRunThumbnailImageProvider(),
+        storage_root=tmp_path / "storage",
+    )
+
+    result = service.build(
+        _context(
+            script_lock_hash="deadbeef" * 4,
+            script_lock_version_number=3,
+        ),
+        project_id="deep-sea-doc",
+    )
+
+    assert result.artifact.source_script_lock_hash == "deadbeef" * 4
+    assert result.artifact.source_script_version_number == 3

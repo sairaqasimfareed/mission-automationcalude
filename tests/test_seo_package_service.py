@@ -5,6 +5,7 @@ import pytest
 from src.models.enums import Platform
 from src.models.research import ResearchResult, ResearchStatus
 from src.models.script import Script, ScriptStatus
+from src.models.script_lock import ScriptLock, ScriptProvenance
 from src.models.seo_validation import SEOValidationCode
 from src.models.video_job import VideoJob
 from src.services.llm.llm_service import LLMServiceResult
@@ -224,3 +225,53 @@ def test_build_propagates_description_generation_failure() -> None:
             genre_id="genre.documentary",
             target_audience="Ocean enthusiasts",
         )
+
+
+def test_build_defaults_to_version_one_with_no_script_lock() -> None:
+    result = _service().build(
+        _approved_job(),
+        genre_id="genre.documentary",
+        target_audience="Ocean enthusiasts",
+    )
+
+    assert result.package.version_number == 1
+    assert result.package.source_script_lock_hash is None
+    assert result.package.source_script_version_number is None
+
+
+def test_build_increments_version_when_given_a_previous_package() -> None:
+    service = _service()
+
+    first = service.build(
+        _approved_job(),
+        genre_id="genre.documentary",
+        target_audience="Ocean enthusiasts",
+    ).package
+
+    second = service.build(
+        _approved_job(),
+        genre_id="genre.documentary",
+        target_audience="Ocean enthusiasts",
+        previous_package=first,
+    ).package
+
+    assert first.version_number == 1
+    assert second.version_number == 2
+
+
+def test_build_carries_script_lock_identity_when_locked() -> None:
+    job = _approved_job()
+    job.script_lock = ScriptLock(
+        script_version_number=3,
+        script_content_hash="deadbeef" * 4,
+        provenance=ScriptProvenance.INTERNAL,
+    )
+
+    result = _service().build(
+        job,
+        genre_id="genre.documentary",
+        target_audience="Ocean enthusiasts",
+    )
+
+    assert result.package.source_script_lock_hash == "deadbeef" * 4
+    assert result.package.source_script_version_number == 3

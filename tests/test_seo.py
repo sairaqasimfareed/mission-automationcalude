@@ -173,3 +173,46 @@ def test_seo_package_is_ready_for_export_requires_approval_and_content() -> None
 
     assert incomplete_package.is_ready_for_export is False
     assert ready_package.is_ready_for_export is True
+
+
+def test_seo_package_provenance_fields_default_to_unset() -> None:
+    package = SEOPackage(
+        video_job_id=uuid4(),
+        platform_metadata=_platform_metadata(),
+        prompt_version="seo_prompt_v1.0.0",
+    )
+
+    assert package.version_number == 1
+    assert package.source_script_lock_hash is None
+    assert package.source_script_version_number is None
+
+
+def test_seo_package_stores_explicit_provenance_fields() -> None:
+    package = SEOPackage(
+        video_job_id=uuid4(),
+        platform_metadata=_platform_metadata(),
+        prompt_version="seo_prompt_v1.0.0",
+        version_number=3,
+        source_script_lock_hash="abc123",
+        source_script_version_number=2,
+    )
+
+    assert package.version_number == 3
+    assert package.source_script_lock_hash == "abc123"
+    assert package.source_script_version_number == 2
+
+    restored = SEOPackage.model_validate_json(package.model_dump_json())
+
+    assert restored.version_number == 3
+    assert restored.source_script_lock_hash == "abc123"
+    assert restored.source_script_version_number == 2
+
+
+def test_seo_package_rejects_non_positive_version_number() -> None:
+    with pytest.raises(ValidationError):
+        SEOPackage(
+            video_job_id=uuid4(),
+            platform_metadata=_platform_metadata(),
+            prompt_version="seo_prompt_v1.0.0",
+            version_number=0,
+        )

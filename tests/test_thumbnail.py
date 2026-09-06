@@ -103,3 +103,40 @@ def test_artifact_rejects_empty_file_path() -> None:
             file_path="   ",
             file_size_bytes=1024,
         )
+
+
+def test_artifact_provenance_fields_default_to_unset() -> None:
+    artifact = ThumbnailArtifact(
+        video_job_id=uuid4(),
+        concept=_concept(),
+        layout=_layout(),
+        image_source_type=ThumbnailImageSourceType.AI_GENERATED,
+        provider_name="dry_run",
+        file_path="outputs/thumbnails/example.png",
+        file_size_bytes=1024,
+    )
+
+    assert artifact.version_number == 1
+    assert artifact.source_script_lock_hash is None
+    assert artifact.source_script_version_number is None
+
+
+def test_artifact_stores_and_round_trips_explicit_provenance_fields() -> None:
+    artifact = ThumbnailArtifact(
+        video_job_id=uuid4(),
+        concept=_concept(),
+        layout=_layout(),
+        image_source_type=ThumbnailImageSourceType.AI_GENERATED,
+        provider_name="dry_run",
+        file_path="outputs/thumbnails/example.png",
+        file_size_bytes=1024,
+        version_number=2,
+        source_script_lock_hash="abc123",
+        source_script_version_number=1,
+    )
+
+    restored = ThumbnailArtifact.model_validate_json(artifact.model_dump_json())
+
+    assert restored.version_number == 2
+    assert restored.source_script_lock_hash == "abc123"
+    assert restored.source_script_version_number == 1

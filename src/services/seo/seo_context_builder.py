@@ -42,6 +42,16 @@ class SEOContext:
     scene_count: int
     estimated_duration_seconds: int
 
+    # Step 2 (SEO, Thumbnail & Publishing Reconciliation), SEO-3: the
+    # canonical script identity this context was built from, when the
+    # script is locked - carried through to SEOPackage/ThumbnailArtifact
+    # so a later staleness check can compare it against the job's
+    # current script_lock without either package needing its own copy
+    # of the full VideoJob. None for a job with no lock yet (SEO/
+    # thumbnail generation does not require a lock).
+    script_lock_hash: str | None = None
+    script_lock_version_number: int | None = None
+
 
 class SEOContextBuilder:
     """
@@ -93,4 +103,14 @@ class SEOContextBuilder:
             key_facts=list(job.research.key_facts),
             scene_count=len(job.scenes),
             estimated_duration_seconds=(job.script.estimated_duration_seconds),
+            script_lock_hash=(
+                job.script_lock.script_content_hash
+                if job.script_lock is not None
+                else None
+            ),
+            script_lock_version_number=(
+                job.script_lock.script_version_number
+                if job.script_lock is not None
+                else None
+            ),
         )

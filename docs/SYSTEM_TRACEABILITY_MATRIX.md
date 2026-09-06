@@ -160,6 +160,18 @@ route to it are covered here only for their non-Flow paths.
 
 **This completes all 16 phases (0-15) of the Post-Script-Approval Production Plan** (Phase 7 out of scope throughout - the Google Flow browser-automation mechanism itself).
 
+## SEO, Thumbnail & Publishing Reconciliation
+
+A third, separate initiative - SEO metadata, thumbnails, and final
+publishing packaging downstream of canonical production (Phases 0-15
+above). Scoped from `Step 2_Publishing_Reconciliation_Implementation_Plan.pdf`
+(phases SEO-0 through SEO-10). Explicitly downstream: consumes
+accepted production truth, never creates production authority.
+
+| Capability | Model | Service | Persistence | GUI | Tests |
+|---|---|---|---|---|---|
+| SEO-3/SEO-6: Versioning and script-lock provenance | `SEOPackage`/`ThumbnailArtifact` gain `version_number`/`source_script_lock_hash`/`source_script_version_number`; `SEOContext` gains `script_lock_hash`/`script_lock_version_number` | `SEOPackageService.build()`/`ThumbnailPackageService.build()` gain an optional `previous_package`/`previous_artifact` param numbering a regenerated package/artifact one higher - **REUSE confirmed by inspection**: `SEOPackage`/`ThumbnailArtifact` had zero version tracking, source-production binding, or staleness detection, and zero wiring to `ApprovalGateService`/`InvalidationService`; `GenreSEOProfile`/`GenreThumbnailProfile` (populated for all 12 genres) are never read by any generation service. `InvalidationService`'s `job.stale_artifacts` mechanism cannot reach these artifacts (deliberately stored in `JobStore`'s own per-artifact JSON files, not on `VideoJob`) - reused the existing `script_lock_hash`-comparison pattern from `ProductionSemanticBrief`/`VisualContinuityBible` instead of inventing a second staleness mechanism | `SEOPackage`/`ThumbnailArtifact`'s new fields (all optional, backward-compatible) | `PackagingView`'s SEO/Thumbnail cards show version number, a new "Regenerate" button (no way existed to regenerate either before this), and a staleness banner (silent/no-lock, "built before locked," or "stale, regenerate" on hash mismatch) | Extended `test_seo_context_builder.py` (+2), `test_seo.py`/`test_thumbnail.py` (+3 each), `test_seo_package_service.py`/`test_thumbnail_package_service.py` (+3 each), `test_packaging_view_gui.py` (+5). Broader regression (104 cases) green | No inspectable version-history archive (not named as a GUI requirement here, unlike Script's own Phase 12); SEO-2 (genre/audience/locale propagation), SEO-4 (banner built, genre-based propagation isn't), SEO-5 (Reviewer/approval wiring) separately scoped |
+
 ---
 
 Maintenance: add a row here in the same change that adds a new

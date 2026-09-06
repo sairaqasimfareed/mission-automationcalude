@@ -80,8 +80,17 @@ class ThumbnailPackageService:
         concept_count: int = 3,
         selected_seo_title: str | None = None,
         hook_text_position: ThumbnailTextPosition = ThumbnailTextPosition.BOTTOM,
+        previous_artifact: ThumbnailArtifact | None = None,
     ) -> ThumbnailPackageBuildResult:
-        """Build one complete, validated ThumbnailArtifact for a video."""
+        """
+        Build one complete, validated ThumbnailArtifact for a video.
+
+        previous_artifact is optional (Step 2, SEO-6) - a caller that
+        passes the artifact this one replaces gets an artifact
+        numbered one higher, mirroring SEOPackageService.build()'s own
+        versioning; omitting it reproduces this method's exact prior
+        behavior (version 1).
+        """
 
         concepts = self.concept_generation_service.generate(
             context,
@@ -112,6 +121,16 @@ class ThumbnailPackageService:
             layout=layout,
             image_source_type=self.image_provider.image_source_type,
             provider_name=self.image_provider.provider_name,
+        )
+
+        artifact = artifact.model_copy(
+            update={
+                "version_number": (
+                    previous_artifact.version_number + 1 if previous_artifact else 1
+                ),
+                "source_script_lock_hash": context.script_lock_hash,
+                "source_script_version_number": (context.script_lock_version_number),
+            }
         )
 
         expected_dimensions = self.layout_service.dimensions_for(context.platform)

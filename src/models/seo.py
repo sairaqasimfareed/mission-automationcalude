@@ -120,6 +120,21 @@ class SEOPackage(MissionBaseModel):
     prompt_version: str
     status: SEOStatus = SEOStatus.DRAFT
 
+    # Step 2 (SEO, Thumbnail & Publishing Reconciliation), SEO-3:
+    # "Persist versions, source production identity... and stale
+    # reasons." version_number increments each time
+    # SEOPackageService.build() is given the package it is replacing,
+    # so a regenerated package is traceable as "version 3," not a
+    # silent overwrite. source_script_lock_hash/
+    # source_script_version_number bind this package to the exact
+    # locked script it was generated from, mirroring the same
+    # script_lock_hash-comparison staleness pattern already used by
+    # ProductionSemanticBrief/VisualContinuityBible - None when no
+    # lock existed yet at generation time.
+    version_number: int = Field(default=1, ge=1)
+    source_script_lock_hash: str | None = None
+    source_script_version_number: int | None = Field(default=None, ge=1)
+
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("tags")

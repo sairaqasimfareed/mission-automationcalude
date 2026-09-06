@@ -15,6 +15,8 @@ from src.desktop.job_store import InMemoryJobStore  # noqa: E402
 from src.desktop.views.packaging_view import PackagingView  # noqa: E402
 from src.models.enums import JobStatus, Platform, WorkflowStage  # noqa: E402
 from src.models.final_export import FinalExportPackage, FinalExportStatus  # noqa: E402
+from src.models.script import Script, ScriptStatus  # noqa: E402
+from src.models.script_lock import ScriptLock, ScriptProvenance  # noqa: E402
 from src.models.seo import (  # noqa: E402
     SEOPackage,
     SEOPlatformMetadata,
@@ -80,6 +82,26 @@ def _final_export_package(*, manifest_path: str) -> FinalExportPackage:
         manifest_path=manifest_path,
         status=FinalExportStatus.UNDER_REVIEW,
     )
+
+
+def _job_with_approved_script() -> VideoJob:
+    job = VideoJob(
+        project_name="Deep Sea Doc",
+        channel_name="Ocean Channel",
+        niche="documentary",
+        topic="Giant squid",
+        status=JobStatus.COMPLETED,
+        current_stage=WorkflowStage.READY_FOR_UPLOAD,
+    )
+    job.script = Script(
+        title="Giant Squid Encounter",
+        content="Narration about a giant squid encounter.",
+        prompt_version="script_prompt_v1.0.0",
+        estimated_duration_seconds=300,
+        status=ScriptStatus.APPROVED,
+    )
+
+    return job
 
 
 def _view(*, export_root: Path) -> PackagingView:
@@ -167,3 +189,125 @@ def test_final_export_card_shows_all_checks_passed_when_clean(
     labels = [label.text() for label in view.findChildren(QLabel)]
 
     assert any("QC: all checks passed." in text for text in labels)
+
+
+def test_seo_card_shows_version_and_regenerate_button(
+    qapp: QApplication,
+    tmp_path: Path,
+) -> None:
+    view = _view(export_root=tmp_path / "exports")
+    job = _job_with_approved_script()
+
+    view._job_store.add(job)
+    view.set_job(job.id)
+    view._job_store.set_seo_package(job.id, _seo_package())
+
+    view.refresh(job)
+
+    labels = [label.text() for label in view.findChildren(QLabel)]
+    buttons = [button.text() for button in view.findChildren(QPushButton)]
+
+    assert any("Version 1" in text for text in labels)
+    assert "Regenerate SEO package" in buttons
+    assert "Generate SEO package" not in buttons
+
+
+def test_seo_card_shows_staleness_banner_when_script_lock_hash_mismatches(
+    qapp: QApplication,
+    tmp_path: Path,
+) -> None:
+    view = _view(export_root=tmp_path / "exports")
+    job = _job_with_approved_script()
+    job.script_lock = ScriptLock(
+        script_version_number=2,
+        script_content_hash="current-hash",
+        provenance=ScriptProvenance.INTERNAL,
+    )
+
+    view._job_store.add(job)
+    view.set_job(job.id)
+    view._job_store.set_seo_package(
+        job.id,
+        _seo_package().model_copy(
+            update={"source_script_lock_hash": "old-hash"},
+        ),
+    )
+
+    view.refresh(job)
+
+    labels = [label.text() for label in view.findChildren(QLabel)]
+
+    assert any("Stale:" in text for text in labels)
+
+
+def test_seo_card_no_staleness_banner_when_hashes_match(
+    qapp: QApplication,
+    tmp_path: Path,
+) -> None:
+    view = _view(export_root=tmp_path / "exports")
+    job = _job_with_approved_script()
+    job.script_lock = ScriptLock(
+        script_version_number=2,
+        script_content_hash="current-hash",
+        provenance=ScriptProvenance.INTERNAL,
+    )
+
+    view._job_store.add(job)
+    view.set_job(job.id)
+    view._job_store.set_seo_package(
+        job.id,
+        _seo_package().model_copy(
+            update={"source_script_lock_hash": "current-hash"},
+        ),
+    )
+
+    view.refresh(job)
+
+    labels = [label.text() for label in view.findChildren(QLabel)]
+
+    assert not any("Stale:" in text for text in labels)
+    assert not any("Built before the script was locked" in text for text in labels)
+
+
+def test_seo_card_shows_unlocked_banner_when_package_predates_the_lock(
+    qapp: QApplication,
+    tmp_path: Path,
+) -> None:
+    view = _view(export_root=tmp_path / "exports")
+    job = _job_with_approved_script()
+    job.script_lock = ScriptLock(
+        script_version_number=1,
+        script_content_hash="current-hash",
+        provenance=ScriptProvenance.INTERNAL,
+    )
+
+    view._job_store.add(job)
+    view.set_job(job.id)
+    view._job_store.set_seo_package(job.id, _seo_package())
+
+    view.refresh(job)
+
+    labels = [label.text() for label in view.findChildren(QLabel)]
+
+    assert any("Built before the script was locked" in text for text in labels)
+
+
+def test_thumbnail_card_shows_version_and_regenerate_button(
+    qapp: QApplication,
+    tmp_path: Path,
+) -> None:
+    view = _view(export_root=tmp_path / "exports")
+    job = _job_with_approved_script()
+
+    view._job_store.add(job)
+    view.set_job(job.id)
+    view._job_store.set_thumbnail(job.id, _thumbnail_artifact())
+
+    view.refresh(job)
+
+    labels = [label.text() for label in view.findChildren(QLabel)]
+    buttons = [button.text() for button in view.findChildren(QPushButton)]
+
+    assert any("Version 1" in text for text in labels)
+    assert "Regenerate thumbnail" in buttons
+    assert "Generate thumbnail" not in buttons
