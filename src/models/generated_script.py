@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 from pydantic import Field, field_validator, model_validator
 
 from src.models.base import MissionBaseModel
@@ -124,3 +126,25 @@ class GeneratedScript(MissionBaseModel):
         """Total narration word count across every segment."""
 
         return len(self.full_narration.split())
+
+    @property
+    def content_hash(self) -> str:
+        """
+        A deterministic content hash identifying this exact script
+        text/structure (Content Studio Redesign, Phase 13/14: "Quality
+        result binds to exact Script version/hash," "Content
+        hash/version binding" for Script Lock). Built from every
+        segment's narration and timing, not id/created_at, so two
+        textually-identical scripts always hash the same and any real
+        content change always hashes differently.
+        """
+
+        ordered = sorted(self.segments, key=lambda segment: segment.segment_number)
+        payload = "\n".join(
+            f"{segment.segment_number}|{segment.start_seconds}|"
+            f"{segment.end_seconds}|{segment.narrative_function.value}|"
+            f"{segment.narration}"
+            for segment in ordered
+        )
+
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()

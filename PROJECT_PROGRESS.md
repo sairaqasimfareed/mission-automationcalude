@@ -5,6 +5,65 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-06 - Content Studio Redesign: Phase 14 Script Lock and Common Production Handoff Contract
+
+**The hard boundary.** New `ScriptLock` (version + content hash +
+provenance + a snapshotted quality status + optional override reason)
+- `created_at` (inherited) doubles as the lock timestamp, no second
+clock. `GeneratedScript` gained a `content_hash` property, extracted
+from Phase 13's quality-gate service so both quality-result binding
+and Script Lock share exactly one hash implementation.
+
+**Composes with, doesn't replace, the existing per-version lock.**
+`ScriptVersion.locked` (and every script-mutating method's check
+against it) already existed. `run_script_lock()`/`run_script_unlock()`
+set/clear both that flag and the new richer `ScriptLock` record
+together, rather than introducing a second, independent lock state.
+
+**Two real "cannot silently edit locked script" bugs, found while
+implementing this phase's own test requirement, fixed:**
+`run_revision()` was unconditionally overwriting `job.generated_script`
+with LLM-revised text *before* the version-service's lock check could
+run - the version-history append correctly failed, but the script
+itself was already silently corrupted by then. The GUI's raw "Save
+typed edit" handler had the identical bug. Both fixed by checking the
+lock first, matching the pattern `run_script_selection_edit()` already
+used correctly.
+
+**Unlock impact analysis, not a generic message.** `ScriptLockService
+.compute_unlock_impact()` reuses `InvalidationService`'s own
+downstream-fields list (now exported public) to report exactly which
+VideoJob fields currently hold a real production artifact that would
+go stale.
+
+**GUI.** A new Script Lock section (in both the Script and Revision
+panels): "Approve & lock script" with an override-reason input and an
+unresolved-blocking-findings warning while unlocked; version/
+provenance/quality/hash-prefix display plus "Unlock script" while
+locked. Both require a `QMessageBox.question()` confirmation naming
+the real consequence - reusing the one existing confirmation-dialog
+pattern in this codebase (`provider_manager_view.py`) rather than
+inventing a second.
+
+**Tests:** `test_script_lock_model.py` (6), `test_script_lock_service.py`
+(10), 8 new pipeline cases (including a dedicated regression proving
+`run_revision()` no longer mutates a locked script even when it
+raises), 6 new GUI cases. mypy/ruff/black clean on every new file. One
+transparent trade-off: `VideoJob.script_lock` grew
+`test_content_intelligence_pipeline.py`'s pre-existing `**dict`-
+unpacking helper's error count by exactly one (60→61 total) -
+rewriting that helper (used across 900+ lines of tests) was judged
+disproportionate versus the smaller, single-file rewrite Phase 13 did
+for a similar case. All targeted pipeline and GUI tests pass.
+
+**Deliberately not built this pass:** downstream production models
+(Scene, RenderResult, ...) don't yet store their own
+`locked_script_id`/hash individually - satisfied today only at the
+job level, deferred until a real downstream reader exists (likely
+Phase 17's automation orchestrator).
+
+---
+
 ## 2026-09-06 - Content Studio Redesign: Phase 13 Script Critique and Formal Quality Gate
 
 **KEEP/MODIFY/REUSE first.** `EditorialCritiqueService`,

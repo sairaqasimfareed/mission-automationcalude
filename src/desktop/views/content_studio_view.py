@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLineEdit,
+    QMessageBox,
     QScrollArea,
     QTextEdit,
     QVBoxLayout,
@@ -48,6 +49,7 @@ from src.models.research_evidence import (
 )
 from src.models.research_plan import ResearchQuestion
 from src.models.reviewer_result import ReviewerResult
+from src.models.script_lock import ScriptProvenance
 from src.models.script_selection_edit import (
     SelectionEditOperation,
     SelectionEditRequest,
@@ -2540,7 +2542,80 @@ class ContentStudioView(QWidget):
                         )
                     )
 
+        self._render_script_lock_section(layout, job)
+
         layout.addWidget(separator())
+
+    def _render_script_lock_section(self, layout: QVBoxLayout, job: VideoJob) -> None:
+        """
+        Content Studio Redesign, Phase 14: Script Lock - the hard
+        boundary between Content Production and Media Production.
+        Distinct from the lightweight per-version lock toggle above
+        (which just blocks further edits): this records a full
+        ScriptLock (version, hash, provenance, quality status
+        snapshot) and is what "Media Production can start using only
+        the lock/handoff contract" actually refers to.
+        """
+
+        layout.addWidget(separator())
+        lock = job.script_lock
+
+        if lock is None:
+            report = job.script_quality_report
+            has_unresolved = bool(
+                report is not None and report.unresolved_blocking_findings
+            )
+
+            if has_unresolved:
+                layout.addWidget(
+                    status_label(
+                        f"{len(report.unresolved_blocking_findings)} unresolved "  # type: ignore[union-attr]
+                        "blocking quality finding(s) - locking requires "
+                        "resolving them or an override reason below.",
+                        role="warning",
+                    )
+                )
+
+            override_input = QLineEdit()
+            override_input.setPlaceholderText(
+                "Override reason (only needed if blocking findings remain)..."
+            )
+            layout.addWidget(override_input)
+
+            lock_button = button("Approve & lock script", variant="primary")
+            lock_button.clicked.connect(
+                lambda _checked=False, inp=override_input: (
+                    self._handle_lock_script(inp)
+                )
+            )
+            layout.addWidget(lock_button, alignment=_LEFT)
+
+            return
+
+        layout.addWidget(
+            status_label(
+                f"Script locked at v{lock.script_version_number} "
+                f"[{lock.provenance.value}]"
+                + (
+                    f", quality: {lock.quality_status.value}"
+                    if lock.quality_status is not None
+                    else ""
+                )
+                + (
+                    f" (override: {lock.override_reason})"
+                    if lock.override_reason
+                    else ""
+                ),
+                role="success",
+            )
+        )
+        layout.addWidget(
+            small_muted(f"Content hash: {lock.script_content_hash[:16]}...")
+        )
+
+        unlock_button = button("Unlock script", variant="ghost")
+        unlock_button.clicked.connect(self._handle_unlock_script)
+        layout.addWidget(unlock_button, alignment=_LEFT)
 
     def _render_packaging_hypothesis_panel(
         self, layout: QVBoxLayout, job: VideoJob
@@ -2769,11 +2844,23 @@ class ContentStudioView(QWidget):
         Record a person's own directly typed rewrite as a manual-edit
         version - no LLM call, unlike the selection-action buttons
         above. A no-op when the text is unchanged.
+
+        The Save button itself is never rendered while locked (see
+        _render_ci_script_panel), but this checks again directly -
+        Phase 14: "Cannot silently edit locked script" means this
+        handler must refuse on its own, not only rely on the button
+        it's normally reached through being hidden.
         """
 
         job = self._current_job()
 
         if job is None or job.generated_script is None:
+            return
+
+        if (
+            job.script_version_history is not None
+            and job.script_version_history.is_locked
+        ):
             return
 
         editor = self._script_segment_editors.get(segment_number)
@@ -2970,6 +3057,82 @@ class ContentStudioView(QWidget):
             index for index, (key, _label) in enumerate(_CI_STAGES) if key == "script"
         )
         self._handle_select_ci_stage(script_index)
+
+    def _handle_lock_script(self, override_input: QLineEdit) -> None:
+        """
+        Content Studio Redesign, Phase 14: "Approve & Lock Script,"
+        GUI requirement "Confirmation dialog before lock."
+        """
+
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        confirmation = QMessageBox.question(
+            self,
+            "Lock script",
+            "Lock the current script version? Once locked, no further "
+            "AI or manual edits are possible until it is explicitly "
+            "unlocked.",
+        )
+
+        if confirmation != QMessageBox.StandardButton.Yes:
+            return
+
+        override_reason = override_input.text().strip() or None
+
+        try:
+            self._content_intelligence_pipeline.run_script_lock(
+                job,
+                provenance=ScriptProvenance.INTERNAL,
+                override_reason=override_reason,
+            )
+        except ValueError as error:
+            self._record_error(job, f"Could not lock script: {error}")
+
+            return
+
+        self._on_change()
+
+    def _handle_unlock_script(self) -> None:
+        """
+        Content Studio Redesign, Phase 14: "Unlock impact analysis" -
+        the confirmation lists the real dependent production assets,
+        not a generic message.
+        """
+
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        impact = self._content_intelligence_pipeline.compute_script_unlock_impact(job)
+        impact_text = (
+            "This will mark the following existing production work as "
+            f"stale: {', '.join(impact)}."
+            if impact
+            else "No downstream production work exists yet - nothing "
+            "will be marked stale."
+        )
+
+        confirmation = QMessageBox.question(
+            self,
+            "Unlock script",
+            f"Unlock the script for further editing? {impact_text}",
+        )
+
+        if confirmation != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            self._content_intelligence_pipeline.run_script_unlock(job)
+        except RuntimeError as error:
+            self._record_error(job, f"Could not unlock script: {error}")
+
+            return
+
+        self._on_change()
 
     def _build_workflow_card(self, job: VideoJob) -> None:
         frame, layout = card("Content workflow", icon_name="dashboard")

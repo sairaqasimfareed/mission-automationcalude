@@ -5,6 +5,7 @@ from uuid import uuid4
 import pytest
 
 from src.models.approval import ApprovalPolicyConfig
+from src.models.script_lock import ScriptProvenance
 from src.models.script_selection_edit import (
     SelectionEditOperation,
     SelectionEditRequest,
@@ -784,6 +785,109 @@ def test_run_script_restore_creates_a_new_version_with_the_old_content() -> None
     assert job.script_version_history.current_version.version_number == 3
     assert job.script_version_history.current_version.reason == VersionReason.RESTORE
     assert job.script_version_history.current_version.restored_from_version_number == 1
+
+
+def test_run_script_lock_produces_a_lock_bound_to_the_current_version() -> None:
+    pipeline, job = _job_with_script()
+
+    job = pipeline.run_script_lock(job)
+
+    assert job.script_lock is not None
+    assert job.script_lock.script_version_number == 1
+    assert job.script_lock.script_content_hash == job.generated_script.content_hash  # type: ignore[union-attr]
+    assert job.script_lock.provenance == ScriptProvenance.INTERNAL
+    assert job.script_version_history is not None
+    assert job.script_version_history.is_locked is True
+
+
+def test_run_script_lock_raises_with_unresolved_blocking_findings() -> None:
+    pipeline, job = _job_with_blocking_finding()
+
+    with pytest.raises(ValueError, match="unresolved blocking"):
+        pipeline.run_script_lock(job)
+
+    assert job.script_lock is None
+
+
+def test_run_script_lock_with_override_reason_succeeds() -> None:
+    pipeline, job = _job_with_blocking_finding()
+
+    job = pipeline.run_script_lock(job, override_reason="Approved despite finding.")
+
+    assert job.script_lock is not None
+    assert job.script_lock.override_reason == "Approved despite finding."
+
+
+def test_run_revision_raises_and_does_not_mutate_a_locked_script() -> None:
+    """
+    Content Studio Redesign, Phase 14: "Cannot silently edit locked
+    script" - this is the specific bug the phase's own test
+    requirement was written to catch: run_revision() used to mutate
+    job.generated_script before checking the lock.
+    """
+
+    pipeline, job = _job_with_blocking_finding()
+    job = pipeline.run_script_lock(job, override_reason="Approved despite finding.")
+    original_narration = job.generated_script.full_narration  # type: ignore[union-attr]
+
+    # A fresh critique is required to even attempt run_revision - the
+    # lock check must fire before any LLM call or mutation happens.
+    from src.models.editorial_critique import (
+        CriticFinding,
+        EditorialCritique,
+        FindingSeverity,
+        QualityDimension,
+    )
+
+    job.editorial_critique = EditorialCritique(
+        topic=job.topic,
+        dimension_scores={},
+        findings=[
+            CriticFinding(
+                dimension=QualityDimension.NARRATIVE_COHERENCE,
+                severity=FindingSeverity.MINOR,
+                segment_number=None,
+                problem="Minor wording issue.",
+                reason="Reads slightly awkward.",
+                recommended_correction="Rephrase for flow.",
+            )
+        ],
+        prompt_version="editorial_critique_prompt_v1.0.0",
+    )
+
+    with pytest.raises(RuntimeError, match="is locked"):
+        pipeline.run_revision(job)
+
+    assert job.generated_script.full_narration == original_narration  # type: ignore[union-attr]
+
+
+def test_run_script_unlock_clears_the_lock_and_the_version_flag() -> None:
+    pipeline, job = _job_with_script()
+    job = pipeline.run_script_lock(job)
+
+    job = pipeline.run_script_unlock(job)
+
+    assert job.script_lock is None
+    assert job.script_version_history is not None
+    assert job.script_version_history.is_locked is False
+
+
+def test_run_script_unlock_raises_when_not_locked() -> None:
+    pipeline, job = _job_with_script()
+
+    with pytest.raises(RuntimeError, match="not locked"):
+        pipeline.run_script_unlock(job)
+
+
+def test_compute_script_unlock_impact_reflects_real_downstream_fields() -> None:
+    pipeline, job = _job_with_script()
+
+    assert pipeline.compute_script_unlock_impact(job) == []
+
+    job = pipeline.run_script_lock(job)
+    job = pipeline.run_scene_planning(job)
+
+    assert "scenes" in pipeline.compute_script_unlock_impact(job)
 
 
 def test_run_packaging_hypothesis_requires_script_and_hook() -> None:

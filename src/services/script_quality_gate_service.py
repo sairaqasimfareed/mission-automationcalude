@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 from uuid import UUID
 
 from src.models.editorial_critique import EditorialCritique
@@ -12,27 +11,6 @@ from src.models.script_quality_report import (
     ScriptQualityReport,
     ScriptQualityStatus,
 )
-
-
-def _content_hash(script: GeneratedScript) -> str:
-    """
-    A deterministic content hash binding a quality result to the exact
-    script it was computed against (Content Studio Redesign, Phase 13:
-    "Quality result binds to exact Script version/hash"). Built from
-    every segment's narration and timing - not id/created_at, which
-    would make two textually-identical scripts hash differently for no
-    meaningful reason.
-    """
-
-    ordered = sorted(script.segments, key=lambda segment: segment.segment_number)
-    payload = "\n".join(
-        f"{segment.segment_number}|{segment.start_seconds}|"
-        f"{segment.end_seconds}|{segment.narrative_function.value}|"
-        f"{segment.narration}"
-        for segment in ordered
-    )
-
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 class ScriptQualityGateService:
@@ -101,7 +79,7 @@ class ScriptQualityGateService:
             major_findings=major_findings,
             status=status,
             script_version_number=script_version_number,
-            script_content_hash=_content_hash(script) if script is not None else None,
+            script_content_hash=script.content_hash if script is not None else None,
         )
 
     @staticmethod

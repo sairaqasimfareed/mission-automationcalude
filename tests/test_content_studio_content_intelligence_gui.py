@@ -2013,3 +2013,134 @@ def test_return_to_script_selects_the_script_stage(qapp: QApplication) -> None:
         index for index, (key, _label) in enumerate(_CI_STAGES) if key == "script"
     )
     assert view._selected_ci_stage_index == script_index
+
+
+def _confirm_yes(monkeypatch: pytest.MonkeyPatch) -> None:
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(
+        "src.desktop.views.content_studio_view.QMessageBox.question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+
+
+def _confirm_no(monkeypatch: pytest.MonkeyPatch) -> None:
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(
+        "src.desktop.views.content_studio_view.QMessageBox.question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.No,
+    )
+
+
+def test_lock_script_with_confirmation_locks_the_current_version(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from PySide6.QtWidgets import QLineEdit
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_script(view, job)
+    view.refresh(job)
+    _confirm_yes(monkeypatch)
+
+    view._handle_lock_script(QLineEdit())
+
+    assert job.script_lock is not None
+    assert job.script_version_history is not None
+    assert job.script_version_history.is_locked is True
+
+
+def test_lock_script_declining_confirmation_leaves_it_unlocked(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from PySide6.QtWidgets import QLineEdit
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_script(view, job)
+    view.refresh(job)
+    _confirm_no(monkeypatch)
+
+    view._handle_lock_script(QLineEdit())
+
+    assert job.script_lock is None
+
+
+def test_unlock_script_with_confirmation_clears_the_lock(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from PySide6.QtWidgets import QLineEdit
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_script(view, job)
+    view.refresh(job)
+    _confirm_yes(monkeypatch)
+    view._handle_lock_script(QLineEdit())
+    assert job.script_lock is not None
+
+    view._handle_unlock_script()
+
+    assert job.script_lock is None
+    assert job.script_version_history is not None
+    assert job.script_version_history.is_locked is False
+
+
+def test_unlock_script_declining_confirmation_leaves_it_locked(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from PySide6.QtWidgets import QLineEdit
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_script(view, job)
+    view.refresh(job)
+    _confirm_yes(monkeypatch)
+    view._handle_lock_script(QLineEdit())
+    assert job.script_lock is not None
+
+    _confirm_no(monkeypatch)
+    view._handle_unlock_script()
+
+    assert job.script_lock is not None
+
+
+def test_script_lock_section_renders_without_error_when_locked(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from PySide6.QtWidgets import QLineEdit
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_script(view, job)
+    view.refresh(job)
+    _confirm_yes(monkeypatch)
+    view._handle_lock_script(QLineEdit())
+
+    view.refresh(job)  # must not raise while rendering the locked state

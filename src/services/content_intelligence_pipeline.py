@@ -7,6 +7,7 @@ from src.agents.scene_planner.agent import ScenePlannerAgent
 from src.models.approval import ApprovalDecision, HumanApprovalAction
 from src.models.editorial_profile import EditorialProfile
 from src.models.information_reveal_map import InformationRevealMap
+from src.models.script_lock import ScriptProvenance
 from src.models.script_quality_report import ScriptQualityStatus
 from src.models.script_selection_edit import SelectionEditRequest
 from src.models.story_blueprint import StoryBeatType, StoryBlueprint
@@ -40,6 +41,7 @@ from src.services.re_hook_planning_service import ReHookPlanningService
 from src.services.research_planning_service import ResearchPlanningService
 from src.services.retention_audit_service import RetentionAuditService
 from src.services.script_generation_service import ScriptGenerationService
+from src.services.script_lock_service import ScriptLockService
 from src.services.script_quality_gate_service import ScriptQualityGateService
 from src.services.script_revision_service import ScriptRevisionService
 from src.services.script_selection_edit_service import ScriptSelectionEditService
@@ -169,6 +171,7 @@ class ContentIntelligencePipeline:
         )
         self.scene_planner = ScenePlannerAgent()
         self.script_version_service = ScriptVersionService()
+        self.script_lock_service = ScriptLockService()
         self.continuity_bible_extraction_service = ContinuityBibleExtractionService(
             llm_service=llm_service,
             profile_ids=profile_ids,
@@ -694,12 +697,28 @@ class ContentIntelligencePipeline:
         "Apply Selected Fixes" vs "Fix All Safe Issues") - omitting it
         addresses every finding, reproducing this method's exact prior
         behavior.
+
+        Checks the lock *before* calling the revision service (Phase
+        14: "Cannot silently edit locked script") - ScriptVersionService
+        .add_revision() also refuses a locked version, but only after
+        job.generated_script would already have been overwritten by
+        the LLM-revised text, corrupting it even though the version-
+        history append then failed. Checking here first means a locked
+        script is never touched at all.
         """
 
         if job.generated_script is None or job.editorial_critique is None:
             raise RuntimeError(
                 "Script revision requires a generated script and an "
                 "editorial critique."
+            )
+
+        if (
+            job.script_version_history is not None
+            and job.script_version_history.is_locked
+        ):
+            raise RuntimeError(
+                "The current script version is locked - unlock it before " "revising."
             )
 
         critique = job.editorial_critique
@@ -833,6 +852,69 @@ class ContentIntelligencePipeline:
         self.invalidation_service.on_script_changed(job)
 
         return job
+
+    def run_script_lock(
+        self,
+        job: VideoJob,
+        *,
+        provenance: ScriptProvenance = ScriptProvenance.INTERNAL,
+        override_reason: str | None = None,
+    ) -> VideoJob:
+        """
+        Content Studio Redesign, Phase 14: "Approve & Lock Script" -
+        the hard, immutable boundary between Content Production and
+        Media Production. Composes ScriptLockService (builds/validates
+        the ScriptLock record) with the pre-existing ScriptVersionService
+        per-version lock flag (the mechanism every script-mutating
+        method already checks), rather than introducing a second,
+        independent lock state.
+        """
+
+        lock = self.script_lock_service.build_lock(
+            job=job, provenance=provenance, override_reason=override_reason
+        )
+
+        assert job.script_version_history is not None  # build_lock guarantees this
+
+        job.script_version_history = self.script_version_service.lock_version(
+            history=job.script_version_history,
+            version_number=lock.script_version_number,
+        )
+        job.script_lock = lock
+
+        return job
+
+    def run_script_unlock(self, job: VideoJob) -> VideoJob:
+        """
+        Content Studio Redesign, Phase 14: reopens a locked script.
+        Deliberately does not itself decide whether the caller should
+        proceed - compute_script_unlock_impact() is how a GUI (or any
+        other caller) gets the real list of dependent production
+        assets to warn about *before* calling this.
+        """
+
+        if job.script_lock is None:
+            raise RuntimeError("This project's script is not locked.")
+
+        if job.script_version_history is not None:
+            job.script_version_history = self.script_version_service.unlock_version(
+                history=job.script_version_history,
+                version_number=job.script_lock.script_version_number,
+            )
+
+        job.script_lock = None
+
+        return job
+
+    def compute_script_unlock_impact(self, job: VideoJob) -> list[str]:
+        """
+        Content Studio Redesign, Phase 14: "Unlock impact analysis" -
+        the real VideoJob field names currently holding a production
+        artifact that depends on the locked script, not a generic
+        message.
+        """
+
+        return self.script_lock_service.compute_unlock_impact(job)
 
     def run_packaging_hypothesis(self, job: VideoJob) -> VideoJob:
         """

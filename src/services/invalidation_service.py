@@ -9,7 +9,13 @@ from src.models.video_job import VideoJob
 # currently hold something get flagged - an empty/unset artifact has
 # nothing to invalidate. These are the three examples the production-
 # hardening spec names explicitly.
-_SCRIPT_CHANGE_DOWNSTREAM = (
+#
+# Public (no leading underscore): Content Studio Redesign, Phase 14's
+# "Unlock impact analysis" reuses this exact list rather than
+# maintaining a second, drifting one - "the actual dependent
+# production assets," not a generic message, are precisely whichever
+# of these fields currently hold something.
+SCRIPT_CHANGE_DOWNSTREAM_FIELDS = (
     "scenes",
     "scene_asset_states",
     "video_clips",
@@ -57,7 +63,7 @@ class InvalidationService:
     ) -> list[StaleArtifact]:
         return self._mark_stale(
             job,
-            _SCRIPT_CHANGE_DOWNSTREAM,
+            SCRIPT_CHANGE_DOWNSTREAM_FIELDS,
             reason=reason,
             triggered_by="script_change",
         )
