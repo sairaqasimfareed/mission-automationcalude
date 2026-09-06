@@ -16,6 +16,9 @@ from src.services.asset_storage_service import (
 from src.services.manual_upload_service import (
     ManualUploadService,
 )
+from src.services.media_technical_validation_service import (
+    MediaTechnicalValidationService,
+)
 
 with TemporaryDirectory() as temporary_directory:
     root = Path(temporary_directory)
@@ -116,6 +119,64 @@ with TemporaryDirectory() as temporary_directory:
     assert missing_result.failure is not None
 
     assert missing_result.failure.reason == AssetFailureReason.FILE_NOT_FOUND
+
+    # --- Post-Script-Approval Production Plan, Phase 8: optional
+    # ffprobe-based technical validation ---
+
+    technically_invalid_probe = (
+        '{"format": {"duration": "0.1"}, '
+        '"streams": [{"codec_type": "video", "width": 1920, "height": 1080}]}'
+    )
+    failing_technical_service = MediaTechnicalValidationService(
+        runner=lambda command: technically_invalid_probe
+    )
+    service_with_technical_validation = ManualUploadService(
+        storage_service=storage_service,
+        technical_validation_service=failing_technical_service,
+    )
+
+    another_video = incoming / "another_video.mp4"
+    another_video.write_bytes(b"valid-video-bytes")
+
+    technical_failure_result = service_with_technical_validation.process_video_upload(
+        file_path=another_video,
+        project_id="documentary-project",
+        scene_number=8,
+    )
+
+    assert technical_failure_result.success is False
+    assert technical_failure_result.failure is not None
+    assert (
+        technical_failure_result.failure.reason
+        == AssetFailureReason.MEDIA_TECHNICAL_VALIDATION_FAILED
+    )
+
+    technically_valid_probe = (
+        '{"format": {"duration": "8.0"}, '
+        '"streams": [{"codec_type": "video", "width": 1920, "height": 1080}]}'
+    )
+    passing_technical_service = MediaTechnicalValidationService(
+        runner=lambda command: technically_valid_probe
+    )
+    service_with_passing_technical_validation = ManualUploadService(
+        storage_service=storage_service,
+        technical_validation_service=passing_technical_service,
+    )
+
+    technical_success_result = (
+        service_with_passing_technical_validation.process_video_upload(
+            file_path=another_video,
+            project_id="documentary-project",
+            scene_number=9,
+        )
+    )
+
+    assert technical_success_result.success is True
+
+    # A service with no technical_validation_service configured (every
+    # site above) behaves exactly as it always did - the default is
+    # None, so this whole check is skipped rather than enforced.
+    assert service.technical_validation_service is None
 
 
 print("Manual Upload Service tests " "completed successfully.")

@@ -22,6 +22,9 @@ from src.models.media_strategy import (
 from src.services.asset_storage_service import (
     AssetStorageService,
 )
+from src.services.media_technical_validation_service import (
+    MediaTechnicalValidationService,
+)
 
 
 class ManualUploadResult(MissionBaseModel):
@@ -62,12 +65,19 @@ class ManualUploadService:
         *,
         storage_service: AssetStorageService,
         maximum_file_size_bytes: int = (5 * 1024 * 1024 * 1024),
+        technical_validation_service: MediaTechnicalValidationService | None = None,
     ) -> None:
         if maximum_file_size_bytes < 1:
             raise ValueError("Maximum upload size must be positive.")
 
         self.storage_service = storage_service
         self.maximum_file_size_bytes = maximum_file_size_bytes
+        # Post-Script-Approval Production Plan, Phase 8: optional so
+        # every existing caller/test of this service keeps working
+        # unchanged - None means "skip the ffprobe-based technical
+        # check," the exact behavior this class already had before
+        # this phase existed.
+        self.technical_validation_service = technical_validation_service
 
     def process_video_upload(
         self,
@@ -89,6 +99,38 @@ class ManualUploadService:
                 success=False,
                 failure=validation_failure,
             )
+
+        if self.technical_validation_service is not None:
+            technical_result = self.technical_validation_service.validate(source)
+
+            if not technical_result.is_valid:
+                technical_failure = AssetModuleFailure(
+                    module_name="manual_upload",
+                    reason=AssetFailureReason.MEDIA_TECHNICAL_VALIDATION_FAILED,
+                    message=(
+                        "Technical validation failed: "
+                        + "; ".join(technical_result.issues)
+                        if technical_result.issues
+                        else "Technical validation failed: file is not readable."
+                    ),
+                    recoverable=True,
+                    requires_user_decision=True,
+                    recovery_options=[
+                        AssetRecoveryAction.RETRY_MANUAL_UPLOAD,
+                        AssetRecoveryAction.SEARCH_STOCK,
+                        AssetRecoveryAction.SKIP_SCENE,
+                    ],
+                    metadata={
+                        "duration_seconds": str(technical_result.duration_seconds),
+                        "width": str(technical_result.width),
+                        "height": str(technical_result.height),
+                    },
+                )
+
+                return ManualUploadResult(
+                    success=False,
+                    failure=technical_failure,
+                )
 
         storage_result = self.storage_service.store_manual_upload(
             source_path=source,

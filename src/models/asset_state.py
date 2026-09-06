@@ -85,6 +85,13 @@ class AssetFailureReason(str, Enum):
     FILE_NOT_FOUND = "file_not_found"
     INVALID_FILE_TYPE = "invalid_file_type"
     FILE_TOO_LARGE = "file_too_large"
+    # Post-Script-Approval Production Plan, Phase 8: "Run technical
+    # checks first: readability, duration, dimensions/aspect ratio" -
+    # distinct from INVALID_MANUAL_UPLOAD (a storage-layer failure)
+    # since this one comes from MediaTechnicalValidationService's own
+    # ffprobe-based inspection, with its own machine/human-readable
+    # issue list.
+    MEDIA_TECHNICAL_VALIDATION_FAILED = "media_technical_validation_failed"
 
     BUDGET_EXCEEDED = "budget_exceeded"
 

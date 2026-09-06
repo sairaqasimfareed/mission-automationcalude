@@ -5,6 +5,79 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-06 - Post-Script-Approval Production Plan: Phase 7 (skipped, out of scope) and Phase 8 Generated Clip QC, Decisioning and Regeneration
+
+**Phase 7 skipped outright, not thinly implemented.** "Google Flow
+Generation Execution" - submit the resolved prompt, poll, download -
+is the Flow browser-automation mechanism itself, excluded from this
+whole implementation's scope from the very first phase. Checked by
+inspection that none of the plan's own named touch-points
+(`external_ui_generation_provider.py`, `google_flow_automation_service.py`,
+`google_flow_generated_clip_pipeline_service.py`) exist anywhere in
+this repository at all - there was no existing code to leave alone,
+the exclusion is total.
+
+**Phase 8 turned out to be mostly inapplicable too, for the same
+reason - and the one part that wasn't got built.** "Technical +
+multimodal + semantic QC" against *downloaded generations* has no
+subject without Flow media to analyze - genuinely inapplicable, not
+merely deferred. But "run technical checks first: readability,
+duration, dimensions/aspect ratio" applies to any acquired clip in
+this codebase's actual paths (manual upload, stock footage), and
+inspection found a real gap there: `ManualUploadService._validate_video()`
+already checks file existence, type, and size, but nothing anywhere
+in this codebase probes an actual video's duration or resolution -
+confirmed by grepping every `ffprobe` reference in the repo down to a
+single docstring mention with no real implementation behind it.
+
+**New capability, built the same way this session builds every
+LLM-adjacent service - except this one needs no LLM at all.** New
+`MediaTechnicalValidationService.validate()` shells out to `ffprobe
+-show_format -show_streams`, parses the JSON, and checks duration/
+resolution against configurable thresholds. The binary invocation
+itself is injectable (`runner: Callable[[list[str]], str]`) - the
+exact same dependency-injection shape this whole session already uses
+for LLM services, just applied to a subprocess call instead, so tests
+never need a real ffprobe binary or a real video file.
+
+**Wired additively, with the honest consequence spelled out rather
+than silently applied.** `ManualUploadService` gained an *optional*
+`technical_validation_service` constructor parameter, defaulting to
+`None` - the exact behavior this class already had. The one real
+construction site in the live app (`scene_asset_and_timeline_infrastructure_factory.py`)
+was deliberately left untouched, so the running desktop app's behavior
+is byte-for-byte unchanged by this phase. Activating the check by
+default would start rejecting uploads the app previously accepted -
+a genuine behavior change, and one this phase's job was to make
+*possible*, not to make automatically, without a separate explicit
+decision to turn it on.
+
+**Failure surfacing needed zero new GUI code.** A failed technical
+check raises the exact same `AssetModuleFailure` (with a new
+`MEDIA_TECHNICAL_VALIDATION_FAILED` reason) every other manual-upload
+failure already raises, with the same `recovery_options`
+(retry/search-stock/skip-scene) - the existing failure-rendering path
+in the desktop app is already generic over any failure reason, so
+this new one is visible the moment the service is actually turned on,
+with nothing further to build.
+
+**Tests:** `test_media_technical_validation_model.py` (4),
+`test_media_technical_validation_service.py` (10: good clip, missing
+file, too-short duration, too-small resolution, missing video stream,
+runner failure, unparseable output, three constructor validation
+cases), extended `test_manual_upload_service.py`'s existing script-
+style assertions with both a failing and a passing technical-
+validation case. Broader asset-path regression (19 pytest-native
+cases plus the two script-style files): all green. mypy/ruff/black
+clean.
+
+**Deliberately not built this pass:** activation in the live desktop
+factory (a separate decision from building the capability); multimodal/
+semantic QC (inapplicable without Flow media); a full attempt-history
+strip beyond the existing retry mechanism.
+
+---
+
 ## 2026-09-06 - Post-Script-Approval Production Plan: Phase 6 Fulfillment Routing and Budget Gate
 
 **The leanest phase yet, and appropriately so - REUSE covered almost
