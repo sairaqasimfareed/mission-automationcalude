@@ -103,7 +103,12 @@ def _job(**overrides: object) -> VideoJob:
         approval_policy=ApprovalPolicyConfig.full_auto(),
     )
     base.update(overrides)
-    return VideoJob(**base)
+    # **dict unpacking against a pydantic model's constructor is a
+    # known mypy-plugin limitation (this session's own established
+    # accepted-debt pattern), and its error count grows by one every
+    # time VideoJob gains a new optional field - suppressed here once,
+    # robustly, rather than re-litigated on every future field.
+    return VideoJob(**base)  # type: ignore[arg-type]
 
 
 def _pipeline() -> tuple[ContentIntelligencePipeline, _EchoStubLLMService]:
@@ -888,6 +893,90 @@ def test_compute_script_unlock_impact_reflects_real_downstream_fields() -> None:
     job = pipeline.run_scene_planning(job)
 
     assert "scenes" in pipeline.compute_script_unlock_impact(job)
+
+
+def test_run_script_intake_creates_a_script_and_version_history() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_script_intake(
+        _job(target_duration_seconds=2), raw_text="Imported narration text."
+    )
+
+    assert job.generated_script is not None
+    assert job.generated_script.full_narration == "Imported narration text."
+    assert job.script_version_history is not None
+    assert job.script_version_history.current_version.version_number == 1
+    assert job.script_intake_result is not None
+
+
+def test_run_script_intake_builds_no_fake_upstream_artifacts() -> None:
+    """
+    Content Studio Redesign, Phase 15 exit criterion: "No fake
+    Research/Hook/Beat artifacts are generated merely to satisfy
+    dependencies."
+    """
+
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_script_intake(
+        _job(target_duration_seconds=2), raw_text="Imported narration text."
+    )
+
+    assert job.research is None
+    assert job.selected_hook is None
+    assert job.story_blueprint is None
+    assert job.selected_story_angle is None
+
+
+def test_run_script_intake_trust_my_script_skips_analysis() -> None:
+    from src.models.script_intake import ScriptIntakeMode
+
+    pipeline, stub = _pipeline()
+
+    # A target duration matching the narration's own estimated length
+    # keeps this test focused on "no analysis call happened" without
+    # also tripping the separately-tested duration-mismatch check.
+    job = pipeline.run_script_intake(
+        _job(target_duration_seconds=1),
+        raw_text="Imported narration text.",
+        mode=ScriptIntakeMode.TRUST_MY_SCRIPT,
+    )
+
+    assert job.script_intake_result is not None
+    assert job.script_intake_result.mismatches == []
+    assert not any(
+        request.metadata.get("agent") == "ScriptIntakeService"
+        for request in stub.requests
+    )
+
+
+def test_run_script_intake_raises_when_current_version_is_locked() -> None:
+    pipeline, job = _job_with_script()
+    job = pipeline.run_script_lock(job)
+
+    with pytest.raises(RuntimeError, match="is locked"):
+        pipeline.run_script_intake(job, raw_text="A replacement script.")
+
+
+def test_run_script_lock_defaults_to_external_provenance_after_intake() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_script_intake(
+        _job(target_duration_seconds=2), raw_text="Imported narration text."
+    )
+    job = pipeline.run_script_lock(job)
+
+    assert job.script_lock is not None
+    assert job.script_lock.provenance == ScriptProvenance.EXTERNAL
+
+
+def test_run_script_lock_stays_internal_for_a_generated_script() -> None:
+    pipeline, job = _job_with_script()
+
+    job = pipeline.run_script_lock(job)
+
+    assert job.script_lock is not None
+    assert job.script_lock.provenance == ScriptProvenance.INTERNAL
 
 
 def test_run_packaging_hypothesis_requires_script_and_hook() -> None:

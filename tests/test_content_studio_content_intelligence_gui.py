@@ -5,6 +5,7 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from collections.abc import Iterator  # noqa: E402
+from pathlib import Path  # noqa: E402
 from uuid import uuid4  # noqa: E402
 
 import pytest  # noqa: E402
@@ -16,6 +17,7 @@ from src.desktop.views.content_studio_view import (  # noqa: E402
     ContentStudioView,
 )
 from src.models.artifact_lifecycle import ArtifactType  # noqa: E402
+from src.models.script_lock import ScriptProvenance  # noqa: E402
 from src.models.script_version import VersionReason  # noqa: E402
 from src.models.video_job import VideoJob  # noqa: E402
 from src.services.content_intelligence_pipeline import (  # noqa: E402
@@ -2144,3 +2146,193 @@ def test_script_lock_section_renders_without_error_when_locked(
     view._handle_lock_script(QLineEdit())
 
     view.refresh(job)  # must not raise while rendering the locked state
+
+
+def _select_script_stage(view: ContentStudioView) -> None:
+    script_index = next(
+        index for index, (key, _label) in enumerate(_CI_STAGES) if key == "script"
+    )
+    view._handle_select_ci_stage(script_index)
+
+
+def test_script_intake_section_renders_before_any_script_exists(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _select_script_stage(view)
+    view.refresh(job)
+
+    assert view._script_intake_editor is not None
+    assert view._script_intake_mode_select is not None
+
+
+def test_import_script_creates_a_generated_script(qapp: QApplication) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _select_script_stage(view)
+    view.refresh(job)
+
+    assert view._script_intake_editor is not None
+    view._script_intake_editor.setPlainText("Imported narration text.")
+
+    view._handle_import_script()
+
+    assert job.generated_script is not None
+    assert job.generated_script.full_narration == "Imported narration text."
+    assert job.script_intake_result is not None
+    assert job.script_version_history is not None
+
+
+def test_import_script_with_blank_text_is_a_noop(qapp: QApplication) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _select_script_stage(view)
+    view.refresh(job)
+
+    view._handle_import_script()
+
+    assert job.generated_script is None
+
+
+def test_script_intake_summary_renders_after_import(qapp: QApplication) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _select_script_stage(view)
+    view.refresh(job)
+
+    assert view._script_intake_editor is not None
+    view._script_intake_editor.setPlainText("Imported narration text for the summary.")
+    view._handle_import_script()
+
+    view.refresh(job)  # must not raise while rendering the intake summary
+
+    assert job.script_intake_result is not None
+
+
+def test_imported_script_lock_defaults_to_external_provenance(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from PySide6.QtWidgets import QLineEdit
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _select_script_stage(view)
+    view.refresh(job)
+
+    assert view._script_intake_editor is not None
+    view._script_intake_editor.setPlainText("Imported narration text.")
+    view._handle_import_script()
+    view.refresh(job)
+    _confirm_yes(monkeypatch)
+
+    view._handle_lock_script(QLineEdit())
+
+    assert job.script_lock is not None
+    assert job.script_lock.provenance == ScriptProvenance.EXTERNAL
+
+
+def test_generated_script_lock_stays_internal(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Regression test: _handle_lock_script() used to hardcode
+    provenance=INTERNAL, silently overriding run_script_lock()'s own
+    EXTERNAL-for-an-imported-script inference. This proves the normal
+    Content Production path (no intake involved at all) still locks
+    INTERNAL now that the hardcoded override is gone.
+    """
+
+    from PySide6.QtWidgets import QLineEdit
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_script(view, job)
+    view.refresh(job)
+    _confirm_yes(monkeypatch)
+
+    view._handle_lock_script(QLineEdit())
+
+    assert job.script_lock is not None
+    assert job.script_lock.provenance == ScriptProvenance.INTERNAL
+
+
+def test_upload_script_file_reads_text_into_the_intake_editor(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    script_file = tmp_path / "script.txt"
+    script_file.write_text("Uploaded narration text.", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "src.desktop.views.content_studio_view.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(script_file), "Text files (*.txt)"),
+    )
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _select_script_stage(view)
+    view.refresh(job)
+
+    view._handle_upload_script_file()
+
+    assert view._script_intake_editor is not None
+    assert view._script_intake_editor.toPlainText() == "Uploaded narration text."
+
+
+def test_upload_script_file_cancelled_is_a_noop(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "src.desktop.views.content_studio_view.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: ("", ""),
+    )
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _select_script_stage(view)
+    view.refresh(job)
+
+    view._handle_upload_script_file()
+
+    assert view._script_intake_editor is not None
+    assert view._script_intake_editor.toPlainText() == ""

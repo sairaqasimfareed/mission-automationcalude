@@ -44,6 +44,7 @@ from src.models.research_plan import ResearchPlan
 from src.models.retention_audit import RetentionAuditReport
 from src.models.scene import Scene
 from src.models.script import Script, ScriptStatus
+from src.models.script_intake import ScriptIntakeResult
 from src.models.script_lock import ScriptLock
 from src.models.script_quality_report import ScriptQualityReport
 from src.models.script_version import ScriptVersionHistory
@@ -185,6 +186,10 @@ class VideoJob(MissionBaseModel):
     # Content Studio Redesign, Phase 14: the hard Content Production /
     # Media Production boundary. None means the script is not locked.
     script_lock: ScriptLock | None = None
+    # Content Studio Redesign, Phase 15: set only for a script that
+    # entered via Script Intake (paste/upload) rather than Content
+    # Production - None means no external script was ever imported.
+    script_intake_result: ScriptIntakeResult | None = None
     continuity_bible: ContinuityBible | None = None
     continuity_validation: ContinuityValidationResult | None = None
 

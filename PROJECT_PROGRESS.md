@@ -5,6 +5,68 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-06 - Content Studio Redesign: Phase 15 Alternate Path - Import Approved Script Intake
+
+**The bypass path.** New `ScriptIntakeService.normalize_text_to_script()`
+converts raw pasted/uploaded text into the exact same `GeneratedScript`
+Content Production itself produces (one segment per blank-line-
+separated paragraph, timed at ~150 words/minute, `narrative_function=
+SETUP` throughout since no real beat sheet exists to draw a role
+from) - so every later stage (versioning, selection edits, quality
+gate, lock) works identically regardless of a script's origin.
+`ContentIntelligencePipeline.run_script_intake()` touches nothing
+else: no fake `research`/`selected_hook`/`story_blueprint` is ever
+built to satisfy some other stage's dependency, verified by a
+dedicated regression test.
+
+**Three named modes, one deterministic check plus one LLM call.**
+TRUST_MY_SCRIPT skips analysis entirely. VALIDATE_FOR_PRODUCTION and
+FULL_QUALITY_CHECK both run `analyze_mismatches()` - one LLM call
+("Primary analyzes but does not rewrite") flagging language/genre/
+audience/platform inconsistencies against the project's own settings,
+reusing the established labeled-block pattern rather than adding a
+language-detection library dependency. Duration mismatch (>20% off
+target) is always checked, deterministically, regardless of mode.
+
+**Provenance inference, not a manual flag.** `run_script_lock()` now
+infers `provenance=EXTERNAL` automatically whenever
+`job.script_intake_result is not None`, `INTERNAL` otherwise - a
+caller only needs to pass `provenance` explicitly to override it.
+
+**Two real bugs found and fixed while building this phase:**
+(1) `_handle_lock_script()` (written for Phase 14, before Script
+Intake existed) hardcoded `provenance=ScriptProvenance.INTERNAL`,
+silently defeating the inference above the moment it existed - caught
+by a GUI test that locked an imported script and got INTERNAL back.
+Fixed by no longer passing `provenance` from the GUI at all, with a
+regression test proving the ordinary Content Production path still
+locks INTERNAL. (2) `test_content_intelligence_pipeline.py`'s `_job()`
+helper's `**dict`-unpacking mypy mismatch count had grown by exactly
+one with each of the last two phases' new optional `VideoJob` fields -
+a compounding pattern - fixed once, permanently, with a single
+`# type: ignore[arg-type]` on that helper's one construction line,
+dropping the file from 62 errors to 1 (a pre-existing, unrelated nit).
+
+**GUI.** The Script panel's import sub-section (shown only before any
+script exists) gained a paste box, an "Upload .txt file..." button
+reading a local file's raw text into that same box, an intake-mode
+selector, and "Import script." Once imported, an always-visible
+summary shows word count, estimated duration vs. target, every
+mismatch with its note, and an explicit statement that Research/
+Hooks/Beat Sheet are intentionally absent, not missing by mistake.
+
+**Tests:** `test_script_intake_model.py` (7), `test_script_intake_service.py`
+(20), 8 new pipeline cases, 10 new GUI cases. mypy/ruff/black clean.
+
+**Deliberately not built this pass:** real document-format extraction
+(.docx/.pdf/...) - plain text only; FULL_QUALITY_CHECK does not yet
+auto-trigger the full editorial critique pipeline (blocked on
+`EditorialCritiqueService`'s `research` param becoming optional, to
+avoid fabricating a fake `ResearchResult` and violating this same
+phase's own "no fake Research artifacts" exit criterion).
+
+---
+
 ## 2026-09-06 - Content Studio Redesign: Phase 14 Script Lock and Common Production Handoff Contract
 
 **The hard boundary.** New `ScriptLock` (version + content hash +

@@ -7,6 +7,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QFileDialog,
     QFormLayout,
     QFrame,
     QHBoxLayout,
@@ -49,7 +50,7 @@ from src.models.research_evidence import (
 )
 from src.models.research_plan import ResearchQuestion
 from src.models.reviewer_result import ReviewerResult
-from src.models.script_lock import ScriptProvenance
+from src.models.script_intake import ScriptIntakeMode
 from src.models.script_selection_edit import (
     SelectionEditOperation,
     SelectionEditRequest,
@@ -207,6 +208,8 @@ class ContentStudioView(QWidget):
         self._script_compare_to: QComboBox | None = None
         self._last_script_comparison: ScriptVersionComparison | None = None
         self._quality_finding_checkboxes: dict[UUID, QCheckBox] = {}
+        self._script_intake_editor: QTextEdit | None = None
+        self._script_intake_mode_select: QComboBox | None = None
 
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -2119,11 +2122,16 @@ class ContentStudioView(QWidget):
                 )
             )
 
+            self._render_script_intake_section(layout, job)
+
             return can_run
 
         layout.addWidget(
             badge(f"{len(script.segments)} segments · {script.word_count} words")
         )
+
+        if job.script_intake_result is not None:
+            self._render_script_intake_summary(layout, job)
 
         history = job.script_version_history
         locked = history is not None and history.is_locked
@@ -2197,6 +2205,84 @@ class ContentStudioView(QWidget):
         self._render_script_version_history(layout, job)
 
         return True
+
+    def _render_script_intake_section(self, layout: QVBoxLayout, job: VideoJob) -> None:
+        """
+        Content Studio Redesign, Phase 15: "Allow users to bypass
+        Content Production while still entering the same professional
+        downstream pipeline." Only offered while no script exists yet
+        - once imported, the script is edited through the exact same
+        editor Content Production's own output uses (Phase 12).
+        """
+
+        layout.addWidget(separator())
+        layout.addWidget(small_muted("Or import an already-written script:"))
+
+        intake_editor = QTextEdit()
+        intake_editor.setPlaceholderText(
+            "Paste your script here (separate segments/paragraphs with "
+            "a blank line)..."
+        )
+        intake_editor.setFixedHeight(120)
+        self._script_intake_editor = intake_editor
+        layout.addWidget(intake_editor)
+
+        mode_row = QHBoxLayout()
+        mode_select = QComboBox()
+        for mode in ScriptIntakeMode:
+            mode_select.addItem(mode.value.replace("_", " ").title(), mode)
+        mode_select.setCurrentIndex(1)  # Validate for Production
+        self._script_intake_mode_select = mode_select
+        mode_row.addWidget(small_muted("Intake mode:"))
+        mode_row.addWidget(mode_select)
+        layout.addLayout(mode_row)
+
+        buttons_row = QHBoxLayout()
+
+        upload_button = button("Upload .txt file...", variant="ghost")
+        upload_button.clicked.connect(self._handle_upload_script_file)
+        buttons_row.addWidget(upload_button)
+
+        import_button = button("Import script", variant="primary")
+        import_button.clicked.connect(self._handle_import_script)
+        buttons_row.addWidget(import_button)
+
+        layout.addLayout(buttons_row)
+
+    def _render_script_intake_summary(self, layout: QVBoxLayout, job: VideoJob) -> None:
+        result = job.script_intake_result
+
+        if result is None:
+            return
+
+        layout.addWidget(
+            badge(
+                f"Imported script [{result.mode.value}] · {result.word_count} words "
+                f"· ~{result.estimated_duration_seconds:.0f}s narration "
+                f"(target {result.target_duration_seconds}s)"
+            )
+        )
+        layout.addWidget(
+            small_muted(
+                "This script was imported via Script Intake - Research, "
+                "Hooks, and the Beat Sheet from Content Production are "
+                "intentionally absent for it, not missing by mistake."
+            )
+        )
+
+        if result.mismatches:
+            for mismatch in result.mismatches:
+                layout.addWidget(
+                    status_label(
+                        f"[{mismatch.field}] expected {mismatch.expected}, "
+                        f"detected {mismatch.detected}: {mismatch.note}",
+                        role="warning",
+                    )
+                )
+        else:
+            layout.addWidget(
+                status_label("No project-setting mismatches detected.", role="success")
+            )
 
     def _render_continuity_bible_panel(
         self, layout: QVBoxLayout, job: VideoJob
@@ -3058,6 +3144,75 @@ class ContentStudioView(QWidget):
         )
         self._handle_select_ci_stage(script_index)
 
+    def _handle_upload_script_file(self) -> None:
+        """
+        Content Studio Redesign, Phase 15: "paste/upload support" -
+        reads a local .txt file's raw text into the same paste box
+        Import Script reads from, rather than a separate upload path.
+        Real document-format extraction (.docx/.pdf/...) is out of
+        scope this pass; plain text covers the common case.
+        """
+
+        if self._script_intake_editor is None:
+            return
+
+        file_path, _filter = QFileDialog.getOpenFileName(
+            self, "Upload script text file", "", "Text files (*.txt)"
+        )
+
+        if not file_path:
+            return
+
+        try:
+            with open(file_path, encoding="utf-8") as handle:
+                text = handle.read()
+        except OSError as error:
+            job = self._current_job()
+
+            if job is not None:
+                self._record_error(job, f"Could not read the file: {error}")
+
+            return
+
+        self._script_intake_editor.setPlainText(text)
+
+    def _handle_import_script(self) -> None:
+        """
+        Content Studio Redesign, Phase 15: "Allow users to bypass
+        Content Production while still entering the same professional
+        downstream pipeline."
+        """
+
+        job = self._current_job()
+
+        if (
+            job is None
+            or self._script_intake_editor is None
+            or self._script_intake_mode_select is None
+        ):
+            return
+
+        raw_text = self._script_intake_editor.toPlainText().strip()
+
+        if not raw_text:
+            return
+
+        mode = self._script_intake_mode_select.currentData()
+
+        if mode is None:
+            mode = ScriptIntakeMode.VALIDATE_FOR_PRODUCTION
+
+        try:
+            self._content_intelligence_pipeline.run_script_intake(
+                job, raw_text=raw_text, mode=mode
+            )
+        except (RuntimeError, ValueError) as error:
+            self._record_error(job, f"Could not import script: {error}")
+
+            return
+
+        self._on_change()
+
     def _handle_lock_script(self, override_input: QLineEdit) -> None:
         """
         Content Studio Redesign, Phase 14: "Approve & Lock Script,"
@@ -3083,9 +3238,11 @@ class ContentStudioView(QWidget):
         override_reason = override_input.text().strip() or None
 
         try:
+            # provenance is left unset here - run_script_lock() infers
+            # EXTERNAL vs INTERNAL from whether this project's script
+            # came in through Script Intake (Phase 15) on its own.
             self._content_intelligence_pipeline.run_script_lock(
                 job,
-                provenance=ScriptProvenance.INTERNAL,
                 override_reason=override_reason,
             )
         except ValueError as error:

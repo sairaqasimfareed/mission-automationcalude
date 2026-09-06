@@ -7,6 +7,7 @@ from src.agents.scene_planner.agent import ScenePlannerAgent
 from src.models.approval import ApprovalDecision, HumanApprovalAction
 from src.models.editorial_profile import EditorialProfile
 from src.models.information_reveal_map import InformationRevealMap
+from src.models.script_intake import ScriptIntakeMode
 from src.models.script_lock import ScriptProvenance
 from src.models.script_quality_report import ScriptQualityStatus
 from src.models.script_selection_edit import SelectionEditRequest
@@ -41,6 +42,7 @@ from src.services.re_hook_planning_service import ReHookPlanningService
 from src.services.research_planning_service import ResearchPlanningService
 from src.services.retention_audit_service import RetentionAuditService
 from src.services.script_generation_service import ScriptGenerationService
+from src.services.script_intake_service import ScriptIntakeService
 from src.services.script_lock_service import ScriptLockService
 from src.services.script_quality_gate_service import ScriptQualityGateService
 from src.services.script_revision_service import ScriptRevisionService
@@ -172,6 +174,11 @@ class ContentIntelligencePipeline:
         self.scene_planner = ScenePlannerAgent()
         self.script_version_service = ScriptVersionService()
         self.script_lock_service = ScriptLockService()
+        self.script_intake_service = ScriptIntakeService(
+            llm_service=llm_service,
+            profile_ids=profile_ids,
+            estimated_cost_usd=estimated_cost_usd,
+        )
         self.continuity_bible_extraction_service = ContinuityBibleExtractionService(
             llm_service=llm_service,
             profile_ids=profile_ids,
@@ -853,11 +860,60 @@ class ContentIntelligencePipeline:
 
         return job
 
+    def run_script_intake(
+        self,
+        job: VideoJob,
+        *,
+        raw_text: str,
+        mode: ScriptIntakeMode = ScriptIntakeMode.VALIDATE_FOR_PRODUCTION,
+    ) -> VideoJob:
+        """
+        Content Studio Redesign, Phase 15: "Allow users to bypass
+        Content Production while still entering the same professional
+        downstream pipeline." Builds a canonical GeneratedScript from
+        raw pasted/uploaded text and starts a fresh version history for
+        it - from this point on, every other script-touching stage
+        (selection edits, revision, quality gate, lock) works
+        identically whether the script came from Content Production or
+        Script Intake. Deliberately does not touch research/story
+        angle/hook/blueprint fields - an imported script has none of
+        those, and none are fabricated to satisfy some other stage's
+        input requirements.
+        """
+
+        if (
+            job.script_version_history is not None
+            and job.script_version_history.is_locked
+        ):
+            raise RuntimeError(
+                "The current script version is locked - unlock it before "
+                "importing a new one."
+            )
+
+        result = self.script_intake_service.intake(
+            job=job, raw_text=raw_text, mode=mode
+        )
+
+        job.generated_script = result.script
+        job.script_version_history = self.script_version_service.start_history(
+            topic=job.topic, script=result.script
+        )
+        job.script_intake_result = result
+        job.editorial_critique = None
+        job.script_quality_report = None
+        job.script_lock = None
+
+        self.invalidation_service.on_script_changed(
+            job, reason="A new script was imported via Script Intake."
+        )
+
+        return job
+
     def run_script_lock(
         self,
         job: VideoJob,
         *,
-        provenance: ScriptProvenance = ScriptProvenance.INTERNAL,
+        provenance: ScriptProvenance | None = None,
         override_reason: str | None = None,
     ) -> VideoJob:
         """
@@ -868,10 +924,21 @@ class ContentIntelligencePipeline:
         per-version lock flag (the mechanism every script-mutating
         method already checks), rather than introducing a second,
         independent lock state.
+
+        provenance defaults to EXTERNAL when this project's script
+        came in through Script Intake (Phase 15) and INTERNAL
+        otherwise - a caller only needs to pass it explicitly to
+        override that inference.
         """
 
+        resolved_provenance = provenance or (
+            ScriptProvenance.EXTERNAL
+            if job.script_intake_result is not None
+            else ScriptProvenance.INTERNAL
+        )
+
         lock = self.script_lock_service.build_lock(
-            job=job, provenance=provenance, override_reason=override_reason
+            job=job, provenance=resolved_provenance, override_reason=override_reason
         )
 
         assert job.script_version_history is not None  # build_lock guarantees this
