@@ -4,6 +4,11 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from src.models.provider_profile import ProviderCategory, ProviderProfile
+from src.models.resolved_voice_blueprint import (
+    ResolvedVoiceBlueprint,
+    ResolvedVoiceProfileReference,
+    VoiceBlueprintResolutionStatus,
+)
 from src.providers.elevenlabs_voice_provider import ElevenLabsVoiceProvider
 from src.services.http.http_provider_executor import (
     HttpProviderExecutionError,
@@ -108,5 +113,52 @@ with TemporaryDirectory() as temp_dir:
         custom_transport.received_requests[0].url
         == "https://proxy.example.com/elevenlabs/v1/text-to-speech/voice-id"
     )
+
+# --- Post-Script-Approval Production Plan, Phase 9:
+# generate_from_blueprint() sends the rich, translated voice_settings
+# payload rather than only text/voice. ---
+
+blueprint = ResolvedVoiceBlueprint(
+    scene_number=1,
+    status=VoiceBlueprintResolutionStatus.RESOLVED,
+    profile=ResolvedVoiceProfileReference(
+        requested_profile_id="voice.neutral_narrator",
+        resolved_profile_id="voice.neutral_narrator",
+        display_name="Neutral Narrator",
+    ),
+    narration_text="The Mary Celeste was found adrift in 1872.",
+    stability=0.6,
+    similarity_boost=0.8,
+    style_strength=0.3,
+    speaker_boost=False,
+)
+
+blueprint_transport = _RecordingTransport(
+    HttpTransportResponse(status_code=200, headers={}, content=b"blueprint-audio")
+)
+
+with TemporaryDirectory() as temp_dir:
+    provider = ElevenLabsVoiceProvider(
+        profile=profile,
+        api_key="real-key-123",
+        transport=blueprint_transport,
+        output_directory=temp_dir,
+    )
+
+    blueprint_path = Path(provider.generate_from_blueprint(blueprint))
+
+    assert blueprint_path.exists()
+    assert blueprint_path.read_bytes() == b"blueprint-audio"
+
+    sent = blueprint_transport.received_requests[0]
+    assert sent.json_body is not None
+    assert sent.json_body["text"] == blueprint.narration_text
+    voice_settings = sent.json_body["voice_settings"]
+    assert voice_settings["stability"] == 0.6
+    assert voice_settings["similarity_boost"] == 0.8
+    assert voice_settings["style"] == 0.3
+    assert voice_settings["use_speaker_boost"] is False
+
+print("ElevenLabsVoiceProvider generate_from_blueprint case passed.")
 
 print("ElevenLabsVoiceProvider tests completed successfully.")

@@ -5,6 +5,72 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-06 - Post-Script-Approval Production Plan: Phase 9 Voice Directive Resolution and ElevenLabs Generation
+
+**The PDF's own "rich blueprint... exists" claim was accurate; "mapping
+incomplete" undersold the gap.** `ResolvedVoiceBlueprint` already had
+everything - stability, similarity_boost, style_strength, speaker_boost,
+speed, pitch_adjustment, volume_gain_db, plus full pronunciation/pause/
+emphasis directive lists, all validated and populated by the pre-existing
+`VoiceDirectiveResolutionService`. Reading the two places that actually
+matter - `ElevenLabsVoiceProvider.generate_voice()` and
+`VoiceGenerationService.generate()`'s own call site - found neither one
+touched any of it. The provider sent `{"text": ..., "model_id": ...}`
+and nothing else; the service's call site passed only
+`blueprint.narration_text` and a resolved voice ID. Every other field
+on a genuinely rich model was computed, validated, and then thrown
+away at the last step.
+
+**Mapped only what's actually documented, not everything that looked
+mappable.** ElevenLabs' real `voice_settings` object has four
+long-stable fields (stability, similarity_boost, style,
+use_speaker_boost) plus a more recently documented `speed`. Those five
+map directly. Everything else on the blueprint - emotion, pace,
+pitch_adjustment, volume_gain_db, and every pronunciation/pause/
+emphasis directive - has no verified ElevenLabs API surface in this
+codebase's own testing (the provider's own pre-existing docstring
+already disclaims "not verified against a live ElevenLabs account,"
+and the user currently has no real API key to verify against). Rather
+than invent a plausible-looking SSML-style mapping for pauses or
+pronunciation that might not actually work, `ElevenLabsVoiceTranslationService`
+names each one in an honest `unsupported_controls` list - only when it
+actually holds a non-default value, so a plain default-settings
+blueprint produces zero noise.
+
+**Additive at the interface level, live at the call site.**
+`VoiceProvider` gained a new `generate_from_blueprint()` method that
+is deliberately *not* abstract - its default implementation reproduces
+`generate_voice()`'s exact prior behavior, so `DryRunVoiceProvider`
+needed not one line of change to keep working. `ElevenLabsVoiceProvider`
+overrides it with the real translation. The one small refactor along
+the way: `VoiceGenerationService`'s private `_resolve_provider_voice()`
+became public `resolve_provider_voice()`, since the base provider's
+own default now needs the identical resolution logic - one shared
+implementation instead of two that could quietly drift apart.
+`VoiceGenerationService.generate()`'s call site itself was switched
+from `provider.generate_voice(...)` to `provider.generate_from_blueprint(blueprint)`
+- this is a real, live orchestration change to the running generation
+path, not a capability left sitting unused.
+
+**Tests:** `test_elevenlabs_voice_request_model.py` (4),
+`test_elevenlabs_voice_translation_service.py` (9: documented-field
+mapping, speed clamping in both directions, no-unsupported-controls
+on defaults, emotion/pace/pronunciation/pause each flagged when
+non-default, default and custom model IDs), extended
+`test_elevenlabs_voice_provider.py` (the full `voice_settings` payload
+is actually sent) and `test_dry_run_voice_provider.py` (the base-class
+default still works, proving zero blast radius). Broader voice-path
+regression: all green. mypy/ruff/black clean.
+
+**Deliberately not built this pass:** any mapping for pace/
+pitch_adjustment/volume_gain_db or the pronunciation/pause/emphasis
+directive lists - genuinely no verified ElevenLabs API surface for
+these, not an oversight; `unsupported_controls` is computed on every
+request but has no GUI reader yet, matching this whole session's
+"don't build ahead of a real reader" discipline.
+
+---
+
 ## 2026-09-06 - Post-Script-Approval Production Plan: Phase 7 (skipped, out of scope) and Phase 8 Generated Clip QC, Decisioning and Regeneration
 
 **Phase 7 skipped outright, not thinly implemented.** "Google Flow

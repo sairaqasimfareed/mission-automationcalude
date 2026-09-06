@@ -136,14 +136,16 @@ class VoiceGenerationService:
         job.attempts += 1
 
         try:
-            output_file = provider.generate_voice(
-                text=blueprint.narration_text,
-                voice=(
-                    self._resolve_provider_voice(
-                        blueprint=blueprint,
-                    )
-                ),
-            )
+            # Post-Script-Approval Production Plan, Phase 9: "The
+            # voice provider must consume a translated
+            # ResolvedVoiceBlueprint rather than only raw narration
+            # text." Every provider supports this call - it's the
+            # base class's own generate_voice()/resolve_provider_voice()
+            # fallback for a provider with no richer translation
+            # (DryRunVoiceProvider), and a real translation for one
+            # that has it (ElevenLabsVoiceProvider) - so this call
+            # site never needs to know which kind it has.
+            output_file = provider.generate_from_blueprint(blueprint)
         except Exception as exc:
             return self._fail(
                 job=job,
@@ -347,11 +349,19 @@ class VoiceGenerationService:
         return None
 
     @staticmethod
-    def _resolve_provider_voice(
+    def resolve_provider_voice(
         *,
         blueprint: ResolvedVoiceBlueprint,
     ) -> str:
-        """Resolve the voice identifier sent to a provider."""
+        """
+        Resolve the voice identifier sent to a provider.
+
+        Public (Post-Script-Approval Production Plan, Phase 9): also
+        reused by VoiceProvider.generate_from_blueprint()'s default
+        implementation, so both this service's own call site and
+        every provider's fallback resolve a voice ID exactly the same
+        way rather than maintaining two copies that could drift apart.
+        """
 
         preferred_voice_id = blueprint.provider_preferences.preferred_voice_id
 
