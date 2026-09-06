@@ -3,6 +3,11 @@ from __future__ import annotations
 import pytest
 
 from src.models.approval import ApprovalPolicyConfig
+from src.models.script_selection_edit import (
+    SelectionEditOperation,
+    SelectionEditRequest,
+)
+from src.models.script_version import VersionReason
 from src.models.video_job import VideoJob
 from src.services.content_intelligence_pipeline import ContentIntelligencePipeline
 from src.services.llm.llm_service import LLMServiceResult
@@ -569,6 +574,98 @@ def test_run_revision_clears_the_stale_critique_and_quality_report() -> None:
     assert job.script_version_history.current_version.version_number == 2
     assert job.script_version_history.current_version.parent_version_number == 1
     assert job.script_version_history.current_version.change_class.value == "narrative"
+
+
+def _job_with_script() -> tuple[ContentIntelligencePipeline, VideoJob]:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_audience_promise(_job())
+    job = pipeline.run_research(job)
+    job = pipeline.run_story_angles(job)
+    job = pipeline.run_narrative_architecture(job)
+    job = pipeline.run_hooks(job)
+    job = pipeline.run_script(job)
+
+    return pipeline, job
+
+
+def test_run_script_selection_edit_requires_a_generated_script() -> None:
+    pipeline, _ = _pipeline()
+
+    with pytest.raises(RuntimeError, match="requires a generated script"):
+        pipeline.run_script_selection_edit(
+            _job(),
+            request=SelectionEditRequest(
+                segment_number=1, operation=SelectionEditOperation.REWRITE
+            ),
+        )
+
+
+def test_run_script_selection_edit_appends_a_manual_edit_version() -> None:
+    pipeline, job = _job_with_script()
+    assert job.generated_script is not None
+    target_segment = job.generated_script.segments[0].segment_number
+
+    job = pipeline.run_script_selection_edit(
+        job,
+        request=SelectionEditRequest(
+            segment_number=target_segment, operation=SelectionEditOperation.REWRITE
+        ),
+    )
+
+    assert job.script_version_history is not None
+    assert job.script_version_history.current_version.version_number == 2
+    assert (
+        job.script_version_history.current_version.reason == VersionReason.MANUAL_EDIT
+    )
+
+
+def test_run_script_selection_edit_raises_when_current_version_is_locked() -> None:
+    pipeline, job = _job_with_script()
+    assert job.script_version_history is not None
+
+    job.script_version_history = pipeline.script_version_service.lock_version(
+        history=job.script_version_history, version_number=1
+    )
+
+    with pytest.raises(RuntimeError, match="is locked"):
+        pipeline.run_script_selection_edit(
+            job,
+            request=SelectionEditRequest(
+                segment_number=1, operation=SelectionEditOperation.REWRITE
+            ),
+        )
+
+
+def test_run_script_restore_requires_version_history() -> None:
+    pipeline, _ = _pipeline()
+
+    with pytest.raises(RuntimeError, match="no script version history"):
+        pipeline.run_script_restore(_job(), version_number=1)
+
+
+def test_run_script_restore_creates_a_new_version_with_the_old_content() -> None:
+    pipeline, job = _job_with_script()
+    original_narration = job.generated_script.full_narration  # type: ignore[union-attr]
+
+    job = pipeline.run_script_selection_edit(
+        job,
+        request=SelectionEditRequest(
+            segment_number=job.generated_script.segments[0].segment_number,  # type: ignore[union-attr]
+            operation=SelectionEditOperation.REWRITE,
+        ),
+    )
+
+    assert job.generated_script.full_narration != original_narration  # type: ignore[union-attr]
+
+    job = pipeline.run_script_restore(job, version_number=1)
+
+    assert job.generated_script is not None
+    assert job.generated_script.full_narration == original_narration
+    assert job.script_version_history is not None
+    assert job.script_version_history.current_version.version_number == 3
+    assert job.script_version_history.current_version.reason == VersionReason.RESTORE
+    assert job.script_version_history.current_version.restored_from_version_number == 1
 
 
 def test_run_packaging_hypothesis_requires_script_and_hook() -> None:

@@ -16,6 +16,7 @@ from src.desktop.views.content_studio_view import (  # noqa: E402
     ContentStudioView,
 )
 from src.models.artifact_lifecycle import ArtifactType  # noqa: E402
+from src.models.script_version import VersionReason  # noqa: E402
 from src.models.video_job import VideoJob  # noqa: E402
 from src.services.content_intelligence_pipeline import (  # noqa: E402
     ContentIntelligencePipeline,
@@ -1552,3 +1553,245 @@ def test_writing_directives_panel_builds_without_error(qapp: QApplication) -> No
     _run_through_writing_directives(view, job)
 
     view.refresh(job)  # must not raise with a populated directive set
+
+
+def _run_through_script(view: ContentStudioView, job: VideoJob) -> None:
+    _run_through_writing_directives(view, job)
+    view._handle_run_ci_stage("script")
+    # The script panel (and its per-segment editors) only builds while
+    # "script" is the selected CI stage - _render_ci_script_panel is
+    # gated the same way every other per-stage panel in this view is.
+    script_index = next(
+        index for index, (key, _label) in enumerate(_CI_STAGES) if key == "script"
+    )
+    view._handle_select_ci_stage(script_index)
+
+
+def test_script_editor_panel_builds_without_error(qapp: QApplication) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_script(view, job)
+
+    view.refresh(job)  # must not raise with a populated script + editors built
+
+    assert job.generated_script is not None
+    assert set(view._script_segment_editors) == {
+        segment.segment_number for segment in job.generated_script.segments
+    }
+
+
+def test_selection_edit_updates_only_the_target_segment(qapp: QApplication) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_script(view, job)
+    view.refresh(job)
+
+    assert job.generated_script is not None
+    target = job.generated_script.segments[0].segment_number
+    other_narrations_before = {
+        segment.segment_number: segment.narration
+        for segment in job.generated_script.segments
+        if segment.segment_number != target
+    }
+
+    from src.models.script_selection_edit import SelectionEditOperation
+
+    view._handle_script_selection_edit(target, SelectionEditOperation.REWRITE)
+
+    assert job.generated_script is not None
+    other_narrations_after = {
+        segment.segment_number: segment.narration
+        for segment in job.generated_script.segments
+        if segment.segment_number != target
+    }
+    assert other_narrations_after == other_narrations_before
+    assert job.script_version_history is not None
+    assert job.script_version_history.current_version.version_number == 2
+
+
+def test_custom_selection_edit_uses_the_instruction_input(qapp: QApplication) -> None:
+    from PySide6.QtWidgets import QLineEdit
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_script(view, job)
+    view.refresh(job)
+
+    assert job.generated_script is not None
+    target = job.generated_script.segments[0].segment_number
+    instruction_input = QLineEdit("Make it sound like a news anchor.")
+
+    view._handle_script_custom_selection_edit(target, instruction_input)
+
+    assert instruction_input.text() == ""
+    assert job.script_version_history is not None
+    assert job.script_version_history.current_version.version_number == 2
+
+
+def test_custom_selection_edit_with_blank_instruction_is_a_noop(
+    qapp: QApplication,
+) -> None:
+    from PySide6.QtWidgets import QLineEdit
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_script(view, job)
+    view.refresh(job)
+
+    assert job.generated_script is not None
+    target = job.generated_script.segments[0].segment_number
+
+    view._handle_script_custom_selection_edit(target, QLineEdit("   "))
+
+    assert job.script_version_history is not None
+    assert job.script_version_history.current_version.version_number == 1
+
+
+def test_save_typed_edit_records_a_manual_edit_version(qapp: QApplication) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_script(view, job)
+    view.refresh(job)
+
+    assert job.generated_script is not None
+    target_segment = job.generated_script.segments[0].segment_number
+    editor = view._script_segment_editors[target_segment]
+    editor.setPlainText("A person typed this narration directly.")
+
+    view._handle_save_script_segment_edit(target_segment)
+
+    assert job.generated_script is not None
+    edited = next(
+        s for s in job.generated_script.segments if s.segment_number == target_segment
+    )
+    assert edited.narration == "A person typed this narration directly."
+    assert job.script_version_history is not None
+    assert job.script_version_history.current_version.version_number == 2
+    assert (
+        job.script_version_history.current_version.reason == VersionReason.MANUAL_EDIT
+    )
+
+
+def test_save_typed_edit_with_unchanged_text_is_a_noop(qapp: QApplication) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_script(view, job)
+    view.refresh(job)
+
+    assert job.generated_script is not None
+    target_segment = job.generated_script.segments[0].segment_number
+
+    view._handle_save_script_segment_edit(target_segment)
+
+    assert job.script_version_history is not None
+    assert job.script_version_history.current_version.version_number == 1
+
+
+def test_restore_version_button_creates_a_new_version(qapp: QApplication) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_script(view, job)
+    view.refresh(job)
+
+    assert job.generated_script is not None
+    original_narration = job.generated_script.full_narration
+    target_segment = job.generated_script.segments[0].segment_number
+
+    from src.models.script_selection_edit import SelectionEditOperation
+
+    view._handle_script_selection_edit(target_segment, SelectionEditOperation.REWRITE)
+    assert job.generated_script.full_narration != original_narration
+
+    view._handle_restore_script_version(1)
+
+    assert job.generated_script is not None
+    assert job.generated_script.full_narration == original_narration
+    assert job.script_version_history is not None
+    assert job.script_version_history.current_version.version_number == 3
+    assert job.script_version_history.current_version.reason == VersionReason.RESTORE
+
+
+def test_compare_versions_produces_a_diff(qapp: QApplication) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_script(view, job)
+    view.refresh(job)
+
+    assert job.generated_script is not None
+    target_segment = job.generated_script.segments[0].segment_number
+
+    from src.models.script_selection_edit import SelectionEditOperation
+
+    view._handle_script_selection_edit(target_segment, SelectionEditOperation.REWRITE)
+    view.refresh(job)  # rebuilds the compare selectors for the new version
+
+    assert view._script_compare_from is not None
+    assert view._script_compare_to is not None
+    view._script_compare_from.setCurrentIndex(0)
+    view._script_compare_to.setCurrentIndex(view._script_compare_to.count() - 1)
+
+    view._handle_compare_script_versions()
+
+    assert view._last_script_comparison is not None
+    assert view._last_script_comparison.has_changes is True
+
+
+def test_locked_version_hides_edit_controls(qapp: QApplication) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_script(view, job)
+
+    view._handle_toggle_script_version_lock()
+    view.refresh(job)
+
+    assert job.script_version_history is not None
+    assert job.script_version_history.is_locked is True
+    assert job.generated_script is not None
+
+    for editor in view._script_segment_editors.values():
+        assert editor.isReadOnly() is True

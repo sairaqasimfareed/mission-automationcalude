@@ -4,8 +4,11 @@ from src.models.editorial_critique import EditorialCritique, QualityDimension
 from src.models.generated_script import GeneratedScript
 from src.models.script_version import (
     ScriptChangeClass,
+    ScriptSegmentDiff,
     ScriptVersion,
+    ScriptVersionComparison,
     ScriptVersionHistory,
+    VersionReason,
 )
 
 # Which critique findings drove a revision determines its change
@@ -100,6 +103,158 @@ class ScriptVersionService:
 
         return history.model_copy(update={"versions": [*history.versions, new_version]})
 
+    def add_manual_edit(
+        self,
+        *,
+        history: ScriptVersionHistory,
+        revised_script: GeneratedScript,
+        change_summary: str,
+        reason: VersionReason = VersionReason.MANUAL_EDIT,
+    ) -> ScriptVersionHistory:
+        """
+        Append one new version from a person's own edit (Content Studio
+        Redesign, Phase 12: selection-based AI edits, and any other
+        non-critique-driven change) - no EditorialCritique exists yet
+        for a change nobody has reviewed, so FACTUAL/NARRATIVE
+        classification (which reads critique findings) is not
+        possible; only the mechanical STRUCTURAL/TIMING checks apply,
+        with STYLE_ONLY as the honest residual otherwise. reason
+        defaults to MANUAL_EDIT but accepts QUALITY_FIX too, for a
+        change a person makes in direct response to a quality-gate
+        report rather than a full independent critique pass.
+        """
+
+        current = history.current_version
+
+        if current.locked:
+            raise ValueError(
+                f"Version {current.version_number} is locked - unlock it "
+                "before adding a new revision."
+            )
+
+        if not change_summary.strip():
+            raise ValueError("A manual edit requires a non-empty change summary.")
+
+        change_class = (
+            self._classify_structural_or_timing(
+                previous=current.script, revised=revised_script
+            )
+            or ScriptChangeClass.STYLE_ONLY
+        )
+
+        new_version = ScriptVersion(
+            version_number=current.version_number + 1,
+            script=revised_script,
+            parent_version_number=current.version_number,
+            change_class=change_class,
+            change_summary=change_summary.strip(),
+            reason=reason,
+        )
+
+        return history.model_copy(update={"versions": [*history.versions, new_version]})
+
+    def restore_version(
+        self,
+        *,
+        history: ScriptVersionHistory,
+        version_number: int,
+        change_summary: str | None = None,
+    ) -> ScriptVersionHistory:
+        """
+        Append one new version whose script content is copied from an
+        earlier version (Content Studio Redesign, Phase 12: "all edits
+        recoverable"). This never deletes or rewrites history - a
+        restore is itself a new, fully lineage-tracked version, exactly
+        like every other change, so restoring is itself undoable by
+        restoring again.
+        """
+
+        current = history.current_version
+
+        if current.locked:
+            raise ValueError(
+                f"Version {current.version_number} is locked - unlock it "
+                "before restoring an earlier version."
+            )
+
+        source = history.get_version(version_number)
+
+        change_class = (
+            self._classify_structural_or_timing(
+                previous=current.script, revised=source.script
+            )
+            or ScriptChangeClass.STYLE_ONLY
+        )
+
+        new_version = ScriptVersion(
+            version_number=current.version_number + 1,
+            script=source.script,
+            parent_version_number=current.version_number,
+            change_class=change_class,
+            change_summary=(
+                change_summary or f"Restored from version {version_number}."
+            ),
+            reason=VersionReason.RESTORE,
+            restored_from_version_number=version_number,
+        )
+
+        return history.model_copy(update={"versions": [*history.versions, new_version]})
+
+    @staticmethod
+    def compare(
+        *,
+        history: ScriptVersionHistory,
+        from_version_number: int,
+        to_version_number: int,
+    ) -> ScriptVersionComparison:
+        """
+        Segment-by-segment diff between two versions in one history
+        (Content Studio Redesign, Phase 12: version compare).
+        """
+
+        from_script = history.get_version(from_version_number).script
+        to_script = history.get_version(to_version_number).script
+
+        from_by_number = {
+            segment.segment_number: segment for segment in from_script.segments
+        }
+        to_by_number = {
+            segment.segment_number: segment for segment in to_script.segments
+        }
+
+        diffs = []
+
+        for segment_number in sorted(set(from_by_number) | set(to_by_number)):
+            before = from_by_number.get(segment_number)
+            after = to_by_number.get(segment_number)
+
+            diffs.append(
+                ScriptSegmentDiff(
+                    segment_number=segment_number,
+                    narration_before=before.narration if before else None,
+                    narration_after=after.narration if after else None,
+                    timing_changed=(
+                        before is not None
+                        and after is not None
+                        and (
+                            before.start_seconds != after.start_seconds
+                            or before.end_seconds != after.end_seconds
+                        )
+                    ),
+                    narrative_function_changed=(
+                        before is not None
+                        and after is not None
+                        and before.narrative_function != after.narrative_function
+                    ),
+                )
+            )
+
+        return ScriptVersionComparison(
+            from_version_number=from_version_number,
+            to_version_number=to_version_number,
+            segment_diffs=diffs,
+        )
+
     def lock_version(
         self,
         *,
@@ -155,12 +310,21 @@ class ScriptVersionService:
         return history.model_copy(update={"versions": updated_versions})
 
     @staticmethod
-    def _classify_change(
+    def _classify_structural_or_timing(
         *,
         previous: GeneratedScript,
         revised: GeneratedScript,
-        critique: EditorialCritique,
-    ) -> ScriptChangeClass:
+    ) -> ScriptChangeClass | None:
+        """
+        The mechanical half of classification, shared by every
+        revision path regardless of whether a critique exists:
+        comparing segment structure/timing needs only the two scripts
+        themselves. Returns None when neither applies, leaving the
+        caller to decide the residual class (critique-informed
+        FACTUAL/NARRATIVE for add_revision, plain STYLE_ONLY for the
+        no-critique paths).
+        """
+
         previous_ordered = sorted(
             previous.segments, key=lambda segment: segment.segment_number
         )
@@ -180,6 +344,23 @@ class ScriptVersionService:
             for earlier, later in zip(previous_ordered, revised_ordered, strict=False)
         ):
             return ScriptChangeClass.TIMING
+
+        return None
+
+    @classmethod
+    def _classify_change(
+        cls,
+        *,
+        previous: GeneratedScript,
+        revised: GeneratedScript,
+        critique: EditorialCritique,
+    ) -> ScriptChangeClass:
+        mechanical = cls._classify_structural_or_timing(
+            previous=previous, revised=revised
+        )
+
+        if mechanical is not None:
+            return mechanical
 
         finding_dimensions = {finding.dimension for finding in critique.findings}
 

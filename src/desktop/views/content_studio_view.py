@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLineEdit,
     QScrollArea,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -46,6 +47,11 @@ from src.models.research_evidence import (
 )
 from src.models.research_plan import ResearchQuestion
 from src.models.reviewer_result import ReviewerResult
+from src.models.script_selection_edit import (
+    SelectionEditOperation,
+    SelectionEditRequest,
+)
+from src.models.script_version import ScriptVersionComparison
 from src.models.story_angle import StoryAngle, StoryAngleStyle
 from src.models.topic_candidate import TopicCandidate
 from src.models.video_job import VideoJob
@@ -132,6 +138,18 @@ _CI_STAGE_REVIEW_TARGET: dict[str, tuple[ArtifactType, str]] = {
     "scene_planning": (ArtifactType.SCRIPT, "scenes"),
 }
 
+# Content Studio Redesign, Phase 12: the fixed selection-edit action
+# buttons every segment editor gets. CUSTOM is deliberately excluded -
+# it has its own instruction-input row rather than a bare button.
+_SELECTION_EDIT_OPERATIONS: list[tuple[SelectionEditOperation, str]] = [
+    (SelectionEditOperation.REWRITE, "Rewrite"),
+    (SelectionEditOperation.SHORTEN, "Shorten"),
+    (SelectionEditOperation.EXPAND, "Expand"),
+    (SelectionEditOperation.MORE_SUSPENSEFUL, "More suspenseful"),
+    (SelectionEditOperation.MORE_NATURAL, "More natural"),
+    (SelectionEditOperation.IMPROVE_TRANSITION, "Improve transition"),
+]
+
 
 class ContentStudioView(QWidget):
     """
@@ -176,6 +194,16 @@ class ContentStudioView(QWidget):
         # cleared only when set_job() moves to a different project.
         self._last_review_by_stage: dict[str, ReviewerResult] = {}
 
+        # Transient - rebuilt fresh every refresh() so a segment's
+        # editable text survives redraws only via job.generated_script
+        # itself (Save/AI-edit actions persist to the job before the
+        # next refresh), matching this view's rebuild-from-job-state
+        # convention everywhere else.
+        self._script_segment_editors: dict[int, QTextEdit] = {}
+        self._script_compare_from: QComboBox | None = None
+        self._script_compare_to: QComboBox | None = None
+        self._last_script_comparison: ScriptVersionComparison | None = None
+
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
 
@@ -194,6 +222,7 @@ class ContentStudioView(QWidget):
     def set_job(self, job_id: UUID) -> None:
         self._job_id = job_id
         self._last_review_by_stage = {}
+        self._last_script_comparison = None
 
     def refresh(self, job: VideoJob) -> None:
         while self._layout.count():
@@ -2063,6 +2092,19 @@ class ContentStudioView(QWidget):
         layout.addLayout(directive_add_row)
 
     def _render_ci_script_panel(self, layout: QVBoxLayout, job: VideoJob) -> bool:
+        """
+        Content Studio Redesign, Phase 12: a real editable Script
+        Editor, not a static read-only card. Each segment gets its own
+        editable text box plus a row of selection-scoped AI edit
+        actions (Rewrite/Shorten/Expand/More Suspenseful/More
+        Natural/Improve Transition/Custom Instruction) - an action
+        applies to whatever text is currently selected in that
+        segment's box, or the whole segment when nothing is selected.
+        A separate "Save typed edit" button records a person's own
+        direct rewrite as its own manual-edit version, with no AI call
+        at all.
+        """
+
         script = job.generated_script
 
         if script is None:
@@ -2078,7 +2120,77 @@ class ContentStudioView(QWidget):
         layout.addWidget(
             badge(f"{len(script.segments)} segments · {script.word_count} words")
         )
-        layout.addWidget(muted(script.full_narration))
+
+        history = job.script_version_history
+        locked = history is not None and history.is_locked
+
+        if locked:
+            layout.addWidget(
+                small_muted(
+                    "The current version is locked - unlock it in Versions "
+                    "below before editing."
+                )
+            )
+
+        self._script_segment_editors = {}
+        ordered_segments = sorted(
+            script.segments, key=lambda segment: segment.segment_number
+        )
+
+        for segment in ordered_segments:
+            layout.addWidget(
+                small_muted(
+                    f"Segment {segment.segment_number} "
+                    f"[{segment.narrative_function.value}, "
+                    f"{segment.start_seconds:.0f}s-{segment.end_seconds:.0f}s]"
+                )
+            )
+
+            editor = QTextEdit()
+            editor.setPlainText(segment.narration)
+            editor.setReadOnly(locked)
+            editor.setFixedHeight(90)
+            self._script_segment_editors[segment.segment_number] = editor
+            layout.addWidget(editor)
+
+            if not locked:
+                actions_row = QHBoxLayout()
+
+                for operation, label in _SELECTION_EDIT_OPERATIONS:
+                    action_button = button(label, variant="ghost")
+                    action_button.clicked.connect(
+                        lambda _checked=False, seg=segment.segment_number, op=operation: (
+                            self._handle_script_selection_edit(seg, op)
+                        )
+                    )
+                    actions_row.addWidget(action_button)
+
+                layout.addLayout(actions_row)
+
+                custom_row = QHBoxLayout()
+                custom_input = QLineEdit()
+                custom_input.setPlaceholderText("Custom instruction...")
+                custom_row.addWidget(custom_input)
+                custom_button = button("Apply custom edit", variant="ghost")
+                custom_button.clicked.connect(
+                    lambda _checked=False, seg=segment.segment_number, inp=custom_input: (
+                        self._handle_script_custom_selection_edit(seg, inp)
+                    )
+                )
+                custom_row.addWidget(custom_button)
+                layout.addLayout(custom_row)
+
+                save_button = button("Save typed edit", variant="ghost")
+                save_button.clicked.connect(
+                    lambda _checked=False, seg=segment.segment_number: (
+                        self._handle_save_script_segment_edit(seg)
+                    )
+                )
+                layout.addWidget(save_button, alignment=_LEFT)
+
+            layout.addWidget(separator())
+
+        self._render_script_version_history(layout, job)
 
         return True
 
@@ -2242,6 +2354,15 @@ class ContentStudioView(QWidget):
     def _render_script_version_history(
         self, layout: QVBoxLayout, job: VideoJob
     ) -> None:
+        """
+        Content Studio Redesign, Phase 12: Versions tab (V1/V2/V3,
+        Compare, Restore) - each version shows its reason (generation/
+        manual edit/reviewer revision/quality fix/restore) alongside
+        the existing change-class/lock display, every non-current
+        version gets a Restore button, and two selectors plus a
+        Compare button render a full segment-by-segment diff.
+        """
+
         history = job.script_version_history
 
         if history is None:
@@ -2249,23 +2370,88 @@ class ContentStudioView(QWidget):
 
         layout.addWidget(badge(f"{len(history.versions)} version(s)"))
 
-        for version in sorted(history.versions, key=lambda v: v.version_number):
+        ordered_versions = sorted(history.versions, key=lambda v: v.version_number)
+        current = history.current_version
+
+        for version in ordered_versions:
             change = version.change_class.value if version.change_class else "initial"
+            reason = version.reason.value if version.reason else "unknown"
             lock_tag = " [locked]" if version.locked else ""
             layout.addWidget(
                 small_muted(
-                    f"v{version.version_number} [{change}]{lock_tag}: "
-                    f"{version.change_summary}"
+                    f"v{version.version_number} [{change}, {reason}]"
+                    f"{lock_tag}: {version.change_summary}"
                 )
             )
 
-        current = history.current_version
+            if version.version_number != current.version_number:
+                restore_button = button(
+                    f"Restore v{version.version_number}", variant="ghost"
+                )
+                restore_button.clicked.connect(
+                    lambda _checked=False, num=version.version_number: (
+                        self._handle_restore_script_version(num)
+                    )
+                )
+                layout.addWidget(restore_button, alignment=_LEFT)
+
         lock_button = button(
             "Unlock current version" if current.locked else "Lock current version",
             variant="ghost",
         )
         lock_button.clicked.connect(self._handle_toggle_script_version_lock)
         layout.addWidget(lock_button, alignment=_LEFT)
+
+        if len(ordered_versions) > 1:
+            layout.addWidget(small_muted("Compare versions:"))
+            compare_row = QHBoxLayout()
+
+            from_select = QComboBox()
+            to_select = QComboBox()
+
+            for version in ordered_versions:
+                from_select.addItem(
+                    f"v{version.version_number}", version.version_number
+                )
+                to_select.addItem(f"v{version.version_number}", version.version_number)
+
+            to_select.setCurrentIndex(len(ordered_versions) - 1)
+
+            self._script_compare_from = from_select
+            self._script_compare_to = to_select
+
+            compare_row.addWidget(from_select)
+            compare_row.addWidget(small_muted("vs"))
+            compare_row.addWidget(to_select)
+
+            compare_button = button("Compare", variant="ghost")
+            compare_button.clicked.connect(self._handle_compare_script_versions)
+            compare_row.addWidget(compare_button)
+            layout.addLayout(compare_row)
+
+            comparison = self._last_script_comparison
+
+            if comparison is not None:
+                layout.addWidget(
+                    badge(
+                        f"v{comparison.from_version_number} vs "
+                        f"v{comparison.to_version_number}: "
+                        + ("changes found" if comparison.has_changes else "no changes")
+                    )
+                )
+
+                for diff in comparison.segment_diffs:
+                    if diff.status == "unchanged":
+                        continue
+
+                    layout.addWidget(
+                        small_muted(
+                            f"Segment {diff.segment_number} [{diff.status}]: "
+                            f"{diff.narration_before or '(none)'} -> "
+                            f"{diff.narration_after or '(none)'}"
+                        )
+                    )
+
         layout.addWidget(separator())
 
     def _render_packaging_hypothesis_panel(
@@ -2412,6 +2598,202 @@ class ContentStudioView(QWidget):
 
             return
 
+        self._on_change()
+
+    def _handle_script_selection_edit(
+        self, segment_number: int, operation: SelectionEditOperation
+    ) -> None:
+        self._apply_script_selection_edit(
+            segment_number, operation, custom_instruction=None
+        )
+
+    def _handle_script_custom_selection_edit(
+        self, segment_number: int, instruction_input: QLineEdit
+    ) -> None:
+        instruction = instruction_input.text().strip()
+
+        if not instruction:
+            return
+
+        self._apply_script_selection_edit(
+            segment_number,
+            SelectionEditOperation.CUSTOM,
+            custom_instruction=instruction,
+        )
+        instruction_input.clear()
+
+    def _apply_script_selection_edit(
+        self,
+        segment_number: int,
+        operation: SelectionEditOperation,
+        *,
+        custom_instruction: str | None,
+    ) -> None:
+        """
+        Content Studio Redesign, Phase 12: apply one selection-scoped
+        AI edit action. selected_text comes from whatever is currently
+        highlighted in that segment's editor - QTextEdit represents a
+        selection spanning multiple paragraphs with a U+2029 separator
+        instead of "\\n", so that's normalized back before it reaches
+        the "must be an exact substring of the narration" check in
+        ScriptSelectionEditService.
+        """
+
+        job = self._current_job()
+
+        if job is None or job.generated_script is None:
+            return
+
+        editor = self._script_segment_editors.get(segment_number)
+        selected_text = None
+
+        if editor is not None:
+            raw_selection = (
+                editor.textCursor().selectedText().replace(" ", "\n").strip()
+            )
+            selected_text = raw_selection or None
+
+        try:
+            request = SelectionEditRequest(
+                segment_number=segment_number,
+                operation=operation,
+                selected_text=selected_text,
+                custom_instruction=custom_instruction,
+            )
+            self._content_intelligence_pipeline.run_script_selection_edit(
+                job, request=request
+            )
+        except (RuntimeError, ValueError) as error:
+            self._record_error(
+                job,
+                f"Selection edit failed: {error}",
+                on_retry=lambda: self._apply_script_selection_edit(
+                    segment_number, operation, custom_instruction=custom_instruction
+                ),
+            )
+
+            return
+
+        self._on_change()
+
+    def _handle_save_script_segment_edit(self, segment_number: int) -> None:
+        """
+        Record a person's own directly typed rewrite as a manual-edit
+        version - no LLM call, unlike the selection-action buttons
+        above. A no-op when the text is unchanged.
+        """
+
+        job = self._current_job()
+
+        if job is None or job.generated_script is None:
+            return
+
+        editor = self._script_segment_editors.get(segment_number)
+
+        if editor is None:
+            return
+
+        new_text = editor.toPlainText().strip()
+
+        if not new_text:
+            return
+
+        segments = job.generated_script.segments
+        target = next(
+            (
+                segment
+                for segment in segments
+                if segment.segment_number == segment_number
+            ),
+            None,
+        )
+
+        if target is None or target.narration == new_text:
+            return
+
+        revised_target = target.model_copy(update={"narration": new_text})
+        revised_segments = [
+            revised_target if segment.segment_number == segment_number else segment
+            for segment in segments
+        ]
+        job.generated_script = job.generated_script.model_copy(
+            update={"segments": revised_segments}
+        )
+
+        if job.script_version_history is not None:
+            service = self._content_intelligence_pipeline.script_version_service
+
+            try:
+                job.script_version_history = service.add_manual_edit(
+                    history=job.script_version_history,
+                    revised_script=job.generated_script,
+                    change_summary=f"Segment {segment_number}: manual text edit.",
+                )
+            except ValueError as error:
+                self._record_error(
+                    job,
+                    f"Could not save the edit: {error}",
+                    on_retry=lambda: self._handle_save_script_segment_edit(
+                        segment_number
+                    ),
+                )
+
+                return
+
+        self._on_change()
+
+    def _handle_restore_script_version(self, version_number: int) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        try:
+            self._content_intelligence_pipeline.run_script_restore(
+                job, version_number=version_number
+            )
+        except (RuntimeError, ValueError) as error:
+            self._record_error(
+                job,
+                f"Could not restore version {version_number}: {error}",
+                on_retry=lambda: self._handle_restore_script_version(version_number),
+            )
+
+            return
+
+        self._on_change()
+
+    def _handle_compare_script_versions(self) -> None:
+        job = self._current_job()
+
+        if (
+            job is None
+            or job.script_version_history is None
+            or self._script_compare_from is None
+            or self._script_compare_to is None
+        ):
+            return
+
+        from_number = self._script_compare_from.currentData()
+        to_number = self._script_compare_to.currentData()
+
+        if from_number is None or to_number is None:
+            return
+
+        service = self._content_intelligence_pipeline.script_version_service
+
+        try:
+            comparison = service.compare(
+                history=job.script_version_history,
+                from_version_number=from_number,
+                to_version_number=to_number,
+            )
+        except ValueError as error:
+            self._record_error(job, f"Could not compare versions: {error}")
+
+            return
+
+        self._last_script_comparison = comparison
         self._on_change()
 
     def _build_workflow_card(self, job: VideoJob) -> None:

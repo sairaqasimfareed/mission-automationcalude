@@ -6,6 +6,7 @@ from src.models.approval import ApprovalDecision, HumanApprovalAction
 from src.models.editorial_profile import EditorialProfile
 from src.models.information_reveal_map import InformationRevealMap
 from src.models.script_quality_report import ScriptQualityStatus
+from src.models.script_selection_edit import SelectionEditRequest
 from src.models.story_blueprint import StoryBeatType, StoryBlueprint
 from src.models.video_job import VideoJob
 from src.services.approval_gate_service import ApprovalGateService
@@ -39,6 +40,7 @@ from src.services.retention_audit_service import RetentionAuditService
 from src.services.script_generation_service import ScriptGenerationService
 from src.services.script_quality_gate_service import ScriptQualityGateService
 from src.services.script_revision_service import ScriptRevisionService
+from src.services.script_selection_edit_service import ScriptSelectionEditService
 from src.services.script_version_service import ScriptVersionService
 from src.services.story_angle_evaluation_service import (
     StoryAngleEvaluationService,
@@ -148,6 +150,11 @@ class ContentIntelligencePipeline:
             estimated_cost_usd=estimated_cost_usd,
         )
         self.script_revision_service = ScriptRevisionService(
+            llm_service=llm_service,
+            profile_ids=profile_ids,
+            estimated_cost_usd=estimated_cost_usd,
+        )
+        self.script_selection_edit_service = ScriptSelectionEditService(
             llm_service=llm_service,
             profile_ids=profile_ids,
             estimated_cost_usd=estimated_cost_usd,
@@ -686,6 +693,80 @@ class ContentIntelligencePipeline:
 
         job.editorial_critique = None
         job.script_quality_report = None
+
+        self.invalidation_service.on_script_changed(job)
+
+        return job
+
+    def run_script_selection_edit(
+        self,
+        job: VideoJob,
+        *,
+        request: SelectionEditRequest,
+    ) -> VideoJob:
+        """
+        Content Studio Redesign, Phase 12: apply one selection-scoped
+        AI edit (Rewrite/Shorten/Expand/More Suspenseful/More
+        Natural/Improve Transition/Custom Instruction) to a single
+        script segment, on a person's direct request - distinct from
+        run_revision, which applies a whole EditorialCritique. Records
+        one new manual-edit version; does not touch or clear any
+        existing critique/quality-gate state, since a selection edit
+        was not produced by, and does not respond to, either of those.
+        """
+
+        if job.generated_script is None:
+            raise RuntimeError("A selection edit requires a generated script.")
+
+        if (
+            job.script_version_history is not None
+            and job.script_version_history.is_locked
+        ):
+            raise RuntimeError(
+                "The current script version is locked - unlock it before "
+                "making a selection edit."
+            )
+
+        revised_script, change_summary = self.script_selection_edit_service.edit(
+            script=job.generated_script,
+            request=request,
+            writing_directives=job.writing_directives,
+        )
+
+        job.generated_script = revised_script
+
+        if job.script_version_history is not None:
+            job.script_version_history = self.script_version_service.add_manual_edit(
+                history=job.script_version_history,
+                revised_script=revised_script,
+                change_summary=change_summary,
+            )
+
+        self.invalidation_service.on_script_changed(job)
+
+        return job
+
+    def run_script_restore(
+        self,
+        job: VideoJob,
+        *,
+        version_number: int,
+    ) -> VideoJob:
+        """
+        Content Studio Redesign, Phase 12: restore an earlier script
+        version's content as a new version (never destructive - the
+        restored-from version, and everything in between, remains in
+        history exactly as it was).
+        """
+
+        if job.script_version_history is None:
+            raise RuntimeError("This project has no script version history yet.")
+
+        job.script_version_history = self.script_version_service.restore_version(
+            history=job.script_version_history,
+            version_number=version_number,
+        )
+        job.generated_script = job.script_version_history.current_version.script
 
         self.invalidation_service.on_script_changed(job)
 

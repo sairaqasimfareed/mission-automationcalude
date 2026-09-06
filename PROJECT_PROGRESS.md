@@ -5,6 +5,82 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-06 - Content Studio Redesign: Phase 12 Script Generation, Rich Editor and Version Control
+
+**KEEP/MODIFY/REUSE first.** Direct code inspection (not assumed) found
+`ContentIntelligencePipeline.run_script()` already assembles the full
+"generation package" the spec asks for - topic, audience promise,
+creative direction/story angle, research, story blueprint, reveal map,
+hook, writing directives, duration, genre - into
+`ScriptGenerationService.generate()`. `ScriptVersionHistory`/
+`ScriptVersionService` (lock/unlock, critique-driven `add_revision()`)
+and `ScriptRevisionService` also already existed from earlier session
+work. So this phase's real, additive scope was: selection-based edits
+(genuinely new), version reasons (new field), and restore/compare
+(both new methods) - not a rebuild of any of the above.
+
+**Version reasons.** `ScriptVersion` gained `reason: VersionReason`
+(GENERATION/MANUAL_EDIT/REVIEWER_REVISION/QUALITY_FIX/RESTORE) and
+`restored_from_version_number`, both optional with a validator that
+infers the same reason the two pre-existing call sites
+(`start_history`/`add_revision`) always implicitly meant - every
+existing `ScriptVersion(...)` construction across the codebase and its
+tests keeps working completely unchanged.
+
+**Selection-based AI edits, with a real context envelope.** New
+`ScriptSelectionEditService` is a distinct, narrower path from
+`ScriptRevisionService`: one person-chosen operation
+(Rewrite/Shorten/Expand/More Suspenseful/More Natural/Improve
+Transition/Custom Instruction) applied to one segment, or a substring
+within it, with no critique involved. The LLM prompt includes the
+immediately preceding/following segments' narration as read-only
+context so an edit still reads coherently in place, but only the
+target segment's narration is ever returned/applied - every other
+segment, and the edited segment's timing/narrative_function/
+source_claim_references, come back byte-identical. This mechanical
+guarantee is what "hook preservation" and "evidence-grounding checks"
+mean in practice here, and it's proven by dedicated regression tests,
+not just asserted in a docstring.
+
+**Restore and compare, non-destructively.** `ScriptVersionService`
+gained `restore_version()` (copies an earlier version's script content
+as a brand-new version - nothing is ever deleted or rewritten, so a
+restore is itself undoable by restoring again) and `compare()` (a pure
+segment-by-segment diff between any two versions, classifying each
+segment added/removed/changed/unchanged).
+
+**GUI: an actual editable Script Editor.** `ContentStudioView`'s
+Script panel no longer shows a static read-only label - each segment
+gets its own editable `QTextEdit`, a row of the six fixed
+selection-action buttons (operating on whatever text is currently
+highlighted, or the whole segment when nothing is selected), a
+custom-instruction row, and a "Save typed edit" button that records a
+person's own direct rewrite as its own manual-edit version with **no**
+AI call at all - the genuinely non-AI "manual edit" path the reason
+vocabulary implies. The version history section gained per-version
+reason display, a Restore button per non-current version, and two
+version selectors plus a Compare button rendering the full diff.
+
+**Tests.** `test_script_version_model.py` (+9), `test_script_version_service.py`
+(+11), new `test_script_selection_edit_model.py` (6) and
+`test_script_selection_edit_service.py` (12, covering hook
+preservation, evidence-grounding, context envelope, and custom
+instructions specifically), 5 new pipeline-level cases, 9 new GUI
+cases (editor construction, AI selection edit, custom edit, manual
+typed edit, restore, compare, and locked-version read-only behavior).
+mypy/ruff/black clean on every new/changed file; the pre-existing
+`test_content_intelligence_pipeline.py` mypy baseline (60 errors, all
+pre-existing `**dict` unpacking debt) is unchanged by this phase's
+edits, confirmed via `git stash` diff.
+
+**Deliberately not built this pass:** no rich-text formatting in
+segment editors (narration is plain spoken text); no drag-to-reorder
+segments (structure remains the blueprint/beat sheet's decision only);
+"Review Selection" (reviewing just a highlighted span) - the existing
+generic per-stage "Review" button already covers whole-script review.
+
+---
+
 ## 2026-09-06 - Render worker thread-safety fix (Windows heap-corruption crash)
 
 **The defect.** A final pre-commit full-suite regression run for Phase
