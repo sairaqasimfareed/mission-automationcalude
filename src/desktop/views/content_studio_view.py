@@ -1249,6 +1249,10 @@ class ContentStudioView(QWidget):
             layout.addWidget(separator())
             self._render_cinematic_prompt_section(layout, job)
 
+        if job.scenes:
+            layout.addWidget(separator())
+            self._render_clip_materialization_section(layout, job)
+
         self._layout.addWidget(frame)
 
     def _render_production_semantic_brief_section(
@@ -1591,6 +1595,60 @@ class ContentStudioView(QWidget):
             return
 
         self._on_change()
+
+    def _render_clip_materialization_section(
+        self, layout: QVBoxLayout, job: VideoJob
+    ) -> None:
+        """
+        Post-Script-Approval Production Plan, Phase 5: "Top summary
+        includes total/ready/missing, route counts, duration
+        integrity and estimated generation budget." Purely a read-only
+        summary - Scene itself is already this codebase's real Clip
+        Workspace (see Clip Workspace's own view for the per-clip
+        detail/fulfillment actions); nothing here duplicates that.
+        """
+
+        status = (
+            self._content_intelligence_pipeline.compute_clip_materialization_status(job)
+        )
+
+        layout.addWidget(
+            badge(
+                f"Clips · {status.ready_clips}/{status.total_clips} ready, "
+                f"{status.missing_clips} missing"
+            )
+        )
+
+        if status.stale_clips:
+            layout.addWidget(
+                status_label(
+                    f"{status.stale_clips} clip(s) stale against the current "
+                    "script lock.",
+                    role="warning",
+                )
+            )
+
+        route_summary = ", ".join(
+            f"{route.replace('_', ' ')}: {count}"
+            for route, count in sorted(status.route_counts.items())
+        )
+        layout.addWidget(small_muted(f"Routes: {route_summary or 'none'}"))
+
+        delta = status.duration_delta_seconds
+        delta_text = (
+            f"+{delta:.0f}s over target"
+            if delta > 0
+            else (f"{delta:.0f}s under target" if delta < 0 else "matches target")
+        )
+        layout.addWidget(
+            small_muted(
+                f"Duration: {status.planned_duration_seconds:.0f}s planned "
+                f"({delta_text})."
+            )
+        )
+        layout.addWidget(
+            small_muted(f"Estimated cost: ${status.total_estimated_cost:.2f}.")
+        )
 
     def _build_ci_stage_panel(
         self,

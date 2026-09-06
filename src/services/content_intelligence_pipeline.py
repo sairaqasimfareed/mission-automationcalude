@@ -6,6 +6,7 @@ from src.agents.research_agent.agent import ResearchAgent
 from src.agents.scene_planner.agent import ScenePlannerAgent
 from src.models.approval import ApprovalDecision, HumanApprovalAction
 from src.models.automation_status import AutomationStatus
+from src.models.clip_materialization import ClipMaterializationStatus
 from src.models.content_decision_record import DecisionCategory
 from src.models.editorial_profile import EditorialProfile
 from src.models.information_reveal_map import InformationRevealMap
@@ -27,6 +28,7 @@ from src.services.cinematic_prompt_compilation_service import (
     CinematicPromptCompilationService,
 )
 from src.services.cinematic_prompt_quality_service import CinematicPromptQualityService
+from src.services.clip_materialization_service import ClipMaterializationService
 from src.services.continuity_bible_extraction_service import (
     ContinuityBibleExtractionService,
 )
@@ -222,6 +224,7 @@ class ContentIntelligencePipeline:
             estimated_cost_usd=estimated_cost_usd,
         )
         self.cinematic_prompt_compilation_service = CinematicPromptCompilationService()
+        self.clip_materialization_service = ClipMaterializationService()
         self.cinematic_prompt_quality_service = CinematicPromptQualityService(
             llm_service=llm_service,
             profile_ids=profile_ids,
@@ -1345,6 +1348,32 @@ class ContentIntelligencePipeline:
         )
 
         return job
+
+    def compute_clip_materialization_status(
+        self, job: VideoJob
+    ) -> ClipMaterializationStatus:
+        """
+        Post-Script-Approval Production Plan, Phase 5: "Top summary
+        includes total/ready/missing, route counts, duration
+        integrity and estimated generation budget." Pure read of
+        already-persisted state, same convention as every other
+        compute_*() method.
+
+        REUSE note: this codebase's Scene already IS the Clip
+        Workspace's per-clip slot (routing/readiness fields, asset
+        acquisition state) - "no manual Plan Clips step" and
+        "workspace is a projection, not a parallel planner" already
+        hold by construction via run_scene_planning(). This status is
+        the one genuinely missing summary over that existing
+        workspace.
+        """
+
+        return self.clip_materialization_service.compute(
+            scenes=job.scenes,
+            script_lock=job.script_lock,
+            cinematic_prompt_package=job.cinematic_prompt_package,
+            target_duration_seconds=float(job.target_duration_seconds),
+        )
 
     def run_packaging_hypothesis(self, job: VideoJob) -> VideoJob:
         """

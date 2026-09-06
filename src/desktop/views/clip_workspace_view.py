@@ -281,7 +281,11 @@ class ClipWorkspaceView(QWidget):
             return
 
         try:
-            self._prompt_export_service.write_file(job.scenes, Path(destination_path))
+            self._prompt_export_service.write_file(
+                job.scenes,
+                Path(destination_path),
+                cinematic_prompt_package=job.cinematic_prompt_package,
+            )
         except OSError as error:
             self._record_error(
                 job,

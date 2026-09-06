@@ -2972,3 +2972,38 @@ def test_score_cinematic_prompts_is_a_noop_without_a_job(
     view = _view(job_store)
 
     view._handle_score_cinematic_prompts()  # must not raise
+
+
+# --- Post-Script-Approval Production Plan, Phase 5: Clip Materialization ---
+
+
+def test_clip_materialization_section_renders_after_scenes_exist(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job.approval_policy = ApprovalPolicyConfig.full_auto()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    view._handle_run_automation()
+    view.refresh(job)  # must not raise; scenes exist from full automation
+
+    status = view._content_intelligence_pipeline.compute_clip_materialization_status(
+        job
+    )
+    assert status.total_clips == len(job.scenes)
+
+
+def test_clip_materialization_section_absent_without_scenes(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)  # must not raise; no scenes yet

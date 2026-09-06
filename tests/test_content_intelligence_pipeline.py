@@ -1536,6 +1536,33 @@ def test_run_cinematic_prompt_quality_scores_the_package() -> None:
     assert len(scored) >= 1
 
 
+def test_compute_clip_materialization_status_reflects_scenes() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_all(_job())
+
+    status = pipeline.compute_clip_materialization_status(job)
+
+    assert status.total_clips == len(job.scenes)
+    assert status.planned_duration_seconds == sum(
+        scene.estimated_duration_seconds for scene in job.scenes
+    )
+
+
+def test_compute_clip_materialization_status_tracks_prompt_tracing() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_all(_job())
+    job = pipeline.run_visual_continuity(job)
+    job = pipeline.run_shot_planning(job)
+    job = pipeline.run_cinematic_prompt_compilation(job)
+
+    status = pipeline.compute_clip_materialization_status(job)
+
+    assert status.traced_to_prompt_clips == len(job.scenes)
+    assert status.is_fully_traced is True
+
+
 def test_run_continuity_bible_requires_a_generated_script() -> None:
     pipeline, _ = _pipeline()
 

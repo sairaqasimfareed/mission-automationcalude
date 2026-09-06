@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from src.models.cinematic_prompt import CinematicPromptPackage, ResolvedCinematicPrompt
 from src.models.scene import Scene, SceneStatus
 from src.services.scene_prompt_export_service import ScenePromptExportService
 
@@ -67,3 +68,45 @@ def test_write_file_writes_the_same_text(tmp_path: Path) -> None:
     service.write_file([_scene()], destination)
 
     assert destination.read_text(encoding="utf-8") == service.to_text([_scene()])
+
+
+# --- Post-Script-Approval Production Plan, Phase 4/5: resolved-prompt preference ---
+
+
+def test_build_entries_prefers_the_resolved_cinematic_prompt() -> None:
+    service = ScenePromptExportService()
+    package = CinematicPromptPackage(
+        script_lock_hash="hash123",
+        prompts=[
+            ResolvedCinematicPrompt(
+                scene_number=1,
+                script_lock_hash="hash123",
+                prompt_text="Identity: Captain Briggs. Environment: the deck.",
+            )
+        ],
+    )
+
+    entries = service.build_entries(
+        [_scene(scene_number=1)], cinematic_prompt_package=package
+    )
+
+    assert entries[0].prompt == "Identity: Captain Briggs. Environment: the deck."
+
+
+def test_build_entries_falls_back_to_visual_prompt_when_scene_not_in_package() -> None:
+    service = ScenePromptExportService()
+    package = CinematicPromptPackage(script_lock_hash="hash123")  # no entries
+
+    entries = service.build_entries(
+        [_scene(scene_number=1)], cinematic_prompt_package=package
+    )
+
+    assert entries[0].prompt == _scene(scene_number=1).visual_prompt
+
+
+def test_build_entries_falls_back_to_visual_prompt_without_a_package() -> None:
+    service = ScenePromptExportService()
+
+    entries = service.build_entries([_scene(scene_number=1)])
+
+    assert entries[0].prompt == _scene(scene_number=1).visual_prompt

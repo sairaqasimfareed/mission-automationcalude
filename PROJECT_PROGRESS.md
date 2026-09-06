@@ -5,6 +5,67 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-06 - Post-Script-Approval Production Plan: Phase 5 Clip Workspace Canonical Materialization
+
+**The REUSE finding that reframed the whole phase.** Before writing
+anything, the question was simple: does this codebase already have a
+Clip Workspace? It does - `Scene` itself (routing via `source_type`/
+`source_status`/`fallback_sources`, asset-acquisition state via
+`SceneAssetState`) plus an entire existing GUI,
+`src/desktop/views/clip_workspace_view.py` (per-scene duration/clip
+review, bulk external-generation export, bulk stock assignment).
+`run_scene_planning()` already auto-materializes it with zero manual
+"Plan Clips" step, and it's already a pure projection of
+`GeneratedScript` rather than a parallel creative planner. Two of this
+phase's three named exit criteria were already true before this
+phase started - not something to build, something to confirm by
+reading the code.
+
+**What was genuinely missing: one summary, and one stable id already
+existed to build it on.** New `ClipMaterializationStatus`/
+`ClipMaterializationService.compute()` - pure aggregation, no LLM
+call - is the "total/ready/missing, route counts, duration integrity,
+estimated budget" summary the plan's GUI section actually asks for.
+The third exit criterion, "every clip traces lock -> semantic ->
+continuity -> shot -> prompt," needed no new id scheme at all -
+`Scene.scene_number` already is the one key `ClipContinuityEntry`,
+`ShotSpecification`, and `ResolvedCinematicPrompt` all share, so
+`is_fully_traced` just checks whether a resolved prompt exists for
+every scene number.
+
+**A real gap found while wiring this phase, not new scope.**
+`ScenePromptExportService` - the existing Clip Workspace's own
+external-generation export, the file a person actually hands to
+Google Flow or any other tool by hand - read `Scene.visual_prompt`,
+the legacy per-scene prompt, even on a project that already had a
+fully resolved `CinematicPromptPackage` from Phase 4. This is exactly
+the "current desktop shortcut must be replaced" gap the source plan
+names, just surfacing in the export path rather than an in-app
+inspector. Fixed by giving `build_entries()`/`to_text()`/`write_file()`
+an optional `cinematic_prompt_package` parameter, preferred whenever
+present and falling back to `scene.visual_prompt` for any scene the
+package doesn't cover - so an older project, or one that hasn't run
+the new chain yet, sees no behavior change at all.
+
+**Tests:** `test_clip_materialization_model.py` (8),
+`test_clip_materialization_service.py` (6: ready/missing counting,
+staleness against the current lock, prompt-tracing counting, route
+aggregation, duration/cost summation), 3 new cases in
+`test_scene_prompt_export_service.py` (resolved-prompt preference,
+package-miss fallback, no-package fallback - all 9 cases in that file
+still pass, confirming the change is additive), 2 new pipeline cases,
+2 new GUI cases. Full combined regression: 258 passed. mypy/ruff/black
+clean.
+
+**Deliberately not built this pass:** a new stable "clip ID" scheme -
+`Scene.scene_number` already serves that role, confirmed sufficient
+by inspection rather than assumed insufficient; clip version/
+regeneration history stays exactly where it already lives, the
+existing Clip Workspace/`SceneAssetState` machinery, not duplicated
+here.
+
+---
+
 ## 2026-09-06 - Post-Script-Approval Production Plan: Phase 4 Resolved Cinematic Prompt Package
 
 **Compilation and evaluation split cleanly, matching an established
