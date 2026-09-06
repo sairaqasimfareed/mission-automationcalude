@@ -39,6 +39,17 @@ class Scene(MissionBaseModel):
     # the legacy sentence-split Script path, which has no such signal.
     narrative_function: str | None = None
 
+    # Post-Script-Approval Production Plan, Phase 0: "All downstream
+    # artifacts identify the exact locked script SHA-256." Set only
+    # when this scene was planned from a script that already has a
+    # ScriptLock (VideoJob.script_lock.script_content_hash) at
+    # planning time - None for scenes planned before any lock exists
+    # (legacy Script path, or a project that never locks). This is
+    # the "real downstream reader" of ScriptLock.script_content_hash
+    # that Content Studio Redesign Phases 14/16/17 each deferred
+    # stamping for, since none of them had one yet.
+    locked_script_hash: str | None = None
+
     source_type: SceneSourceType = SceneSourceType.MANUAL_UPLOAD
     source_status: SceneSourceStatus = SceneSourceStatus.WAITING_FOR_UPLOAD
     source_locked: bool = False

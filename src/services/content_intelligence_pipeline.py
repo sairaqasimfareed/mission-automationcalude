@@ -9,6 +9,10 @@ from src.models.automation_status import AutomationStatus
 from src.models.content_decision_record import DecisionCategory
 from src.models.editorial_profile import EditorialProfile
 from src.models.information_reveal_map import InformationRevealMap
+from src.models.production_handoff import (
+    ProductionHandoffState,
+    ProductionHandoffStatus,
+)
 from src.models.script_intake import ScriptIntakeMode
 from src.models.script_lock import ScriptProvenance
 from src.models.script_production_readiness import ScriptProductionReadinessReport
@@ -1144,6 +1148,16 @@ class ContentIntelligencePipeline:
             editorial_profile,
         )
 
+        if job.script_lock is not None:
+            # Post-Script-Approval Production Plan, Phase 0: "All
+            # downstream artifacts identify the exact locked script
+            # SHA-256." Stamped here rather than inside ScenePlannerAgent
+            # itself - the agent only knows about the script, not the
+            # lock, and every other lock-aware decision in this
+            # pipeline already lives at the orchestration layer.
+            for scene in job.scenes:
+                scene.locked_script_hash = job.script_lock.script_content_hash
+
         self.invalidation_service.clear_stale(job, "scenes")
 
         self.approval_gate_service.record_event(
@@ -1445,4 +1459,50 @@ class ContentIntelligencePipeline:
             pending_decision_point=pending_decision_point,
             pending_stage=pending.stage if pending is not None else None,
             pending_summary=pending.summary if pending is not None else None,
+        )
+
+    def compute_production_handoff_status(
+        self, job: VideoJob
+    ) -> ProductionHandoffStatus:
+        """
+        Post-Script-Approval Production Plan, Phase 0: "Emit a post-
+        approval production state such as LOCKED / BUILDING_PACKAGE /
+        PACKAGE_READY / BLOCKED." Pure read of already-persisted
+        state, matching every other compute_*() method's convention.
+
+        BLOCKED: no script lock exists yet - there is nothing for a
+            production package to be built from.
+        LOCKED: locked, but no scenes have been planned from it yet.
+        BUILDING_PACKAGE: locked and scenes exist, but
+            InvalidationService already flags them stale (the script
+            changed and was re-locked since those scenes were
+            planned) - a rebuild is owed, reusing the exact staleness
+            mechanism run_all() itself already checks before deciding
+            whether to replan scenes, rather than inventing a second
+            notion of "out of date."
+        PACKAGE_READY: locked, scenes exist, and are not stale.
+        """
+
+        if job.script_lock is None:
+            return ProductionHandoffStatus(
+                state=ProductionHandoffState.BLOCKED,
+                blocked_reason="No script lock exists yet - approve and lock the "
+                "script before production planning can begin.",
+            )
+
+        if not job.scenes:
+            return ProductionHandoffStatus(
+                state=ProductionHandoffState.LOCKED,
+                locked_script_hash=job.script_lock.script_content_hash,
+            )
+
+        if self.invalidation_service.is_stale(job, "scenes"):
+            return ProductionHandoffStatus(
+                state=ProductionHandoffState.BUILDING_PACKAGE,
+                locked_script_hash=job.script_lock.script_content_hash,
+            )
+
+        return ProductionHandoffStatus(
+            state=ProductionHandoffState.PACKAGE_READY,
+            locked_script_hash=job.script_lock.script_content_hash,
         )

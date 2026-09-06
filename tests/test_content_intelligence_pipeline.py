@@ -5,6 +5,7 @@ from uuid import uuid4
 import pytest
 
 from src.models.approval import ApprovalPolicyConfig
+from src.models.production_handoff import ProductionHandoffState
 from src.models.script_lock import ScriptProvenance
 from src.models.script_selection_edit import (
     SelectionEditOperation,
@@ -1238,6 +1239,70 @@ def test_run_all_reaches_a_script_lock_for_an_intake_originated_script() -> None
     assert job.script_lock.provenance == ScriptProvenance.EXTERNAL
     assert job.script_version_history is not None
     assert job.script_version_history.is_locked is True
+
+
+def test_compute_production_handoff_status_is_blocked_without_a_lock() -> None:
+    pipeline, _ = _pipeline()
+
+    status = pipeline.compute_production_handoff_status(_job())
+
+    assert status.state == ProductionHandoffState.BLOCKED
+    assert status.blocked_reason is not None
+
+
+def test_compute_production_handoff_status_is_locked_before_scenes_exist() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_script_intake(_job(), raw_text="Imported narration text.")
+    job = pipeline.run_script_lock(job)
+
+    status = pipeline.compute_production_handoff_status(job)
+
+    assert status.state == ProductionHandoffState.LOCKED
+    assert status.locked_script_hash == job.script_lock.script_content_hash
+
+
+def test_compute_production_handoff_status_is_package_ready_once_scenes_exist() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_all(_job())
+
+    assert job.script_lock is not None
+    status = pipeline.compute_production_handoff_status(job)
+
+    assert status.state == ProductionHandoffState.PACKAGE_READY
+    assert status.is_ready is True
+
+
+def test_scenes_are_stamped_with_the_locked_script_hash() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_all(_job())
+
+    assert job.script_lock is not None
+    assert job.scenes
+    assert all(
+        scene.locked_script_hash == job.script_lock.script_content_hash
+        for scene in job.scenes
+    )
+
+
+def test_compute_production_handoff_status_is_building_package_when_scenes_are_stale() -> (
+    None
+):
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_all(_job())
+    assert job.script_lock is not None
+
+    # Simulate a downstream re-lock (e.g. after unlock+re-edit+re-lock)
+    # leaving the existing scenes flagged stale, without re-running
+    # scene planning yet.
+    pipeline.invalidation_service.on_script_changed(job)
+
+    status = pipeline.compute_production_handoff_status(job)
+
+    assert status.state == ProductionHandoffState.BUILDING_PACKAGE
 
 
 def test_run_continuity_bible_requires_a_generated_script() -> None:

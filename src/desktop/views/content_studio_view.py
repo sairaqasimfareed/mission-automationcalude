@@ -42,6 +42,7 @@ from src.models.content_decision_record import ContentDecisionRecord, DecisionCa
 from src.models.creative_direction import CreativeDirection
 from src.models.enums import Platform, ProductionMode, WorkflowStage
 from src.models.hook import HookCandidate, HookEvaluation
+from src.models.production_handoff import ProductionHandoffState
 from src.models.research import ResearchResult, ResearchSource, SourceStatus
 from src.models.research_evidence import (
     EvidenceRecord,
@@ -259,6 +260,7 @@ class ContentStudioView(QWidget):
         self._build_topic_card(job)
         self._build_settings_card(job)
         self._build_content_intelligence_card(job)
+        self._build_production_handoff_card(job)
         self._build_activity_history_card(job)
         self._build_legacy_pipeline_notice(job)
         self._build_workflow_card(job)
@@ -1165,6 +1167,73 @@ class ContentStudioView(QWidget):
             return
 
         self._on_change()
+
+    def _build_production_handoff_card(self, job: VideoJob) -> None:
+        """
+        Post-Script-Approval Production Plan, Phase 0: "After final
+        approval, show 'Script locked for production' rather than a
+        separate manual Plan Clips requirement" / "If downstream build
+        fails, show Retry Production Handoff without forcing another
+        script approval." Only shown once locking is even possible
+        (i.e. a script exists) - a brand-new project with nothing
+        produced yet has nothing to hand off.
+        """
+
+        if job.generated_script is None:
+            return
+
+        frame, layout = card("Production handoff", icon_name="clapper")
+
+        status = self._content_intelligence_pipeline.compute_production_handoff_status(
+            job
+        )
+
+        state_role = {
+            ProductionHandoffState.BLOCKED: "warning",
+            ProductionHandoffState.LOCKED: None,
+            ProductionHandoffState.BUILDING_PACKAGE: "warning",
+            ProductionHandoffState.PACKAGE_READY: "success",
+        }[status.state]
+
+        state_text = {
+            ProductionHandoffState.BLOCKED: status.blocked_reason
+            or "Blocked - no script lock exists yet.",
+            ProductionHandoffState.LOCKED: (
+                "Script locked for production. Scenes have not been " "planned yet."
+            ),
+            ProductionHandoffState.BUILDING_PACKAGE: (
+                "The script changed since scenes were last planned - "
+                "the production package needs rebuilding."
+            ),
+            ProductionHandoffState.PACKAGE_READY: (
+                "Production package is ready - scenes are planned and "
+                "match the current script lock."
+            ),
+        }[status.state]
+
+        if state_role is None:
+            layout.addWidget(small_muted(state_text))
+        else:
+            layout.addWidget(status_label(state_text, role=state_role))
+
+        if status.state in (
+            ProductionHandoffState.LOCKED,
+            ProductionHandoffState.BUILDING_PACKAGE,
+        ):
+            retry_button = button(
+                (
+                    "Retry production handoff"
+                    if job.scenes
+                    else "Build production package"
+                ),
+                variant="primary",
+            )
+            retry_button.clicked.connect(
+                lambda: self._handle_run_ci_stage("scene_planning")
+            )
+            layout.addWidget(retry_button, alignment=_LEFT)
+
+        self._layout.addWidget(frame)
 
     def _build_ci_stage_panel(
         self,

@@ -132,6 +132,19 @@ functionality - see `docs/REMAINING_GAPS.md` for what to do about it.
 
 ---
 
+## Post-Script-Approval Production Plan
+
+A separate initiative from Content Studio Redesign above - what happens
+after a script locks. Google Flow's own browser-automation mechanism is
+explicitly out of scope (already implemented separately); phases that
+route to it are covered here only for their non-Flow paths.
+
+| Capability | Model | Service | Persistence | GUI | Tests |
+|---|---|---|---|---|---|
+| Phase 0: Canonical Script Lock and Production Handoff | New `src/models/production_handoff.py` (`ProductionHandoffState` BLOCKED/LOCKED/BUILDING_PACKAGE/PACKAGE_READY, `ProductionHandoffStatus` - pure computed snapshot, same convention as `AutomationStatus`) | New `ContentIntelligencePipeline.compute_production_handoff_status()` - reuses `InvalidationService.is_stale(job, "scenes")` for the BUILDING_PACKAGE distinction rather than a second staleness concept - **REUSE confirmed by inspection**: the plan's core "one authoritative lock, SHA-256 bound, atomic failure" requirements were already satisfied by Content Studio Redesign's `ScriptLock`/`ScriptLockService`/`run_script_lock()` (Phase 14, hardened Phase 19); `run_scene_planning()` now stamps `Scene.locked_script_hash` from `job.script_lock.script_content_hash` whenever a lock exists at planning time - closing a gap Content Studio Redesign Phases 14/16/17 each explicitly deferred for lack of a downstream reader | `Scene.locked_script_hash` (new, optional, backward-compatible) | New "Production handoff" card: state banner (blocked/locked/building/ready) + "Retry production handoff"/"Build production package" button reusing the existing generic `_handle_run_ci_stage("scene_planning")` dispatch - no new handler needed; shown only once a script exists | `test_production_handoff_model.py` (5 tests), 5 new cases in `test_content_intelligence_pipeline.py`, 3 new cases in `test_content_studio_content_intelligence_gui.py` | No hard guard inside `run_scene_planning()` refusing an unlocked script (matches the established precedent of not retrofitting hard preconditions into methods many existing tests call standalone); no hash stamping yet on anything downstream of scenes (clips/timelines/render results don't exist for the new pipeline yet) |
+
+---
+
 Maintenance: add a row here in the same change that adds a new
 Model/Service/Persistence/GUI/Tests combination. A capability that only
 has some of these columns filled in is not done - see

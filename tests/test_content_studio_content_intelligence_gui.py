@@ -2688,3 +2688,63 @@ def test_legacy_pipeline_notice_is_suppressed_once_a_path_is_chosen(
     assert ContentStudioView._should_show_legacy_pipeline_notice(job) is False
 
     view.refresh(job)  # must not raise once the notice is suppressed
+
+
+# --- Post-Script-Approval Production Plan, Phase 0: Production Handoff ---
+
+
+def test_production_handoff_card_is_absent_without_a_script(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)  # must not raise; job.generated_script is None
+
+
+def test_production_handoff_reaches_package_ready_after_full_automation(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job.approval_policy = ApprovalPolicyConfig.full_auto()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    view._handle_run_automation()
+    view.refresh(job)  # must not raise while the handoff card renders
+
+    from src.models.production_handoff import ProductionHandoffState
+
+    status = view._content_intelligence_pipeline.compute_production_handoff_status(job)
+    assert status.state == ProductionHandoffState.PACKAGE_READY
+
+
+def test_retry_production_handoff_button_replans_scenes(qapp: QApplication) -> None:
+    from src.models.production_handoff import ProductionHandoffState
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job.approval_policy = ApprovalPolicyConfig.full_auto()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    view._handle_run_automation()
+
+    pipeline = view._content_intelligence_pipeline
+    pipeline.invalidation_service.on_script_changed(job)
+    status = pipeline.compute_production_handoff_status(job)
+    assert status.state == ProductionHandoffState.BUILDING_PACKAGE
+
+    view.refresh(job)
+    view._handle_run_ci_stage("scene_planning")
+
+    status_after = pipeline.compute_production_handoff_status(job)
+    assert status_after.state == ProductionHandoffState.PACKAGE_READY

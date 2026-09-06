@@ -5,6 +5,77 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-06 - Post-Script-Approval Production Plan: Phase 0 Canonical Script Lock and Production Handoff
+
+**Starting the second PDF (Post-Script-Approval Production Plan),
+Google Flow's own automation mechanism explicitly excluded per the
+standing scope.** Re-extracted the full 16-phase plan
+(`Mission_Automation_Post_Script_Approval_Phase_Plan.pdf`) and
+checked its own "Current Repository Position" table against this
+repo's actual state before writing anything - the PDF's table is
+partially stale (it names files like `content_workspace_service.py`/
+`clip_workspace_service.py`/`visual_continuity_service.py` that don't
+exist under those names here; the underlying repo has evolved past
+that baseline). Confirmed instead, by direct inspection, that this
+whole session's Content Studio Redesign work already covers large
+parts of this plan's own scope: `ScriptLock`/`ScriptLockService`/
+`run_script_lock()` (Content Studio Phase 14, hardened Phase 19) *is*
+this plan's "Final Script Lock + SHA-256 integrity binding"; genre
+`SceneEditingDirectives` is most of "Production Semantic Brief," just
+organized per-scene instead of per-segment; continuity extraction,
+audio timeline, and the FFmpeg render stack already exist and are
+substantial.
+
+**What Phase 0 actually needed, once the REUSE audit was done.** The
+plan's exit criteria ask for one thing Content Studio Redesign never
+had a concrete reason to build: "all downstream artifacts identify
+the exact locked script SHA-256." Phases 14, 16, and 17 each
+explicitly deferred stamping `Scene`/directive models with a
+`locked_script_id`/hash, each time for the same reason - "no real
+downstream reader exists yet." This plan *is* that reader. New
+`Scene.locked_script_hash: str | None` (optional, backward-compatible)
+is now stamped by `run_scene_planning()` from
+`job.script_lock.script_content_hash` whenever a lock exists at
+planning time.
+
+**A post-approval production state, computed not persisted.** New
+`src/models/production_handoff.py` - `ProductionHandoffState`
+(BLOCKED/LOCKED/BUILDING_PACKAGE/PACKAGE_READY) and
+`ProductionHandoffStatus`, following the exact same pure-computed-
+snapshot convention `AutomationStatus`/`ScriptQualityReport` already
+established. `ContentIntelligencePipeline.compute_production_handoff_status()`
+reuses the pre-existing `InvalidationService.is_stale(job, "scenes")`
+check for the BUILDING_PACKAGE distinction (a script re-locked after
+scenes were already planned) rather than inventing a second notion of
+staleness - one mechanism, read from two places.
+
+**GUI.** A new "Production handoff" card - a state banner plus a
+"Retry production handoff" (or "Build production package," before
+scenes exist yet) button. The button reuses the existing generic
+`_handle_run_ci_stage("scene_planning")` dispatch rather than a new
+handler, satisfying the plan's own "Retry Production Handoff without
+forcing another script approval" literally: nothing about retrying
+touches approval state at all.
+
+**Tests:** `test_production_handoff_model.py` (5), 5 new pipeline
+cases (blocked-without-lock, locked-before-scenes, package-ready,
+hash-stamping, building-package-when-stale), 3 new GUI cases. Full
+combined regression (content intelligence pipeline, GUI, migration,
+production handoff model): 208 passed. mypy/ruff/black clean.
+
+**Deliberately not built this pass:** no hard precondition inside
+`run_scene_planning()` itself refusing to run without a lock - matches
+this session's own established precedent (Content Studio Redesign
+Phase 7: many existing tests call pipeline stage methods directly and
+standalone, without their normal preconditions, by design; `run_all()`'s
+own call order already only reaches scene planning after locking, so
+enforcement lives at the orchestration/GUI level instead); no hash
+stamping on anything downstream of scenes (clips, timelines, render
+results) since none of those exist yet for the new pipeline - deferred
+to whichever later phase actually builds them.
+
+---
+
 ## 2026-09-06 - Content Studio Redesign: Phase 19 End-to-End Integration, Migration and Production Readiness
 
 **A verification phase, and it earned its keep - two real bugs found,
