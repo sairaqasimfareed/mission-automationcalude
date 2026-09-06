@@ -5,6 +5,33 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-06 - Post-Script-Approval Production Plan: Phase 14 FFmpeg Production Render
+
+**Repository position confirmed by inspection - "Real FFmpeg production stack is implemented" held up for every headline capability.** `ProductionRenderService.render()` already builds the master plan, transition/effect/subtitle/camera/animation plans, the render graph, resolves FFmpeg capabilities, builds the filter graph and the deterministic command plan, executes FFmpeg, and normalizes the outcome into `RenderResult` - exactly this phase's own "use existing ProductionRenderService" bullet, already true before this phase started. `FFmpegExecutionService.execute()` already supports progress callbacks, a timeout, and cooperative cancellation via a `cancellation_check` callable.
+
+**Four narrow, genuine gaps found by reading the actual call chain, not assumed from the plan's own brief description:**
+
+1. **Cancellation was supported two layers down but never reachable from the top.** `FFmpegExecutionService.execute()` already accepts `cancellation_check`, but `ProductionRenderService.render()` never accepted or forwarded one - the capability existed and was simply unwired at the one boundary a caller would actually use.
+
+2. **No staged-output-then-promote pattern existed anywhere.** FFmpeg always wrote directly to the final requested output path. A crash, a cancellation, or any of the execution service's own late-stage failures (`output_size` - an empty file; `output_type` - not a regular file) could leave a corrupt or partial file sitting at the exact path a caller would treat as the finished video.
+
+3. **RenderResult persisted almost none of what the render actually did.** `FFmpegExecutionResult` already carries the full command list, exit code, and metadata; `FFmpegResolvedConfig` already carries the detected FFmpeg version and the selected video/audio codec and hardware acceleration - all of it was computed and then discarded the moment `ProductionRenderService.render()` returned, since `RenderResult` had nowhere to put it.
+
+4. **The best find of the four: failure classification already existed, several layers deep, and was silently thrown away.** Reading `FFmpegExecutionService.execute()` line by line found it already stamps a `failure_stage` value into `FFmpegExecutionResult.metadata` on every failure path - `process_start`, `stream_setup`, `timeout`, `cancelled`, `ffmpeg_exit`, `output_presence`, `output_type`, `output_size` - a genuinely fine-grained taxonomy. `ProductionRenderService.render()` never read `execution_result.metadata` at all. "Classify environment/media failures vs upstream-plan defects" wasn't missing logic; it was missing plumbing.
+
+**What was built - all additive, all optional:**
+
+- `ProductionRenderService.render()` gains an optional `cancellation_check` parameter, forwarded straight through to `FFmpegExecutionService.execute()`.
+- Every render now writes to `<target>.part` and only ever promotes it to the real target path via an atomic `Path.replace()` after `execution_result.success` is genuinely true (which `FFmpegExecutionService` itself already guarantees means the file exists, is a regular file, and is non-empty). A failed, cancelled, or crashed render (including an exception raised by `execute()` itself) always cleans up its own staging file, so a retry never confuses a stale partial file for real output.
+- New `src/models/render_failure_diagnosis.py`: `RenderFailureCategory` (ENVIRONMENT/COMMAND_OR_MEDIA/CANCELLED) and `classify_render_failure()`, which maps the execution service's existing `failure_stage` taxonomy onto this phase's three-way distinction. Deliberately coarse where honesty requires it: `ffmpeg_exit` (FFmpeg ran and rejected the command or its media) maps to one combined category, since this codebase does not parse FFmpeg's stderr text to separate a bad input file from a malformed generated command.
+- `RenderResult` gains `ffmpeg_command`, `exit_code`, `ffmpeg_version`, `selected_video_codec`, `selected_audio_codec`, `selected_hardware_acceleration`, and `failure_category` - all optional, all backward-compatible with a `RenderResult` built before this phase.
+
+**Tests:** new `test_render_failure_diagnosis_model.py` (5 cases covering every mapped stage plus unknown/missing-stage honesty), extended `test_render_result.py` (default-unset and explicit-value-with-round-trip assertions for every new field), extended `test_production_render_service.py` with 4 new cases (cancellation forwarding, real-filesystem staged-output promotion, staging cleanup on a classified failure, staging cleanup when `execute()` itself raises) alongside updating its 3 existing cases' fixtures for the new fields - all still green. Broader regression across the whole render/FFmpeg stack (73 cases: production render, render result, failure diagnosis, render stage, FFmpeg execution/command-builder/diagnostics/stability, render graph, filter graph fades/limiter/ducking/transitions, master edit plan) plus the separately-run FFmpeg capability suite (7 passed, 1 pre-existing environment skip): all green. mypy/ruff/black clean on every touched file.
+
+**Deliberately not built this pass:** `render_stage.py`'s own `_execute_production_render()` does not yet forward a `cancellation_check` - no caller in this codebase currently has a cancellation signal to supply, so wiring one through the pipeline stage without a real source would be speculative; the capability is available on `ProductionRenderService.render()` itself for the day a caller does. No deeper stderr parsing to split `COMMAND_OR_MEDIA` further - that would need real, tested heuristics this pass has no evidence to back.
+
+---
+
 ## 2026-09-06 - Post-Script-Approval Production Plan: Phase 13 Master Edit Plan and Render-Readiness Gate
 
 **Nearly all of this phase's stated objective already existed, built

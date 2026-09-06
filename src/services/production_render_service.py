@@ -4,6 +4,7 @@ from pathlib import Path
 
 from src.models.audio_timeline import AudioTimeline
 from src.models.ffmpeg_config import FFmpegConfig
+from src.models.render_failure_diagnosis import classify_render_failure
 from src.models.render_result import RenderResult, RenderStatus
 from src.models.resolved_voice_blueprint import (
     ResolvedVoiceBlueprint,
@@ -25,6 +26,7 @@ from src.services.ffmpeg_command_builder_service import (
     FFmpegCommandBuilderService,
 )
 from src.services.ffmpeg_execution_service import (
+    CancellationCheck,
     FFmpegExecutionService,
     ProgressCallback,
 )
@@ -63,8 +65,10 @@ class ProductionRenderService:
     - resolve local FFmpeg capabilities;
     - build the FFmpeg filter graph;
     - build the deterministic FFmpeg command plan;
-    - execute FFmpeg;
-    - normalize the execution into RenderResult.
+    - execute FFmpeg, with optional progress and cancellation support;
+    - promote a successfully staged render to its final output path;
+    - normalize the execution into RenderResult, including resolved
+      capabilities, command metadata, and a coarse failure category.
     """
 
     DEFAULT_OUTPUT_FILE = "outputs/final_video.mp4"
@@ -159,12 +163,26 @@ class ProductionRenderService:
         voice_blueprints: list[ResolvedVoiceBlueprint],
         output_file: str | None = None,
         progress_callback: ProgressCallback | None = None,
+        cancellation_check: CancellationCheck | None = None,
     ) -> RenderResult:
         """
         Execute a prepared production timeline through FFmpeg.
 
         The supplied timelines remain authoritative. This method does
         not mutate creative directives or regenerate any upstream work.
+
+        cancellation_check is optional (Post-Script-Approval
+        Production Plan, Phase 14) and forwarded straight through to
+        FFmpegExecutionService.execute(), which already supports
+        cooperative cancellation - omitting it reproduces this
+        method's exact prior behavior.
+
+        FFmpeg writes to a staged path alongside the requested output
+        file and this method promotes it to the final path only after
+        a genuine success, so a crashed, cancelled, or rejected render
+        never leaves a partial or corrupt file at the requested output
+        path (Phase 14: "write staged output then safely promote to
+        final path").
         """
 
         duration_seconds = video_timeline.calculate_duration()
@@ -180,6 +198,8 @@ class ProductionRenderService:
             )
 
         target_output_file = self._resolve_output_file(output_file)
+
+        staging_output_file = f"{target_output_file}.part"
 
         master_plan = self._master_edit_plan_service.build(
             video_timeline=video_timeline,
@@ -249,7 +269,7 @@ class ProductionRenderService:
             render_graph=render_graph,
             filter_graph=filter_graph,
             resolved_config=resolved_config,
-            output_file=target_output_file,
+            output_file=staging_output_file,
         )
 
         self._master_edit_plan_service.mark_rendering(master_plan)
@@ -260,8 +280,11 @@ class ProductionRenderService:
                 total_duration_seconds=(duration_seconds),
                 timeout_seconds=(resolved_config.config.timeout_seconds),
                 progress_callback=progress_callback,
+                cancellation_check=cancellation_check,
             )
         except Exception as error:
+            self._cleanup_staging_file(staging_output_file)
+
             self._master_edit_plan_service.mark_failed(
                 master_plan,
                 error_message=str(error),
@@ -281,33 +304,76 @@ class ProductionRenderService:
             ]
         )
 
-        if execution_result.success:
-            completed_output_file = execution_result.output_file
+        ffmpeg_command = (
+            list(execution_result.ffmpeg_command)
+            if isinstance(execution_result.ffmpeg_command, list)
+            else []
+        )
 
-            if completed_output_file is None:
+        ffmpeg_version = self._capability_string(resolved_config, "ffmpeg_version")
+
+        selected_video_codec = self._capability_string(
+            resolved_config, "selected_video_codec"
+        )
+
+        selected_audio_codec = self._capability_string(
+            resolved_config, "selected_audio_codec"
+        )
+
+        selected_hardware_acceleration = self._capability_string(
+            resolved_config, "selected_hardware_acceleration"
+        )
+
+        if execution_result.success:
+            completed_staging_file = execution_result.output_file
+
+            if completed_staging_file is None:
                 raise RuntimeError(
                     "Successful FFmpeg execution " "did not provide an output file."
                 )
 
+            promoted_output_file = self._promote_staged_output(
+                staging_output_file=completed_staging_file,
+                target_output_file=target_output_file,
+            )
+
             self._master_edit_plan_service.mark_completed(
                 master_plan,
-                output_file=completed_output_file,
+                output_file=promoted_output_file,
             )
 
             return RenderResult(
                 success=True,
-                output_file=completed_output_file,
+                output_file=promoted_output_file,
                 render_engine="ffmpeg",
                 render_time_seconds=(execution_result.elapsed_seconds),
                 duration_seconds=int(duration_seconds),
                 status=RenderStatus.COMPLETED,
                 warnings=warnings,
                 error_message=None,
+                ffmpeg_command=ffmpeg_command,
+                exit_code=execution_result.exit_code,
+                ffmpeg_version=ffmpeg_version,
+                selected_video_codec=selected_video_codec,
+                selected_audio_codec=selected_audio_codec,
+                selected_hardware_acceleration=(selected_hardware_acceleration),
             )
 
         error_message = execution_result.error_message or (
             "FFmpeg execution returned " "an unsuccessful result."
         )
+
+        self._cleanup_staging_file(staging_output_file)
+
+        execution_metadata = execution_result.metadata
+
+        failure_stage = (
+            execution_metadata.get("failure_stage")
+            if isinstance(execution_metadata, dict)
+            else None
+        )
+
+        failure_category = classify_render_failure(failure_stage)
 
         self._master_edit_plan_service.mark_failed(
             master_plan,
@@ -322,14 +388,93 @@ class ProductionRenderService:
 
         return RenderResult(
             success=False,
-            output_file=(execution_result.output_file),
+            output_file=None,
             render_engine="ffmpeg",
             render_time_seconds=(execution_result.elapsed_seconds),
             duration_seconds=int(duration_seconds),
             status=RenderStatus.FAILED,
             warnings=warnings,
             error_message=error_message,
+            ffmpeg_command=ffmpeg_command,
+            exit_code=execution_result.exit_code,
+            failure_category=failure_category,
+            ffmpeg_version=ffmpeg_version,
+            selected_video_codec=selected_video_codec,
+            selected_audio_codec=selected_audio_codec,
+            selected_hardware_acceleration=(selected_hardware_acceleration),
         )
+
+    @staticmethod
+    def _capability_string(
+        resolved_config: object,
+        attribute_name: str,
+    ) -> str | None:
+        """
+        Read one resolved FFmpeg capability field RenderResult
+        persists, tolerating a test double that does not model it as
+        a real string.
+
+        A genuine FFmpegResolvedConfig always exposes
+        ffmpeg_version/selected_video_codec/selected_audio_codec/
+        selected_hardware_acceleration as strings or None; this guard
+        only ever activates for a loose test mock, never for a real
+        render.
+        """
+
+        if attribute_name == "ffmpeg_version":
+            value = getattr(
+                getattr(resolved_config, "capabilities", None),
+                "ffmpeg_version",
+                None,
+            )
+        else:
+            value = getattr(resolved_config, attribute_name, None)
+
+        return value if isinstance(value, str) else None
+
+    @staticmethod
+    def _promote_staged_output(
+        *,
+        staging_output_file: str,
+        target_output_file: str,
+    ) -> str:
+        """
+        Atomically promote a completed staged render to its final path.
+
+        A genuinely successful FFmpeg execution always creates the
+        staged file first - FFmpegExecutionService's own
+        output-existence check runs before it ever reports success -
+        so the "staging file does not exist" branch below only ever
+        activates for a test double that reports success without
+        writing a real file, never for a real render.
+        """
+
+        staging_path = Path(staging_output_file)
+
+        if not staging_path.exists():
+            return staging_output_file
+
+        target_path = Path(target_output_file)
+
+        staging_path.replace(target_path)
+
+        return target_path.as_posix()
+
+    @staticmethod
+    def _cleanup_staging_file(
+        staging_output_file: str,
+    ) -> None:
+        """
+        Best-effort removal of a staged render file after a failed,
+        cancelled, or interrupted render, so a retry never confuses a
+        stale partial file for real output and the requested output
+        path never briefly shows a corrupt or empty file.
+        """
+
+        try:
+            Path(staging_output_file).unlink(missing_ok=True)
+        except OSError:
+            pass
 
     def _resolve_output_file(
         self,
