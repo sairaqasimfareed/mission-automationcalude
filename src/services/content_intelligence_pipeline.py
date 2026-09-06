@@ -63,6 +63,7 @@ from src.services.script_quality_gate_service import ScriptQualityGateService
 from src.services.script_revision_service import ScriptRevisionService
 from src.services.script_selection_edit_service import ScriptSelectionEditService
 from src.services.script_version_service import ScriptVersionService
+from src.services.shot_planning_service import ShotPlanningService
 from src.services.story_angle_evaluation_service import (
     StoryAngleEvaluationService,
     select_winning_evaluation,
@@ -211,6 +212,11 @@ class ContentIntelligencePipeline:
             estimated_cost_usd=estimated_cost_usd,
         )
         self.visual_continuity_validation_service = VisualContinuityValidationService()
+        self.shot_planning_service = ShotPlanningService(
+            llm_service=llm_service,
+            profile_ids=profile_ids,
+            estimated_cost_usd=estimated_cost_usd,
+        )
         self.continuity_bible_extraction_service = ContinuityBibleExtractionService(
             llm_service=llm_service,
             profile_ids=profile_ids,
@@ -1208,6 +1214,45 @@ class ContentIntelligencePipeline:
         return self.visual_continuity_validation_service.validate(
             job.visual_continuity_bible
         )
+
+    def run_shot_planning(self, job: VideoJob) -> VideoJob:
+        """
+        Post-Script-Approval Production Plan, Phase 3: "Convert
+        continuity-aware clip states into high-production shot
+        specifications with within-clip action timing." Requires the
+        visual continuity bible this phase's own shots must respect,
+        not merely scenes - a shot planned without continuity context
+        would just be Content Studio's existing Scene.visual_prompt
+        with extra steps.
+        """
+
+        if job.script_lock is None:
+            raise RuntimeError("Shot planning requires a locked script.")
+
+        if job.visual_continuity_bible is None:
+            raise RuntimeError("Shot planning requires a visual continuity bible.")
+
+        if not job.scenes:
+            raise RuntimeError("Shot planning requires planned scenes.")
+
+        job.cinematic_shot_plan = self.shot_planning_service.plan(
+            scenes=job.scenes,
+            visual_continuity_bible=job.visual_continuity_bible,
+            script_lock_hash=job.script_lock.script_content_hash,
+            topic=job.topic,
+        )
+
+        self.approval_gate_service.record_event(
+            job=job,
+            stage="shot_planning",
+            summary=(
+                f"Cinematic shot plan generated "
+                f"({len(job.cinematic_shot_plan.shots)} shot(s))."
+            ),
+            category=DecisionCategory.GENERATION,
+        )
+
+        return job
 
     def run_packaging_hypothesis(self, job: VideoJob) -> VideoJob:
         """

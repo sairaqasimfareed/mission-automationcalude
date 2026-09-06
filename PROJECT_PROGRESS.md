@@ -5,6 +5,52 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-06 - Post-Script-Approval Production Plan: Phase 3 Cinematic Shot Plan and Temporal Beat Expansion
+
+**Continuity state referenced, never duplicated.** `ShotSpecification`
+deliberately carries no wardrobe/location/lighting fields of its own -
+it references its scene only by `scene_number`, and whatever
+incoming/outgoing visual state applies comes from `VisualContinuityBible`'s
+own `ClipContinuityEntry`, looked up by that same number. Two models
+holding the same state field would eventually disagree with each
+other; one model holding it and a second one pointing at it never can.
+
+**Duration is production timing, not a creative decision.** Every
+shot's `duration_seconds` is set by the pipeline from `Scene.
+estimated_duration_seconds` after the LLM call returns - never asked
+of the LLM at all. An LLM guessing at a number that already exists
+elsewhere is exactly the kind of "second source of truth" this whole
+plan's own cross-cutting rules warn against.
+
+**A partial or malformed LLM response still satisfies the exit
+criterion.** "Every planned clip has exactly one shot specification"
+is checked mechanically (`CinematicShotPlan.has_exactly_one_shot_per_scene`),
+and `ShotPlanningService.plan()` fills a plain, honestly-generic
+fallback shot for any scene its one LLM call's response didn't cover
+- so the plan is always complete even when a single provider call
+comes back partial, rather than silently leaving a clip unplanned.
+
+**Explicitly out of scope, not overlooked.** The plan's own
+"calculate provider-compatible durations including 8s preferred clips
+and shorter remainders" bullet is Google Flow-generation-specific
+logic - excluded per this whole implementation's standing scope
+alongside the Flow automation mechanism itself. Shot duration here is
+whatever `Scene.estimated_duration_seconds` already is.
+
+**Tests:** `test_shot_planning_model.py` (6), `test_shot_planning_service.py`
+(6: one shot per scene, scene-sourced duration overriding whatever the
+LLM said, temporal-beat parsing, fallback-shot filling for a skipped
+scene, empty-scenes/provider-failure rejection), 4 new pipeline cases,
+3 new GUI cases. mypy/ruff/black clean.
+
+**Deliberately not built this pass:** a shot-diversity heuristic
+across the whole plan ("avoid repetitive visual grammar") - judging
+diversity needs either a second evaluation pass or cross-shot prompt
+context this per-scene call doesn't currently carry, better scoped as
+its own follow-up than folded in here.
+
+---
+
 ## 2026-09-06 - Post-Script-Approval Production Plan: Phase 2 Visual Continuity Bible
 
 **The PDF's own "strong domain model exists" claim didn't survive

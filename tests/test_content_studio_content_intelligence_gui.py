@@ -2844,3 +2844,48 @@ def test_generate_visual_continuity_is_a_noop_without_a_job(
     view = _view(job_store)
 
     view._handle_generate_visual_continuity()  # must not raise
+
+
+# --- Post-Script-Approval Production Plan, Phase 3: Cinematic Shot Plan ---
+
+
+def test_shot_planning_section_absent_without_visual_continuity(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job.approval_policy = ApprovalPolicyConfig.full_auto()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    view._handle_run_automation()
+    view.refresh(job)  # must not raise; no visual continuity bible yet
+
+
+def test_generate_shot_plan_populates_the_plan(qapp: QApplication) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job.approval_policy = ApprovalPolicyConfig.full_auto()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    view._handle_run_automation()
+    view._handle_generate_visual_continuity()
+
+    view._handle_generate_shot_plan()
+
+    assert job.cinematic_shot_plan is not None
+    assert job.cinematic_shot_plan.has_exactly_one_shot_per_scene is True
+
+    view.refresh(job)  # must not raise while the plan renders
+
+
+def test_generate_shot_plan_is_a_noop_without_a_job(qapp: QApplication) -> None:
+    job_store = InMemoryJobStore()
+    view = _view(job_store)
+
+    view._handle_generate_shot_plan()  # must not raise

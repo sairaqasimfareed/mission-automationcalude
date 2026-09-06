@@ -50,6 +50,7 @@ from src.models.script_intake import ScriptIntakeResult
 from src.models.script_lock import ScriptLock
 from src.models.script_quality_report import ScriptQualityReport
 from src.models.script_version import ScriptVersionHistory
+from src.models.shot_planning import CinematicShotPlan
 from src.models.story_angle import StoryAngle, StoryAngleEvaluation
 from src.models.story_blueprint import StoryBlueprint
 from src.models.topic_candidate import TopicCandidate
@@ -207,6 +208,10 @@ class VideoJob(MissionBaseModel):
     # per-clip visual state machine - None until generated, requires
     # scenes to exist first.
     visual_continuity_bible: VisualContinuityBible | None = None
+    # Post-Script-Approval Production Plan, Phase 3: one shot
+    # specification per planned clip - None until generated, requires
+    # a visual continuity bible to exist first.
+    cinematic_shot_plan: CinematicShotPlan | None = None
 
     content_decisions: list[ContentDecisionRecord] = Field(default_factory=list)
     stale_artifacts: list[StaleArtifact] = Field(default_factory=list)

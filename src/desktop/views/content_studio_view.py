@@ -1241,6 +1241,10 @@ class ContentStudioView(QWidget):
             layout.addWidget(separator())
             self._render_visual_continuity_section(layout, job)
 
+        if job.script_lock is not None and job.visual_continuity_bible is not None:
+            layout.addWidget(separator())
+            self._render_shot_planning_section(layout, job)
+
         self._layout.addWidget(frame)
 
     def _render_production_semantic_brief_section(
@@ -1402,6 +1406,70 @@ class ContentStudioView(QWidget):
                 job,
                 f"Could not generate visual continuity bible: {error}",
                 on_retry=self._handle_generate_visual_continuity,
+            )
+
+            return
+
+        self._on_change()
+
+    def _render_shot_planning_section(self, layout: QVBoxLayout, job: VideoJob) -> None:
+        """
+        Post-Script-Approval Production Plan, Phase 3: "Clip card
+        shows clip number/source/duration/shot summary" / "Clip
+        inspector shows full shot details plus intra-shot timeline."
+        Also lives inside the Production Handoff card alongside
+        Production Directives and Visual Continuity - all three are
+        read-only inspectors over the same post-lock production
+        chain.
+        """
+
+        plan = job.cinematic_shot_plan
+
+        if plan is None:
+            layout.addWidget(small_muted("No cinematic shot plan generated yet."))
+            generate_button = button("Generate cinematic shot plan", variant="primary")
+            generate_button.clicked.connect(self._handle_generate_shot_plan)
+            layout.addWidget(generate_button, alignment=_LEFT)
+
+            return
+
+        layout.addWidget(badge(f"Cinematic shot plan · {len(plan.shots)} shot(s)"))
+
+        if not plan.has_exactly_one_shot_per_scene:
+            layout.addWidget(
+                status_label(
+                    "Some scenes have more than one shot specification.",
+                    role="warning",
+                )
+            )
+
+        for shot in sorted(plan.shots, key=lambda s: s.scene_number):
+            layout.addWidget(
+                small_muted(
+                    f"Scene {shot.scene_number} ({shot.duration_seconds:.0f}s): "
+                    f"{shot.shot_size.value.replace('_', ' ')} · "
+                    f"{shot.shot_angle.value.replace('_', ' ')} · "
+                    f"{shot.movement.value} - {shot.action}"
+                )
+            )
+
+        regenerate_button = button("Regenerate cinematic shot plan", variant="ghost")
+        regenerate_button.clicked.connect(self._handle_generate_shot_plan)
+        layout.addWidget(regenerate_button, alignment=_LEFT)
+
+    def _handle_generate_shot_plan(self) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        try:
+            self._content_intelligence_pipeline.run_shot_planning(job)
+        except (RuntimeError, ValueError) as error:
+            self._record_error(
+                job,
+                f"Could not generate cinematic shot plan: {error}",
+                on_retry=self._handle_generate_shot_plan,
             )
 
             return

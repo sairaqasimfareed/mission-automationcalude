@@ -1435,6 +1435,59 @@ def test_compute_visual_continuity_validation_after_generation() -> None:
     assert result.script_lock_hash == job.script_lock.script_content_hash
 
 
+def test_run_shot_planning_requires_visual_continuity() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_all(_job())
+
+    with pytest.raises(RuntimeError, match="requires a visual continuity bible"):
+        pipeline.run_shot_planning(job)
+
+
+def test_run_shot_planning_requires_a_script_lock() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_audience_promise(_job())
+    job = pipeline.run_research(job)
+    job = pipeline.run_story_angles(job)
+    job = pipeline.run_narrative_architecture(job)
+    job = pipeline.run_hooks(job)
+    job = pipeline.run_script(job)
+    job = pipeline.run_continuity_bible(job)
+    job = pipeline.run_scene_planning(job)
+
+    with pytest.raises(RuntimeError, match="requires a locked script"):
+        pipeline.run_shot_planning(job)
+
+
+def test_run_shot_planning_builds_a_plan_with_one_shot_per_scene() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_all(_job())
+    job = pipeline.run_visual_continuity(job)
+    job = pipeline.run_shot_planning(job)
+
+    assert job.cinematic_shot_plan is not None
+    assert job.cinematic_shot_plan.has_exactly_one_shot_per_scene is True
+    assert job.cinematic_shot_plan.script_lock_hash == (
+        job.script_lock.script_content_hash
+    )
+
+
+def test_run_shot_planning_records_a_generation_event() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_all(_job())
+    job = pipeline.run_visual_continuity(job)
+    job = pipeline.run_shot_planning(job)
+
+    matching = [
+        record for record in job.content_decisions if record.stage == "shot_planning"
+    ]
+    assert len(matching) == 1
+    assert matching[0].category == "generation"
+
+
 def test_run_continuity_bible_requires_a_generated_script() -> None:
     pipeline, _ = _pipeline()
 
