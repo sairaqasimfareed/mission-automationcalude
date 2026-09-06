@@ -5,6 +5,60 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-06 - Post-Script-Approval Production Plan: Phase 13 Master Edit Plan and Render-Readiness Gate
+
+**Nearly all of this phase's stated objective already existed, built
+for a different but overlapping purpose.** `MasterEditPlanService`'s
+`_readiness_failures()`/`_build_warnings()` already implement exactly
+what the phase asks for - a render-readiness report distinguishing
+hard blockers (no scenes, video/editing/voice/audio not ready,
+incompatible durations) from soft warnings (missing media, borderline
+duration slack), spanning every dimension named in the objective. No
+new readiness logic was needed.
+
+**The one genuine gap: a render-input identity hash was computed, but
+never persisted onto the plan it describes.** `RenderIdentityService`
+(pre-existing, from an even earlier production-hardening spec's own
+Phase 6 per its docstring) already computes a deterministic SHA-256
+hash from a job's video timeline, audio timeline, and render settings
+- but that hash is used *only* for `FinalPreview` staleness detection
+(`final_preview_service.py`/`quality_center_view.py`). A persisted
+`MasterEditPlan` had no self-describing record of which exact render
+inputs it was built from - "persist render input manifest/hash for
+reproducibility" was the actual, narrower gap.
+
+**Narrow, additive fix.** New optional `MasterEditPlan.render_identity_hash:
+str | None = None` field, and a matching optional
+`MasterEditPlanService.build(..., render_identity_hash: str | None = None)`
+parameter that passes it straight through to the model constructor.
+The service deliberately stays decoupled from `VideoJob`/
+`RenderIdentityService` - a caller that wants a self-describing plan
+computes the hash separately (`RenderIdentityService.compute(job)`)
+and passes the resulting string through; omitting it reproduces the
+method's exact prior behavior. Confirmed `refresh()` never touches the
+field, so it survives a refresh call untouched, and it round-trips
+through `model_dump_json()`/`model_validate_json()` unchanged.
+
+**Tests:** extended `tests/test_master_edit_plan_service.py` (its
+existing script-style, top-level-assert format) with a new section
+covering: default `render_identity_hash is None` (exact prior
+behavior), an explicit hash stored on `build()`, survival across
+`refresh()`, and survival across a serialization round-trip. Broader
+regression (`test_master_edit_plan_service.py` +
+`test_render_identity_service.py` + `test_final_preview_service.py` +
+`test_production_render_service.py` = 29 passed). mypy/ruff/black
+clean on both touched files.
+
+**Deliberately not built this pass:** no caller has been wired to
+actually compute and pass `render_identity_hash` yet (e.g. wherever a
+`MasterEditPlan` is first built from a `VideoJob`) - this phase adds
+the capability to carry the identity, not a new call site forcing
+every plan to carry one. That wiring is a natural, low-risk follow-up
+but wasn't required by this phase's own wording and was left out to
+keep this change minimal and reviewable.
+
+---
+
 ## 2026-09-06 - Post-Script-Approval Production Plan: Phase 12 Video Timeline and Editing Directive Compilation
 
 **Most of this phase turned out to already be solved, more thoroughly

@@ -93,6 +93,16 @@ class MasterEditPlan(MissionBaseModel):
         default_factory=dict,
     )
 
+    # Post-Script-Approval Production Plan, Phase 13: "Persist render
+    # input manifest/hash for reproducibility." Optional - the exact
+    # same RenderIdentityService.compute(job) hash already used
+    # elsewhere for FinalPreview staleness detection, stamped directly
+    # onto the plan itself rather than only computed ad hoc, so a
+    # persisted MasterEditPlan is self-describing about exactly which
+    # render inputs it was built from. None for a plan built before
+    # this field existed, or when a caller doesn't supply one.
+    render_identity_hash: str | None = None
+
     @model_validator(mode="after")
     def validate_master_edit_plan(
         self,

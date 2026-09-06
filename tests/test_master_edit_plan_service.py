@@ -770,4 +770,51 @@ restored = serialization_plan.__class__.model_validate_json(serialized)
 assert restored == serialization_plan
 
 
+# --------------------------------------------------
+# Render identity hash (Post-Script-Approval Production
+# Plan, Phase 13)
+# --------------------------------------------------
+
+no_hash_plan = service.build(
+    video_timeline=build_video_timeline(
+        durations=[
+            8,
+            7,
+        ],
+    ),
+    audio_timeline=(build_ready_audio_timeline()),
+)
+
+assert no_hash_plan.render_identity_hash is None
+
+print("Default render identity hash " "successfully left unset.")
+
+hashed_plan = service.build(
+    video_timeline=build_video_timeline(
+        durations=[
+            8,
+            7,
+        ],
+    ),
+    audio_timeline=(build_ready_audio_timeline()),
+    render_identity_hash=("deadbeef" * 8),
+)
+
+assert hashed_plan.render_identity_hash == ("deadbeef" * 8)
+
+refreshed_hashed_plan = service.refresh(hashed_plan)
+
+assert refreshed_hashed_plan.render_identity_hash == ("deadbeef" * 8)
+
+print("Explicit render identity hash " "survives refresh().")
+
+hashed_serialized = hashed_plan.model_dump_json()
+
+hashed_restored = hashed_plan.__class__.model_validate_json(hashed_serialized)
+
+assert hashed_restored.render_identity_hash == ("deadbeef" * 8)
+
+print("Render identity hash round-trips " "through serialization.")
+
+
 print("Master Edit Plan Service tests " "completed successfully.")

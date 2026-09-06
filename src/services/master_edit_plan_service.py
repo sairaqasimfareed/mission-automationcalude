@@ -29,12 +29,21 @@ class MasterEditPlanService:
         audio_timeline: AudioTimeline,
         duration_tolerance_seconds: float = 0.5,
         metadata: dict[str, Any] | None = None,
+        render_identity_hash: str | None = None,
     ) -> MasterEditPlan:
         """
         Build and summarize one master editing plan.
 
         The supplied timelines remain the authoritative timeline
         objects referenced by the resulting plan.
+
+        render_identity_hash is optional (Post-Script-Approval
+        Production Plan, Phase 13) - this service stays decoupled from
+        VideoJob/RenderIdentityService, so a caller that wants the plan
+        to carry its own render-input identity computes it separately
+        (RenderIdentityService.compute(job)) and passes the resulting
+        string straight through; omitting it reproduces this method's
+        exact prior behavior.
         """
 
         if duration_tolerance_seconds < 0.0:
@@ -45,6 +54,7 @@ class MasterEditPlanService:
             audio_timeline=audio_timeline,
             duration_tolerance_seconds=(duration_tolerance_seconds),
             metadata=dict(metadata or {}),
+            render_identity_hash=render_identity_hash,
         )
 
         return self.refresh(
