@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from typing import Any
+
 from src.models.approval import ApprovalDecision, HumanApprovalAction
-from src.models.content_decision_record import ContentDecisionRecord
+from src.models.content_decision_record import ContentDecisionRecord, DecisionCategory
 from src.models.video_job import VideoJob
 from src.services.approval_service import ApprovalService
 
@@ -53,10 +55,43 @@ class ApprovalGateService:
                 stage=stage,
                 summary=summary,
                 approval=decision,
+                category=DecisionCategory.APPROVAL,
             )
         )
 
         return decision
+
+    def record_event(
+        self,
+        *,
+        job: VideoJob,
+        stage: str,
+        summary: str,
+        category: DecisionCategory,
+        metadata: dict[str, Any] | None = None,
+    ) -> ContentDecisionRecord:
+        """
+        Content Studio Redesign, Phase 18: append a non-approval
+        activity-history entry (generation/invalidation/restore/lock/
+        unlock) for a stage that has no approval gate of its own.
+
+        This is the single place every pipeline/service call that
+        wants to show up in the Activity History panel goes through,
+        so `job.content_decisions` stays the one append-only ledger
+        `gate()`/`resolve()` already established rather than a second
+        history mechanism growing up beside it.
+        """
+
+        record = ContentDecisionRecord(
+            stage=stage,
+            summary=summary,
+            category=category,
+            metadata=metadata or {},
+        )
+
+        job.content_decisions.append(record)
+
+        return record
 
     def resolve(
         self,
@@ -98,6 +133,7 @@ class ApprovalGateService:
                 stage=pending_record.stage,
                 summary=f"{pending_record.summary} -> {resolved.state.value}",
                 approval=resolved,
+                category=DecisionCategory.APPROVAL,
             )
         )
 

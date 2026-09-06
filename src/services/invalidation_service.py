@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from src.models.content_decision_record import ContentDecisionRecord, DecisionCategory
 from src.models.invalidation import StaleArtifact
 from src.models.video_job import VideoJob
 
@@ -128,5 +129,22 @@ class InvalidationService:
             )
             job.stale_artifacts.append(record)
             new_records.append(record)
+
+        if new_records:
+            # Content Studio Redesign, Phase 18: surface invalidation in
+            # the unified Activity History alongside generation/approval/
+            # restore/lock events - job.stale_artifacts remains the
+            # detailed per-field ledger this class already owns, this is
+            # just one human-readable headline entry per invalidation
+            # event, not a duplicate of that ledger.
+            artifact_names = ", ".join(record.artifact for record in new_records)
+            job.content_decisions.append(
+                ContentDecisionRecord(
+                    stage="invalidation",
+                    summary=f"{reason} ({artifact_names} marked stale.)",
+                    category=DecisionCategory.INVALIDATION,
+                    metadata={"triggered_by": triggered_by},
+                )
+            )
 
         return new_records

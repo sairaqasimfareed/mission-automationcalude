@@ -5,6 +5,93 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-06 - Content Studio Redesign: Phase 18 Activity History, Auditability and Recovery
+
+**REUSE confirmed by inspection - and it reframed the phase from "build
+a history model" to "close a silent logging gap."** `ContentDecisionRecord`/
+`VideoJob.content_decisions` already existed, already append-only,
+already carrying `id`/`created_at`/`updated_at` for free from
+`MissionBaseModel`. But reading every call site that actually appends
+to it turned up only two: `ApprovalGateService.gate()` and `.resolve()`,
+covering exactly the 7 explicitly gated decision points. The other 7 of
+`run_all()`'s 14 stages, plus revision, selection edits, restore,
+intake, ignore-finding, ambiguity resolution, and - most strikingly -
+script lock/unlock, wrote to it never. Unlocking a script does
+`job.script_lock = None`; before this phase, that left *zero* trace a
+lock had ever existed once undone. That silent gap was the actual
+scope here, not a missing model.
+
+**One category taxonomy, one append surface.** New `DecisionCategory`
+(GENERATION/APPROVAL/INVALIDATION/RESTORE/LOCK/UNLOCK) folds the
+source PDF's "generation/review/approval/unapproval/invalidation/
+restore/lock" into six buckets - review and approval collapse into one
+APPROVAL category because `ApprovalDecision.state` already
+distinguishes pending from resolved, and "unapproval" in this
+pipeline's practical terms is unlocking an already-locked script.
+`category` is optional with an `effective_category` property that
+infers GENERATION/APPROVAL for every record persisted before this
+field existed - an old project's JSON needs no migration and still
+classifies sensibly. New `ApprovalGateService.record_event()` is the
+one place every non-approval write goes through, so
+`job.content_decisions` stays one ledger instead of growing a
+second, competing history mechanism.
+
+**Every silent stage, wired.** `record_event()` calls added to
+`run_retention_audit`, `run_writing_directives`, `run_continuity_bible`,
+`run_editorial_critique`, `run_quality_gate`, `run_packaging_hypothesis`,
+`run_scene_planning`, `run_revision`, `run_ignore_finding`,
+`run_script_selection_edit`, `run_script_intake`,
+`run_resolve_ambiguity_manually`, `run_resolve_ambiguity_by_ai`
+(all GENERATION), `run_script_restore` (RESTORE), and
+`run_script_lock`/`run_script_unlock` (LOCK/UNLOCK - the version
+number is captured *before* `job.script_lock` is cleared on unlock,
+so the record still names what was unlocked). `InvalidationService`
+gets its own single new headline record (category INVALIDATION)
+appended directly from `_mark_stale()` whenever it actually flags
+something new - its own, more detailed `stale_artifacts` ledger is
+untouched, the two are complementary, not duplicated.
+
+**A real bug found via a failing test.** The new script-intake
+logging line called `mode.value`, assuming an enum - but the GUI
+passes a plain `str` pulled from a `QComboBox`'s stored item data,
+not a `ScriptIntakeMode` member, so three existing intake tests
+failed with `AttributeError: 'str' object has no attribute 'value'`.
+Fixed with `getattr(mode, "value", mode)`, which handles both the
+enum callers and the GUI's raw string identically.
+
+**GUI.** `_build_approval_history_card` renamed
+`_build_activity_history_card` and widened from "approval decisions
+only" to every `ContentDecisionRecord` in the job, each entry showing
+its category, stage, timestamp, and summary. Two new filters
+(category, stage) persist on the view across `refresh()` calls, reset
+on `set_job()`, and apply by calling `self.refresh(job)` directly on
+change - the same pattern `_handle_select_ci_stage` already
+established, not the job-mutating `_on_change()` callback most other
+handlers use, since a filter choice isn't job state. The pending-
+approval action row is unaffected by either filter and always shows
+the real pending decision.
+
+**Tests:** `test_content_decision_record.py` (+4: category default,
+explicit category, backward-compatible legacy-record inference),
+`test_approval_gate_service.py` (+3: `record_event`, metadata
+passthrough, explicit `APPROVAL` stamping on `gate()`/`resolve()`),
+6 new GUI cases (widened timeline shows previously-invisible stages,
+filter persistence for both filters, lock/unlock visibility,
+`set_job()` filter reset). Full regression: `test_content_intelligence_pipeline.py`
+(180+), `test_content_studio_content_intelligence_gui.py` (102),
+`test_invalidation_service.py` (11, unaffected). mypy/ruff/black clean.
+
+**Deliberately not built this pass:** a dedicated rollback-to-any-
+past-state recovery UI beyond the pre-existing script-version Restore
+action (Phase 12) - now visible in the unified timeline, but a
+broader mechanism spanning more than script content was judged out of
+scope until a concrete need for it exists; no activity-log export; no
+pagination (a single project's stage count is small and bounded, so
+the full reversed list renders directly like every other list panel
+in this view already does).
+
+---
+
 ## 2026-09-06 - Content Studio Redesign: Phase 17 Unified Automation Engine (One Engine, Multiple Approval Postures)
 
 **REUSE confirmed by inspection before writing anything new - and it

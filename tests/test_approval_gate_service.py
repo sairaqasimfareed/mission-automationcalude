@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from src.models.approval import ApprovalPolicyConfig, ApprovalState, HumanApprovalAction
+from src.models.content_decision_record import DecisionCategory
 from src.models.video_job import VideoJob
 from src.services.approval_gate_service import ApprovalGateService
 
@@ -177,3 +178,49 @@ def test_latest_pending_ignores_an_earlier_resolved_point() -> None:
 
     assert pending is not None
     assert pending.stage == "hooks"
+
+
+def test_record_event_appends_a_non_approval_record() -> None:
+    job = _job()
+    service = ApprovalGateService()
+
+    record = service.record_event(
+        job=job,
+        stage="scene_planning",
+        summary="Scenes generated (12).",
+        category=DecisionCategory.GENERATION,
+    )
+
+    assert job.content_decisions == [record]
+    assert record.approval is None
+    assert record.category == DecisionCategory.GENERATION
+    assert record.effective_category == DecisionCategory.GENERATION
+
+
+def test_record_event_carries_optional_metadata() -> None:
+    job = _job()
+    service = ApprovalGateService()
+
+    record = service.record_event(
+        job=job,
+        stage="script_lock",
+        summary="Script locked.",
+        category=DecisionCategory.LOCK,
+        metadata={"script_version_number": 3},
+    )
+
+    assert record.metadata == {"script_version_number": 3}
+
+
+def test_gate_and_resolve_records_are_explicitly_categorized_approval() -> None:
+    job = _job(approval_policy=ApprovalPolicyConfig.manual_editorial())
+    service = ApprovalGateService()
+
+    service.gate(job=job, decision_point="research", stage="research", summary="r")
+    service.resolve(
+        job=job, decision_point="research", action=HumanApprovalAction.APPROVE
+    )
+
+    assert all(
+        record.category == DecisionCategory.APPROVAL for record in job.content_decisions
+    )

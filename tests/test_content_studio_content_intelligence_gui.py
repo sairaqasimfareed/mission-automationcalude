@@ -2516,3 +2516,137 @@ def test_run_automation_resume_does_not_regenerate_completed_stages(
     view._handle_run_automation()
 
     assert job.generated_script is first_script
+
+
+# --- Phase 18: Activity History ---
+
+
+def test_activity_history_card_builds_without_error_when_empty(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)  # must not raise, even with no content_decisions yet
+
+    assert job.content_decisions == []
+
+
+def test_activity_history_shows_generation_events_beyond_approval_gates(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job.approval_policy = ApprovalPolicyConfig.full_auto()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view._handle_run_automation()
+    view.refresh(job)  # must not raise while rendering the full timeline
+
+    stages_recorded = {record.stage for record in job.content_decisions}
+
+    # Stages that never had an approval gate of their own (Phase 18's
+    # actual gap) must still show up in the ledger.
+    assert "scene_planning" in stages_recorded
+    assert "continuity_bible" in stages_recorded
+    assert "quality_gate" in stages_recorded
+
+
+def test_activity_history_category_filter_persists_across_refresh(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job.approval_policy = ApprovalPolicyConfig.full_auto()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    view._handle_run_automation()
+
+    view._handle_activity_history_category_filter_changed("generation")
+
+    assert view._activity_history_category_filter == "generation"
+
+    view.refresh(job)  # must not raise while filtered
+
+    assert view._activity_history_category_filter == "generation"
+
+
+def test_activity_history_stage_filter_persists_across_refresh(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job.approval_policy = ApprovalPolicyConfig.full_auto()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    view._handle_run_automation()
+
+    view._handle_activity_history_stage_filter_changed("scene_planning")
+
+    assert view._activity_history_stage_filter == "scene_planning"
+
+    view.refresh(job)  # must not raise while filtered
+
+
+def test_set_job_resets_activity_history_filters(qapp: QApplication) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view._activity_history_category_filter = "lock"
+    view._activity_history_stage_filter = "script_lock"
+
+    view.set_job(uuid4())
+
+    assert view._activity_history_category_filter == "all"
+    assert view._activity_history_stage_filter == "all"
+
+
+def test_script_lock_and_unlock_are_recorded_in_activity_history(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job.approval_policy = ApprovalPolicyConfig.full_auto()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    view._handle_run_automation()
+
+    pipeline = view._content_intelligence_pipeline
+    pipeline.run_script_lock(job, provenance=ScriptProvenance.INTERNAL)
+
+    lock_records = [
+        record
+        for record in job.content_decisions
+        if record.stage == "script_lock" and record.effective_category.value == "lock"
+    ]
+    assert len(lock_records) == 1
+
+    pipeline.run_script_unlock(job)
+
+    unlock_records = [
+        record
+        for record in job.content_decisions
+        if record.stage == "script_lock" and record.effective_category.value == "unlock"
+    ]
+    assert len(unlock_records) == 1
+
+    view.refresh(job)  # must not raise with lock/unlock events present

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from src.models.approval import ApprovalPolicy, ApprovalState
-from src.models.content_decision_record import ContentDecisionRecord
+from src.models.content_decision_record import ContentDecisionRecord, DecisionCategory
 from src.models.video_job import VideoJob
 from src.services.approval_service import ApprovalService
 
@@ -99,6 +99,34 @@ restored = VideoJob.model_validate(dumped)
 assert len(restored.content_decisions) == 2
 assert restored.content_decisions[1].approval is not None
 assert restored.content_decisions[1].approval.state == ApprovalState.APPROVED
+
+
+# --- Phase 18: category / effective_category ---
+
+uncategorized = ContentDecisionRecord(stage="research", summary="Generated research.")
+assert uncategorized.category is None
+assert uncategorized.effective_category == DecisionCategory.GENERATION
+
+uncategorized_with_approval = ContentDecisionRecord(
+    stage="research", summary="Generated research.", approval=decision
+)
+assert uncategorized_with_approval.category is None
+assert uncategorized_with_approval.effective_category == DecisionCategory.APPROVAL
+
+explicit_lock = ContentDecisionRecord(
+    stage="script_lock",
+    summary="Script locked for production.",
+    category=DecisionCategory.LOCK,
+)
+assert explicit_lock.effective_category == DecisionCategory.LOCK
+
+# Old, already-persisted records (no category field at all in the raw
+# JSON) must still classify sensibly through model_validate.
+legacy_dumped = {**uncategorized.model_dump(mode="json")}
+del legacy_dumped["category"]
+legacy_restored = ContentDecisionRecord.model_validate(legacy_dumped)
+assert legacy_restored.category is None
+assert legacy_restored.effective_category == DecisionCategory.GENERATION
 
 
 print("Content Decision Record tests completed successfully.")

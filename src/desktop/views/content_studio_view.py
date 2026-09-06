@@ -38,6 +38,7 @@ from src.desktop.widgets import (
 )
 from src.models.approval import HumanApprovalAction
 from src.models.artifact_lifecycle import ArtifactType
+from src.models.content_decision_record import ContentDecisionRecord, DecisionCategory
 from src.models.creative_direction import CreativeDirection
 from src.models.enums import Platform, ProductionMode, WorkflowStage
 from src.models.hook import HookCandidate, HookEvaluation
@@ -213,6 +214,13 @@ class ContentStudioView(QWidget):
         self._script_intake_editor: QTextEdit | None = None
         self._script_intake_mode_select: QComboBox | None = None
 
+        # Content Studio Redesign, Phase 18: Activity History filters -
+        # plain strings persisted across refresh() (not live QComboBox
+        # references), matching how _selected_ci_stage_index already
+        # survives a rebuild without holding onto a widget.
+        self._activity_history_category_filter: str = "all"
+        self._activity_history_stage_filter: str = "all"
+
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
 
@@ -232,6 +240,8 @@ class ContentStudioView(QWidget):
         self._job_id = job_id
         self._last_review_by_stage = {}
         self._last_script_comparison = None
+        self._activity_history_category_filter = "all"
+        self._activity_history_stage_filter = "all"
 
     def refresh(self, job: VideoJob) -> None:
         while self._layout.count():
@@ -249,7 +259,7 @@ class ContentStudioView(QWidget):
         self._build_topic_card(job)
         self._build_settings_card(job)
         self._build_content_intelligence_card(job)
-        self._build_approval_history_card(job)
+        self._build_activity_history_card(job)
         self._build_workflow_card(job)
         self._build_research_card(job)
         self._build_script_card(job)
@@ -1335,25 +1345,84 @@ class ContentStudioView(QWidget):
 
         return str(artifact)
 
-    def _build_approval_history_card(self, job: VideoJob) -> None:
-        frame, layout = card("Approval history", icon_name="shield")
+    def _build_activity_history_card(self, job: VideoJob) -> None:
+        """
+        Content Studio Redesign, Phase 18: "Project Activity/History
+        panel" - a single chronological, filterable timeline over
+        every ContentDecisionRecord, not only approval-gated ones.
+
+        Reuses job.content_decisions as the sole ledger (the same one
+        ApprovalGateService.gate()/resolve() already wrote to before
+        this phase) rather than introducing a second history model;
+        this phase's actual new work was widening which stages write
+        to it (see ApprovalGateService.record_event and the pipeline's
+        new record_event() calls) and this filtered timeline view.
+        """
+
+        frame, layout = card("Activity history", icon_name="shield")
 
         if not job.content_decisions:
-            layout.addWidget(small_muted("No approval decisions recorded yet."))
+            layout.addWidget(small_muted("No activity recorded yet."))
             self._layout.addWidget(frame)
 
             return
 
+        filter_row = QHBoxLayout()
+        filter_row.setSpacing(6)
+
+        category_select = QComboBox()
+        category_select.addItem("All categories", "all")
+        for category in DecisionCategory:
+            category_select.addItem(
+                category.value.replace("_", " ").title(), category.value
+            )
+        category_select.setCurrentIndex(
+            category_select.findData(self._activity_history_category_filter)
+        )
+        category_select.currentIndexChanged.connect(
+            lambda: self._handle_activity_history_category_filter_changed(
+                category_select.currentData()
+            )
+        )
+        filter_row.addWidget(category_select)
+
+        stages_present = sorted({record.stage for record in job.content_decisions})
+        stage_select = QComboBox()
+        stage_select.addItem("All stages", "all")
+        for stage in stages_present:
+            stage_select.addItem(stage.replace("_", " ").title(), stage)
+        stage_index = stage_select.findData(self._activity_history_stage_filter)
+        stage_select.setCurrentIndex(stage_index if stage_index >= 0 else 0)
+        stage_select.currentIndexChanged.connect(
+            lambda: self._handle_activity_history_stage_filter_changed(
+                stage_select.currentData()
+            )
+        )
+        filter_row.addWidget(stage_select)
+        filter_row.addStretch()
+        layout.addLayout(filter_row)
+
+        visible_records = [
+            record
+            for record in reversed(job.content_decisions)
+            if (
+                self._activity_history_category_filter == "all"
+                or record.effective_category.value
+                == self._activity_history_category_filter
+            )
+            and (
+                self._activity_history_stage_filter == "all"
+                or record.stage == self._activity_history_stage_filter
+            )
+        ]
+
+        if not visible_records:
+            layout.addWidget(small_muted("No activity matches the current filters."))
+
+        for record in visible_records:
+            self._render_activity_history_entry(layout, record)
+
         pending = ApprovalGateService.latest_pending(job)
-
-        for record in reversed(job.content_decisions):
-            approval = record.approval
-            state_text = approval.state.value if approval is not None else "unknown"
-            layout.addWidget(badge(f"{record.stage} · {state_text}"))
-            layout.addWidget(small_muted(record.summary))
-
-            if approval is not None and approval.confidence is not None:
-                layout.addWidget(small_muted(f"Confidence: {approval.confidence:.2f}"))
 
         if pending is not None:
             layout.addWidget(separator())
@@ -1385,6 +1454,41 @@ class ContentStudioView(QWidget):
             layout.addLayout(button_row)
 
         self._layout.addWidget(frame)
+
+    @staticmethod
+    def _render_activity_history_entry(
+        layout: QVBoxLayout, record: ContentDecisionRecord
+    ) -> None:
+        approval = record.approval
+        category_label = record.effective_category.value.replace("_", " ")
+        state_text = approval.state.value if approval is not None else category_label
+
+        timestamp = record.created_at.strftime("%Y-%m-%d %H:%M")
+        layout.addWidget(badge(f"{record.stage} · {state_text} · {timestamp}"))
+        layout.addWidget(small_muted(record.summary))
+
+        if approval is not None and approval.confidence is not None:
+            layout.addWidget(small_muted(f"Confidence: {approval.confidence:.2f}"))
+
+    def _handle_activity_history_category_filter_changed(self, category: str) -> None:
+        if not category:
+            return
+
+        self._activity_history_category_filter = category
+        job = self._current_job()
+
+        if job is not None:
+            self.refresh(job)
+
+    def _handle_activity_history_stage_filter_changed(self, stage: str) -> None:
+        if not stage:
+            return
+
+        self._activity_history_stage_filter = stage
+        job = self._current_job()
+
+        if job is not None:
+            self.refresh(job)
 
     def _handle_resolve_approval(self, action: HumanApprovalAction) -> None:
         job = self._current_job()

@@ -6,6 +6,7 @@ from src.agents.research_agent.agent import ResearchAgent
 from src.agents.scene_planner.agent import ScenePlannerAgent
 from src.models.approval import ApprovalDecision, HumanApprovalAction
 from src.models.automation_status import AutomationStatus
+from src.models.content_decision_record import DecisionCategory
 from src.models.editorial_profile import EditorialProfile
 from src.models.information_reveal_map import InformationRevealMap
 from src.models.script_intake import ScriptIntakeMode
@@ -477,6 +478,13 @@ class ContentIntelligencePipeline:
             editorial_profile=editorial_profile,
         )
 
+        self.approval_gate_service.record_event(
+            job=job,
+            stage="retention_audit",
+            summary="Retention audit generated.",
+            category=DecisionCategory.GENERATION,
+        )
+
         return job
 
     def run_hooks(
@@ -572,6 +580,13 @@ class ContentIntelligencePipeline:
             user_directives=job.user_writing_directives,
         )
 
+        self.approval_gate_service.record_event(
+            job=job,
+            stage="writing_directives",
+            summary="Writing directives resolved.",
+            category=DecisionCategory.GENERATION,
+        )
+
         return job
 
     def run_script(self, job: VideoJob) -> VideoJob:
@@ -643,6 +658,13 @@ class ContentIntelligencePipeline:
             job.continuity_bible
         )
 
+        self.approval_gate_service.record_event(
+            job=job,
+            stage="continuity_bible",
+            summary="Continuity bible extracted.",
+            category=DecisionCategory.GENERATION,
+        )
+
         return job
 
     def run_editorial_critique(self, job: VideoJob) -> VideoJob:
@@ -665,6 +687,13 @@ class ContentIntelligencePipeline:
             script=job.generated_script,
             research=job.research,
             editorial_profile=editorial_profile,
+        )
+
+        self.approval_gate_service.record_event(
+            job=job,
+            stage="editorial_critique",
+            summary=f"Editorial critique generated ({len(job.editorial_critique.findings)} finding(s)).",
+            category=DecisionCategory.GENERATION,
         )
 
         return job
@@ -695,6 +724,13 @@ class ContentIntelligencePipeline:
                 if job.script_version_history is not None
                 else None
             ),
+        )
+
+        self.approval_gate_service.record_event(
+            job=job,
+            stage="quality_gate",
+            summary=f"Quality gate evaluated: {job.script_quality_report.status.value}.",
+            category=DecisionCategory.GENERATION,
         )
 
         return job
@@ -758,6 +794,13 @@ class ContentIntelligencePipeline:
         job.editorial_critique = None
         job.script_quality_report = None
 
+        self.approval_gate_service.record_event(
+            job=job,
+            stage="revision",
+            summary="Script revised to address editorial critique findings.",
+            category=DecisionCategory.GENERATION,
+        )
+
         self.invalidation_service.on_script_changed(job)
 
         return job
@@ -783,6 +826,13 @@ class ContentIntelligencePipeline:
             report=job.script_quality_report,
             finding_id=finding_id,
             reason=reason,
+        )
+
+        self.approval_gate_service.record_event(
+            job=job,
+            stage="quality_gate",
+            summary=f"Quality finding ignored: {reason}",
+            category=DecisionCategory.GENERATION,
         )
 
         return job
@@ -836,6 +886,13 @@ class ContentIntelligencePipeline:
         job.editorial_critique = None
         job.script_quality_report = None
 
+        self.approval_gate_service.record_event(
+            job=job,
+            stage="script",
+            summary=f"Selection edit applied: {change_summary}",
+            category=DecisionCategory.GENERATION,
+        )
+
         self.invalidation_service.on_script_changed(job)
 
         return job
@@ -867,6 +924,13 @@ class ContentIntelligencePipeline:
 
         job.editorial_critique = None
         job.script_quality_report = None
+
+        self.approval_gate_service.record_event(
+            job=job,
+            stage="script",
+            summary=f"Restored script version {version_number} as a new version.",
+            category=DecisionCategory.RESTORE,
+        )
 
         self.invalidation_service.on_script_changed(job)
 
@@ -915,6 +979,16 @@ class ContentIntelligencePipeline:
         job.script_quality_report = None
         job.script_lock = None
 
+        self.approval_gate_service.record_event(
+            job=job,
+            stage="script_intake",
+            summary=(
+                "Script imported via Script Intake "
+                f"({getattr(mode, 'value', mode)})."
+            ),
+            category=DecisionCategory.GENERATION,
+        )
+
         self.invalidation_service.on_script_changed(
             job, reason="A new script was imported via Script Intake."
         )
@@ -961,6 +1035,17 @@ class ContentIntelligencePipeline:
         )
         job.script_lock = lock
 
+        self.approval_gate_service.record_event(
+            job=job,
+            stage="script_lock",
+            summary=(
+                f"Script locked for production (version {lock.script_version_number}, "
+                f"{resolved_provenance.value})."
+            ),
+            category=DecisionCategory.LOCK,
+            metadata={"script_version_number": lock.script_version_number},
+        )
+
         return job
 
     def run_script_unlock(self, job: VideoJob) -> VideoJob:
@@ -975,13 +1060,23 @@ class ContentIntelligencePipeline:
         if job.script_lock is None:
             raise RuntimeError("This project's script is not locked.")
 
+        unlocked_version_number = job.script_lock.script_version_number
+
         if job.script_version_history is not None:
             job.script_version_history = self.script_version_service.unlock_version(
                 history=job.script_version_history,
-                version_number=job.script_lock.script_version_number,
+                version_number=unlocked_version_number,
             )
 
         job.script_lock = None
+
+        self.approval_gate_service.record_event(
+            job=job,
+            stage="script_lock",
+            summary=f"Script unlocked (was locked at version {unlocked_version_number}).",
+            category=DecisionCategory.UNLOCK,
+            metadata={"script_version_number": unlocked_version_number},
+        )
 
         return job
 
@@ -1019,6 +1114,13 @@ class ContentIntelligencePipeline:
             editorial_profile=editorial_profile,
         )
 
+        self.approval_gate_service.record_event(
+            job=job,
+            stage="packaging_hypothesis",
+            summary="Packaging hypothesis generated.",
+            category=DecisionCategory.GENERATION,
+        )
+
         return job
 
     def run_scene_planning(self, job: VideoJob) -> VideoJob:
@@ -1043,6 +1145,13 @@ class ContentIntelligencePipeline:
         )
 
         self.invalidation_service.clear_stale(job, "scenes")
+
+        self.approval_gate_service.record_event(
+            job=job,
+            stage="scene_planning",
+            summary=f"Scenes generated ({len(job.scenes)}).",
+            category=DecisionCategory.GENERATION,
+        )
 
         return job
 
@@ -1072,6 +1181,13 @@ class ContentIntelligencePipeline:
             *new_ambiguities,
         ]
 
+        self.approval_gate_service.record_event(
+            job=job,
+            stage="production_readiness",
+            summary=f"Production ambiguity detection found {len(new_ambiguities)} new ambiguity(-ies).",
+            category=DecisionCategory.GENERATION,
+        )
+
         return job
 
     def run_resolve_ambiguity_manually(
@@ -1091,6 +1207,13 @@ class ContentIntelligencePipeline:
             )
             for ambiguity in job.production_ambiguities
         ]
+
+        self.approval_gate_service.record_event(
+            job=job,
+            stage="production_readiness",
+            summary=f"Production ambiguity resolved manually: {note}",
+            category=DecisionCategory.GENERATION,
+        )
 
         return job
 
@@ -1117,6 +1240,13 @@ class ContentIntelligencePipeline:
         job.production_ambiguities = [
             resolved if a.id == ambiguity_id else a for a in job.production_ambiguities
         ]
+
+        self.approval_gate_service.record_event(
+            job=job,
+            stage="production_readiness",
+            summary="Production ambiguity resolved by AI.",
+            category=DecisionCategory.GENERATION,
+        )
 
         return job
 
