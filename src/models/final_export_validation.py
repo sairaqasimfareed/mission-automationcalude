@@ -30,6 +30,15 @@ class FinalExportValidationCode(str, Enum):
     MEDIA_NO_AUDIO_STREAM = "media_no_audio_stream"
     MEDIA_RESOLUTION_MISMATCH = "media_resolution_mismatch"
 
+    # Step 2 (SEO, Thumbnail & Publishing Reconciliation), SEO-1:
+    # "Fail closed if upstream production authority is missing/stale."
+    # A hard block, not a warning - unlike SEO_PACKAGE_NOT_READY/
+    # THUMBNAIL_NOT_READY above (which only mean "not yet reviewed"),
+    # these mean the package was built against a script that is no
+    # longer the project's canonical one.
+    SEO_PACKAGE_STALE = "seo_package_stale"
+    THUMBNAIL_STALE = "thumbnail_stale"
+
 
 class FinalExportValidationIssue(MissionBaseModel):
     """One warning or error discovered during final export validation."""

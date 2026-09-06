@@ -185,6 +185,10 @@ def test_seo_package_provenance_fields_default_to_unset() -> None:
     assert package.version_number == 1
     assert package.source_script_lock_hash is None
     assert package.source_script_version_number is None
+    assert package.source_genre_id is None
+    assert package.source_target_country is None
+    assert package.source_language is None
+    assert package.source_scene_count is None
 
 
 def test_seo_package_stores_explicit_provenance_fields() -> None:
@@ -195,17 +199,29 @@ def test_seo_package_stores_explicit_provenance_fields() -> None:
         version_number=3,
         source_script_lock_hash="abc123",
         source_script_version_number=2,
+        source_genre_id="genre.documentary",
+        source_target_country="United States",
+        source_language="English",
+        source_scene_count=4,
     )
 
     assert package.version_number == 3
     assert package.source_script_lock_hash == "abc123"
     assert package.source_script_version_number == 2
+    assert package.source_genre_id == "genre.documentary"
+    assert package.source_target_country == "United States"
+    assert package.source_language == "English"
+    assert package.source_scene_count == 4
 
     restored = SEOPackage.model_validate_json(package.model_dump_json())
 
     assert restored.version_number == 3
     assert restored.source_script_lock_hash == "abc123"
     assert restored.source_script_version_number == 2
+    assert restored.source_genre_id == "genre.documentary"
+    assert restored.source_target_country == "United States"
+    assert restored.source_language == "English"
+    assert restored.source_scene_count == 4
 
 
 def test_seo_package_rejects_non_positive_version_number() -> None:

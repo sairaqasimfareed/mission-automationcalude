@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Protocol
 from uuid import UUID
 
 from PySide6.QtCore import Qt, QUrl
@@ -24,16 +25,34 @@ from src.desktop.widgets import (
     status_label,
     subheading,
 )
+from src.models.approval import ApprovalPolicy
+from src.models.content_decision_record import DecisionCategory
 from src.models.final_export import FinalExportPackage
-from src.models.seo import SEOPackage
-from src.models.thumbnail import ThumbnailArtifact
+from src.models.seo import SEOPackage, SEOStatus
+from src.models.thumbnail import ThumbnailArtifact, ThumbnailArtifactStatus
 from src.models.video_job import VideoJob
+from src.services.approval_gate_service import ApprovalGateService
 from src.services.final_export.final_export_service import FinalExportService
 from src.services.seo.seo_context_builder import SEOContextBuilder
 from src.services.seo.seo_package_service import SEOPackageService
 from src.services.thumbnail.thumbnail_package_service import ThumbnailPackageService
 
 _LEFT = Qt.AlignmentFlag.AlignLeft
+
+
+class _PackageProvenance(Protocol):
+    """
+    The dependency-tracking fields SEOPackage and ThumbnailArtifact
+    both carry identically (Step 2, SEO-3/SEO-4) - a structural type
+    so the staleness banner can accept either without depending on
+    both concrete models or duplicating the check.
+    """
+
+    source_script_lock_hash: str | None
+    source_genre_id: str | None
+    source_target_country: str | None
+    source_language: str | None
+    source_scene_count: int | None
 
 
 class PackagingView(QWidget):
@@ -54,6 +73,7 @@ class PackagingView(QWidget):
         thumbnail_package_service: ThumbnailPackageService,
         final_export_service: FinalExportService,
         on_change: Callable[[], None],
+        approval_gate_service: ApprovalGateService | None = None,
     ) -> None:
         super().__init__()
 
@@ -62,6 +82,7 @@ class PackagingView(QWidget):
         self._thumbnail_package_service = thumbnail_package_service
         self._final_export_service = final_export_service
         self._on_change = on_change
+        self._approval_gate_service = approval_gate_service or ApprovalGateService()
         self._job_id: UUID | None = None
 
         outer_layout = QVBoxLayout(self)
@@ -118,10 +139,17 @@ class PackagingView(QWidget):
                 small_muted(f"Version {seo_package.version_number}"),
             )
 
-            self._build_script_lock_staleness_banner(
+            self._build_dependency_staleness_banners(
                 layout,
                 job=job,
-                source_script_lock_hash=seo_package.source_script_lock_hash,
+                provenance=seo_package,
+            )
+
+            self._build_review_status_row(
+                layout,
+                status_value=seo_package.status.value,
+                on_approve=self._handle_approve_seo,
+                on_reject=self._handle_reject_seo,
             )
 
             if script_approved:
@@ -173,10 +201,17 @@ class PackagingView(QWidget):
                 small_muted(f"Version {thumbnail.version_number}"),
             )
 
-            self._build_script_lock_staleness_banner(
+            self._build_dependency_staleness_banners(
                 layout,
                 job=job,
-                source_script_lock_hash=thumbnail.source_script_lock_hash,
+                provenance=thumbnail,
+            )
+
+            self._build_review_status_row(
+                layout,
+                status_value=thumbnail.status.value,
+                on_approve=self._handle_approve_thumbnail,
+                on_reject=self._handle_reject_thumbnail,
             )
 
             if script_approved:
@@ -246,46 +281,120 @@ class PackagingView(QWidget):
         return audience_input.text
 
     @staticmethod
-    def _build_script_lock_staleness_banner(
+    def _build_dependency_staleness_banners(
         layout: QVBoxLayout,
         *,
         job: VideoJob,
-        source_script_lock_hash: str | None,
+        provenance: _PackageProvenance,
     ) -> None:
         """
         Step 2 (SEO, Thumbnail & Publishing Reconciliation), SEO-4:
-        precise, dependency-aware staleness rather than a global flag -
-        mirrors the same script_lock_hash-comparison pattern already
-        used for ProductionSemanticBrief/VisualContinuityBible.
+        "Define dependency graph for title, description, chapters,
+        thumbnail copy, locale and final render duration... Material
+        production changes must stale only affected publishing
+        artifacts." A single script-content hash cannot catch every
+        dependency this phase names - genre and locale can each
+        change independently of the script's own text - so each
+        tracked dependency is compared independently, naming exactly
+        what moved rather than one coarse "something changed."
 
-        Silent when the job has no lock yet (nothing to compare
-        against) or the hashes genuinely match.
+        Silent when nothing to compare against exists yet, or every
+        tracked dependency still matches the job's current state.
         """
 
-        if job.script_lock is None:
-            return
+        if job.script_lock is not None:
+            current_hash = job.script_lock.script_content_hash
 
-        current_hash = job.script_lock.script_content_hash
+            if provenance.source_script_lock_hash is None:
+                layout.addWidget(
+                    status_label(
+                        "Built before the script was locked - "
+                        "regenerate to bind it to the current script.",
+                        role="warning",
+                    )
+                )
+            elif provenance.source_script_lock_hash != current_hash:
+                layout.addWidget(
+                    status_label(
+                        "Stale: the script has changed since this "
+                        "was built. Regenerate to match the current "
+                        "script.",
+                        role="warning",
+                    )
+                )
 
-        if source_script_lock_hash is None:
+        if (
+            provenance.source_genre_id is not None
+            and provenance.source_genre_id != job.genre_id
+        ):
             layout.addWidget(
                 status_label(
-                    "Built before the script was locked - "
-                    "regenerate to bind it to the current script.",
+                    "Stale: the project's genre has changed since " "this was built.",
                     role="warning",
                 )
             )
 
-            return
-
-        if source_script_lock_hash != current_hash:
+        if provenance.source_target_country is not None and (
+            provenance.source_target_country != job.target_country
+            or provenance.source_language != job.language
+        ):
             layout.addWidget(
                 status_label(
-                    "Stale: the script has changed since this was "
-                    "built. Regenerate to match the current script.",
+                    "Stale: the target country/language has changed "
+                    "since this was built.",
                     role="warning",
                 )
             )
+
+        if (
+            provenance.source_scene_count is not None
+            and provenance.source_scene_count != len(job.scenes)
+        ):
+            layout.addWidget(
+                status_label(
+                    "Stale: the scene count has changed since this " "was built.",
+                    role="warning",
+                )
+            )
+
+    @staticmethod
+    def _build_review_status_row(
+        layout: QVBoxLayout,
+        *,
+        status_value: str,
+        on_approve: Callable[[], None],
+        on_reject: Callable[[], None],
+    ) -> None:
+        """
+        Step 2 (SEO, Thumbnail & Publishing Reconciliation), SEO-5:
+        "Provide coherent review/approval card and history." Approving
+        or rejecting here directly sets the package's own status - a
+        deliberately simpler, more direct mechanism than routing
+        through the generic cross-pipeline pending-decision banner
+        elsewhere (Content Studio's Activity History), since a person
+        is already looking at exactly the artifact in question. Every
+        transition is still recorded to the same shared
+        job.content_decisions ledger (see _handle_approve_seo etc.)
+        for a unified audit trail - "shared audit primitives" without
+        a second competing approval-state machine.
+        """
+
+        role = {"approved": "success", "rejected": "error"}.get(status_value, "warning")
+
+        layout.addWidget(
+            status_label(f"Review status: {status_value}", role=role),
+        )
+
+        if status_value != "under_review":
+            return
+
+        approve_button = button("Approve", variant="primary", icon_name="check")
+        approve_button.clicked.connect(on_approve)
+        layout.addWidget(approve_button, alignment=_LEFT)
+
+        reject_button = button("Reject")
+        reject_button.clicked.connect(on_reject)
+        layout.addWidget(reject_button, alignment=_LEFT)
 
     def _build_final_export_card(self, job: VideoJob) -> None:
         frame, layout = card("Final export", icon_name="export")
@@ -437,7 +546,53 @@ class PackagingView(QWidget):
             return
 
         assert self._job_id is not None
-        self._job_store.set_seo_package(self._job_id, result.package)
+
+        package = result.package
+
+        if job.approval_policy.policy_for("publishing") == ApprovalPolicy.AUTO:
+            package = package.model_copy(update={"status": SEOStatus.APPROVED})
+
+        self._approval_gate_service.record_event(
+            job=job,
+            stage="seo",
+            summary=(f"SEO package generated (version {package.version_number})."),
+            category=DecisionCategory.GENERATION,
+        )
+
+        self._job_store.set_seo_package(self._job_id, package)
+        self._on_change()
+
+    def _handle_approve_seo(self) -> None:
+        self._resolve_seo_review(SEOStatus.APPROVED, "approved")
+
+    def _handle_reject_seo(self) -> None:
+        self._resolve_seo_review(SEOStatus.REJECTED, "rejected")
+
+    def _resolve_seo_review(
+        self,
+        status: SEOStatus,
+        verb: str,
+    ) -> None:
+        job = self._current_job()
+
+        if job is None or self._job_id is None:
+            return
+
+        package = self._job_store.get_seo_package(self._job_id)
+
+        if package is None:
+            return
+
+        resolved = package.model_copy(update={"status": status})
+
+        self._approval_gate_service.record_event(
+            job=job,
+            stage="seo",
+            summary=f"SEO package {verb}.",
+            category=DecisionCategory.APPROVAL,
+        )
+
+        self._job_store.set_seo_package(self._job_id, resolved)
         self._on_change()
 
     def _handle_generate_thumbnail(
@@ -476,7 +631,55 @@ class PackagingView(QWidget):
             return
 
         assert self._job_id is not None
-        self._job_store.set_thumbnail(self._job_id, result.artifact)
+
+        artifact = result.artifact
+
+        if job.approval_policy.policy_for("publishing") == ApprovalPolicy.AUTO:
+            artifact = artifact.model_copy(
+                update={"status": ThumbnailArtifactStatus.APPROVED},
+            )
+
+        self._approval_gate_service.record_event(
+            job=job,
+            stage="thumbnail",
+            summary=(f"Thumbnail generated (version {artifact.version_number})."),
+            category=DecisionCategory.GENERATION,
+        )
+
+        self._job_store.set_thumbnail(self._job_id, artifact)
+        self._on_change()
+
+    def _handle_approve_thumbnail(self) -> None:
+        self._resolve_thumbnail_review(ThumbnailArtifactStatus.APPROVED, "approved")
+
+    def _handle_reject_thumbnail(self) -> None:
+        self._resolve_thumbnail_review(ThumbnailArtifactStatus.REJECTED, "rejected")
+
+    def _resolve_thumbnail_review(
+        self,
+        status: ThumbnailArtifactStatus,
+        verb: str,
+    ) -> None:
+        job = self._current_job()
+
+        if job is None or self._job_id is None:
+            return
+
+        artifact = self._job_store.get_thumbnail(self._job_id)
+
+        if artifact is None:
+            return
+
+        resolved = artifact.model_copy(update={"status": status})
+
+        self._approval_gate_service.record_event(
+            job=job,
+            stage="thumbnail",
+            summary=f"Thumbnail {verb}.",
+            category=DecisionCategory.APPROVAL,
+        )
+
+        self._job_store.set_thumbnail(self._job_id, resolved)
         self._on_change()
 
     def _handle_build_final_export(self) -> None:

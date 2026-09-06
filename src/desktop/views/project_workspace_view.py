@@ -203,6 +203,7 @@ class ProjectWorkspaceView(QWidget):
             thumbnail_package_service=thumbnail_package_service,
             final_export_service=final_export_service,
             on_change=self.refresh,
+            approval_gate_service=content_intelligence_pipeline.approval_gate_service,
         )
 
         self._workspaces: list[tuple[str, str, str, QWidget]] = [

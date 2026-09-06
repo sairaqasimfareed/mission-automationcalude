@@ -55,6 +55,7 @@ class FinalExportValidationService:
         self._validate_manifest(package, errors=errors)
         self._validate_thumbnail_readiness(package, warnings=warnings)
         self._validate_seo_readiness(package, warnings=warnings)
+        self._validate_upstream_freshness(package, errors=errors)
 
         return FinalExportValidationResult(
             is_valid=not errors,
@@ -244,5 +245,66 @@ class FinalExportValidationService:
                     severity=FinalExportValidationSeverity.WARNING,
                     message="SEO package has not been approved.",
                     field="seo_package.status",
+                )
+            )
+
+    @staticmethod
+    def _validate_upstream_freshness(
+        package: FinalExportPackage,
+        *,
+        errors: list[FinalExportValidationIssue],
+    ) -> None:
+        """
+        Step 2 (SEO, Thumbnail & Publishing Reconciliation), SEO-1:
+        "Fail closed if upstream production authority is missing/
+        stale." Unlike the packaging screen's own staleness banner
+        (a soft warning nudging a person to regenerate), this is the
+        hard gate at the one point that actually matters: a package
+        must never be handed off for publishing built against a
+        script that is no longer canonical.
+
+        Silent (nothing to compare) when this package carries no
+        production provenance at all, or the job it was built from
+        had no script lock at render time either - there is no
+        canonical hash to have drifted from.
+        """
+
+        if package.provenance is None:
+            return
+
+        current_hash = package.provenance.script_lock_hash
+
+        if current_hash is None:
+            return
+
+        seo_hash = package.seo_package.source_script_lock_hash
+
+        if seo_hash is None or seo_hash != current_hash:
+            errors.append(
+                FinalExportValidationIssue(
+                    code=FinalExportValidationCode.SEO_PACKAGE_STALE,
+                    severity=FinalExportValidationSeverity.ERROR,
+                    message=(
+                        "SEO package was built before the current "
+                        "script lock (or before any lock existed) - "
+                        "regenerate it before publishing."
+                    ),
+                    field="seo_package.source_script_lock_hash",
+                )
+            )
+
+        thumbnail_hash = package.thumbnail_artifact.source_script_lock_hash
+
+        if thumbnail_hash is None or thumbnail_hash != current_hash:
+            errors.append(
+                FinalExportValidationIssue(
+                    code=FinalExportValidationCode.THUMBNAIL_STALE,
+                    severity=FinalExportValidationSeverity.ERROR,
+                    message=(
+                        "Thumbnail was built before the current "
+                        "script lock (or before any lock existed) - "
+                        "regenerate it before publishing."
+                    ),
+                    field="thumbnail_artifact.source_script_lock_hash",
                 )
             )

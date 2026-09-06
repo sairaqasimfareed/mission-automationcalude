@@ -4,11 +4,16 @@ import pytest
 
 from src.models.audience_promise import AudiencePromise, PromiseStrength
 from src.models.enums import Platform
+from src.models.media_strategy import SceneSourceType
+from src.models.render_result import RenderResult
 from src.models.research import ResearchResult, ResearchStatus
+from src.models.scene import Scene
 from src.models.script import Script, ScriptStatus
 from src.models.script_lock import ScriptLock, ScriptProvenance
 from src.models.seo_validation import SEOValidationCode
+from src.models.video_clip import VideoClip
 from src.models.video_job import VideoJob
+from src.models.video_timeline import VideoTimeline
 from src.services.llm.llm_service import LLMServiceResult
 from src.services.seo.seo_description_generation_service import (
     SEODescriptionGenerationService,
@@ -302,3 +307,56 @@ def test_build_defaults_target_audience_from_audience_promise() -> None:
 
     assert isinstance(result, SEOPackageBuildResult)
     assert result.validation.is_valid is True
+
+
+def test_build_does_not_invalidate_any_production_artifact() -> None:
+    """
+    Step 2, SEO-4: "SEO-only edits must not invalidate clips/audio/
+    render." Proves the negative directly - building (and rebuilding)
+    an SEOPackage for a job that already has scenes/clips/a timeline/a
+    render result must never touch InvalidationService's
+    job.stale_artifacts ledger or mutate any of those fields, since
+    SEO generation is purely downstream and reads the job, never
+    writes production state.
+    """
+
+    job = _approved_job()
+    job.scenes = [
+        Scene(
+            scene_number=1,
+            title="Scene one",
+            narration="Something happens.",
+            visual_prompt="A dark hallway.",
+            estimated_duration_seconds=8,
+        )
+    ]
+    job.video_clips = [
+        VideoClip(
+            scene_number=1,
+            source_type=SceneSourceType.MANUAL_UPLOAD,
+            duration_seconds=5,
+            local_file="clip.mp4",
+        )
+    ]
+    job.video_timeline = VideoTimeline()
+    job.render_result = RenderResult(render_engine="ffmpeg")
+
+    service = _service()
+
+    first = service.build(
+        job,
+        genre_id="genre.documentary",
+        target_audience="Ocean enthusiasts",
+    ).package
+    service.build(
+        job,
+        genre_id="genre.documentary",
+        target_audience="Ocean enthusiasts",
+        previous_package=first,
+    )
+
+    assert job.stale_artifacts == []
+    assert len(job.scenes) == 1
+    assert len(job.video_clips) == 1
+    assert job.video_timeline is not None
+    assert job.render_result is not None

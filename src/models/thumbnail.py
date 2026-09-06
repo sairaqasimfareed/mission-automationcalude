@@ -117,6 +117,13 @@ class ThumbnailArtifact(MissionBaseModel):
     source_script_lock_hash: str | None = None
     source_script_version_number: int | None = Field(default=None, ge=1)
 
+    # Step 2, SEO-4: mirrors SEOPackage's own dependency-tracking
+    # fields exactly - see that model's docstring.
+    source_genre_id: str | None = None
+    source_target_country: str | None = None
+    source_language: str | None = None
+    source_scene_count: int | None = Field(default=None, ge=0)
+
     warnings: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 

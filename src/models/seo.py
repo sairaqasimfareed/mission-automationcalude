@@ -135,6 +135,18 @@ class SEOPackage(MissionBaseModel):
     source_script_lock_hash: str | None = None
     source_script_version_number: int | None = Field(default=None, ge=1)
 
+    # Step 2, SEO-4: "Define dependency graph for title, description,
+    # chapters, thumbnail copy, locale and final render duration." A
+    # script-content hash alone does not catch every dependency this
+    # phase names - genre, locale, and scene count can each change
+    # independently of the script's own text. Each is tracked
+    # separately so the staleness banner can name exactly which
+    # dependency moved, rather than one coarse "something changed."
+    source_genre_id: str | None = None
+    source_target_country: str | None = None
+    source_language: str | None = None
+    source_scene_count: int | None = Field(default=None, ge=0)
+
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("tags")

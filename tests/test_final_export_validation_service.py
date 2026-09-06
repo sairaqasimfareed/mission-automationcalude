@@ -6,6 +6,7 @@ from uuid import uuid4
 from src.models.enums import Platform
 from src.models.final_export import FinalExportPackage, FinalExportStatus
 from src.models.final_export_validation import FinalExportValidationCode
+from src.models.production_provenance import ProductionProvenance
 from src.models.seo import SEOPackage, SEOPlatformMetadata, TitleCandidate
 from src.models.thumbnail import (
     ThumbnailArtifact,
@@ -352,3 +353,87 @@ def test_validate_skips_technical_checks_for_uri_scheme_paths() -> None:
     assert FinalExportValidationCode.MEDIA_NOT_READABLE not in codes
     assert FinalExportValidationCode.MEDIA_NO_AUDIO_STREAM not in codes
     assert FinalExportValidationCode.MEDIA_RESOLUTION_MISMATCH not in codes
+
+
+def test_validate_is_silent_on_freshness_when_package_has_no_provenance() -> None:
+    package = _package()
+
+    result = FinalExportValidationService().validate(package)
+
+    codes = [issue.code for issue in result.errors]
+
+    assert FinalExportValidationCode.SEO_PACKAGE_STALE not in codes
+    assert FinalExportValidationCode.THUMBNAIL_STALE not in codes
+
+
+def test_validate_is_silent_on_freshness_when_job_had_no_lock() -> None:
+    package = _package(
+        provenance=ProductionProvenance(script_lock_hash=None),
+    )
+
+    result = FinalExportValidationService().validate(package)
+
+    codes = [issue.code for issue in result.errors]
+
+    assert FinalExportValidationCode.SEO_PACKAGE_STALE not in codes
+    assert FinalExportValidationCode.THUMBNAIL_STALE not in codes
+
+
+def test_validate_blocks_when_seo_package_predates_the_lock() -> None:
+    package = _package(
+        provenance=ProductionProvenance(script_lock_hash="current-hash"),
+        seo_package=_seo_package(),  # source_script_lock_hash defaults to None
+    )
+
+    result = FinalExportValidationService().validate(package)
+
+    codes = [issue.code for issue in result.errors]
+
+    assert result.is_valid is False
+    assert FinalExportValidationCode.SEO_PACKAGE_STALE in codes
+
+
+def test_validate_blocks_when_seo_package_hash_mismatches() -> None:
+    package = _package(
+        provenance=ProductionProvenance(script_lock_hash="current-hash"),
+        seo_package=_seo_package(source_script_lock_hash="old-hash"),
+    )
+
+    result = FinalExportValidationService().validate(package)
+
+    codes = [issue.code for issue in result.errors]
+
+    assert result.is_valid is False
+    assert FinalExportValidationCode.SEO_PACKAGE_STALE in codes
+
+
+def test_validate_blocks_when_thumbnail_predates_the_lock() -> None:
+    package = _package(
+        provenance=ProductionProvenance(script_lock_hash="current-hash"),
+        seo_package=_seo_package(source_script_lock_hash="current-hash"),
+        thumbnail_artifact=_thumbnail_artifact(),
+    )
+
+    result = FinalExportValidationService().validate(package)
+
+    codes = [issue.code for issue in result.errors]
+
+    assert result.is_valid is False
+    assert FinalExportValidationCode.THUMBNAIL_STALE in codes
+
+
+def test_validate_accepts_when_both_hashes_match_current_lock() -> None:
+    package = _package(
+        provenance=ProductionProvenance(script_lock_hash="current-hash"),
+        seo_package=_seo_package(source_script_lock_hash="current-hash"),
+        thumbnail_artifact=_thumbnail_artifact(
+            source_script_lock_hash="current-hash",
+        ),
+    )
+
+    result = FinalExportValidationService().validate(package)
+
+    codes = [issue.code for issue in result.errors]
+
+    assert FinalExportValidationCode.SEO_PACKAGE_STALE not in codes
+    assert FinalExportValidationCode.THUMBNAIL_STALE not in codes

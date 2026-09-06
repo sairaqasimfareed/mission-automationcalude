@@ -119,6 +119,10 @@ def test_artifact_provenance_fields_default_to_unset() -> None:
     assert artifact.version_number == 1
     assert artifact.source_script_lock_hash is None
     assert artifact.source_script_version_number is None
+    assert artifact.source_genre_id is None
+    assert artifact.source_target_country is None
+    assert artifact.source_language is None
+    assert artifact.source_scene_count is None
 
 
 def test_artifact_stores_and_round_trips_explicit_provenance_fields() -> None:
@@ -133,6 +137,10 @@ def test_artifact_stores_and_round_trips_explicit_provenance_fields() -> None:
         version_number=2,
         source_script_lock_hash="abc123",
         source_script_version_number=1,
+        source_genre_id="genre.documentary",
+        source_target_country="United States",
+        source_language="English",
+        source_scene_count=4,
     )
 
     restored = ThumbnailArtifact.model_validate_json(artifact.model_dump_json())
@@ -140,3 +148,7 @@ def test_artifact_stores_and_round_trips_explicit_provenance_fields() -> None:
     assert restored.version_number == 2
     assert restored.source_script_lock_hash == "abc123"
     assert restored.source_script_version_number == 1
+    assert restored.source_genre_id == "genre.documentary"
+    assert restored.source_target_country == "United States"
+    assert restored.source_language == "English"
+    assert restored.source_scene_count == 4

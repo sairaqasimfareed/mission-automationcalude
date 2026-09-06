@@ -130,6 +130,10 @@ class ThumbnailPackageService:
                 ),
                 "source_script_lock_hash": context.script_lock_hash,
                 "source_script_version_number": (context.script_lock_version_number),
+                "source_genre_id": context.genre_id,
+                "source_target_country": context.target_country,
+                "source_language": context.language,
+                "source_scene_count": context.scene_count,
             }
         )
 
