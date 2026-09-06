@@ -18,9 +18,13 @@ from src.desktop.views.content_studio_view import (  # noqa: E402
 )
 from src.models.approval import ApprovalPolicyConfig  # noqa: E402
 from src.models.artifact_lifecycle import ArtifactType  # noqa: E402
+from src.models.media_strategy import SceneSourceType  # noqa: E402
+from src.models.scene import Scene  # noqa: E402
 from src.models.script_lock import ScriptProvenance  # noqa: E402
 from src.models.script_version import VersionReason  # noqa: E402
+from src.models.video_clip import VideoClip  # noqa: E402
 from src.models.video_job import VideoJob  # noqa: E402
+from src.models.video_timeline import VideoTimeline  # noqa: E402
 from src.services.content_intelligence_pipeline import (  # noqa: E402
     ContentIntelligencePipeline,
 )
@@ -1707,6 +1711,65 @@ def test_save_typed_edit_records_a_manual_edit_version(qapp: QApplication) -> No
     assert (
         job.script_version_history.current_version.reason == VersionReason.MANUAL_EDIT
     )
+
+
+def test_save_typed_edit_invalidates_downstream_production_artifacts(
+    qapp: QApplication,
+) -> None:
+    """
+    Regression test (found via external audit): unlike
+    run_revision()/run_script_selection_edit()/run_script_restore(),
+    this GUI-only, non-LLM typed-edit path never called
+    InvalidationService - a person could retype a segment's narration
+    after scenes/clips/timeline already existed and none of them
+    would be flagged stale. Mirrors
+    test_run_revision_invalidates_only_the_downstream_artifacts_that_exist
+    in test_invalidation_matrix_wiring.py.
+    """
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_script(view, job)
+    view.refresh(job)
+
+    assert job.generated_script is not None
+    target_segment = job.generated_script.segments[0].segment_number
+
+    # Simulate a person who already ran scene planning and clip
+    # resolution before going back to hand-edit a segment - the exact
+    # re-entry scenario on_script_changed() exists to catch.
+    job.scenes = [
+        Scene(
+            scene_number=1,
+            title="Scene one",
+            narration="Something happens.",
+            visual_prompt="A dark hallway.",
+            estimated_duration_seconds=8,
+        )
+    ]
+    job.video_clips = [
+        VideoClip(
+            scene_number=1,
+            source_type=SceneSourceType.MANUAL_UPLOAD,
+            duration_seconds=5,
+            local_file="clip.mp4",
+        )
+    ]
+    job.video_timeline = VideoTimeline()
+
+    editor = view._script_segment_editors[target_segment]
+    editor.setPlainText("A person typed this narration directly.")
+
+    view._handle_save_script_segment_edit(target_segment)
+
+    stale_names = {record.artifact for record in job.stale_artifacts}
+    assert stale_names == {"scenes", "video_clips", "video_timeline"}
+    assert all(record.triggered_by == "script_change" for record in job.stale_artifacts)
 
 
 def test_save_typed_edit_with_unchanged_text_is_a_noop(qapp: QApplication) -> None:

@@ -3801,6 +3801,18 @@ class ContentStudioView(QWidget):
         job.editorial_critique = None
         job.script_quality_report = None
 
+        # Found via external audit: this GUI-only, non-LLM path never
+        # called InvalidationService, unlike run_revision()/
+        # run_script_selection_edit()/run_script_restore() right next
+        # to it - a person could retype a segment's narration after
+        # scenes/clips/timelines/render already existed and none of
+        # them would be flagged stale. Matching every other
+        # script-mutating path for real now, not just in a comment.
+        self._content_intelligence_pipeline.invalidation_service.on_script_changed(
+            job,
+            reason=(f"Segment {segment_number}'s narration was manually edited."),
+        )
+
         self._on_change()
 
     def _handle_restore_script_version(self, version_number: int) -> None:
