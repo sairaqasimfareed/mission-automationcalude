@@ -5,6 +5,7 @@ from uuid import UUID
 from src.agents.research_agent.agent import ResearchAgent
 from src.agents.scene_planner.agent import ScenePlannerAgent
 from src.models.approval import ApprovalDecision, HumanApprovalAction
+from src.models.automation_status import AutomationStatus
 from src.models.editorial_profile import EditorialProfile
 from src.models.information_reveal_map import InformationRevealMap
 from src.models.script_intake import ScriptIntakeMode
@@ -1243,4 +1244,46 @@ class ContentIntelligencePipeline:
 
         return self.approval_gate_service.resolve(
             job=job, decision_point=decision_point, action=action, notes=notes
+        )
+
+    def compute_automation_status(self, job: VideoJob) -> AutomationStatus:
+        """
+        Content Studio Redesign, Phase 17: "Visible current operation
+        and completed stages" / "Pause reason and next required user
+        action." Pure read of already-persisted state - mirrors
+        exactly the presence checks run_all() itself makes, so this
+        never drifts from what "Run/Resume Automation" would actually
+        do next.
+        """
+
+        stage_presence = (
+            ("audience_promise", job.audience_promise is not None),
+            ("research_plan", job.research_plan is not None),
+            ("research", job.research is not None),
+            ("story_angles", bool(job.story_angles)),
+            ("narrative_architecture", job.story_blueprint is not None),
+            ("retention_audit", job.retention_audit is not None),
+            ("hooks", bool(job.hook_candidates)),
+            ("writing_directives", job.writing_directives is not None),
+            ("script", job.generated_script is not None),
+            ("continuity_bible", job.continuity_bible is not None),
+            ("editorial_critique", job.editorial_critique is not None),
+            ("quality_gate", job.script_quality_report is not None),
+            ("packaging_hypothesis", job.packaging_hypothesis is not None),
+            ("scene_planning", bool(job.scenes)),
+        )
+        completed_stages = [key for key, present in stage_presence if present]
+
+        pending = ApprovalGateService.latest_pending(job)
+        pending_decision_point = (
+            pending.approval.decision_point
+            if pending is not None and pending.approval is not None
+            else None
+        )
+
+        return AutomationStatus(
+            completed_stages=completed_stages,
+            pending_decision_point=pending_decision_point,
+            pending_stage=pending.stage if pending is not None else None,
+            pending_summary=pending.summary if pending is not None else None,
         )

@@ -1079,6 +1079,8 @@ class ContentStudioView(QWidget):
             )
         )
 
+        self._render_automation_status(layout, job)
+
         stage_row = QHBoxLayout()
         stage_row.setSpacing(6)
 
@@ -1098,6 +1100,60 @@ class ContentStudioView(QWidget):
         self._build_ci_stage_panel(layout, job, stage_key, stage_label)
 
         self._layout.addWidget(frame)
+
+    def _render_automation_status(self, layout: QVBoxLayout, job: VideoJob) -> None:
+        """
+        Content Studio Redesign, Phase 17: "Run/Resume Automation,"
+        "Pause reason and next required user action," "Visible current
+        operation and completed stages." Fully Automatic, Custom
+        Approvals, and Approve Every Major Stage are all just
+        ApprovalPolicyConfig configuration consumed by this same
+        run_all()/compute_automation_status() pair - one engine, not
+        three separate implementations.
+        """
+
+        status = self._content_intelligence_pipeline.compute_automation_status(job)
+
+        run_row = QHBoxLayout()
+        run_button = button(
+            "Resume automation" if status.completed_stages else "Run automation",
+            variant="primary",
+        )
+        run_button.clicked.connect(self._handle_run_automation)
+        run_row.addWidget(run_button)
+        run_row.addWidget(badge(f"{len(status.completed_stages)} stage(s) completed"))
+        layout.addLayout(run_row)
+
+        if status.is_paused:
+            layout.addWidget(
+                status_label(
+                    f"Paused at '{status.pending_stage}' - "
+                    f"'{status.pending_decision_point}' needs your decision "
+                    f"below. {status.pending_summary or ''}".strip(),
+                    role="warning",
+                )
+            )
+        elif status.is_complete:
+            layout.addWidget(
+                status_label("Automation has completed every stage.", role="success")
+            )
+
+        layout.addWidget(separator())
+
+    def _handle_run_automation(self) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        try:
+            self._content_intelligence_pipeline.run_all(job)
+        except (RuntimeError, ValueError) as error:
+            self._record_error(job, f"Automation stopped: {error}")
+
+            return
+
+        self._on_change()
 
     def _build_ci_stage_panel(
         self,

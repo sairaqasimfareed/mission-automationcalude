@@ -5,6 +5,70 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-06 - Content Studio Redesign: Phase 17 Unified Automation Engine (One Engine, Multiple Approval Postures)
+
+**REUSE confirmed by inspection before writing anything new - and it
+changed the shape of the whole phase.** This phase's stated exit
+criterion was "all workflow modes (full auto, review critical stages,
+manual editorial) are one engine, not three separate code paths."
+Before writing an orchestrator, `ContentIntelligencePipeline.run_all()`
+was re-read end to end: it already is that one engine - a single
+mode-agnostic loop over all 14 stages, driven purely by
+`VideoJob.approval_policy`, pausing at whichever gate the policy marks
+as requiring review and continuing straight through any gate it
+doesn't. `ApprovalPolicyConfig.full_auto()`/`.review_critical_stages()`/
+`.manual_editorial()` presets already exist, and `LLMService` already
+has its own retry/fallback. None of Phase 17's backend engine work was
+still open - writing a second orchestrator here would have been the
+exact duplicate-engine mistake the phase exists to prevent.
+
+**What was genuinely missing: visibility, not logic.** A person
+looking at a project mid-automation had no single answer to "what has
+this run already done, and what is it waiting on me for." New
+`AutomationStatus` (`src/models/automation_status.py`) is a pure
+computed snapshot - never persisted, recomputed fresh on every call,
+the same convention `ScriptQualityReport`/`ScriptProductionReadinessReport`
+already follow - with `completed_stages`, `pending_decision_point`/
+`pending_stage`/`pending_summary`, and `is_paused`/`is_complete`
+properties. `ContentIntelligencePipeline.compute_automation_status()`
+mirrors `run_all()`'s own per-stage presence checks (so the status can
+never drift out of sync with what `run_all()` would actually do next)
+and reuses `ApprovalGateService.latest_pending()` for the pause
+details rather than re-deriving them.
+
+**GUI.** The Content Intelligence card gained a "Resume automation" /
+"Run automation" primary button (calls `run_all()` directly) plus a
+completed-stage-count badge, a warning banner naming the pending
+stage/decision/summary while paused, and a success banner once
+`scene_planning` is done and nothing is pending.
+
+**A stub gap found via a real test failure, not a code review.**
+`test_run_automation_runs_the_whole_pipeline` failed with
+`job.generated_script is None` after a `full_auto()` run - not a bug
+in the new code, but in the GUI test file's own, separate
+`_EchoStubLLMService` double. `test_content_intelligence_pipeline.py`'s
+stub already substitutes `SPOILER_RISK: 70` -> `0` for
+`HookEvaluationService` (the service's placeholder dry-run scores
+every dimension at 70, which zeroes `overall_score`/`confidence_score`
+by construction - fine in isolation, fatal to a full auto-continuing
+run). The GUI test file's own copy of that stub never got the same
+fix. Ported the identical substitution across; all 4 automation GUI
+tests pass afterward.
+
+**Tests:** `test_automation_status_model.py` (5), 6 new pipeline
+cases (including `full_auto()` completing without pausing and
+`manual_editorial()` pausing early, both through the same `run_all()`
+call - direct proof of "one engine, multiple postures"), 4 new GUI
+cases. mypy/ruff/black clean.
+
+**Deliberately not built this pass:** an "Automatic Reviewer" fourth
+policy preset (auto-resolving low-severity findings without a human) -
+deferred until a concrete need for it beyond the existing three
+presets is identified, rather than adding a preset nobody asked for
+yet.
+
+---
+
 ## 2026-09-06 - Content Studio Redesign: Phase 16 Imported Script Production Enrichment and Automatic Directive Extraction
 
 **REUSE confirmed by inspection before writing anything new.** This

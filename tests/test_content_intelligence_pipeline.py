@@ -12,6 +12,7 @@ from src.models.script_selection_edit import (
 )
 from src.models.script_version import VersionReason
 from src.models.video_job import VideoJob
+from src.services.approval_gate_service import ApprovalGateService
 from src.services.content_intelligence_pipeline import ContentIntelligencePipeline
 from src.services.llm.llm_service import LLMServiceResult
 from src.shared.llm.models import LLMCallResult, LLMCallStatus, LLMProvider
@@ -1068,6 +1069,81 @@ def test_run_script_lock_raises_with_unresolved_continuity_critical_ambiguity() 
     )
     job = pipeline.run_script_lock(job)
     assert job.script_lock is not None
+
+
+def test_compute_automation_status_reflects_no_progress_on_a_fresh_job() -> None:
+    pipeline, _ = _pipeline()
+
+    status = pipeline.compute_automation_status(_job())
+
+    assert status.completed_stages == []
+    assert status.is_paused is False
+    assert status.is_complete is False
+
+
+def test_compute_automation_status_lists_completed_stages() -> None:
+    pipeline, job = _job_with_script()
+
+    status = pipeline.compute_automation_status(job)
+
+    assert "audience_promise" in status.completed_stages
+    assert "research" in status.completed_stages
+    assert "script" in status.completed_stages
+    assert "scene_planning" not in status.completed_stages
+
+
+def test_compute_automation_status_reports_the_pending_gate() -> None:
+    """
+    Content Studio Redesign, Phase 17: "Pause reason and next required
+    user action" - reuses ApprovalGateService.latest_pending(), the
+    same mechanism run_all() itself checks via is_blocked().
+    """
+
+    pipeline, _ = _pipeline()
+    job = _job(approval_policy=ApprovalPolicyConfig.review_critical_stages())
+
+    job = pipeline.run_all(job)
+    status = pipeline.compute_automation_status(job)
+
+    assert status.is_paused is True
+    assert status.pending_decision_point is not None
+
+
+def test_compute_automation_status_is_complete_once_run_all_finishes() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_all(_job())
+    status = pipeline.compute_automation_status(job)
+
+    assert status.is_complete is True
+    assert status.is_paused is False
+
+
+def test_run_all_custom_gate_matrix_full_auto_completes_without_pausing() -> None:
+    """
+    Content Studio Redesign, Phase 17 exit criterion: "All workflow
+    modes are configuration of one engine, not three separate
+    implementations" - FULL_AUTO/REVIEW_CRITICAL_STAGES/MANUAL_EDITORIAL
+    are all just ApprovalPolicyConfig presets consumed by this same
+    run_all(), never three different code paths.
+    """
+
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_all(_job(approval_policy=ApprovalPolicyConfig.full_auto()))
+
+    assert job.generated_script is not None
+    assert job.scenes
+
+
+def test_run_all_custom_gate_matrix_manual_editorial_pauses_early() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_all(
+        _job(approval_policy=ApprovalPolicyConfig.manual_editorial())
+    )
+
+    assert ApprovalGateService.latest_pending(job) is not None
 
 
 def test_run_packaging_hypothesis_requires_script_and_hook() -> None:

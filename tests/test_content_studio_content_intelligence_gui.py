@@ -16,6 +16,7 @@ from src.desktop.views.content_studio_view import (  # noqa: E402
     _CI_STAGES,
     ContentStudioView,
 )
+from src.models.approval import ApprovalPolicyConfig  # noqa: E402
 from src.models.artifact_lifecycle import ArtifactType  # noqa: E402
 from src.models.script_lock import ScriptProvenance  # noqa: E402
 from src.models.script_version import VersionReason  # noqa: E402
@@ -63,6 +64,15 @@ class _EchoStubLLMService:
             content = content.replace(
                 "PROMISE_STRENGTH: moderate", "PROMISE_STRENGTH: strong"
             )
+        elif request.metadata.get("agent") == "HookEvaluationService":
+            # Same reasoning as test_content_intelligence_pipeline.py's
+            # own stub: the service's placeholder dry-run scores every
+            # dimension (including SPOILER_RISK) at 70, which zeroes
+            # overall_score/confidence_score by construction
+            # (raw_average - spoiler_risk = 0) - fine in isolation, but
+            # a full run_all() test needs a hook that can plausibly
+            # auto-continue past the hook gate.
+            content = content.replace("SPOILER_RISK: 70", "SPOILER_RISK: 0")
 
         result = LLMCallResult(
             status=LLMCallStatus.SUCCESS,
@@ -2443,3 +2453,66 @@ def test_production_readiness_panel_renders_after_resolving_ambiguities(
     view._handle_resolve_ambiguity_by_ai(target_id)
 
     view.refresh(job)  # must not raise while rendering a resolved ambiguity
+
+
+def test_automation_status_renders_before_any_stage_runs(qapp: QApplication) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)  # must not raise
+
+
+def test_run_automation_runs_the_whole_pipeline(qapp: QApplication) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job.approval_policy = ApprovalPolicyConfig.full_auto()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view._handle_run_automation()
+
+    assert job.generated_script is not None
+    assert job.scenes
+
+
+def test_run_automation_pauses_and_status_reflects_it(qapp: QApplication) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job.approval_policy = ApprovalPolicyConfig.manual_editorial()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view._handle_run_automation()
+    view.refresh(job)  # must not raise while rendering the paused state
+
+    status = view._content_intelligence_pipeline.compute_automation_status(job)
+    assert status.is_paused is True
+
+
+def test_run_automation_resume_does_not_regenerate_completed_stages(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job.approval_policy = ApprovalPolicyConfig.full_auto()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view._handle_run_automation()
+    first_script = job.generated_script
+
+    view._handle_run_automation()
+
+    assert job.generated_script is first_script
