@@ -5,6 +5,76 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-06 - Post-Script-Approval Production Plan: Phase 12 Video Timeline and Editing Directive Compilation
+
+**Most of this phase turned out to already be solved, more thoroughly
+than the objective's own wording suggested - and one architectural
+fact made the "obvious" gap not exist at all.** `TimelineValidationService`
+already detects both gaps and overlaps between timeline items and
+duration disagreement between an item and its own clip - "validate no
+accidental gaps/overlaps" was fully satisfied before this phase
+started. More striking: `VideoTimelineItem`'s own model validator
+makes a duration mismatch between the item and its clip literally
+impossible to construct - a hard `ValueError`, not a soft warning -
+and `TimelineBuilderService` always sizes every item's slot to exactly
+its clip's own actual duration. An item/clip disagreement cannot
+happen by this architecture's own design, full stop.
+
+**So "define duration mismatch policy" isn't about items and clips -
+it's one level upstream, and nothing there was checked at all.** The
+real disagreement is between a scene's *planned* duration
+(`Scene.estimated_duration_seconds`, fixed at scene-planning time) and
+the *actual* duration of whatever clip eventually gets acquired for it
+- manual upload, stock footage, whatever comes back. A scene planned
+for 8 seconds whose acquired clip actually runs 15 wasn't compared
+against its plan anywhere; the timeline builder just uses whatever the
+clip's real length is and moves on, silently changing the video's
+total runtime from what was planned.
+
+**A recommendation engine, not an executor - deliberately.** New
+`DurationMismatchPolicyService.evaluate()` compares each scene against
+its acquired clip within a configurable tolerance and recommends one
+of this phase's own four named dispositions: TRIM for a too-long clip,
+HOLD_LAST_FRAME for a too-short one, or BLOCK when the disagreement is
+severe (a configurable ratio of the planned duration - a wildly-off
+clip needs a person's judgment, not an automatic guess).
+APPROVED_WORKAROUND is never auto-assigned; it only exists once a
+person has explicitly accepted a mismatch, and the model requires a
+note recording who/why when it is used. The service never mutates a
+clip or timeline itself - executing a recommendation (actually
+trimming, actually freeze-framing) belongs to whichever later stage
+builds the render timeline from an accepted decision, matching this
+phase's own "policy," not "execution," wording exactly.
+
+**Deliberately not wired into `ProductionReadinessService` - a
+conscious risk decision, not an oversight.** That aggregator is this
+codebase's own established sensitive file (it's the one a near-miss
+`Write` overwrite nearly destroyed earlier this session, in Phase 16
+of the Content Studio Redesign work). This session's own discipline
+throughout has been to avoid touching delicate, already-tested
+infrastructure without a concrete driving need already established -
+so this phase's new capability stays standalone and fully tested,
+with wiring it into the readiness aggregator (or a GUI) left as its
+own explicit, separately-reviewed step rather than folded in here as
+a side effect.
+
+**Tests:** `test_duration_mismatch_policy_model.py` (5: signed
+mismatch in both directions, approved-workaround requires a note,
+block does not), `test_duration_mismatch_policy_service.py` (8:
+within-tolerance clean, too-long recommends trim, too-short recommends
+hold, severe mismatch recommends block, no-matching-clip skipped,
+independent multi-scene evaluation, constructor validation). Broader
+timeline regression (13 cases, including the pre-existing
+`TimelineValidationService`/`TimelineBuilderService` suites): all
+green. mypy/ruff/black clean.
+
+**Deliberately not built this pass:** any wiring into
+`ProductionReadinessService`/the `Blocker` system or a GUI (see
+above); an actual trim/hold-last-frame execution mechanism - this
+phase covers the policy layer only.
+
+---
+
 ## 2026-09-06 - Post-Script-Approval Production Plan: Phase 11 Audio Timeline Compilation and Mix Directives
 
 **This phase's own repository-position claim - "AudioTimeline/AudioTrack
