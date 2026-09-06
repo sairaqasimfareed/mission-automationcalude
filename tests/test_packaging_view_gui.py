@@ -9,10 +9,19 @@ from pathlib import Path  # noqa: E402
 from uuid import uuid4  # noqa: E402
 
 import pytest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QLabel, QPushButton  # noqa: E402
+from PySide6.QtWidgets import (  # noqa: E402
+    QApplication,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+)
 
 from src.desktop.job_store import InMemoryJobStore  # noqa: E402
 from src.desktop.views.packaging_view import PackagingView  # noqa: E402
+from src.models.audience_promise import (  # noqa: E402
+    AudiencePromise,
+    PromiseStrength,
+)
 from src.models.enums import JobStatus, Platform, WorkflowStage  # noqa: E402
 from src.models.final_export import FinalExportPackage, FinalExportStatus  # noqa: E402
 from src.models.script import Script, ScriptStatus  # noqa: E402
@@ -311,3 +320,53 @@ def test_thumbnail_card_shows_version_and_regenerate_button(
     assert any("Version 1" in text for text in labels)
     assert "Regenerate thumbnail" in buttons
     assert "Generate thumbnail" not in buttons
+
+
+def test_seo_card_shows_canonical_audience_and_no_free_text_box_when_promised(
+    qapp: QApplication,
+    tmp_path: Path,
+) -> None:
+    view = _view(export_root=tmp_path / "exports")
+    job = _job_with_approved_script()
+    job.audience_promise = AudiencePromise(
+        topic="Giant squid",
+        target_audience="Deep sea documentary fans",
+        platform="youtube",
+        genre_id="genre.documentary",
+        target_duration_seconds=300,
+        intended_emotion="wonder",
+        central_curiosity="What is down there?",
+        primary_question="What is down there?",
+        viewer_benefit="A close look at a giant squid.",
+        expected_payoff="Understanding giant squid behavior.",
+        promise_strength=PromiseStrength.STRONG,
+        prompt_version="audience_promise_prompt_v1.0.0",
+    )
+
+    view._job_store.add(job)
+    view.set_job(job.id)
+
+    view.refresh(job)
+
+    labels = [label.text() for label in view.findChildren(QLabel)]
+    line_edits = view.findChildren(QLineEdit)
+
+    assert any("Deep sea documentary fans" in text for text in labels)
+    assert not any(edit.text() == "General audience" for edit in line_edits)
+
+
+def test_seo_card_shows_free_text_audience_box_without_a_promise(
+    qapp: QApplication,
+    tmp_path: Path,
+) -> None:
+    view = _view(export_root=tmp_path / "exports")
+    job = _job_with_approved_script()
+
+    view._job_store.add(job)
+    view.set_job(job.id)
+
+    view.refresh(job)
+
+    line_edits = view.findChildren(QLineEdit)
+
+    assert any(edit.text() == "General audience" for edit in line_edits)

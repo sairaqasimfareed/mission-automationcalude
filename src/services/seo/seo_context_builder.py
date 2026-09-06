@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from uuid import UUID
 
 from src.models.enums import Platform
+from src.models.genre_profile import GenreSEOProfile, GenreThumbnailProfile
 from src.models.script import ScriptStatus
 from src.models.video_job import VideoJob
+from src.services.genre_profile_registry_service import (
+    GenreProfileRegistryService,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,29 +56,62 @@ class SEOContext:
     script_lock_hash: str | None = None
     script_lock_version_number: int | None = None
 
+    # Step 2 (SEO, Thumbnail & Publishing Reconciliation), SEO-2: "Make
+    # publishing metadata consume canonical creative/audience authority
+    # without re-inference." GenreProfile already carries these two
+    # sub-profiles, populated for every genre - resolved once here so
+    # every SEO/thumbnail generation service reads real genre-specific
+    # tone/style guidance instead of only a bare genre_id string.
+    genre_seo_profile: GenreSEOProfile = field(default_factory=GenreSEOProfile)
+    genre_thumbnail_profile: GenreThumbnailProfile = field(
+        default_factory=GenreThumbnailProfile
+    )
+
 
 class SEOContextBuilder:
     """
     Build one SEOContext from an existing VideoJob.
 
-    genre_id, target_audience, and language_code are not persisted on
-    VideoJob today - the same is already true of
-    MissionApplicationService.execute()/.resume(), which require
-    genre_id and language_code as explicit caller-supplied parameters
-    rather than deriving them from job state. This builder follows the
-    same established convention instead of inventing new VideoJob
-    fields.
+    genre_id and language_code are not persisted on VideoJob today -
+    the same is already true of MissionApplicationService.execute()/
+    .resume(), which require them as explicit caller-supplied
+    parameters rather than deriving them from job state. This builder
+    follows the same established convention instead of inventing new
+    VideoJob fields.
     """
+
+    def __init__(
+        self,
+        *,
+        genre_profile_registry: GenreProfileRegistryService | None = None,
+    ) -> None:
+        self._genre_profile_registry = (
+            genre_profile_registry
+            or GenreProfileRegistryService.with_default_profiles()
+        )
 
     def build(
         self,
         job: VideoJob,
         *,
         genre_id: str,
-        target_audience: str,
+        target_audience: str | None = None,
         language_code: str = "en",
     ) -> SEOContext:
-        """Build one SEO generation context from an approved script."""
+        """
+        Build one SEO generation context from an approved script.
+
+        target_audience is optional (SEO-2) - omitting it resolves the
+        canonical audience already established for this project
+        (job.audience_promise.target_audience), rather than requiring
+        a person to re-type a guess every time SEO/thumbnail content
+        is generated. An explicit value still always wins (e.g. for a
+        Script-Intake project with no audience promise), matching
+        "prevent title/script text from becoming a substitute genre
+        authority" - the canonical value is the default, not the only
+        option, and a caller that wants a specific value keeps that
+        control.
+        """
 
         if job.script is None:
             raise ValueError("SEO context requires a VideoJob with a script.")
@@ -87,12 +124,38 @@ class SEOContextBuilder:
         # is needed here.
         assert job.research is not None
 
+        resolved_target_audience = (target_audience or "").strip() or (
+            job.audience_promise.target_audience
+            if job.audience_promise is not None
+            else ""
+        )
+
+        if not resolved_target_audience:
+            raise ValueError(
+                "SEO context requires a target audience - either from "
+                "the job's audience promise or an explicit override."
+            )
+
+        genre_resolution = self._genre_profile_registry.resolve(genre_id)
+
+        genre_seo_profile = (
+            genre_resolution.profile.seo
+            if genre_resolution.profile is not None
+            else GenreSEOProfile()
+        )
+
+        genre_thumbnail_profile = (
+            genre_resolution.profile.thumbnail
+            if genre_resolution.profile is not None
+            else GenreThumbnailProfile()
+        )
+
         return SEOContext(
             video_job_id=job.id,
             topic=job.topic,
             niche=job.niche,
             genre_id=genre_id,
-            target_audience=target_audience,
+            target_audience=resolved_target_audience,
             target_country=job.target_country,
             language=job.language,
             language_code=language_code,
@@ -113,4 +176,6 @@ class SEOContextBuilder:
                 if job.script_lock is not None
                 else None
             ),
+            genre_seo_profile=genre_seo_profile,
+            genre_thumbnail_profile=genre_thumbnail_profile,
         )

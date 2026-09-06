@@ -5,6 +5,7 @@ from uuid import uuid4
 import pytest
 
 from src.models.enums import Platform
+from src.models.genre_profile import GenreSEOProfile, GenreTone
 from src.services.llm.llm_service import LLMServiceResult
 from src.services.seo.seo_context_builder import SEOContext
 from src.services.seo.seo_title_generation_service import (
@@ -14,24 +15,27 @@ from src.shared.llm.models import LLMCallResult, LLMCallStatus, LLMProvider
 from src.shared.llm.request import LLMRequest
 
 
-def _context() -> SEOContext:
-    return SEOContext(
-        video_job_id=uuid4(),
-        topic="Deep sea creatures",
-        niche="ocean-life",
-        genre_id="genre.documentary",
-        target_audience="Ocean enthusiasts",
-        target_country="United States",
-        language="English",
-        language_code="en",
-        platform=Platform.YOUTUBE,
-        script_title="Deep Sea Creatures Explained",
-        script_content="Full script content about deep sea creatures.",
-        research_summary="An overview of deep sea creatures.",
-        key_facts=["Fact one.", "Fact two."],
-        scene_count=3,
-        estimated_duration_seconds=600,
-    )
+def _context(**overrides: object) -> SEOContext:
+    defaults: dict[str, object] = {
+        "video_job_id": uuid4(),
+        "topic": "Deep sea creatures",
+        "niche": "ocean-life",
+        "genre_id": "genre.documentary",
+        "target_audience": "Ocean enthusiasts",
+        "target_country": "United States",
+        "language": "English",
+        "language_code": "en",
+        "platform": Platform.YOUTUBE,
+        "script_title": "Deep Sea Creatures Explained",
+        "script_content": "Full script content about deep sea creatures.",
+        "research_summary": "An overview of deep sea creatures.",
+        "key_facts": ["Fact one.", "Fact two."],
+        "scene_count": 3,
+        "estimated_duration_seconds": 600,
+    }
+    defaults.update(overrides)
+
+    return SEOContext(**defaults)  # type: ignore[arg-type]
 
 
 class _StubLLMService:
@@ -138,6 +142,21 @@ def test_generate_includes_context_in_prompt() -> None:
     assert "Deep sea creatures" in stub.last_request.prompt
     assert "Deep Sea Creatures Explained" in stub.last_request.prompt
     assert "Ocean enthusiasts" in stub.last_request.prompt
+
+
+def test_generate_includes_genre_title_tone_in_prompt() -> None:
+    stub = _StubLLMService(content="Title A")
+
+    service = SEOTitleGenerationService(llm_service=stub)  # type: ignore[arg-type]
+
+    context = _context(
+        genre_seo_profile=GenreSEOProfile(title_tone=GenreTone.SUSPENSEFUL),
+    )
+
+    service.generate(context, candidate_count=1)
+
+    assert stub.last_request is not None
+    assert "suspenseful" in stub.last_request.prompt
 
 
 def test_generate_raises_when_provider_fails() -> None:

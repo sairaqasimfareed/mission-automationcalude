@@ -97,7 +97,7 @@ class SEOPackageService:
         job: VideoJob,
         *,
         genre_id: str,
-        target_audience: str,
+        target_audience: str | None = None,
         language_code: str = "en",
         title_candidate_count: int = 5,
         max_tags: int = 15,
@@ -112,6 +112,12 @@ class SEOPackageService:
         one higher, so a regenerated package is traceable as "version
         N" rather than a silent, unversioned overwrite; omitting it
         reproduces this method's exact prior behavior (version 1).
+
+        target_audience is optional (Step 2, SEO-2) - omitting it
+        resolves the job's own canonical audience promise instead of
+        requiring a caller to supply a guess; see
+        SEOContextBuilder.build()'s own docstring for the exact
+        precedence.
         """
 
         context = self.context_builder.build(

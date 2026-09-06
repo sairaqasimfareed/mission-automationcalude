@@ -134,12 +134,24 @@ class ThumbnailConceptGenerationService:
             else ""
         )
 
+        thumbnail_profile = context.genre_thumbnail_profile
+
+        face_guidance = (
+            "should feature a clearly visible human face or expression"
+            if thumbnail_profile.use_faces
+            else "does not need to feature a human face"
+        )
+
         return (
             f"Propose {concept_count} distinct thumbnail concepts for "
             "the following video.\n\n"
             f"Topic: {context.topic}\n"
             f"Niche: {context.niche}\n"
             f"Target audience: {context.target_audience}\n"
+            f"Composition style: {thumbnail_profile.composition}\n"
+            f"Color mood: {thumbnail_profile.color_mood}\n"
+            f"Text style: {thumbnail_profile.text_style}\n"
+            f"The visual concept {face_guidance}.\n"
             f"{title_line}"
             f"Script title: {context.script_title}\n\n"
             f"Script content:\n{context.script_content}\n\n"
@@ -147,7 +159,8 @@ class ThumbnailConceptGenerationService:
             "labeled lines, and separate blocks with a line of three "
             "or more dashes:\n"
             "CONCEPT: <one-sentence description of the visual concept>\n"
-            "HOOK: <short on-image hook text, under 8 words>\n"
+            "HOOK: <short on-image hook text, under "
+            f"{thumbnail_profile.maximum_words} words>\n"
             "PROMPT: <detailed AI image-generation prompt>"
         )
 

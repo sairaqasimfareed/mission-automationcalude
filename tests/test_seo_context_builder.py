@@ -2,16 +2,37 @@ from __future__ import annotations
 
 import pytest
 
+from src.models.audience_promise import AudiencePromise, PromiseStrength
 from src.models.enums import Platform
 from src.models.research import ResearchResult, ResearchStatus
 from src.models.scene import Scene
 from src.models.script import Script, ScriptStatus
 from src.models.script_lock import ScriptLock, ScriptProvenance
 from src.models.video_job import VideoJob
+from src.services.genre_profile_registry_service import (
+    GenreProfileRegistryService,
+)
 from src.services.seo.seo_context_builder import (
     SEOContext,
     SEOContextBuilder,
 )
+
+
+def _audience_promise(*, target_audience: str) -> AudiencePromise:
+    return AudiencePromise(
+        topic="Deep sea creatures",
+        target_audience=target_audience,
+        platform="youtube",
+        genre_id="genre.documentary",
+        target_duration_seconds=600,
+        intended_emotion="wonder",
+        central_curiosity="What lives in the deepest trenches?",
+        primary_question="What lives in the deepest trenches?",
+        viewer_benefit="A vivid picture of deep sea life.",
+        expected_payoff="Understanding of deep sea adaptation.",
+        promise_strength=PromiseStrength.STRONG,
+        prompt_version="audience_promise_prompt_v1.0.0",
+    )
 
 
 def _approved_research() -> ResearchResult:
@@ -155,3 +176,65 @@ def test_build_raises_when_script_is_not_approved() -> None:
             genre_id="genre.documentary",
             target_audience="Ocean enthusiasts",
         )
+
+
+def test_build_defaults_target_audience_from_audience_promise() -> None:
+    job = _job_with_approved_script()
+    job.audience_promise = _audience_promise(target_audience="Mystery enthusiasts")
+
+    context = SEOContextBuilder().build(
+        job,
+        genre_id="genre.documentary",
+    )
+
+    assert context.target_audience == "Mystery enthusiasts"
+
+
+def test_build_explicit_target_audience_overrides_audience_promise() -> None:
+    job = _job_with_approved_script()
+    job.audience_promise = _audience_promise(target_audience="Mystery enthusiasts")
+
+    context = SEOContextBuilder().build(
+        job,
+        genre_id="genre.documentary",
+        target_audience="Ocean enthusiasts",
+    )
+
+    assert context.target_audience == "Ocean enthusiasts"
+
+
+def test_build_raises_when_no_target_audience_is_available() -> None:
+    job = _job_with_approved_script()
+
+    with pytest.raises(ValueError, match="requires a target audience"):
+        SEOContextBuilder().build(
+            job,
+            genre_id="genre.documentary",
+        )
+
+
+def test_build_resolves_genre_seo_and_thumbnail_profiles() -> None:
+    job = _job_with_approved_script()
+
+    context = SEOContextBuilder(
+        genre_profile_registry=(GenreProfileRegistryService.with_default_profiles()),
+    ).build(
+        job,
+        genre_id="genre.horror",
+        target_audience="Horror fans",
+    )
+
+    default_context = SEOContextBuilder(
+        genre_profile_registry=(GenreProfileRegistryService.with_default_profiles()),
+    ).build(
+        job,
+        genre_id="genre.default",
+        target_audience="Horror fans",
+    )
+
+    # genre.horror's own SEO/thumbnail profile is real, populated
+    # creative direction from earlier session work, not the bare
+    # dataclass defaults - confirming the registry is genuinely
+    # consulted rather than always falling back to a neutral default.
+    assert context.genre_seo_profile != default_context.genre_seo_profile
+    assert context.genre_thumbnail_profile != default_context.genre_thumbnail_profile

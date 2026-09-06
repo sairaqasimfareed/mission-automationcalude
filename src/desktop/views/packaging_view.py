@@ -125,13 +125,12 @@ class PackagingView(QWidget):
             )
 
             if script_approved:
-                audience_input = QLineEdit("General audience")
-                layout.addWidget(audience_input)
+                audience_getter = self._build_audience_widget(layout, job)
 
                 regenerate_button = button("Regenerate SEO package", icon_name="tag")
                 regenerate_button.clicked.connect(
                     lambda: self._handle_generate_seo(
-                        audience_input.text(),
+                        audience_getter(),
                         previous_package=seo_package,
                     ),
                 )
@@ -139,14 +138,13 @@ class PackagingView(QWidget):
         elif script_approved:
             layout.addWidget(small_muted("Not generated yet."))
 
-            audience_input = QLineEdit("General audience")
-            layout.addWidget(audience_input)
+            audience_getter = self._build_audience_widget(layout, job)
 
             generate_button = button(
                 "Generate SEO package", variant="primary", icon_name="tag"
             )
             generate_button.clicked.connect(
-                lambda: self._handle_generate_seo(audience_input.text()),
+                lambda: self._handle_generate_seo(audience_getter()),
             )
             layout.addWidget(generate_button, alignment=_LEFT)
         else:
@@ -182,13 +180,12 @@ class PackagingView(QWidget):
             )
 
             if script_approved:
-                audience_input = QLineEdit("General audience")
-                layout.addWidget(audience_input)
+                audience_getter = self._build_audience_widget(layout, job)
 
                 regenerate_button = button("Regenerate thumbnail", icon_name="image")
                 regenerate_button.clicked.connect(
                     lambda: self._handle_generate_thumbnail(
-                        audience_input.text(),
+                        audience_getter(),
                         previous_artifact=thumbnail,
                     ),
                 )
@@ -196,20 +193,57 @@ class PackagingView(QWidget):
         elif script_approved:
             layout.addWidget(small_muted("Not generated yet."))
 
-            audience_input = QLineEdit("General audience")
-            layout.addWidget(audience_input)
+            audience_getter = self._build_audience_widget(layout, job)
 
             generate_button = button(
                 "Generate thumbnail", variant="primary", icon_name="image"
             )
             generate_button.clicked.connect(
-                lambda: self._handle_generate_thumbnail(audience_input.text()),
+                lambda: self._handle_generate_thumbnail(audience_getter()),
             )
             layout.addWidget(generate_button, alignment=_LEFT)
         else:
             layout.addWidget(small_muted("Requires an approved script."))
 
         self._layout.addWidget(frame)
+
+    @staticmethod
+    def _build_audience_widget(
+        layout: QVBoxLayout,
+        job: VideoJob,
+    ) -> Callable[[], str | None]:
+        """
+        Step 2 (SEO, Thumbnail & Publishing Reconciliation), SEO-2:
+        "Make publishing metadata consume canonical creative/audience
+        authority without re-inference." When this project already
+        has a canonical audience promise (Content Studio Redesign,
+        Phase 6), show it read-only and let SEOContextBuilder resolve
+        it automatically - no free-text box for a person to re-guess
+        an audience the project has already established. Only a
+        project with no audience promise (e.g. an imported Script
+        Intake project) falls back to the original free-text entry.
+
+        Returns a zero-argument getter rather than the resolved value
+        directly, so a "Regenerate" button built once at refresh time
+        still reads whatever is currently in the fallback box at the
+        moment it's clicked.
+        """
+
+        if job.audience_promise is not None:
+            layout.addWidget(
+                small_muted(
+                    "Target audience: "
+                    f"{job.audience_promise.target_audience} "
+                    "(from Audience & Creative Strategy)"
+                )
+            )
+
+            return lambda: None
+
+        audience_input = QLineEdit("General audience")
+        layout.addWidget(audience_input)
+
+        return audience_input.text
 
     @staticmethod
     def _build_script_lock_staleness_banner(
@@ -374,7 +408,7 @@ class PackagingView(QWidget):
 
     def _handle_generate_seo(
         self,
-        target_audience: str,
+        target_audience: str | None,
         *,
         previous_package: SEOPackage | None = None,
     ) -> None:
@@ -408,7 +442,7 @@ class PackagingView(QWidget):
 
     def _handle_generate_thumbnail(
         self,
-        target_audience: str,
+        target_audience: str | None,
         *,
         previous_artifact: ThumbnailArtifact | None = None,
     ) -> None:

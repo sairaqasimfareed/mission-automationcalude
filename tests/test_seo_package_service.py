@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from src.models.audience_promise import AudiencePromise, PromiseStrength
 from src.models.enums import Platform
 from src.models.research import ResearchResult, ResearchStatus
 from src.models.script import Script, ScriptStatus
@@ -275,3 +276,29 @@ def test_build_carries_script_lock_identity_when_locked() -> None:
 
     assert result.package.source_script_lock_hash == "deadbeef" * 4
     assert result.package.source_script_version_number == 3
+
+
+def test_build_defaults_target_audience_from_audience_promise() -> None:
+    job = _approved_job()
+    job.audience_promise = AudiencePromise(
+        topic="Deep sea creatures",
+        target_audience="Mystery enthusiasts",
+        platform="youtube",
+        genre_id="genre.documentary",
+        target_duration_seconds=600,
+        intended_emotion="wonder",
+        central_curiosity="What lives in the deepest trenches?",
+        primary_question="What lives in the deepest trenches?",
+        viewer_benefit="A vivid picture of deep sea life.",
+        expected_payoff="Understanding of deep sea adaptation.",
+        promise_strength=PromiseStrength.STRONG,
+        prompt_version="audience_promise_prompt_v1.0.0",
+    )
+
+    result = _service().build(
+        job,
+        genre_id="genre.documentary",
+    )
+
+    assert isinstance(result, SEOPackageBuildResult)
+    assert result.validation.is_valid is True
