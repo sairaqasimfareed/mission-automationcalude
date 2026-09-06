@@ -1351,6 +1351,90 @@ def test_run_production_semantic_brief_records_a_generation_event() -> None:
     assert matching[0].category == "generation"
 
 
+def test_run_visual_continuity_requires_a_script_lock() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_audience_promise(_job())
+    job = pipeline.run_research(job)
+    job = pipeline.run_story_angles(job)
+    job = pipeline.run_narrative_architecture(job)
+    job = pipeline.run_hooks(job)
+    job = pipeline.run_script(job)
+    job = pipeline.run_continuity_bible(job)
+    job = pipeline.run_scene_planning(job)
+
+    with pytest.raises(RuntimeError, match="requires a locked script"):
+        pipeline.run_visual_continuity(job)
+
+
+def test_run_visual_continuity_requires_scenes() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_all(_job())
+    job.scenes = []
+
+    with pytest.raises(RuntimeError, match="requires planned scenes"):
+        pipeline.run_visual_continuity(job)
+
+
+def test_run_visual_continuity_requires_a_continuity_bible() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_all(_job())
+    job.continuity_bible = None
+
+    with pytest.raises(RuntimeError, match="requires a continuity bible"):
+        pipeline.run_visual_continuity(job)
+
+
+def test_run_visual_continuity_builds_a_bible_bound_to_the_lock() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_all(_job())
+    job = pipeline.run_visual_continuity(job)
+
+    assert job.visual_continuity_bible is not None
+    assert job.visual_continuity_bible.script_lock_hash == (
+        job.script_lock.script_content_hash
+    )
+    assert len(job.visual_continuity_bible.clip_entries) == len(job.scenes)
+
+
+def test_run_visual_continuity_records_a_generation_event() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_all(_job())
+    job = pipeline.run_visual_continuity(job)
+
+    matching = [
+        record
+        for record in job.content_decisions
+        if record.stage == "visual_continuity"
+    ]
+    assert len(matching) == 1
+    assert matching[0].category == "generation"
+
+
+def test_compute_visual_continuity_validation_is_none_before_generation() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_all(_job())
+
+    assert pipeline.compute_visual_continuity_validation(job) is None
+
+
+def test_compute_visual_continuity_validation_after_generation() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_all(_job())
+    job = pipeline.run_visual_continuity(job)
+
+    result = pipeline.compute_visual_continuity_validation(job)
+
+    assert result is not None
+    assert result.script_lock_hash == job.script_lock.script_content_hash
+
+
 def test_run_continuity_bible_requires_a_generated_script() -> None:
     pipeline, _ = _pipeline()
 

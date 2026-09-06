@@ -1237,6 +1237,10 @@ class ContentStudioView(QWidget):
             layout.addWidget(separator())
             self._render_production_semantic_brief_section(layout, job)
 
+        if job.script_lock is not None and job.scenes and job.continuity_bible:
+            layout.addWidget(separator())
+            self._render_visual_continuity_section(layout, job)
+
         self._layout.addWidget(frame)
 
     def _render_production_semantic_brief_section(
@@ -1311,6 +1315,93 @@ class ContentStudioView(QWidget):
                 job,
                 f"Could not generate production directives: {error}",
                 on_retry=self._handle_generate_production_semantic_brief,
+            )
+
+            return
+
+        self._on_change()
+
+    def _render_visual_continuity_section(
+        self, layout: QVBoxLayout, job: VideoJob
+    ) -> None:
+        """
+        Post-Script-Approval Production Plan, Phase 2: "Optional Bible
+        view lists identities, canonical descriptions and references"
+        / "Highlight state changes and blocked contradictions." Lives
+        alongside the Production Directives section in the same
+        Production Handoff card - both are read-only inspectors over
+        post-lock production artifacts, not separate workflow stages.
+        """
+
+        bible = job.visual_continuity_bible
+
+        if bible is None:
+            layout.addWidget(small_muted("No visual continuity bible generated yet."))
+            generate_button = button(
+                "Generate visual continuity bible", variant="primary"
+            )
+            generate_button.clicked.connect(self._handle_generate_visual_continuity)
+            layout.addWidget(generate_button, alignment=_LEFT)
+
+            return
+
+        layout.addWidget(
+            badge(
+                f"Visual continuity · {len(bible.identities)} identit(ies) · "
+                f"{len(bible.clip_entries)} clip entr(ies)"
+            )
+        )
+
+        validation = (
+            self._content_intelligence_pipeline.compute_visual_continuity_validation(
+                job
+            )
+        )
+
+        if validation is not None and not validation.is_consistent:
+            layout.addWidget(
+                status_label(
+                    f"{len(validation.conflicts)} continuity conflict(s) found - "
+                    "see below.",
+                    role="warning",
+                )
+            )
+            for conflict in validation.conflicts:
+                layout.addWidget(
+                    small_muted(f"Scene {conflict.scene_number}: {conflict.detail}")
+                )
+        elif validation is not None:
+            layout.addWidget(
+                status_label("No continuity conflicts detected.", role="success")
+            )
+
+        for identity in bible.identities:
+            layout.addWidget(
+                small_muted(
+                    f"{identity.entity_type.value.title()}: {identity.name} - "
+                    f"{identity.canonical_description}"
+                )
+            )
+
+        regenerate_button = button(
+            "Regenerate visual continuity bible", variant="ghost"
+        )
+        regenerate_button.clicked.connect(self._handle_generate_visual_continuity)
+        layout.addWidget(regenerate_button, alignment=_LEFT)
+
+    def _handle_generate_visual_continuity(self) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        try:
+            self._content_intelligence_pipeline.run_visual_continuity(job)
+        except (RuntimeError, ValueError) as error:
+            self._record_error(
+                job,
+                f"Could not generate visual continuity bible: {error}",
+                on_retry=self._handle_generate_visual_continuity,
             )
 
             return

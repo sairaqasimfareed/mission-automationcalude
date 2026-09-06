@@ -5,6 +5,79 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-06 - Post-Script-Approval Production Plan: Phase 2 Visual Continuity Bible
+
+**The PDF's own "strong domain model exists" claim didn't survive
+inspection - a real, useful finding, not a rubber-stamp.** The
+pre-existing `ContinuityBible` (Content Studio Redesign, Phase 16) is
+genuinely solid, but it operates at the *script* level: character/
+location/timeline/fact entries with no per-clip state at all. This
+phase asks for something materially different - "the authoritative
+visual state machine across every clip boundary," with incoming/
+outgoing state per clip and enforced handoff equality between
+adjacent clips. Nothing in this codebase did that before this phase.
+
+**Design choice that eliminates a whole failure mode: derive
+incoming state, don't ask for it.** The LLM call in
+`VisualContinuityService.build()` only ever asks for one thing per
+scene - its OUTGOING visual state (wardrobe, condition, location,
+time of day, weather, lighting, props, vehicles, plus the shot action
+and which known entities appear). Each scene's `incoming_state` is
+then computed by the service itself as the *previous* scene's
+outgoing state (a fresh, honestly-"unspecified" `VisualState()` for
+scene 1, since nothing precedes it). "Enforce adjacent handoff
+equality for contiguous clips" - this phase's own named requirement -
+holds by construction this way, the same discipline Phase 1's
+coverage gate already established, rather than depending on an LLM
+independently producing two identical values on two separate calls
+and hoping they agree.
+
+**Identities reused, not re-extracted.** `CanonicalEntityIdentity`
+objects are built directly from the pre-existing `ContinuityBible`'s
+own `.characters`/`.locations` - no second LLM call re-derives what
+was already extracted. Scoped honestly to PERSON/LOCATION only, not
+PROP/VEHICLE: this codebase has no existing prop/vehicle identity
+extraction to reuse, and building one from scratch was judged out of
+proportion to this pass - documented as a real gap, not silently
+dropped. Props and vehicles still appear on `VisualState.props`/
+`.vehicles` as plain names, just without a registered canonical
+identity behind them yet.
+
+**Extraction and validation stay two separate passes, matching an
+established pattern exactly.** `VisualContinuityBible` construction
+is deliberately lenient - no hard validators - mirroring how
+`ContinuityBible`/`ContinuityValidationService` already split
+extraction from checking. New `VisualContinuityValidationService.validate()`
+(rule-based, no LLM) mechanically checks handoff equality and
+unknown-identity references, producing `VisualContinuityConflict`
+diagnostics rather than raising - "actionable continuity conflict
+diagnostics," this phase's own wording, means something a person can
+read and act on, not an exception a caller has to catch.
+
+**GUI.** A "Visual Continuity" section joins Production Directives in
+the same Production Handoff card - both are read-only inspectors over
+post-lock production artifacts, not separate workflow stages. Shows
+every canonical identity with its description, a conflict banner when
+`compute_visual_continuity_validation()` finds a problem, and
+Generate/Regenerate buttons.
+
+**Tests:** `test_visual_continuity_model.py` (7), `test_visual_continuity_service.py`
+(7: one entry per scene, identities sourced from the continuity bible,
+fresh first-scene incoming state, handoff equality by construction,
+empty-scenes/provider-failure/negative-cost rejection),
+`test_visual_continuity_validation_service.py` (4: consistent bible,
+handoff mismatch, unknown identity, empty bible), 7 new pipeline
+cases, 3 new GUI cases. mypy/ruff/black clean.
+
+**Deliberately not built this pass:** PROP/VEHICLE canonical identity
+resolution (honestly documented gap, not a silent one); reference-
+asset attachment ("attach reference assets through provider-neutral
+IDs" - the `reference_asset_ids` field exists, but no attachment
+mechanism does yet, deferred until a real asset store integration
+exists to attach from).
+
+---
+
 ## 2026-09-06 - Post-Script-Approval Production Plan: Phase 1 Production Semantic Brief / Directive Bible
 
 **A deterministic, no-LLM-call phase - everything it needed already

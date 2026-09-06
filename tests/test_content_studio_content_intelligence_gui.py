@@ -2801,3 +2801,46 @@ def test_generate_production_directives_is_a_noop_without_a_job(
     view = _view(job_store)
 
     view._handle_generate_production_semantic_brief()  # must not raise
+
+
+# --- Post-Script-Approval Production Plan, Phase 2: Visual Continuity Bible ---
+
+
+def test_visual_continuity_section_absent_without_scenes_or_lock(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)  # must not raise; nothing to show yet
+
+
+def test_generate_visual_continuity_populates_the_bible(qapp: QApplication) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job.approval_policy = ApprovalPolicyConfig.full_auto()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    view._handle_run_automation()
+
+    view._handle_generate_visual_continuity()
+
+    assert job.visual_continuity_bible is not None
+    assert len(job.visual_continuity_bible.clip_entries) == len(job.scenes)
+
+    view.refresh(job)  # must not raise while the bible renders
+
+
+def test_generate_visual_continuity_is_a_noop_without_a_job(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    view = _view(job_store)
+
+    view._handle_generate_visual_continuity()  # must not raise

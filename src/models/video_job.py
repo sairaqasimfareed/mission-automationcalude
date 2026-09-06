@@ -55,6 +55,7 @@ from src.models.story_blueprint import StoryBlueprint
 from src.models.topic_candidate import TopicCandidate
 from src.models.video_clip import VideoClip
 from src.models.video_timeline import VideoTimeline
+from src.models.visual_continuity import VisualContinuityBible
 from src.models.writing_directives import WritingDirectiveSet
 
 
@@ -202,6 +203,10 @@ class VideoJob(MissionBaseModel):
     # production intent for the locked script - None until generated,
     # requires script_lock to exist first.
     production_semantic_brief: ProductionSemanticBrief | None = None
+    # Post-Script-Approval Production Plan, Phase 2: the authoritative
+    # per-clip visual state machine - None until generated, requires
+    # scenes to exist first.
+    visual_continuity_bible: VisualContinuityBible | None = None
 
     content_decisions: list[ContentDecisionRecord] = Field(default_factory=list)
     stale_artifacts: list[StaleArtifact] = Field(default_factory=list)

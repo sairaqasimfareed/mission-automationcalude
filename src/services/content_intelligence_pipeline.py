@@ -20,6 +20,7 @@ from src.models.script_quality_report import ScriptQualityStatus
 from src.models.script_selection_edit import SelectionEditRequest
 from src.models.story_blueprint import StoryBeatType, StoryBlueprint
 from src.models.video_job import VideoJob
+from src.models.visual_continuity import VisualContinuityValidationResult
 from src.services.approval_gate_service import ApprovalGateService
 from src.services.audience_promise_service import AudiencePromiseService
 from src.services.continuity_bible_extraction_service import (
@@ -69,6 +70,10 @@ from src.services.story_angle_evaluation_service import (
 from src.services.story_angle_generation_service import StoryAngleGenerationService
 from src.services.story_blueprint_generation_service import (
     StoryBlueprintGenerationService,
+)
+from src.services.visual_continuity_service import VisualContinuityService
+from src.services.visual_continuity_validation_service import (
+    VisualContinuityValidationService,
 )
 from src.services.writing_directives_service import WritingDirectivesService
 
@@ -200,6 +205,12 @@ class ContentIntelligencePipeline:
         )
         self.script_production_readiness_service = ScriptProductionReadinessService()
         self.production_semantic_brief_service = ProductionSemanticBriefService()
+        self.visual_continuity_service = VisualContinuityService(
+            llm_service=llm_service,
+            profile_ids=profile_ids,
+            estimated_cost_usd=estimated_cost_usd,
+        )
+        self.visual_continuity_validation_service = VisualContinuityValidationService()
         self.continuity_bible_extraction_service = ContinuityBibleExtractionService(
             llm_service=llm_service,
             profile_ids=profile_ids,
@@ -1138,6 +1149,65 @@ class ContentIntelligencePipeline:
         )
 
         return job
+
+    def run_visual_continuity(self, job: VideoJob) -> VideoJob:
+        """
+        Post-Script-Approval Production Plan, Phase 2: "Create the
+        authoritative visual state machine across every clip
+        boundary." Requires scenes to exist (the clip-boundary unit
+        in this codebase) and a continuity bible (the character/
+        location identities this reuses rather than re-extracting).
+        Like Phase 1, hard-requires job.script_lock - "primary
+        inputs: FinalScriptLock" is this plan's own stated contract
+        for every phase in its chain.
+        """
+
+        if job.script_lock is None:
+            raise RuntimeError("Visual continuity requires a locked script.")
+
+        if not job.scenes:
+            raise RuntimeError("Visual continuity requires planned scenes.")
+
+        if job.continuity_bible is None:
+            raise RuntimeError("Visual continuity requires a continuity bible.")
+
+        job.visual_continuity_bible = self.visual_continuity_service.build(
+            scenes=job.scenes,
+            continuity_bible=job.continuity_bible,
+            script_lock_hash=job.script_lock.script_content_hash,
+        )
+
+        self.approval_gate_service.record_event(
+            job=job,
+            stage="visual_continuity",
+            summary=(
+                "Visual continuity bible generated "
+                f"({len(job.visual_continuity_bible.clip_entries)} clip "
+                "entry(-ies))."
+            ),
+            category=DecisionCategory.GENERATION,
+        )
+
+        return job
+
+    def compute_visual_continuity_validation(
+        self, job: VideoJob
+    ) -> VisualContinuityValidationResult | None:
+        """
+        Post-Script-Approval Production Plan, Phase 2: "Continuity
+        validation passes before prompt resolution." Pure read, same
+        convention as every other compute_*() method - returns None
+        when there is nothing to validate yet rather than raising,
+        since a GUI checking readiness shouldn't need a try/except
+        for the common "not built yet" case.
+        """
+
+        if job.visual_continuity_bible is None:
+            return None
+
+        return self.visual_continuity_validation_service.validate(
+            job.visual_continuity_bible
+        )
 
     def run_packaging_hypothesis(self, job: VideoJob) -> VideoJob:
         """
