@@ -260,6 +260,7 @@ class ContentStudioView(QWidget):
         self._build_settings_card(job)
         self._build_content_intelligence_card(job)
         self._build_activity_history_card(job)
+        self._build_legacy_pipeline_notice(job)
         self._build_workflow_card(job)
         self._build_research_card(job)
         self._build_script_card(job)
@@ -3585,6 +3586,61 @@ class ContentStudioView(QWidget):
             return
 
         self._on_change()
+
+    def _build_legacy_pipeline_notice(self, job: VideoJob) -> None:
+        """
+        Content Studio Redesign, Phase 19: "Legacy GUI retirement/
+        redirect plan." The panels below this notice ("Content
+        workflow," "Research," "Script," "Originality review,"
+        "Scenes") are the original ContentPipeline - still fully
+        functional and deliberately left in place (no destructive
+        rewrite, matching this whole redesign's own ground rules), but
+        superseded by the Content Intelligence card above for any
+        project using it. Rather than hiding or disabling the legacy
+        actions - which could strand an in-progress legacy-pipeline
+        project mid-flow - this is a plain, always-visible pointer so
+        a person opening a new project chooses the current path
+        deliberately instead of by accident.
+
+        Suppressed once a project has clearly already committed to one
+        path (either pipeline has produced something), since at that
+        point the redirect has already served its purpose and would
+        just be noise on every refresh.
+        """
+
+        if not self._should_show_legacy_pipeline_notice(job):
+            return
+
+        frame, layout = card("Which workflow should I use?", icon_name="dashboard")
+        layout.addWidget(
+            small_muted(
+                "Use the Content Intelligence card above - it is the current, "
+                "actively developed production path (Audience Promise through "
+                "Script Lock). The 'Content workflow'/'Research'/'Script'/"
+                "'Originality review'/'Scenes' panels below are the original "
+                "pipeline, kept working for existing projects but not the "
+                "recommended starting point for a new one."
+            )
+        )
+        self._layout.addWidget(frame)
+
+    @staticmethod
+    def _should_show_legacy_pipeline_notice(job: VideoJob) -> bool:
+        """
+        False once a project has clearly already committed to one
+        pipeline (either has produced something) - at that point the
+        redirect has already served its purpose and would just be
+        noise on every refresh. A plain predicate, not folded directly
+        into _build_legacy_pipeline_notice, so it can be tested
+        without depending on Qt's deferred widget-deletion timing.
+        """
+
+        return not (
+            job.audience_promise is not None
+            or job.generated_script is not None
+            or job.research is not None
+            or job.script is not None
+        )
 
     def _build_workflow_card(self, job: VideoJob) -> None:
         frame, layout = card("Content workflow", icon_name="dashboard")

@@ -1194,6 +1194,51 @@ def test_run_all_locks_the_approved_version() -> None:
     assert job.script_quality_report.status.value == "approved_for_production"
     assert job.script_version_history.is_locked is True
 
+    # Content Studio Redesign, Phase 19: "the internal content path
+    # reaches a valid Script Lock" - not just the version's boolean
+    # locked flag, the real Phase 14 ScriptLock record with an
+    # Activity History entry to match.
+    assert job.script_lock is not None
+    assert job.script_lock.provenance == ScriptProvenance.INTERNAL
+    lock_records = [
+        record for record in job.content_decisions if record.category == "lock"
+    ]
+    assert len(lock_records) == 1
+
+    # Idempotent: calling run_all() again on an already-locked,
+    # already-complete job must not build a second ScriptLock or
+    # append a second lock record.
+    first_lock_id = job.script_lock.id
+    job = pipeline.run_all(job)
+
+    assert job.script_lock is not None
+    assert job.script_lock.id == first_lock_id
+    lock_records_after = [
+        record for record in job.content_decisions if record.category == "lock"
+    ]
+    assert len(lock_records_after) == 1
+
+
+def test_run_all_reaches_a_script_lock_for_an_intake_originated_script() -> None:
+    """
+    Content Studio Redesign, Phase 19: the "Import Approved Script"
+    (external) path must also reach a valid Script Lock, with
+    EXTERNAL provenance inferred automatically - proving the two
+    named E2E flows (internal content production, external approved
+    script) both terminate the same way rather than needing separate
+    lock logic.
+    """
+
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_script_intake(_job(), raw_text="Imported narration text.")
+    job = pipeline.run_script_lock(job)
+
+    assert job.script_lock is not None
+    assert job.script_lock.provenance == ScriptProvenance.EXTERNAL
+    assert job.script_version_history is not None
+    assert job.script_version_history.is_locked is True
+
 
 def test_run_continuity_bible_requires_a_generated_script() -> None:
     pipeline, _ = _pipeline()

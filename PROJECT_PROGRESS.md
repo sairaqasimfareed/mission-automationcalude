@@ -5,6 +5,98 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-06 - Content Studio Redesign: Phase 19 End-to-End Integration, Migration and Production Readiness
+
+**A verification phase, and it earned its keep - two real bugs found,
+neither catchable by any prior phase's own narrower tests.**
+
+**Bug 1: `run_all()` never actually created a `ScriptLock`.** The
+phase's exit criterion is blunt: "both paths reach a valid Script
+Lock." Writing the E2E test to prove it for the internal-content path
+found that `run_all()`'s final locking step called
+`ScriptVersionService.lock_version()` directly - the same boolean
+flag every script-mutating method checks, but *not* Phase 14's real
+`ScriptLock` record. A fully automatic run completed, "locked" the
+version, and left `job.script_lock` at `None` with zero Activity
+History trace a lock had happened. Fixed by routing through
+`run_script_lock()` itself, the exact method every manual "Approve &
+lock script" click already uses - guarded on `job.script_lock is
+None` so a second `run_all()` call on an already-complete job stays a
+true no-op, with a `try/except ValueError` fallback to the old
+direct-lock behavior for the one edge case where a caller ran
+ambiguity detection outside `run_all()`'s own sequence and left
+something genuinely unresolved (`run_all()` has never raised at this
+point and shouldn't start now).
+
+**Bug 2, more serious: a real-condition data-loss-on-reload bug.**
+Building the migration test - load a raw pre-redesign-shaped JSON
+file, run it through `run_all()`, then round-trip it through
+`JsonJobStore` again - surfaced a `VideoJob` validator failure:
+`"Scenes cannot exist without a script."` `validate_workflow_state()`
+predates this session's Content Intelligence work and only ever
+checked the *legacy* `self.script` field (`ContentPipeline`'s own
+artifact), never `self.generated_script` (the new pipeline's). Any
+project completed through the new pipeline - which is to say, any
+project built this whole session - would fail to deserialize at all
+the moment it was saved and reloaded through `JsonJobStore`, which is
+exactly what the real desktop app does on every save. No prior
+phase's tests happened to do a real `model_dump_json()` →
+`model_validate_json()` round-trip on a `run_all()`-completed job, so
+this sat undetected through 18 phases. Fixed by accepting either
+provenance in that one validator branch.
+
+**Migration, proven not assumed.** New `tests/test_project_migration.py`
+constructs a raw pre-redesign JSON dict directly - not a `VideoJob(...)`
+construction, which by definition would include every field that
+exists today - confirms it loads with every Content Studio Redesign
+field defaulting sensibly, then runs it through the *exact* `run_all()`
+any new project uses and confirms it reaches a real `ScriptLock`,
+then saves and reloads it again. "Compatible existing projects
+migrate" is a tested claim now, not an inference from "every field is
+optional."
+
+**Legacy GUI retirement/redirect plan.** A plain "Which workflow
+should I use?" notice, always visible on a fresh project, pointing at
+Content Intelligence over the original `ContentPipeline` - the four
+legacy cards (Content workflow/Research/Script/Originality review/
+Scenes) stay exactly as functional as before, nothing hidden or
+disabled, so an in-progress legacy-pipeline project is never
+stranded. The notice disappears once a project has clearly committed
+to either path, via a small testable `_should_show_legacy_pipeline_notice()`
+predicate kept separate from the widget-building code specifically so
+its logic doesn't depend on Qt's deferred-deletion timing in tests.
+
+**Final documentation.** New `docs/CONTENT_STUDIO_OPERATOR_GUIDE.md` -
+a practical, task-oriented "how do I actually run a project" guide
+covering both E2E paths, the three approval postures, checking where
+a project stands, editing/recovering a script, and the legacy
+pipeline's status. Distinct from `IMPLEMENTATION_STATE.md`'s
+architecture-and-status framing and `SYSTEM_TRACEABILITY_MATRIX.md`'s
+model→service→GUI→tests framing - this one is for using the app, not
+auditing it.
+
+**Tests:** `test_run_all_locks_the_approved_version` extended to
+assert the real `ScriptLock` (not just the version's boolean flag)
+plus idempotency across a second `run_all()` call; new
+`test_run_all_reaches_a_script_lock_for_an_intake_originated_script`
+proves the external path reaches the same destination with `EXTERNAL`
+provenance inferred automatically; `test_project_migration.py` (2
+tests, described above); 2 new GUI cases for the notice predicate.
+Full suite - 1818 tests, `test_ffmpeg_capability_service.py` excluded
+as this session's own established known-flaky exclusion - green after
+both fixes. mypy/ruff/black clean.
+
+**Deliberately not built this pass:** no automated migration script -
+none is needed; Pydantic's own optional-field defaults are the
+migration mechanism, and this phase's job was proving that with a
+real test, not building new machinery around it. No document-format
+script import beyond plain text (unchanged from Phase 15). No fourth
+"Automatic Reviewer" approval posture (unchanged from Phase 17).
+
+This closes out PDF-2 (Content Studio Redesign) Phases 0-19 in full.
+
+---
+
 ## 2026-09-06 - Content Studio Redesign: Phase 18 Activity History, Auditability and Recovery
 
 **REUSE confirmed by inspection - and it reframed the phase from "build

@@ -263,10 +263,21 @@ class VideoJob(MissionBaseModel):
                 raise ValueError("Originality review requires an approved script.")
 
         if self.scenes:
-            if self.script is None:
+            # Content Studio Redesign, Phase 19: this check predates
+            # ContentIntelligencePipeline.run_scene_planning(), which
+            # derives scenes from generated_script (the new pipeline's
+            # own script artifact), not the legacy script field
+            # ContentPipeline produces - a project that never touches
+            # ContentPipeline at all (every new-pipeline project) has
+            # scenes with self.script always None by construction, so
+            # this validator must accept either provenance rather than
+            # only the legacy one. Found via a real round-trip
+            # failure: a run_all()-completed job could not be
+            # serialized and reloaded through JsonJobStore at all.
+            if self.script is None and self.generated_script is None:
                 raise ValueError("Scenes cannot exist without a script.")
 
-            if self.script.status != ScriptStatus.APPROVED:
+            if self.script is not None and self.script.status != ScriptStatus.APPROVED:
                 raise ValueError("Scene planning requires an approved script.")
 
         if self.scene_asset_states and not self.scenes:

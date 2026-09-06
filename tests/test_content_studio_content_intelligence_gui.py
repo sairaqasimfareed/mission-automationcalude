@@ -2630,8 +2630,13 @@ def test_script_lock_and_unlock_are_recorded_in_activity_history(
     view.refresh(job)
     view._handle_run_automation()
 
+    # Content Studio Redesign, Phase 19: full_auto() automation now
+    # runs the script all the way through run_script_lock() itself
+    # (see ContentIntelligencePipeline.run_all()), so the lock already
+    # exists here - no separate explicit lock call is needed.
     pipeline = view._content_intelligence_pipeline
-    pipeline.run_script_lock(job, provenance=ScriptProvenance.INTERNAL)
+    assert job.script_lock is not None
+    assert job.script_lock.provenance == ScriptProvenance.INTERNAL
 
     lock_records = [
         record
@@ -2650,3 +2655,36 @@ def test_script_lock_and_unlock_are_recorded_in_activity_history(
     assert len(unlock_records) == 1
 
     view.refresh(job)  # must not raise with lock/unlock events present
+
+
+# --- Phase 19: legacy pipeline redirect notice ---
+
+
+def test_legacy_pipeline_notice_shows_on_a_fresh_project(qapp: QApplication) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)  # must not raise while the notice renders
+
+    assert ContentStudioView._should_show_legacy_pipeline_notice(job) is True
+
+
+def test_legacy_pipeline_notice_is_suppressed_once_a_path_is_chosen(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job.approval_policy = ApprovalPolicyConfig.full_auto()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    view._handle_run_ci_stage("audience_promise")
+
+    assert ContentStudioView._should_show_legacy_pipeline_notice(job) is False
+
+    view.refresh(job)  # must not raise once the notice is suppressed

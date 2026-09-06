@@ -1349,11 +1349,40 @@ class ContentIntelligencePipeline:
             == ScriptQualityStatus.APPROVED_FOR_PRODUCTION
         )
 
-        if approved and job.script_version_history is not None:
-            job.script_version_history = self.script_version_service.lock_version(
-                history=job.script_version_history,
-                version_number=job.script_version_history.current_version.version_number,
-            )
+        if (
+            approved
+            and job.script_version_history is not None
+            and job.script_lock is None
+        ):
+            # Content Studio Redesign, Phase 19: route the automatic
+            # path through the same run_script_lock() every manual
+            # "Approve & lock script" click uses, rather than calling
+            # ScriptVersionService.lock_version() directly - a fully
+            # automatic run previously ended with the version's
+            # locked flag set but no ScriptLock record and no Activity
+            # History entry at all, so "the internal content path
+            # reaches a valid Script Lock" wasn't actually true end to
+            # end. Guarded on job.script_lock is None so a second
+            # run_all() call on an already-locked job stays a true
+            # no-op, matching this method's own idempotency guarantee.
+            #
+            # run_script_lock() can refuse (ValueError) over an
+            # unresolved continuity-critical ambiguity a caller
+            # created via run_production_ambiguity_detection() outside
+            # run_all()'s own sequence - run_all() has never raised at
+            # this point before, so that case falls back to the
+            # pre-Phase-19 behavior (version-level lock flag only)
+            # rather than turning a previously-silent completion into
+            # a new failure mode.
+            history_before_lock = job.script_version_history
+
+            try:
+                job = self.run_script_lock(job)
+            except ValueError:
+                job.script_version_history = self.script_version_service.lock_version(
+                    history=history_before_lock,
+                    version_number=history_before_lock.current_version.version_number,
+                )
 
         if job.packaging_hypothesis is None:
             job = self.run_packaging_hypothesis(job)
