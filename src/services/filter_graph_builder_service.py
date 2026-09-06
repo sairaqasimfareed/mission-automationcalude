@@ -770,12 +770,29 @@ class FilterGraphBuilderService:
                 ),
             ]
 
+            # Post-Script-Approval Production Plan, Phase 11: "Resolve
+            # volume, fades, loop, duck_under_voice and provenance" -
+            # fade_in_seconds/fade_out_seconds already flow onto
+            # RenderNode.payload (render_graph_builder_service.py) but
+            # were never read here, so a track's configured fades were
+            # silently ignored at render time. Inserted between volume
+            # and delay/anull so a track's local fade timing is
+            # unaffected by adelay's later PTS shift.
+            current_label = volume_label
+
+            for fade_node in self._build_fade_nodes(
+                node=node,
+                input_label=current_label,
+            ):
+                chain_nodes.append(fade_node)
+                current_label = fade_node.output_labels[0]
+
             if delay_ms > 0:
                 chain_nodes.append(
                     FilterNode(
                         media_type=(FilterMediaType.AUDIO),
                         filter_name="adelay",
-                        input_labels=[volume_label],
+                        input_labels=[current_label],
                         output_labels=[normalized_label],
                         raw_arguments=[f"{delay_ms}:all=1"],
                         source_render_node_id=str(node.id),
@@ -786,7 +803,7 @@ class FilterGraphBuilderService:
                     FilterNode(
                         media_type=(FilterMediaType.AUDIO),
                         filter_name="anull",
-                        input_labels=[volume_label],
+                        input_labels=[current_label],
                         output_labels=[normalized_label],
                         source_render_node_id=str(node.id),
                     )
@@ -831,7 +848,7 @@ class FilterGraphBuilderService:
             media_type=(FilterMediaType.AUDIO),
             filter_name="amix",
             input_labels=(final_mix_labels),
-            output_labels=["audio_final"],
+            output_labels=["audio_mixed"],
             options={
                 "inputs": str(len(final_mix_labels)),
                 "duration": "longest",
@@ -844,10 +861,39 @@ class FilterGraphBuilderService:
                 media_type=(FilterMediaType.AUDIO),
                 nodes=[mix_node],
                 input_labels=list(final_mix_labels),
-                output_label=("audio_final"),
+                output_label=("audio_mixed"),
                 metadata={
                     "operation": ("audio_mix"),
                 },
+            )
+        )
+
+        # Post-Script-Approval Production Plan, Phase 11: "Add
+        # loudness normalization targets and clipping prevention."
+        # `amix` above deliberately disables its own normalization
+        # (normalize=0) to keep per-track levels the deterministic
+        # ones this whole builder already resolves - but summed,
+        # un-normalized tracks can exceed full scale and clip. A
+        # brick-wall limiter on the final mixed output prevents that
+        # without altering the relative mix the rest of this method
+        # already computed. "audio_final" stays the graph's public
+        # output label (FilterGraph.audio_output_label references it
+        # directly) - only what feeds it changed.
+        limiter_node = FilterNode(
+            media_type=FilterMediaType.AUDIO,
+            filter_name="alimiter",
+            input_labels=["audio_mixed"],
+            output_labels=["audio_final"],
+            options={"limit": "1.0"},
+        )
+
+        chains.append(
+            FilterChain(
+                media_type=FilterMediaType.AUDIO,
+                nodes=[limiter_node],
+                input_labels=["audio_mixed"],
+                output_label="audio_final",
+                metadata={"operation": "audio_limiter"},
             )
         )
 
@@ -1294,6 +1340,73 @@ class FilterGraphBuilderService:
             raise ValueError(f"{field_name.capitalize()} " "must be positive.")
 
         return number
+
+    def _build_fade_nodes(
+        self,
+        *,
+        node: RenderNode,
+        input_label: str,
+    ) -> list[FilterNode]:
+        """
+        Post-Script-Approval Production Plan, Phase 11: build 0, 1, or
+        2 `afade` filter nodes for one audio track's configured
+        fade_in_seconds/fade_out_seconds, chained in sequence so both
+        can apply to the same track. Returns an empty list (the exact
+        prior behavior) when neither is configured, so a track with no
+        fades produces an identical filter chain to before this phase.
+        """
+
+        fade_in_seconds = self._optional_number(
+            node.payload.get("fade_in_seconds"),
+            default=0.0,
+        )
+        fade_out_seconds = self._optional_number(
+            node.payload.get("fade_out_seconds"),
+            default=0.0,
+        )
+
+        fade_nodes: list[FilterNode] = []
+        current_label = input_label
+
+        if fade_in_seconds > 0:
+            fade_in_label = f"{input_label}_fadein"
+
+            fade_nodes.append(
+                FilterNode(
+                    media_type=FilterMediaType.AUDIO,
+                    filter_name="afade",
+                    input_labels=[current_label],
+                    output_labels=[fade_in_label],
+                    options={
+                        "t": "in",
+                        "st": "0",
+                        "d": self._format_number(fade_in_seconds),
+                    },
+                    source_render_node_id=str(node.id),
+                )
+            )
+            current_label = fade_in_label
+
+        if fade_out_seconds > 0:
+            fade_out_label = f"{input_label}_fadeout"
+            fade_out_start = max(0.0, node.duration_seconds - fade_out_seconds)
+
+            fade_nodes.append(
+                FilterNode(
+                    media_type=FilterMediaType.AUDIO,
+                    filter_name="afade",
+                    input_labels=[current_label],
+                    output_labels=[fade_out_label],
+                    options={
+                        "t": "out",
+                        "st": self._format_number(fade_out_start),
+                        "d": self._format_number(fade_out_seconds),
+                    },
+                    source_render_node_id=str(node.id),
+                )
+            )
+
+        return fade_nodes
 
     @staticmethod
     def _optional_number(

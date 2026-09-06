@@ -5,6 +5,66 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-06 - Post-Script-Approval Production Plan: Phase 11 Audio Timeline Compilation and Mix Directives
+
+**This phase's own repository-position claim - "AudioTimeline/AudioTrack
+models exist" - undersold what was actually there.** Reading
+`FilterGraphBuilderService._build_audio_chains()` directly (not
+assuming from the PDF's summary) found genuinely sophisticated,
+already-working infrastructure: real ducking via FFmpeg's
+`sidechaincompress` filter, with the voiceover track (or a mix of
+several) driving the compressor as the sidechain trigger, so
+background music and SFX duck automatically under narration instead
+of playing at a flat level. This was not a stub or a placeholder - it
+already worked, with its own dedicated ducking test suite proving it.
+
+**The one real gap, found by grepping for the field names, not
+guessing.** `AudioTrack.fade_in_seconds`/`.fade_out_seconds` already
+existed and already flowed correctly onto `RenderNode.payload` via
+`render_graph_builder_service.py` - but `FilterGraphBuilderService`
+never read either field when building a track's actual filter chain.
+A project could configure a fade, see it reflected in the model, and
+have it silently vanish at render time. New `_build_fade_nodes()`
+inserts 0, 1, or 2 `afade` filter nodes between the existing `volume`
+and `adelay`/`anull` stages - fade-in starts at the track's own local
+time 0; fade-out's start offset is computed from the track's real
+duration minus the configured fade-out length. A track with neither
+fade configured produces the exact same chain as before this phase -
+verified by re-running every existing ducking/transition/render test
+unchanged and green.
+
+**Clipping prevention added; loudness-target normalization
+deliberately not.** `amix` already disables its own automatic
+normalization (`normalize=0`) to keep this builder's deterministic
+per-track levels intact - but un-normalized, summed tracks can exceed
+full scale. A final `alimiter` now sits between the mix and the
+graph's public `audio_final` label (the raw `amix` output was renamed
+to an internal `audio_mixed` label so the public contract -
+`FilterGraph.audio_output_label` - is completely unchanged). A real
+LUFS-target loudness normalization (`loudnorm`) needs a two-pass
+analyze-then-apply flow this pipeline has no infrastructure for; a
+single-pass estimate would be less honest than not claiming loudness
+compliance at all, so this phase covers clipping prevention only and
+says so plainly rather than quietly conflating the two.
+
+**Tests:** new `test_filter_graph_builder_audio_fades.py` (5: no-fade
+produces no `afade`, fade-in-only, fade-out-only with the correct
+duration-derived start offset, both fades chained together, fade still
+applies alongside a positive start delay), new
+`test_filter_graph_builder_audio_limiter.py` (2: limiter present on
+the final mix, `amix` feeds the limiter rather than the public label
+directly). Full existing filter-graph/render regression (23 cases
+spanning ducking, transitions, render-graph building, and production
+render): all green, proving the label rename and new nodes changed
+nothing observable for any existing caller. mypy/ruff/black clean.
+
+**Deliberately not built this pass:** proper LUFS-target loudness
+normalization - the two-pass measurement infrastructure it needs
+doesn't exist in this pipeline yet, and adding a fake single-pass
+approximation would misrepresent what the system actually guarantees.
+
+---
+
 ## 2026-09-06 - Post-Script-Approval Production Plan: Phase 10 Music and SFX Acquisition
 
 **Most of this phase was already built, under different names than the
