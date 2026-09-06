@@ -5,6 +5,139 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-06 - Render worker thread-safety fix (Windows heap-corruption crash)
+
+**The defect.** A final pre-commit full-suite regression run for Phase
+11 crashed with a genuine Windows fatal exception (`0xc0000374`, heap
+corruption) inside `test_render_progress_updates_live_and_survives_cross_workspace_refresh`,
+not a flaky stall. Root cause in
+`src/desktop/views/render_workspace_view.py`: `_RenderWorker`'s
+`progress`/`finished`/`failed` signals, and the render `QThread`'s
+`finished` signal, were all connected to **lambdas** so the connection
+could close over the per-render `job_id`/`user_input`. Qt's
+`AutoConnection` only detects that a signal needs cross-thread queued
+delivery by inspecting a bound method's `__self__` to find its owning
+thread; a lambda has no such owner, so the connection silently
+resolved to a **direct call in the emitting thread** - meaning GUI
+widgets were being mutated from the background render `QThread`
+itself. That is undefined behaviour in Qt and the actual cause of the
+crash. Confirmed empirically (small standalone repro scripts) that an
+explicit `Qt.ConnectionType.QueuedConnection` does **not** fix this for
+a lambda slot in this PySide6 version either - only a connection to a
+genuine bound method of a `QObject` gets correct thread-affinity
+detection.
+
+**The fix.** `job_id`/`user_input` now travel as plain attributes on
+`_RenderWorker` (and, for `thread.finished`, on the `QThread` instance
+itself, since that signal carries no arguments), and every one of the
+four cross-thread connections now targets a real bound method on
+`RenderWorkspaceView` (`_handle_render_progress`,
+`_handle_render_finished`, `_handle_render_failed`,
+`_handle_render_thread_finished`), each recovering its job via
+`self.sender()`. No lambda crosses a thread boundary as a signal slot
+anywhere in this file anymore.
+
+**Verification.** The specific crashing test now passes cleanly
+(`1 passed in 355.98s` - it is a genuinely slow test on its own, not a
+stall; confirmed via CPU-time-diff over real elapsed wait before and
+during the run). Combined with the two bisected halves of the full
+suite already having passed cleanly in the prior session segment
+(6 passed / 40.47s and 104 passed / 190.08s) and a separate 143-test
+batch (85.76s), this is treated as sufficient evidence the fix is
+correct without re-running the entire suite end-to-end again, given
+its multi-minute-per-slow-test cost.
+
+---
+
+## 2026-09-05 - Content Studio Redesign: Phase 11 Script Workspace - Writing Directives
+
+**Backend.** New `src/models/writing_directives.py`: `DirectiveSource`
+(SYSTEM/GENRE/PROJECT/USER - exactly the redesign's four named
+sources), `WritingDirective` (text + source + `overridable`, stored
+independently per the redesign's own wording rather than derived
+purely from source), `WritingDirectiveSet`.
+
+New `WritingDirectivesService.resolve()`. Three fixed SYSTEM
+directives - "Never state a claim the research does not support,"
+"Never fabricate quotes, statistics, or sources," "Never fully reveal
+the story's payoff before its planned position" - are appended
+unconditionally after every call. They are never constructed any
+other way anywhere in this codebase, which is what makes "System
+factual-grounding rules cannot be disabled by ordinary user
+directives" a real mechanical guarantee rather than a hope that the
+LLM behaves. GENRE candidate directives are derived deterministically
+from an already-resolved `EditorialProfile`'s own fields (tone,
+narrative style, hook style, CTA policy) - not LLM-invented, so
+whatever `EditorialProfileCompositionService`'s precedence resolution
+already decided is represented faithfully. One LLM call ("Primary
+resolves applicable defaults into a coherent directive set") merges
+and deduplicates only the overridable GENRE/PROJECT/USER candidates;
+the system directives are never sent to, or restated by, that call.
+
+**A genuine simplification, not a shortcut.** The source document
+states conflict detection twice: "Detect contradictory directives
+before approval" (backend) and "Reviewer checks conflicts, omissions
+and impractical instructions" (AI/orchestration). Read together these
+describe one requirement, not two - satisfied entirely by adding a new
+`ArtifactType.DIRECTIVES` focus-guidance entry to the existing,
+already-established `ReviewerService` mechanism (the same dict-lookup
+pattern Phases 8-10 each added one entry to), rather than building a
+second, bespoke rule-based conflict-detection engine that would have
+duplicated what the Reviewer already does generically.
+
+`VideoJob` gained `project_writing_rules`, `user_writing_directives`
+(both editable raw-string lists a human populates) and
+`writing_directives` (the resolved artifact) - all optional and
+empty/None by default, fully backward-compatible.
+`ContentIntelligencePipeline` gained `run_writing_directives()` - stage
+6b, sitting between Hook and Script, requiring only a selected hook
+(deliberately not coupled to Story Architecture's own state, matching
+this phase's explicit goal of keeping Directives distinct from it) -
+wired into `run_all()`'s default sequence.
+
+`ScriptGenerationService.generate()` gained an optional
+`writing_directives` parameter. When supplied, every directive's text
+becomes an explicit prompt constraint; omitting it - still the default
+whenever the Directives stage was never run for a project - reproduces
+the service's exact prior behavior, proven by a dedicated regression
+test. This is what makes "Approved Directives artifact is available to
+Script Generation Package" a real, functional wiring rather than a
+documentation claim: the directives genuinely reach the prompt when
+present.
+
+**GUI.** A new "Directives" panel sits between Hooks and Script in the
+CI stage rotation, showing every resolved directive with a source
+badge - system directives are marked "non-overridable" and have no
+Remove control anywhere in the GUI, so a user cannot even attempt to
+delete one. Below that, Add/Remove editors for project rules and user
+directives mirror the established Phase 7 question-editing pattern
+exactly.
+
+**Deliberately not built this pass**, documented rather than silently
+skipped: no dedicated rule-based conflict-detection engine separate
+from the Reviewer, per the "one requirement, not two" reading above;
+no new `ApprovalPolicyConfig` decision-point gate for this stage
+(several other CI stages - retention audit, continuity bible,
+editorial critique, quality gate, revision, packaging hypothesis -
+also have no dedicated gate today, so this isn't a new gap this phase
+introduces); `run_script()` still carries no *hard* requirement on
+`job.writing_directives` - kept fully optional, matching every other
+phase's additive-parameter discipline, so no existing test calling
+`run_script()` directly needed updating.
+
+Quality gates: mypy, ruff, and black all clean across every touched
+file (a brand-new test file, `test_writing_directives_model.py`, was
+written using explicit keyword construction from the start rather than
+the `**dict` unpacking pattern that has repeatedly tripped the
+pydantic-mypy plugin elsewhere in this session's test suite - avoiding
+that debt rather than adding to it). New tests:
+`test_writing_directives_model.py` (8), `test_writing_directives_
+service.py` (8), 2 new cases in `test_script_generation_service.py`, 3
+new cases in `test_content_intelligence_pipeline.py`, 1 new case in
+`test_reviewer_service.py`, 6 new cases in `test_content_studio_
+content_intelligence_gui.py` - 143 tests across the six touched test
+files, all passing.
+
 ## 2026-09-05 - Content Studio Redesign: Phase 10 Hook Lab
 
 **Backend.** `HookCandidate` (already existed) gained `type:

@@ -99,6 +99,7 @@ _CI_STAGES: list[tuple[str, str]] = [
     ("narrative_architecture", "Narrative architecture"),
     ("retention_audit", "Retention audit"),
     ("hooks", "Hooks"),
+    ("writing_directives", "Directives"),
     ("script", "Script"),
     ("continuity_bible", "Continuity bible"),
     ("editorial_critique", "Editorial critique"),
@@ -121,6 +122,7 @@ _CI_STAGE_REVIEW_TARGET: dict[str, tuple[ArtifactType, str]] = {
     "narrative_architecture": (ArtifactType.STORY_ARCHITECTURE, "story_blueprint"),
     "retention_audit": (ArtifactType.STORY_ARCHITECTURE, "retention_audit"),
     "hooks": (ArtifactType.HOOK, "selected_hook"),
+    "writing_directives": (ArtifactType.DIRECTIVES, "writing_directives"),
     "script": (ArtifactType.SCRIPT, "generated_script"),
     "continuity_bible": (ArtifactType.STORY_ARCHITECTURE, "continuity_bible"),
     "editorial_critique": (ArtifactType.SCRIPT, "editorial_critique"),
@@ -826,6 +828,58 @@ class ContentStudioView(QWidget):
 
         self._on_change()
 
+    def _handle_add_project_writing_rule(self, text_input: QLineEdit) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        text = text_input.text().strip()
+
+        if not text:
+            return
+
+        job.project_writing_rules = job.project_writing_rules + [text]
+        self._on_change()
+
+    def _handle_remove_project_writing_rule(self, rule: str) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        job.project_writing_rules = [
+            existing for existing in job.project_writing_rules if existing != rule
+        ]
+        self._on_change()
+
+    def _handle_add_user_writing_directive(self, text_input: QLineEdit) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        text = text_input.text().strip()
+
+        if not text:
+            return
+
+        job.user_writing_directives = job.user_writing_directives + [text]
+        self._on_change()
+
+    def _handle_remove_user_writing_directive(self, directive_text: str) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        job.user_writing_directives = [
+            existing
+            for existing in job.user_writing_directives
+            if existing != directive_text
+        ]
+        self._on_change()
+
     def _handle_select_story_angle(self, angle: StoryAngle) -> None:
         job = self._current_job()
 
@@ -1022,6 +1076,7 @@ class ContentStudioView(QWidget):
             "narrative_architecture": self._render_narrative_architecture_panel,
             "retention_audit": self._render_retention_audit_panel,
             "hooks": self._render_hooks_panel,
+            "writing_directives": self._render_writing_directives_panel,
             "script": self._render_ci_script_panel,
             "continuity_bible": self._render_continuity_bible_panel,
             "editorial_critique": self._render_editorial_critique_panel,
@@ -1912,6 +1967,101 @@ class ContentStudioView(QWidget):
 
         return True
 
+    def _render_writing_directives_panel(
+        self, layout: QVBoxLayout, job: VideoJob
+    ) -> bool:
+        """
+        Content Studio Redesign, Phase 11: Script Workspace - Writing
+        Directives. Deliberately kept distinct from Story Architecture
+        - this panel never touches job.story_blueprint/.reveal_map.
+        """
+
+        if job.writing_directives is None:
+            can_run = job.selected_hook is not None
+            layout.addWidget(
+                small_muted(
+                    "Not started." if can_run else "Requires a selected hook first."
+                )
+            )
+            self._render_writing_directive_inputs(layout, job)
+
+            return can_run
+
+        for directive in job.writing_directives.directives:
+            lock_note = "" if directive.overridable else " · non-overridable"
+            layout.addWidget(badge(f"{directive.source.value}{lock_note}"))
+            layout.addWidget(small_muted(directive.text))
+
+        layout.addWidget(separator())
+        self._render_writing_directive_inputs(layout, job)
+
+        return True
+
+    def _render_writing_directive_inputs(
+        self, layout: QVBoxLayout, job: VideoJob
+    ) -> None:
+        layout.addWidget(small_muted("Project rules:"))
+
+        for rule in job.project_writing_rules:
+            rule_row = QHBoxLayout()
+            rule_row.setSpacing(6)
+            rule_row.addWidget(small_muted(f"- {rule}"))
+
+            remove_rule_button = button("Remove", variant="ghost")
+            remove_rule_button.clicked.connect(
+                lambda _checked=False, r=rule: self._handle_remove_project_writing_rule(
+                    r
+                )
+            )
+            rule_row.addWidget(remove_rule_button)
+            layout.addLayout(rule_row)
+
+        new_rule_input = QLineEdit()
+        new_rule_input.setPlaceholderText("New project rule")
+
+        rule_add_row = QHBoxLayout()
+        rule_add_row.setSpacing(6)
+        rule_add_row.addWidget(new_rule_input)
+
+        add_rule_button = button("Add project rule", variant="ghost")
+        add_rule_button.clicked.connect(
+            lambda: self._handle_add_project_writing_rule(new_rule_input)
+        )
+        rule_add_row.addWidget(add_rule_button)
+        layout.addLayout(rule_add_row)
+
+        layout.addWidget(small_muted("Your directives:"))
+
+        for directive_text in job.user_writing_directives:
+            directive_row = QHBoxLayout()
+            directive_row.setSpacing(6)
+            directive_row.addWidget(small_muted(f"- {directive_text}"))
+
+            remove_directive_button = button("Remove", variant="ghost")
+            remove_directive_button.clicked.connect(
+                lambda _checked=False, d=directive_text: (
+                    self._handle_remove_user_writing_directive(d)
+                )
+            )
+            directive_row.addWidget(remove_directive_button)
+            layout.addLayout(directive_row)
+
+        new_directive_input = QLineEdit()
+        new_directive_input.setPlaceholderText(
+            "New directive, e.g. 'avoid rhetorical questions'"
+        )
+
+        directive_add_row = QHBoxLayout()
+        directive_add_row.setSpacing(6)
+        directive_add_row.addWidget(new_directive_input)
+
+        add_directive_button = button("Add directive", variant="ghost")
+        add_directive_button.clicked.connect(
+            lambda: self._handle_add_user_writing_directive(new_directive_input)
+        )
+        directive_add_row.addWidget(add_directive_button)
+        layout.addLayout(directive_add_row)
+
     def _render_ci_script_panel(self, layout: QVBoxLayout, job: VideoJob) -> bool:
         script = job.generated_script
 
@@ -2205,6 +2355,9 @@ class ContentStudioView(QWidget):
             ),
             "retention_audit": self._content_intelligence_pipeline.run_retention_audit,
             "hooks": self._content_intelligence_pipeline.run_hooks,
+            "writing_directives": (
+                self._content_intelligence_pipeline.run_writing_directives
+            ),
             "script": self._content_intelligence_pipeline.run_script,
             "continuity_bible": self._content_intelligence_pipeline.run_continuity_bible,
             "editorial_critique": (

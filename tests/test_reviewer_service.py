@@ -283,3 +283,25 @@ def test_hook_artifacts_get_unsupported_claim_and_spoiler_focus_guidance() -> No
     assert stub.last_request is not None
     assert "unsupported claims" in stub.last_request.prompt.lower()
     assert "premature disclosure" in stub.last_request.prompt.lower()
+
+
+def test_directives_artifacts_get_conflict_and_omission_focus_guidance() -> None:
+    """
+    Content Studio Redesign, Phase 11: "Reviewer checks conflicts,
+    omissions and impractical instructions."
+    """
+
+    stub = _StubLLMService(content=_FULL_RESPONSE)
+    service = ReviewerService(llm_service=stub)  # type: ignore[arg-type]
+
+    service.review(
+        artifact_type=ArtifactType.DIRECTIVES,
+        content="content",
+        context="context",
+        reviewer_profile_id="anthropic-reviewer",
+    )
+
+    assert stub.last_request is not None
+    assert "contradict" in stub.last_request.prompt.lower()
+    assert "omitted" in stub.last_request.prompt.lower()
+    assert "impractical" in stub.last_request.prompt.lower()

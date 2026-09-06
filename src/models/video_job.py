@@ -51,6 +51,7 @@ from src.models.story_blueprint import StoryBlueprint
 from src.models.topic_candidate import TopicCandidate
 from src.models.video_clip import VideoClip
 from src.models.video_timeline import VideoTimeline
+from src.models.writing_directives import WritingDirectiveSet
 
 
 class VideoJob(MissionBaseModel):
@@ -163,6 +164,18 @@ class VideoJob(MissionBaseModel):
     hook_evaluations: list[HookEvaluation] = Field(default_factory=list)
     selected_hook: HookEvaluation | None = None
     re_hook_plan: ReHookPlan | None = None
+
+    # Content Studio Redesign, Phase 11: Script Workspace - Writing
+    # Directives. project_writing_rules/user_writing_directives are
+    # the raw, human-edited inputs (PROJECT/USER sources);
+    # writing_directives is the resolved artifact
+    # WritingDirectivesService.resolve() produces from them plus the
+    # genre defaults and the fixed system directives - distinct from
+    # Story Architecture per this phase's own goal.
+    project_writing_rules: list[str] = Field(default_factory=list)
+    user_writing_directives: list[str] = Field(default_factory=list)
+    writing_directives: WritingDirectiveSet | None = None
+
     generated_script: GeneratedScript | None = None
     editorial_critique: EditorialCritique | None = None
     script_quality_report: ScriptQualityReport | None = None

@@ -42,13 +42,28 @@ class _RenderWorker(QObject):
     """
     Runs one render orchestration call off the Qt main thread.
 
-    progress/finished/failed are ordinary Qt signals - Qt's
-    AutoConnection resolves queued-vs-direct delivery by comparing the
-    calling thread to the receiving slot's owning thread at emit()
-    time, not the emitting QObject's own thread affinity, so cross-
-    thread delivery is safe even though FFmpegExecutionService actually
-    invokes progress_callback from its own separate daemon thread (a
-    third thread beyond this worker's thread and the Qt main thread).
+    progress/finished/failed are ordinary Qt signals, but AutoConnection
+    only auto-detects queued-vs-direct delivery when the receiving slot
+    is a bound method of a QObject - it inspects the method's __self__
+    to find the object's owning thread, and queues delivery onto that
+    thread's event loop whenever the emit() call happens on a different
+    thread. A lambda (or any plain function) has no __self__, so this
+    detection silently fails and AutoConnection falls back to a direct
+    call in the *emitting* thread instead - confirmed empirically for
+    this PySide6 version, including with an explicit
+    Qt.ConnectionType.QueuedConnection, which turned out not to force
+    main-thread delivery for a lambda slot either (only a genuine bound
+    QObject method reliably gets queued cross-thread delivery here).
+    RenderWorkspaceView previously connected these signals to lambdas
+    (to close over the per-render job_id), so their handlers ran
+    directly on this worker's QThread and mutated GUI widgets from a
+    background thread - undefined behaviour in Qt, and the cause of an
+    intermittent heap-corruption crash (0xc0000374) under test.
+    job_id/user_input are therefore carried as plain attributes on this
+    worker (and, for thread.finished, on the QThread itself) instead of
+    via lambda closures, so every cross-thread connection below can
+    target a real bound method on RenderWorkspaceView and get correct
+    thread-affinity detection.
     """
 
     progress = Signal(object)
@@ -67,6 +82,12 @@ class _RenderWorker(QObject):
         self._orchestrator = orchestrator
         self._job = job
         self._user_input = user_input
+        # Plain attributes (not constructor args) so _RenderWorker stays
+        # a QObject the connect() calls below can route by identity via
+        # self.sender() - see the class docstring for why this replaces
+        # the lambda-closure approach.
+        self.job_id = job.id
+        self.user_input = user_input
 
     def run(self) -> None:
         try:
@@ -527,19 +548,25 @@ class RenderWorkspaceView(QWidget):
         worker.moveToThread(thread)
 
         job_id = job.id
+        # QThread is a QObject too, so it can carry the same job_id
+        # attribute the worker does - thread.finished (connected below)
+        # has no signal argument to carry it as a parameter instead.
+        thread.job_id = job_id  # type: ignore[attr-defined]
 
+        # Bound methods, not lambdas: AutoConnection only detects that a
+        # slot needs to run on the main GUI thread when the slot is a
+        # bound method of a real QObject (it reads the method's __self__
+        # to find the owning thread). A lambda has no such owner, so
+        # AutoConnection silently delivers it directly on the emitting
+        # (worker) thread instead - see the _RenderWorker docstring for
+        # the crash this caused. job_id/user_input travel as attributes
+        # on the worker/thread (read back via self.sender() in each
+        # handler) rather than lambda closures, specifically so these
+        # connections can target real bound methods.
         thread.started.connect(worker.run)
-        worker.progress.connect(
-            lambda progress, jid=job_id: self._handle_render_progress(jid, progress)
-        )
-        worker.finished.connect(
-            lambda result, jid=job_id: self._handle_render_finished(jid, result)
-        )
-        worker.failed.connect(
-            lambda message, jid=job_id, ui=user_input: self._handle_render_failed(
-                jid, message, ui
-            )
-        )
+        worker.progress.connect(self._handle_render_progress)
+        worker.finished.connect(self._handle_render_finished)
+        worker.failed.connect(self._handle_render_failed)
         worker.finished.connect(thread.quit)
         worker.failed.connect(thread.quit)
 
@@ -552,7 +579,7 @@ class RenderWorkspaceView(QWidget):
         # which is a real crash, not just a leak - so thread-lifetime
         # cleanup is intentionally kept separate from, and later than,
         # the UI-facing "is this job still rendering" bookkeeping.
-        thread.finished.connect(lambda jid=job_id: self._render_threads.pop(jid, None))
+        thread.finished.connect(self._handle_render_thread_finished)
         thread.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
 
@@ -565,8 +592,11 @@ class RenderWorkspaceView(QWidget):
 
         thread.start()
 
-    def _handle_render_progress(self, job_id: UUID, progress: RenderProgress) -> None:
-        if job_id != self._job_id:
+    def _handle_render_progress(self, progress: RenderProgress) -> None:
+        worker = self.sender()
+        job_id = worker.job_id if isinstance(worker, _RenderWorker) else None
+
+        if job_id is None or job_id != self._job_id:
             return
 
         self._progress_bar.setValue(int(progress.progress_percent))
@@ -589,9 +619,14 @@ class RenderWorkspaceView(QWidget):
 
     def _handle_render_finished(
         self,
-        job_id: UUID,
         result: RenderOrchestrationResult,
     ) -> None:
+        worker = self.sender()
+        job_id = worker.job_id if isinstance(worker, _RenderWorker) else None
+
+        if job_id is None:
+            return
+
         self._rendering_job_ids.discard(job_id)
 
         if result.success:
@@ -607,12 +642,14 @@ class RenderWorkspaceView(QWidget):
         if job_id == self._job_id:
             self._on_change()
 
-    def _handle_render_failed(
-        self,
-        job_id: UUID,
-        message: str,
-        user_input: dict[str, object] | None = None,
-    ) -> None:
+    def _handle_render_failed(self, message: str) -> None:
+        worker = self.sender()
+
+        if not isinstance(worker, _RenderWorker):
+            return
+
+        job_id = worker.job_id
+        user_input = worker.user_input
         self._rendering_job_ids.discard(job_id)
 
         job = self._job_store.get(job_id)
@@ -628,6 +665,25 @@ class RenderWorkspaceView(QWidget):
             )
             show_recoverable_error(self, "Render failed", message, on_retry=on_retry)
             self._on_change()
+
+    def _handle_render_thread_finished(self) -> None:
+        """
+        Drop the (thread, worker) bookkeeping entry once the QThread has
+        actually stopped.
+
+        thread.finished is a bound-method connection for the same
+        cross-thread-safety reason as the worker signals above (see the
+        _RenderWorker docstring) - self.sender() here is the QThread
+        instance itself, which carries job_id as a plain attribute
+        (set in _execute_render) since this signal has no arguments to
+        carry it as a parameter.
+        """
+
+        thread = self.sender()
+        job_id = getattr(thread, "job_id", None)
+
+        if job_id is not None:
+            self._render_threads.pop(job_id, None)
 
     def _current_job(self) -> VideoJob | None:
         if self._job_id is None:

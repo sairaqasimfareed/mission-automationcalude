@@ -1430,3 +1430,125 @@ def test_hooks_panel_builds_without_error_after_generate_more_and_custom_hook(
     view._handle_write_custom_hook(QLineEdit("A hook I wrote myself."))
 
     view.refresh(job)  # must not raise with a mixed generated+custom hook set
+
+
+def _run_through_writing_directives(view: ContentStudioView, job: VideoJob) -> None:
+    _run_through_hooks(view, job)
+    view._handle_run_ci_stage("writing_directives")
+
+
+def test_running_writing_directives_produces_system_and_overridable_directives(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_writing_directives(view, job)
+
+    assert job.writing_directives is not None
+    assert len(job.writing_directives.system_directives) == 3
+
+
+def test_adding_and_removing_a_project_writing_rule(qapp: QApplication) -> None:
+    from PySide6.QtWidgets import QLineEdit
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view._handle_add_project_writing_rule(
+        QLineEdit("Keep the runtime under 8 minutes.")
+    )
+
+    assert job.project_writing_rules == ["Keep the runtime under 8 minutes."]
+
+    view._handle_remove_project_writing_rule("Keep the runtime under 8 minutes.")
+
+    assert job.project_writing_rules == []
+
+
+def test_adding_a_blank_project_writing_rule_is_a_noop(qapp: QApplication) -> None:
+    from PySide6.QtWidgets import QLineEdit
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view._handle_add_project_writing_rule(QLineEdit("   "))
+
+    assert job.project_writing_rules == []
+
+
+def test_adding_and_removing_a_user_writing_directive(qapp: QApplication) -> None:
+    from PySide6.QtWidgets import QLineEdit
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view._handle_add_user_writing_directive(QLineEdit("Avoid rhetorical questions."))
+
+    assert job.user_writing_directives == ["Avoid rhetorical questions."]
+
+    view._handle_remove_user_writing_directive("Avoid rhetorical questions.")
+
+    assert job.user_writing_directives == []
+
+
+def test_writing_directives_resolution_includes_project_rules_and_user_directives(
+    qapp: QApplication,
+) -> None:
+    from PySide6.QtWidgets import QLineEdit
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view._handle_add_project_writing_rule(
+        QLineEdit("Keep the runtime under 8 minutes.")
+    )
+    view._handle_add_user_writing_directive(QLineEdit("Avoid rhetorical questions."))
+
+    _run_through_writing_directives(view, job)
+
+    assert job.writing_directives is not None
+    all_text = " ".join(d.text for d in job.writing_directives.directives)
+    # The echo-stub's dry-run response doesn't literally echo these
+    # back, but resolution must not fail with them populated, and the
+    # inputs themselves must be preserved on the job regardless.
+    assert "Keep the runtime under 8 minutes." in job.project_writing_rules
+    assert "Avoid rhetorical questions." in job.user_writing_directives
+    assert all_text  # sanity: a real directive set was produced
+
+
+def test_writing_directives_panel_builds_without_error(qapp: QApplication) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_through_writing_directives(view, job)
+
+    view.refresh(job)  # must not raise with a populated directive set

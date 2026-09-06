@@ -36,6 +36,13 @@ _ARTIFACT_FOCUS_GUIDANCE: dict[ArtifactType, str] = {
         "particular attention to: unsupported claims the research does "
         "not back, and premature disclosure of the story's payoff."
     ),
+    ArtifactType.DIRECTIVES: (
+        "Pay particular attention to: directives that contradict each "
+        "other, necessary guidance that has been omitted, and "
+        "instructions that would be impractical to follow in practice. "
+        "Never suggest removing or weakening a system-sourced "
+        "directive."
+    ),
 }
 
 

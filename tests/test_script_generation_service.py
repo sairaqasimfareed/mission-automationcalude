@@ -436,3 +436,65 @@ def test_dry_run_response_is_itself_parseable() -> None:
     )
 
     assert len(script.segments) == 3
+
+
+def test_generate_without_writing_directives_behaves_exactly_as_before() -> None:
+    stub = _StubLLMService(content=_THREE_SEGMENT_RESPONSE)
+
+    _generate(stub).generate(
+        topic="The Mary Celeste",
+        editorial_profile=_editorial_profile(),
+        research=_research(),
+        audience_promise=_promise(),
+        story_angle=_angle(),
+        blueprint=_blueprint(),
+        reveal_map=_reveal_map(),
+        winning_hook=_winning_hook(),
+        re_hook_plan=_re_hook_plan(),
+    )
+
+    assert stub.last_request is not None
+    assert "Writing directives" not in stub.last_request.prompt
+
+
+def test_generate_includes_writing_directives_in_prompt_when_supplied() -> None:
+    from src.models.writing_directives import DirectiveSource, WritingDirectiveSet
+    from src.models.writing_directives import WritingDirective as _WD
+
+    stub = _StubLLMService(content=_THREE_SEGMENT_RESPONSE)
+
+    directive_set = WritingDirectiveSet(
+        directives=[
+            _WD(
+                text="Never state a claim the research does not support.",
+                source=DirectiveSource.SYSTEM,
+                overridable=False,
+            ),
+            _WD(
+                text="Avoid rhetorical questions.",
+                source=DirectiveSource.USER,
+                overridable=True,
+            ),
+        ],
+        prompt_version="writing_directives_prompt_v1.0.0",
+    )
+
+    _generate(stub).generate(
+        topic="The Mary Celeste",
+        editorial_profile=_editorial_profile(),
+        research=_research(),
+        audience_promise=_promise(),
+        story_angle=_angle(),
+        blueprint=_blueprint(),
+        reveal_map=_reveal_map(),
+        winning_hook=_winning_hook(),
+        re_hook_plan=_re_hook_plan(),
+        writing_directives=directive_set,
+    )
+
+    assert stub.last_request is not None
+    assert "Writing directives" in stub.last_request.prompt
+    assert "Avoid rhetorical questions." in stub.last_request.prompt
+    assert (
+        "Never state a claim the research does not support." in stub.last_request.prompt
+    )

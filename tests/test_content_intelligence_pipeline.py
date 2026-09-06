@@ -378,6 +378,36 @@ def test_run_hooks_accepts_additional_instructions() -> None:
     assert job.selected_hook is not None
 
 
+def test_run_writing_directives_requires_a_selected_hook() -> None:
+    pipeline, _ = _pipeline()
+
+    with pytest.raises(RuntimeError, match="require a selected hook"):
+        pipeline.run_writing_directives(_job())
+
+
+def test_run_writing_directives_produces_a_set_including_system_directives() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_audience_promise(_job())
+    job = pipeline.run_research(job)
+    job = pipeline.run_story_angles(job)
+    job = pipeline.run_narrative_architecture(job)
+    job = pipeline.run_hooks(job)
+    job = pipeline.run_writing_directives(job)
+
+    assert job.writing_directives is not None
+    assert len(job.writing_directives.system_directives) == 3
+
+
+def test_run_all_resolves_writing_directives_before_the_script() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_all(_job())
+
+    assert job.writing_directives is not None
+    assert job.generated_script is not None
+
+
 def test_run_script_requires_upstream_stages() -> None:
     pipeline, _ = _pipeline()
 

@@ -9,6 +9,7 @@ from src.models.re_hook import ReHookPlan
 from src.models.research import ResearchResult
 from src.models.story_angle import StoryAngle
 from src.models.story_blueprint import StoryBeat, StoryBeatType, StoryBlueprint
+from src.models.writing_directives import WritingDirectiveSet
 from src.services.llm.labeled_block_parser import extract_labeled_field, split_blocks
 from src.services.llm.llm_service import LLMService
 from src.shared.llm.models import LLMProvider
@@ -65,8 +66,16 @@ class ScriptGenerationService:
         reveal_map: InformationRevealMap,
         winning_hook: HookEvaluation,
         re_hook_plan: ReHookPlan | None = None,
+        writing_directives: WritingDirectiveSet | None = None,
     ) -> GeneratedScript:
-        """Write narration for every beat in the blueprint."""
+        """
+        Write narration for every beat in the blueprint.
+
+        writing_directives is optional and additive (Content Studio
+        Redesign, Phase 11) - when supplied, every directive's text is
+        injected into the prompt as an explicit constraint; omitting
+        it reproduces this service's exact prior behavior.
+        """
 
         normalized_topic = topic.strip()
 
@@ -87,6 +96,7 @@ class ScriptGenerationService:
                 reveal_map=reveal_map,
                 winning_hook=winning_hook,
                 re_hook_plan=re_hook_plan,
+                writing_directives=writing_directives,
             ),
             system_prompt=(
                 "You are an expert scriptwriter for long-form video, "
@@ -177,6 +187,7 @@ class ScriptGenerationService:
         reveal_map: InformationRevealMap,
         winning_hook: HookEvaluation,
         re_hook_plan: ReHookPlan | None,
+        writing_directives: WritingDirectiveSet | None,
     ) -> str:
         re_hooks_by_position = (
             {re_hook.position_seconds: re_hook for re_hook in re_hook_plan.re_hooks}
@@ -208,6 +219,16 @@ class ScriptGenerationService:
             f"- {loop.question}" for loop in reveal_map.curiosity_loops
         )
 
+        directives_section = ""
+
+        if writing_directives is not None:
+            directive_lines = "\n".join(
+                f"- {directive.text}" for directive in writing_directives.directives
+            )
+            directives_section = (
+                f"Writing directives (must follow):\n{directive_lines}\n\n"
+            )
+
         return (
             f"Topic: {topic}\n"
             f"Selected angle [{story_angle.style.value}]: {story_angle.title} - "
@@ -216,6 +237,7 @@ class ScriptGenerationService:
             f"Research summary: {research.research_summary}\n"
             f"Key facts: {'; '.join(research.key_facts)}\n"
             f"Tracked questions:\n{loop_lines}\n\n"
+            f"{directives_section}"
             f"Write narration for each of these segments, in order. Do "
             f"not change their timing, tension, or structural role:\n"
             f"{beats_block}\n\n"

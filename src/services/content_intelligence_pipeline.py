@@ -48,6 +48,7 @@ from src.services.story_angle_generation_service import StoryAngleGenerationServ
 from src.services.story_blueprint_generation_service import (
     StoryBlueprintGenerationService,
 )
+from src.services.writing_directives_service import WritingDirectivesService
 
 
 class ContentIntelligencePipeline:
@@ -165,6 +166,11 @@ class ContentIntelligencePipeline:
             estimated_cost_usd=estimated_cost_usd,
         )
         self.continuity_validation_service = ContinuityValidationService()
+        self.writing_directives_service = WritingDirectivesService(
+            llm_service=llm_service,
+            profile_ids=profile_ids,
+            estimated_cost_usd=estimated_cost_usd,
+        )
         self.approval_gate_service = ApprovalGateService()
         self.invalidation_service = InvalidationService()
 
@@ -511,6 +517,32 @@ class ContentIntelligencePipeline:
 
         return job
 
+    def run_writing_directives(self, job: VideoJob) -> VideoJob:
+        """
+        Stage 6b: resolve genre defaults, project rules, and user
+        directives into one coherent Writing Directives set, after
+        Hook and before Script (Content Studio Redesign, Phase 11).
+
+        Not a hard requirement for run_script() - job.writing_directives
+        stays None if this stage is never run, and script generation
+        behaves exactly as it did before this phase existed.
+        """
+
+        if job.selected_hook is None:
+            raise RuntimeError("Writing directives require a selected hook.")
+
+        editorial_profile = job.editorial_profile_snapshot or (
+            self.resolve_editorial_profile(job)
+        )
+
+        job.writing_directives = self.writing_directives_service.resolve(
+            editorial_profile=editorial_profile,
+            project_rules=job.project_writing_rules,
+            user_directives=job.user_writing_directives,
+        )
+
+        return job
+
     def run_script(self, job: VideoJob) -> VideoJob:
         """Stage 7: write and compress the script."""
 
@@ -542,6 +574,7 @@ class ContentIntelligencePipeline:
             reveal_map=job.reveal_map,
             winning_hook=job.selected_hook,
             re_hook_plan=job.re_hook_plan,
+            writing_directives=job.writing_directives,
         )
 
         job.generated_script = self.narrative_compression_service.compress(script)
@@ -762,6 +795,9 @@ class ContentIntelligencePipeline:
             job = self.run_hooks(job)
         if self.approval_gate_service.is_blocked(job, "hook"):
             return job
+
+        if job.writing_directives is None:
+            job = self.run_writing_directives(job)
 
         if job.generated_script is None:
             job = self.run_script(job)
