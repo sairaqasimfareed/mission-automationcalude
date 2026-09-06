@@ -2889,3 +2889,86 @@ def test_generate_shot_plan_is_a_noop_without_a_job(qapp: QApplication) -> None:
     view = _view(job_store)
 
     view._handle_generate_shot_plan()  # must not raise
+
+
+# --- Post-Script-Approval Production Plan, Phase 4: Cinematic Prompt Package ---
+
+
+def _run_to_shot_plan(view: ContentStudioView) -> None:
+    view._handle_run_automation()
+    view._handle_generate_visual_continuity()
+    view._handle_generate_shot_plan()
+
+
+def test_cinematic_prompt_section_absent_without_a_shot_plan(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job.approval_policy = ApprovalPolicyConfig.full_auto()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    view._handle_run_automation()
+    view.refresh(job)  # must not raise; no shot plan yet
+
+
+def test_compile_cinematic_prompts_populates_the_package(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job.approval_policy = ApprovalPolicyConfig.full_auto()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_to_shot_plan(view)
+
+    view._handle_compile_cinematic_prompts()
+
+    assert job.cinematic_prompt_package is not None
+    assert len(job.cinematic_prompt_package.prompts) == len(job.scenes)
+
+    view.refresh(job)  # must not raise while the package renders
+
+
+def test_score_cinematic_prompts_attaches_scores(qapp: QApplication) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job.approval_policy = ApprovalPolicyConfig.full_auto()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _run_to_shot_plan(view)
+    view._handle_compile_cinematic_prompts()
+
+    view._handle_score_cinematic_prompts()
+
+    assert job.cinematic_prompt_package is not None
+    assert any(p.is_scored for p in job.cinematic_prompt_package.prompts)
+
+    view.refresh(job)  # must not raise while scores render
+
+
+def test_compile_cinematic_prompts_is_a_noop_without_a_job(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    view = _view(job_store)
+
+    view._handle_compile_cinematic_prompts()  # must not raise
+
+
+def test_score_cinematic_prompts_is_a_noop_without_a_job(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    view = _view(job_store)
+
+    view._handle_score_cinematic_prompts()  # must not raise

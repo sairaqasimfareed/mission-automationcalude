@@ -5,6 +5,64 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-06 - Post-Script-Approval Production Plan: Phase 4 Resolved Cinematic Prompt Package
+
+**Compilation and evaluation split cleanly, matching an established
+pattern across the whole engine.** `CinematicPromptCompilationService.compile()`
+is pure and deterministic - every ingredient it needs (shot
+specification, continuity state, semantic-intent segment) is already
+resolved structured data by the time this phase runs, so assembling
+one prompt string from it is templated composition, not a creative
+judgment call. Scoring the *result* for quality genuinely needs
+judgment, so that's a separate service, `CinematicPromptQualityService.evaluate()`,
+making one batched LLM call across every prompt in the package -
+exactly the same "writing and evaluation are separate passes"
+discipline `HookEvaluationService`/`StoryAngleEvaluationService`
+already established, applied here for the third or fourth time this
+session.
+
+**A fixed quality floor, not a per-genre tunable.** `QUALITY_BLOCK_THRESHOLD`
+is one constant, not something a genre profile can loosen. A prompt
+scoring below it on any single dimension is a compilation defect -
+missing structured input, a malformed continuity lookup - not a
+matter of genre taste the way, say, a script's tone might vary. `is_blocked`
+reads the *lowest* of the six scores, so one badly wrong dimension
+can't be averaged away by five good ones.
+
+**Evaluation returns a new package, never mutates the one it's
+given.** `CinematicPromptQualityService.evaluate()` builds fresh
+`ResolvedCinematicPrompt` copies via `model_copy(update=...)` rather
+than assigning scores onto the caller's own objects - a caller that
+kept a reference to the pre-evaluation package still sees it
+unscored, which is the safer default when nothing in this codebase's
+established conventions calls for in-place mutation here.
+
+**One PDF exit criterion turned out to be inapplicable, and that's
+worth stating plainly rather than pretending to satisfy it.**
+"`ClipWorkspaceAutoGenerationService` no longer reconstructs a
+simplistic prompt from Scene" - that service, and `ClipWorkspace`
+itself, do not exist anywhere in this repository under any name,
+confirmed by direct inspection during Phase 0's own baseline audit.
+There is nothing to fix here because the thing the PDF assumes exists
+was never built in this codebase's actual history.
+
+**Tests:** `test_cinematic_prompt_model.py` (9), `test_cinematic_prompt_compilation_service.py`
+(7: one prompt per scene, identity/environment/lighting inclusion,
+reference-asset carry-through, standard negatives, reproducibility,
+graceful handling of a scene missing shot/continuity data),
+`test_cinematic_prompt_quality_service.py` (5: score attachment,
+non-mutation of the original package, a skipped scene staying
+unscored, empty-package/provider-failure rejection), 4 new pipeline
+cases, 5 new GUI cases. Full combined regression: 271 passed. mypy/
+ruff/black clean.
+
+**Deliberately not built this pass:** golden-prompt snapshot tests -
+the compiled text format may still shift shape as later phases
+(clip materialization, generation execution) actually consume it, so
+locking it down now would just mean rewriting the snapshots soon.
+
+---
+
 ## 2026-09-06 - Post-Script-Approval Production Plan: Phase 3 Cinematic Shot Plan and Temporal Beat Expansion
 
 **Continuity state referenced, never duplicated.** `ShotSpecification`

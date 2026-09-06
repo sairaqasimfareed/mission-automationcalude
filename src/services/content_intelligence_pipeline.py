@@ -23,6 +23,10 @@ from src.models.video_job import VideoJob
 from src.models.visual_continuity import VisualContinuityValidationResult
 from src.services.approval_gate_service import ApprovalGateService
 from src.services.audience_promise_service import AudiencePromiseService
+from src.services.cinematic_prompt_compilation_service import (
+    CinematicPromptCompilationService,
+)
+from src.services.cinematic_prompt_quality_service import CinematicPromptQualityService
 from src.services.continuity_bible_extraction_service import (
     ContinuityBibleExtractionService,
 )
@@ -213,6 +217,12 @@ class ContentIntelligencePipeline:
         )
         self.visual_continuity_validation_service = VisualContinuityValidationService()
         self.shot_planning_service = ShotPlanningService(
+            llm_service=llm_service,
+            profile_ids=profile_ids,
+            estimated_cost_usd=estimated_cost_usd,
+        )
+        self.cinematic_prompt_compilation_service = CinematicPromptCompilationService()
+        self.cinematic_prompt_quality_service = CinematicPromptQualityService(
             llm_service=llm_service,
             profile_ids=profile_ids,
             estimated_cost_usd=estimated_cost_usd,
@@ -1248,6 +1258,88 @@ class ContentIntelligencePipeline:
             summary=(
                 f"Cinematic shot plan generated "
                 f"({len(job.cinematic_shot_plan.shots)} shot(s))."
+            ),
+            category=DecisionCategory.GENERATION,
+        )
+
+        return job
+
+    def run_cinematic_prompt_compilation(self, job: VideoJob) -> VideoJob:
+        """
+        Post-Script-Approval Production Plan, Phase 4: "Compile shot,
+        continuity and semantic intent into the exact provider-facing
+        cinematic instruction." Clears any prior quality scores by
+        starting a fresh package - a recompiled prompt is unscored
+        until CinematicPromptQualityService evaluates it again, the
+        same "quality result invalidation after [artifact] change"
+        discipline this pipeline already applies to script quality
+        reports.
+        """
+
+        if job.script_lock is None:
+            raise RuntimeError("Cinematic prompt compilation requires a locked script.")
+
+        if job.cinematic_shot_plan is None:
+            raise RuntimeError(
+                "Cinematic prompt compilation requires a cinematic shot plan."
+            )
+
+        if job.visual_continuity_bible is None:
+            raise RuntimeError(
+                "Cinematic prompt compilation requires a visual continuity bible."
+            )
+
+        if not job.scenes:
+            raise RuntimeError("Cinematic prompt compilation requires planned scenes.")
+
+        job.cinematic_prompt_package = (
+            self.cinematic_prompt_compilation_service.compile(
+                scenes=job.scenes,
+                shot_plan=job.cinematic_shot_plan,
+                visual_continuity_bible=job.visual_continuity_bible,
+                production_semantic_brief=job.production_semantic_brief,
+                script_lock_hash=job.script_lock.script_content_hash,
+            )
+        )
+
+        self.approval_gate_service.record_event(
+            job=job,
+            stage="cinematic_prompt_compilation",
+            summary=(
+                "Cinematic prompt package compiled "
+                f"({len(job.cinematic_prompt_package.prompts)} prompt(s))."
+            ),
+            category=DecisionCategory.GENERATION,
+        )
+
+        return job
+
+    def run_cinematic_prompt_quality(self, job: VideoJob) -> VideoJob:
+        """
+        Post-Script-Approval Production Plan, Phase 4: "Score
+        specificity, continuity, action, camera, lighting and reveal
+        safety. Block/regenerate low-quality prompts before spending
+        generation budget."
+        """
+
+        if job.cinematic_prompt_package is None:
+            raise RuntimeError(
+                "Cinematic prompt quality evaluation requires a compiled "
+                "prompt package."
+            )
+
+        job.cinematic_prompt_package = self.cinematic_prompt_quality_service.evaluate(
+            job.cinematic_prompt_package
+        )
+
+        blocked_count = len(job.cinematic_prompt_package.blocked_prompts)
+
+        self.approval_gate_service.record_event(
+            job=job,
+            stage="cinematic_prompt_compilation",
+            summary=(
+                "Cinematic prompt package scored "
+                f"({blocked_count} blocked prompt(s))."
             ),
             category=DecisionCategory.GENERATION,
         )

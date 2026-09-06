@@ -1488,6 +1488,54 @@ def test_run_shot_planning_records_a_generation_event() -> None:
     assert matching[0].category == "generation"
 
 
+def test_run_cinematic_prompt_compilation_requires_shot_plan() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_all(_job())
+    job = pipeline.run_visual_continuity(job)
+
+    with pytest.raises(RuntimeError, match="requires a cinematic shot plan"):
+        pipeline.run_cinematic_prompt_compilation(job)
+
+
+def test_run_cinematic_prompt_compilation_produces_one_prompt_per_scene() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_all(_job())
+    job = pipeline.run_visual_continuity(job)
+    job = pipeline.run_shot_planning(job)
+    job = pipeline.run_cinematic_prompt_compilation(job)
+
+    assert job.cinematic_prompt_package is not None
+    assert len(job.cinematic_prompt_package.prompts) == len(job.scenes)
+    assert job.cinematic_prompt_package.script_lock_hash == (
+        job.script_lock.script_content_hash
+    )
+
+
+def test_run_cinematic_prompt_quality_requires_a_compiled_package() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_all(_job())
+
+    with pytest.raises(RuntimeError, match="requires a compiled"):
+        pipeline.run_cinematic_prompt_quality(job)
+
+
+def test_run_cinematic_prompt_quality_scores_the_package() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_all(_job())
+    job = pipeline.run_visual_continuity(job)
+    job = pipeline.run_shot_planning(job)
+    job = pipeline.run_cinematic_prompt_compilation(job)
+    job = pipeline.run_cinematic_prompt_quality(job)
+
+    assert job.cinematic_prompt_package is not None
+    scored = [p for p in job.cinematic_prompt_package.prompts if p.is_scored]
+    assert len(scored) >= 1
+
+
 def test_run_continuity_bible_requires_a_generated_script() -> None:
     pipeline, _ = _pipeline()
 

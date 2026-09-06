@@ -1245,6 +1245,10 @@ class ContentStudioView(QWidget):
             layout.addWidget(separator())
             self._render_shot_planning_section(layout, job)
 
+        if job.script_lock is not None and job.cinematic_shot_plan is not None:
+            layout.addWidget(separator())
+            self._render_cinematic_prompt_section(layout, job)
+
         self._layout.addWidget(frame)
 
     def _render_production_semantic_brief_section(
@@ -1470,6 +1474,118 @@ class ContentStudioView(QWidget):
                 job,
                 f"Could not generate cinematic shot plan: {error}",
                 on_retry=self._handle_generate_shot_plan,
+            )
+
+            return
+
+        self._on_change()
+
+    def _render_cinematic_prompt_section(
+        self, layout: QVBoxLayout, job: VideoJob
+    ) -> None:
+        """
+        Post-Script-Approval Production Plan, Phase 4: "Clip inspector
+        shows the exact final Flow prompt. Expose negatives,
+        references, quality scores and prompt version in collapsible
+        sections. Copy Prompt remains a recovery aid, not the primary
+        route." No dedicated "Copy Prompt" button is added here - this
+        panel already reads directly from the persisted, validated
+        prompt package, which is what makes copying unnecessary as
+        the primary route in the first place.
+        """
+
+        package = job.cinematic_prompt_package
+
+        if package is None:
+            layout.addWidget(small_muted("No cinematic prompt package compiled yet."))
+            compile_button = button("Compile cinematic prompts", variant="primary")
+            compile_button.clicked.connect(self._handle_compile_cinematic_prompts)
+            layout.addWidget(compile_button, alignment=_LEFT)
+
+            return
+
+        layout.addWidget(
+            badge(f"Cinematic prompt package · {len(package.prompts)} prompt(s)")
+        )
+
+        if package.is_ready:
+            layout.addWidget(
+                status_label("Every prompt is scored and ready.", role="success")
+            )
+        elif package.blocked_prompts:
+            layout.addWidget(
+                status_label(
+                    f"{len(package.blocked_prompts)} prompt(s) blocked - "
+                    "below the quality floor.",
+                    role="warning",
+                )
+            )
+        else:
+            layout.addWidget(small_muted("Not yet scored."))
+
+        for prompt in sorted(package.prompts, key=lambda p: p.scene_number):
+            score_text = (
+                f"lowest score {prompt.lowest_score}"
+                if prompt.is_scored
+                else "unscored"
+            )
+            layout.addWidget(
+                small_muted(
+                    f"Scene {prompt.scene_number} (v{prompt.prompt_version}, "
+                    f"{score_text}): {prompt.prompt_text}"
+                )
+            )
+            if prompt.negative_constraints:
+                layout.addWidget(
+                    small_muted("Negative: " + "; ".join(prompt.negative_constraints))
+                )
+
+        button_row = QHBoxLayout()
+        button_row.setSpacing(6)
+
+        recompile_button = button("Recompile prompts", variant="ghost")
+        recompile_button.clicked.connect(self._handle_compile_cinematic_prompts)
+        button_row.addWidget(recompile_button)
+
+        score_button = button("Score prompt quality", variant="primary")
+        score_button.clicked.connect(self._handle_score_cinematic_prompts)
+        button_row.addWidget(score_button)
+
+        button_row.addStretch()
+        layout.addLayout(button_row)
+
+    def _handle_compile_cinematic_prompts(self) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        try:
+            self._content_intelligence_pipeline.run_cinematic_prompt_compilation(job)
+        except (RuntimeError, ValueError) as error:
+            self._record_error(
+                job,
+                f"Could not compile cinematic prompts: {error}",
+                on_retry=self._handle_compile_cinematic_prompts,
+            )
+
+            return
+
+        self._on_change()
+
+    def _handle_score_cinematic_prompts(self) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        try:
+            self._content_intelligence_pipeline.run_cinematic_prompt_quality(job)
+        except (RuntimeError, ValueError) as error:
+            self._record_error(
+                job,
+                f"Could not score cinematic prompt quality: {error}",
+                on_retry=self._handle_score_cinematic_prompts,
             )
 
             return

@@ -8,6 +8,7 @@ from src.models.asset_state import SceneAssetState
 from src.models.audience_promise import AudiencePromise
 from src.models.audio_timeline import AudioTimeline
 from src.models.base import MissionBaseModel
+from src.models.cinematic_prompt import CinematicPromptPackage
 from src.models.content_decision_record import ContentDecisionRecord
 from src.models.continuity_bible import ContinuityBible, ContinuityValidationResult
 from src.models.creative_direction import CreativeDirection
@@ -212,6 +213,12 @@ class VideoJob(MissionBaseModel):
     # specification per planned clip - None until generated, requires
     # a visual continuity bible to exist first.
     cinematic_shot_plan: CinematicShotPlan | None = None
+    # Post-Script-Approval Production Plan, Phase 4: one resolved,
+    # provider-facing prompt per shot - None until compiled, requires
+    # a cinematic shot plan to exist first. Quality scores are added
+    # by a separate evaluation pass and may be absent even once the
+    # package itself exists.
+    cinematic_prompt_package: CinematicPromptPackage | None = None
 
     content_decisions: list[ContentDecisionRecord] = Field(default_factory=list)
     stale_artifacts: list[StaleArtifact] = Field(default_factory=list)
