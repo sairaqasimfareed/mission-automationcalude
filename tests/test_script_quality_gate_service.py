@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import pytest
+
 from src.models.editorial_critique import (
     CriticFinding,
     EditorialCritique,
     FindingSeverity,
 )
 from src.models.editorial_profile import EditorialProfile
+from src.models.generated_script import GeneratedScript, ScriptSegment
 from src.models.script_quality_report import ScriptQualityStatus
+from src.models.story_blueprint import StoryBeatType
 from src.services.editorial_profile_composition_service import (
     EditorialProfileCompositionService,
 )
@@ -134,3 +138,128 @@ def test_a_dimension_the_critique_never_scored_is_not_gated() -> None:
     assert "hook_strength" not in report.dimension_thresholds
     assert "hook_strength" not in report.failed_dimensions
     assert report.status == ScriptQualityStatus.APPROVED_FOR_PRODUCTION
+
+
+def _script(narration: str = "The crew vanished without a trace.") -> GeneratedScript:
+    return GeneratedScript(
+        topic="The Mary Celeste",
+        genre_id="genre.mystery",
+        target_duration_seconds=30,
+        segments=[
+            ScriptSegment(
+                segment_number=1,
+                start_seconds=0,
+                end_seconds=30,
+                narrative_function=StoryBeatType.HOOK,
+                narration=narration,
+                tension_level=60,
+            )
+        ],
+        prompt_version="script_generation_prompt_v1.0.0",
+    )
+
+
+def test_evaluate_without_a_script_leaves_the_binding_fields_unset() -> None:
+    service = ScriptQualityGateService()
+
+    report = service.evaluate(
+        critique=_critique(), editorial_profile=_mystery_profile()
+    )
+
+    assert report.script_version_number is None
+    assert report.script_content_hash is None
+
+
+def test_evaluate_with_a_script_binds_version_and_hash() -> None:
+    service = ScriptQualityGateService()
+
+    report = service.evaluate(
+        critique=_critique(),
+        editorial_profile=_mystery_profile(),
+        script=_script(),
+        script_version_number=2,
+    )
+
+    assert report.script_version_number == 2
+    assert report.script_content_hash is not None
+    assert len(report.script_content_hash) == 64  # sha256 hex digest
+
+
+def test_evaluate_hash_is_deterministic_for_identical_scripts() -> None:
+    service = ScriptQualityGateService()
+
+    first = service.evaluate(
+        critique=_critique(), editorial_profile=_mystery_profile(), script=_script()
+    )
+    second = service.evaluate(
+        critique=_critique(), editorial_profile=_mystery_profile(), script=_script()
+    )
+
+    assert first.script_content_hash == second.script_content_hash
+
+
+def test_evaluate_hash_differs_when_narration_changes() -> None:
+    service = ScriptQualityGateService()
+
+    first = service.evaluate(
+        critique=_critique(), editorial_profile=_mystery_profile(), script=_script()
+    )
+    second = service.evaluate(
+        critique=_critique(),
+        editorial_profile=_mystery_profile(),
+        script=_script("A completely different opening line."),
+    )
+
+    assert first.script_content_hash != second.script_content_hash
+
+
+def test_ignore_finding_records_a_resolution() -> None:
+    finding = _finding(severity=FindingSeverity.BLOCKING)
+    critique = _critique(findings=[finding])
+    service = ScriptQualityGateService()
+    report = service.evaluate(critique=critique, editorial_profile=_mystery_profile())
+
+    updated = service.ignore_finding(
+        report=report, finding_id=finding.id, reason="Acceptable for this genre."
+    )
+
+    resolution = updated.resolution_for(finding.id)
+    assert resolution is not None
+    assert resolution.reason == "Acceptable for this genre."
+    assert updated.unresolved_blocking_findings == []
+
+
+def test_ignore_finding_rejects_an_unknown_finding_id() -> None:
+    critique = _critique(findings=[_finding(severity=FindingSeverity.BLOCKING)])
+    service = ScriptQualityGateService()
+    report = service.evaluate(critique=critique, editorial_profile=_mystery_profile())
+
+    with pytest.raises(ValueError, match="No finding"):
+        service.ignore_finding(
+            report=report, finding_id=_finding().id, reason="Doesn't matter."
+        )
+
+
+def test_ignore_finding_rejects_an_empty_reason() -> None:
+    finding = _finding(severity=FindingSeverity.BLOCKING)
+    critique = _critique(findings=[finding])
+    service = ScriptQualityGateService()
+    report = service.evaluate(critique=critique, editorial_profile=_mystery_profile())
+
+    with pytest.raises(ValueError, match="non-empty reason"):
+        service.ignore_finding(report=report, finding_id=finding.id, reason="   ")
+
+
+def test_ignore_finding_rejects_a_finding_already_resolved() -> None:
+    finding = _finding(severity=FindingSeverity.BLOCKING)
+    critique = _critique(findings=[finding])
+    service = ScriptQualityGateService()
+    report = service.evaluate(critique=critique, editorial_profile=_mystery_profile())
+    once = service.ignore_finding(
+        report=report, finding_id=finding.id, reason="First reason."
+    )
+
+    with pytest.raises(ValueError, match="already has a resolution"):
+        service.ignore_finding(
+            report=once, finding_id=finding.id, reason="Second reason."
+        )

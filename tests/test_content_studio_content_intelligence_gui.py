@@ -1795,3 +1795,221 @@ def test_locked_version_hides_edit_controls(qapp: QApplication) -> None:
 
     for editor in view._script_segment_editors.values():
         assert editor.isReadOnly() is True
+
+
+class _FindingStubLLMService:
+    """
+    Mirrors test_content_intelligence_pipeline.py's stub of the same
+    name: echoes every stage except EditorialCritiqueService, which
+    returns one fixed blocking narrative_coherence finding, so the
+    Quality Gate panel has a real, actionable finding to render.
+    """
+
+    def __init__(self) -> None:
+        self.echo = _EchoStubLLMService()
+
+    def generate(
+        self,
+        request: LLMRequest,
+        *,
+        estimated_cost_usd: float = 0.0,
+        profile_ids: list[str] | None = None,
+    ) -> LLMServiceResult:
+        if request.metadata.get("agent") == "EditorialCritiqueService":
+            content = (
+                "FACTUAL_CONFIDENCE: 80\n"
+                "HOOK_STRENGTH: 80\n"
+                "RETENTION_ARCHITECTURE: 80\n"
+                "EMOTIONAL_PROGRESSION: 80\n"
+                "RESEARCH_GROUNDING: 80\n"
+                "NARRATIVE_COHERENCE: 80\n"
+                "AUDIENCE_FIT: 80\n"
+                "VISUAL_OPPORTUNITY_DENSITY: 80\n"
+                "CHARACTER_DEPTH: 80\n"
+                "PAYOFF_STRENGTH: 80\n"
+                "CONTINUITY: 80\n"
+                "---\n"
+                "DIMENSION: narrative_coherence\n"
+                "SEVERITY: blocking\n"
+                "SEGMENT_NUMBER: none\n"
+                "PROBLEM: Unsupported claim about the crew's fate.\n"
+                "REASON: No source in research backs this claim.\n"
+                "RECOMMENDED_CORRECTION: Remove or attribute the claim."
+            )
+
+            result = LLMCallResult(
+                status=LLMCallStatus.SUCCESS,
+                provider=LLMProvider.OPENAI,
+                model="test-model",
+                content=content,
+            )
+
+            return LLMServiceResult(
+                result=result,
+                selected_profile_id="test-profile",
+                all_providers_failed=False,
+            )
+
+        return self.echo.generate(
+            request, estimated_cost_usd=estimated_cost_usd, profile_ids=profile_ids
+        )
+
+
+def _view_with_finding_stub(job_store: InMemoryJobStore) -> ContentStudioView:
+    stub = _FindingStubLLMService()
+
+    return ContentStudioView(
+        job_store=job_store,
+        content_pipeline=ContentPipeline(llm_service=stub),  # type: ignore[arg-type]
+        content_intelligence_pipeline=ContentIntelligencePipeline(
+            llm_service=stub  # type: ignore[arg-type]
+        ),
+        reviewer_service=ReviewerService(llm_service=stub),  # type: ignore[arg-type]
+        topic_candidate_generation_service=TopicCandidateGenerationService(
+            llm_service=stub  # type: ignore[arg-type]
+        ),
+        fact_check_service=FactCheckService(llm_service=stub),  # type: ignore[arg-type]
+        on_change=lambda: None,
+    )
+
+
+def _job_with_quality_gate_finding(view: ContentStudioView, job: VideoJob) -> None:
+    _run_through_script(view, job)
+    view._handle_run_ci_stage("editorial_critique")
+    view._handle_run_ci_stage("quality_gate")
+    quality_gate_index = next(
+        index for index, (key, _label) in enumerate(_CI_STAGES) if key == "quality_gate"
+    )
+    view._handle_select_ci_stage(quality_gate_index)
+
+
+def test_quality_gate_panel_renders_a_checkbox_per_unresolved_finding(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view_with_finding_stub(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _job_with_quality_gate_finding(view, job)
+    view.refresh(job)
+
+    assert job.script_quality_report is not None
+    assert len(job.script_quality_report.blocking_findings) == 1
+    assert len(view._quality_finding_checkboxes) == 1
+
+
+def test_apply_selected_fixes_revises_only_the_checked_findings(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view_with_finding_stub(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _job_with_quality_gate_finding(view, job)
+    view.refresh(job)
+
+    for checkbox in view._quality_finding_checkboxes.values():
+        checkbox.setChecked(True)
+
+    view._handle_apply_selected_fixes()
+
+    assert job.editorial_critique is None
+    assert job.script_quality_report is None
+    assert job.script_version_history is not None
+    assert job.script_version_history.current_version.version_number == 2
+
+
+def test_fix_all_safe_issues_is_a_noop_when_the_only_finding_is_blocking(
+    qapp: QApplication,
+) -> None:
+    """
+    The stub's one finding is BLOCKING, which is never "safe to
+    auto-fix" - Fix All Safe Issues must not touch it.
+    """
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view_with_finding_stub(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _job_with_quality_gate_finding(view, job)
+    view.refresh(job)
+
+    view._handle_fix_all_safe_issues()
+
+    assert job.script_quality_report is not None
+    assert job.script_version_history is not None
+    assert job.script_version_history.current_version.version_number == 1
+
+
+def test_ignore_with_reason_records_a_resolution(qapp: QApplication) -> None:
+    from PySide6.QtWidgets import QLineEdit
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view_with_finding_stub(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _job_with_quality_gate_finding(view, job)
+    view.refresh(job)
+
+    assert job.script_quality_report is not None
+    finding_id = job.script_quality_report.blocking_findings[0].id
+
+    view._handle_ignore_quality_finding(
+        finding_id, QLineEdit("Acceptable creative license for this project.")
+    )
+
+    assert job.script_quality_report is not None
+    resolution = job.script_quality_report.resolution_for(finding_id)
+    assert resolution is not None
+    assert resolution.reason == "Acceptable creative license for this project."
+
+
+def test_ignore_with_a_blank_reason_is_a_noop(qapp: QApplication) -> None:
+    from PySide6.QtWidgets import QLineEdit
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view_with_finding_stub(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _job_with_quality_gate_finding(view, job)
+    view.refresh(job)
+
+    assert job.script_quality_report is not None
+    finding_id = job.script_quality_report.blocking_findings[0].id
+
+    view._handle_ignore_quality_finding(finding_id, QLineEdit("   "))
+
+    assert job.script_quality_report.resolution_for(finding_id) is None
+
+
+def test_return_to_script_selects_the_script_stage(qapp: QApplication) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view_with_finding_stub(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    _job_with_quality_gate_finding(view, job)
+
+    view._handle_return_to_script()
+
+    script_index = next(
+        index for index, (key, _label) in enumerate(_CI_STAGES) if key == "script"
+    )
+    assert view._selected_ci_stage_index == script_index

@@ -74,6 +74,23 @@ class CriticFinding(MissionBaseModel):
 
         return cleaned
 
+    @property
+    def is_safe_to_auto_fix(self) -> bool:
+        """
+        Content Studio Redesign, Phase 13: "Fix All Safe Issues."
+
+        ScriptRevisionService never restructures a script regardless of
+        severity - it only ever rewrites narration text for the beats
+        it's told to address - so every finding is mechanically "safe"
+        in the sense of never breaking structure. BLOCKING findings are
+        still excluded from an unattended "fix everything safe" pass:
+        a finding severe enough to force revision on its own warrants
+        a person actually looking at it before it's auto-applied,
+        rather than being silently swept into a batch fix.
+        """
+
+        return self.severity != FindingSeverity.BLOCKING
+
 
 class EditorialCritique(MissionBaseModel):
     """

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from uuid import UUID
 
 from src.models.editorial_critique import CriticFinding, EditorialCritique
 from src.models.generated_script import GeneratedScript, ScriptSegment
@@ -40,8 +41,23 @@ class ScriptRevisionService:
         *,
         script: GeneratedScript,
         critique: EditorialCritique,
+        finding_ids: list[UUID] | None = None,
     ) -> GeneratedScript:
-        if not critique.findings:
+        """
+        finding_ids is optional (Content Studio Redesign, Phase 13:
+        "Apply Selected Fixes") - when given, only findings whose id
+        is in this list are addressed, exactly as if the critique had
+        only ever contained them; omitting it (the default) addresses
+        every finding, reproducing this method's exact prior behavior.
+        """
+
+        findings = (
+            critique.findings
+            if finding_ids is None
+            else [finding for finding in critique.findings if finding.id in finding_ids]
+        )
+
+        if not findings:
             raise ValueError(
                 "Script revision requires at least one critique finding to " "act on."
             )
@@ -49,7 +65,7 @@ class ScriptRevisionService:
         ordered_segments = sorted(
             script.segments, key=lambda segment: segment.start_seconds
         )
-        findings_by_segment = self._group_findings(critique.findings)
+        findings_by_segment = self._group_findings(findings)
 
         request = LLMRequest(
             provider=LLMProvider.OPENAI,

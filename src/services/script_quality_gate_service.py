@@ -1,8 +1,38 @@
 from __future__ import annotations
 
+import hashlib
+from uuid import UUID
+
 from src.models.editorial_critique import EditorialCritique
 from src.models.editorial_profile import EditorialProfile
-from src.models.script_quality_report import ScriptQualityReport, ScriptQualityStatus
+from src.models.generated_script import GeneratedScript
+from src.models.script_quality_report import (
+    FindingResolution,
+    FindingResolutionAction,
+    ScriptQualityReport,
+    ScriptQualityStatus,
+)
+
+
+def _content_hash(script: GeneratedScript) -> str:
+    """
+    A deterministic content hash binding a quality result to the exact
+    script it was computed against (Content Studio Redesign, Phase 13:
+    "Quality result binds to exact Script version/hash"). Built from
+    every segment's narration and timing - not id/created_at, which
+    would make two textually-identical scripts hash differently for no
+    meaningful reason.
+    """
+
+    ordered = sorted(script.segments, key=lambda segment: segment.segment_number)
+    payload = "\n".join(
+        f"{segment.segment_number}|{segment.start_seconds}|"
+        f"{segment.end_seconds}|{segment.narrative_function.value}|"
+        f"{segment.narration}"
+        for segment in ordered
+    )
+
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 class ScriptQualityGateService:
@@ -21,7 +51,17 @@ class ScriptQualityGateService:
         *,
         critique: EditorialCritique,
         editorial_profile: EditorialProfile,
+        script: GeneratedScript | None = None,
+        script_version_number: int | None = None,
     ) -> ScriptQualityReport:
+        """
+        script/script_version_number are optional so every pre-Phase-13
+        caller/test keeps constructing a report exactly as before; the
+        real ContentIntelligencePipeline call site always supplies both
+        so the resulting report can be bound to an exact script
+        version/hash.
+        """
+
         declared_thresholds = editorial_profile.content_intelligence.quality_thresholds
 
         evaluated_thresholds = {
@@ -60,4 +100,45 @@ class ScriptQualityGateService:
             blocking_findings=blocking_findings,
             major_findings=major_findings,
             status=status,
+            script_version_number=script_version_number,
+            script_content_hash=_content_hash(script) if script is not None else None,
+        )
+
+    @staticmethod
+    def ignore_finding(
+        *,
+        report: ScriptQualityReport,
+        finding_id: UUID,
+        reason: str,
+    ) -> ScriptQualityReport:
+        """
+        Record that a person chose to ignore one finding, with a
+        reason - Phase 13: "Store ignored findings with user reason."
+        Does not change the report's score/status: an ignored finding
+        is still visible, just annotated, matching this codebase's
+        append-only audit-trail philosophy.
+        """
+
+        matched = next(
+            (finding for finding in report.all_findings if finding.id == finding_id),
+            None,
+        )
+
+        if matched is None:
+            raise ValueError(f"No finding {finding_id} exists on this report.")
+
+        if not reason.strip():
+            raise ValueError("Ignoring a finding requires a non-empty reason.")
+
+        if report.resolution_for(matched.id) is not None:
+            raise ValueError(f"Finding {finding_id} already has a resolution.")
+
+        resolution = FindingResolution(
+            finding_id=matched.id,
+            action=FindingResolutionAction.IGNORED,
+            reason=reason.strip(),
+        )
+
+        return report.model_copy(
+            update={"resolutions": [*report.resolutions, resolution]}
         )

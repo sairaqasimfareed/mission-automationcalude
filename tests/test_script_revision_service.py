@@ -213,3 +213,43 @@ def test_dry_run_response_is_itself_parseable() -> None:
     revised = replay_service.revise(script=_script(), critique=_critique())
 
     assert len(revised.segments) == 2
+
+
+def test_revise_with_finding_ids_only_addresses_the_selected_findings() -> None:
+    stub = _StubLLMService(content=_REVISED_RESPONSE)
+    service = ScriptRevisionService(llm_service=stub)  # type: ignore[arg-type]
+
+    selected = _finding(segment_number=1, problem="A finding on segment 1.")
+    unselected = _finding(segment_number=2, problem="A finding on segment 2.")
+    critique = _critique(findings=[selected, unselected])
+
+    service.revise(script=_script(), critique=critique, finding_ids=[selected.id])
+
+    assert stub.last_request is not None
+    assert "A finding on segment 1." in stub.last_request.prompt
+    assert "A finding on segment 2." not in stub.last_request.prompt
+
+
+def test_revise_with_no_matching_finding_ids_raises() -> None:
+    stub = _StubLLMService(content=_REVISED_RESPONSE)
+    service = ScriptRevisionService(llm_service=stub)  # type: ignore[arg-type]
+
+    from uuid import uuid4
+
+    with pytest.raises(ValueError, match="at least one critique finding"):
+        service.revise(script=_script(), critique=_critique(), finding_ids=[uuid4()])
+
+
+def test_revise_without_finding_ids_addresses_every_finding_as_before() -> None:
+    stub = _StubLLMService(content=_REVISED_RESPONSE)
+    service = ScriptRevisionService(llm_service=stub)  # type: ignore[arg-type]
+
+    finding_one = _finding(segment_number=1, problem="A finding on segment 1.")
+    finding_two = _finding(segment_number=2, problem="A finding on segment 2.")
+    critique = _critique(findings=[finding_one, finding_two])
+
+    service.revise(script=_script(), critique=critique)
+
+    assert stub.last_request is not None
+    assert "A finding on segment 1." in stub.last_request.prompt
+    assert "A finding on segment 2." in stub.last_request.prompt

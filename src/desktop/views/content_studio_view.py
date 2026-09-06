@@ -5,6 +5,7 @@ from uuid import UUID
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFormLayout,
     QFrame,
@@ -203,6 +204,7 @@ class ContentStudioView(QWidget):
         self._script_compare_from: QComboBox | None = None
         self._script_compare_to: QComboBox | None = None
         self._last_script_comparison: ScriptVersionComparison | None = None
+        self._quality_finding_checkboxes: dict[UUID, QCheckBox] = {}
 
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -2281,6 +2283,14 @@ class ContentStudioView(QWidget):
         return True
 
     def _render_quality_gate_panel(self, layout: QVBoxLayout, job: VideoJob) -> bool:
+        """
+        Content Studio Redesign, Phase 13: Critique tab / formal
+        Quality Gate. Separates the Reviewer's advisory critique
+        (findings) from the system's own pass/fail decision - a
+        finding is one input to this gate, never the sole authority
+        (the LLM alone never decides Quality passes).
+        """
+
         report = job.script_quality_report
 
         if report is None:
@@ -2297,6 +2307,24 @@ class ContentStudioView(QWidget):
 
         layout.addWidget(badge(report.status.value))
 
+        if (
+            report.script_version_number is not None
+            and job.script_version_history is not None
+            and report.script_version_number
+            != job.script_version_history.current_version.version_number
+        ):
+            layout.addWidget(
+                status_label(
+                    f"This result was computed against script v"
+                    f"{report.script_version_number}, but the current "
+                    f"version is v"
+                    f"{job.script_version_history.current_version.version_number} "
+                    "- it no longer reflects the script. Run the quality "
+                    "gate again.",
+                    role="warning",
+                )
+            )
+
         for dimension, threshold in sorted(report.dimension_thresholds.items()):
             score = report.dimension_scores.get(dimension, 0)
             passed = dimension not in report.failed_dimensions
@@ -2307,10 +2335,70 @@ class ContentStudioView(QWidget):
                 )
             )
 
-        if report.blocking_findings:
-            layout.addWidget(
-                small_muted(f"{len(report.blocking_findings)} blocking finding(s).")
+        self._quality_finding_checkboxes = {}
+        findings = report.all_findings
+
+        if not findings:
+            layout.addWidget(status_label("No findings.", role="success"))
+
+            return True
+
+        for finding in findings:
+            resolution = report.resolution_for(finding.id)
+            location = (
+                f"segment {finding.segment_number}"
+                if finding.segment_number is not None
+                else "whole script"
             )
+            safe_tag = "safe" if finding.is_safe_to_auto_fix else "needs review"
+
+            if resolution is not None:
+                layout.addWidget(
+                    small_muted(
+                        f"[{finding.severity.value} · {location} · "
+                        f"{resolution.action.value}"
+                        + (f": {resolution.reason}" if resolution.reason else "")
+                        + f"] {finding.problem}"
+                    )
+                )
+
+                continue
+
+            checkbox = QCheckBox(
+                f"[{finding.severity.value} · {location} · {safe_tag}] "
+                f"{finding.problem} -> {finding.recommended_correction}"
+            )
+            self._quality_finding_checkboxes[finding.id] = checkbox
+            layout.addWidget(checkbox)
+
+            ignore_row = QHBoxLayout()
+            reason_input = QLineEdit()
+            reason_input.setPlaceholderText("Reason for ignoring...")
+            ignore_row.addWidget(reason_input)
+            ignore_button = button("Ignore with reason", variant="ghost")
+            ignore_button.clicked.connect(
+                lambda _checked=False, fid=finding.id, inp=reason_input: (
+                    self._handle_ignore_quality_finding(fid, inp)
+                )
+            )
+            ignore_row.addWidget(ignore_button)
+            layout.addLayout(ignore_row)
+
+        actions_row = QHBoxLayout()
+
+        apply_selected_button = button("Apply selected fixes", variant="primary")
+        apply_selected_button.clicked.connect(self._handle_apply_selected_fixes)
+        actions_row.addWidget(apply_selected_button)
+
+        fix_all_safe_button = button("Fix all safe issues", variant="ghost")
+        fix_all_safe_button.clicked.connect(self._handle_fix_all_safe_issues)
+        actions_row.addWidget(fix_all_safe_button)
+
+        return_button = button("Return to script", variant="ghost")
+        return_button.clicked.connect(self._handle_return_to_script)
+        actions_row.addWidget(return_button)
+
+        layout.addLayout(actions_row)
 
         return True
 
@@ -2740,6 +2828,12 @@ class ContentStudioView(QWidget):
 
                 return
 
+        # The prior critique/quality report describes the pre-edit
+        # script - clear both, matching every other script-mutating
+        # pipeline path (Phase 13: invalidation applies uniformly).
+        job.editorial_critique = None
+        job.script_quality_report = None
+
         self._on_change()
 
     def _handle_restore_script_version(self, version_number: int) -> None:
@@ -2795,6 +2889,87 @@ class ContentStudioView(QWidget):
 
         self._last_script_comparison = comparison
         self._on_change()
+
+    def _handle_ignore_quality_finding(
+        self, finding_id: UUID, reason_input: QLineEdit
+    ) -> None:
+        reason = reason_input.text().strip()
+
+        if not reason:
+            return
+
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        try:
+            self._content_intelligence_pipeline.run_ignore_finding(
+                job, finding_id=finding_id, reason=reason
+            )
+        except (RuntimeError, ValueError) as error:
+            self._record_error(job, f"Could not ignore finding: {error}")
+
+            return
+
+        self._on_change()
+
+    def _handle_apply_selected_fixes(self) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        selected_ids = [
+            finding_id
+            for finding_id, checkbox in self._quality_finding_checkboxes.items()
+            if checkbox.isChecked()
+        ]
+
+        if not selected_ids:
+            return
+
+        try:
+            self._content_intelligence_pipeline.run_revision(
+                job, finding_ids=selected_ids
+            )
+        except (RuntimeError, ValueError) as error:
+            self._record_error(job, f"Could not apply selected fixes: {error}")
+
+            return
+
+        self._on_change()
+
+    def _handle_fix_all_safe_issues(self) -> None:
+        job = self._current_job()
+
+        if job is None or job.script_quality_report is None:
+            return
+
+        report = job.script_quality_report
+        safe_ids = [
+            finding.id
+            for finding in report.all_findings
+            if finding.is_safe_to_auto_fix and report.resolution_for(finding.id) is None
+        ]
+
+        if not safe_ids:
+            return
+
+        try:
+            self._content_intelligence_pipeline.run_revision(job, finding_ids=safe_ids)
+        except (RuntimeError, ValueError) as error:
+            self._record_error(job, f"Could not fix safe issues: {error}")
+
+            return
+
+        self._on_change()
+
+    def _handle_return_to_script(self) -> None:
+        script_index = next(
+            index for index, (key, _label) in enumerate(_CI_STAGES) if key == "script"
+        )
+        self._handle_select_ci_stage(script_index)
 
     def _build_workflow_card(self, job: VideoJob) -> None:
         frame, layout = card("Content workflow", icon_name="dashboard")

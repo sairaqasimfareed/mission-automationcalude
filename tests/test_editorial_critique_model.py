@@ -85,3 +85,21 @@ def test_character_dependent_dimensions_are_exactly_character_and_payoff() -> No
         QualityDimension.CHARACTER_DEPTH,
         QualityDimension.PAYOFF_STRENGTH,
     }
+
+
+def test_blocking_finding_is_not_safe_to_auto_fix() -> None:
+    finding = _finding(severity=FindingSeverity.BLOCKING)
+
+    assert finding.is_safe_to_auto_fix is False
+
+
+@pytest.mark.parametrize(
+    "severity",
+    [FindingSeverity.MINOR, FindingSeverity.MODERATE, FindingSeverity.MAJOR],
+)
+def test_non_blocking_findings_are_safe_to_auto_fix(
+    severity: FindingSeverity,
+) -> None:
+    finding = _finding(severity=severity)
+
+    assert finding.is_safe_to_auto_fix is True

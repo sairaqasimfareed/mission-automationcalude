@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 import pytest
 
 from src.models.approval import ApprovalPolicyConfig
@@ -485,6 +487,31 @@ def test_run_quality_gate_produces_a_status() -> None:
     assert job.script_quality_report.genre_id == "genre.mystery"
 
 
+def test_run_quality_gate_binds_the_exact_script_version() -> None:
+    """Content Studio Redesign, Phase 13: "Quality result binds to
+    exact Script version/hash." """
+
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_audience_promise(_job())
+    job = pipeline.run_research(job)
+    job = pipeline.run_story_angles(job)
+    job = pipeline.run_narrative_architecture(job)
+    job = pipeline.run_hooks(job)
+    job = pipeline.run_script(job)
+    job = pipeline.run_editorial_critique(job)
+    job = pipeline.run_quality_gate(job)
+
+    assert job.script_version_history is not None
+    assert job.script_quality_report is not None
+    assert (
+        job.script_quality_report.script_version_number
+        == job.script_version_history.current_version.version_number
+        == 1
+    )
+    assert job.script_quality_report.script_content_hash is not None
+
+
 def test_run_revision_requires_script_and_critique() -> None:
     pipeline, _ = _pipeline()
 
@@ -492,59 +519,67 @@ def test_run_revision_requires_script_and_critique() -> None:
         pipeline.run_revision(_job())
 
 
-def test_run_revision_clears_the_stale_critique_and_quality_report() -> None:
-    class _FindingStubLLMService:
-        def __init__(self) -> None:
-            self.echo = _EchoStubLLMService()
+class _FindingStubLLMService:
+    """
+    Echoes every stage except EditorialCritiqueService, which returns
+    one fixed blocking narrative_coherence finding - shared by every
+    test in this file that needs a real, non-empty critique to act on
+    (revision, selective fixes, ignore-with-reason).
+    """
 
-        def generate(
-            self,
-            request: LLMRequest,
-            *,
-            estimated_cost_usd: float = 0.0,
-            profile_ids: list[str] | None = None,
-        ) -> LLMServiceResult:
-            if request.metadata.get("agent") == "EditorialCritiqueService":
-                content = (
-                    "FACTUAL_CONFIDENCE: 80\n"
-                    "HOOK_STRENGTH: 80\n"
-                    "RETENTION_ARCHITECTURE: 80\n"
-                    "EMOTIONAL_PROGRESSION: 80\n"
-                    "RESEARCH_GROUNDING: 80\n"
-                    "NARRATIVE_COHERENCE: 80\n"
-                    "AUDIENCE_FIT: 80\n"
-                    "VISUAL_OPPORTUNITY_DENSITY: 80\n"
-                    "CHARACTER_DEPTH: 80\n"
-                    "PAYOFF_STRENGTH: 80\n"
-                    "CONTINUITY: 80\n"
-                    "---\n"
-                    "DIMENSION: narrative_coherence\n"
-                    "SEVERITY: blocking\n"
-                    "SEGMENT_NUMBER: none\n"
-                    "PROBLEM: Unsupported claim about the crew's fate.\n"
-                    "REASON: No source in research backs this claim.\n"
-                    "RECOMMENDED_CORRECTION: Remove or attribute the claim."
-                )
+    def __init__(self) -> None:
+        self.echo = _EchoStubLLMService()
 
-                result = LLMCallResult(
-                    status=LLMCallStatus.SUCCESS,
-                    provider=LLMProvider.OPENAI,
-                    model="test-model",
-                    content=content,
-                )
-
-                return LLMServiceResult(
-                    result=result,
-                    selected_profile_id="test-profile",
-                    all_providers_failed=False,
-                )
-
-            return self.echo.generate(
-                request,
-                estimated_cost_usd=estimated_cost_usd,
-                profile_ids=profile_ids,
+    def generate(
+        self,
+        request: LLMRequest,
+        *,
+        estimated_cost_usd: float = 0.0,
+        profile_ids: list[str] | None = None,
+    ) -> LLMServiceResult:
+        if request.metadata.get("agent") == "EditorialCritiqueService":
+            content = (
+                "FACTUAL_CONFIDENCE: 80\n"
+                "HOOK_STRENGTH: 80\n"
+                "RETENTION_ARCHITECTURE: 80\n"
+                "EMOTIONAL_PROGRESSION: 80\n"
+                "RESEARCH_GROUNDING: 80\n"
+                "NARRATIVE_COHERENCE: 80\n"
+                "AUDIENCE_FIT: 80\n"
+                "VISUAL_OPPORTUNITY_DENSITY: 80\n"
+                "CHARACTER_DEPTH: 80\n"
+                "PAYOFF_STRENGTH: 80\n"
+                "CONTINUITY: 80\n"
+                "---\n"
+                "DIMENSION: narrative_coherence\n"
+                "SEVERITY: blocking\n"
+                "SEGMENT_NUMBER: none\n"
+                "PROBLEM: Unsupported claim about the crew's fate.\n"
+                "REASON: No source in research backs this claim.\n"
+                "RECOMMENDED_CORRECTION: Remove or attribute the claim."
             )
 
+            result = LLMCallResult(
+                status=LLMCallStatus.SUCCESS,
+                provider=LLMProvider.OPENAI,
+                model="test-model",
+                content=content,
+            )
+
+            return LLMServiceResult(
+                result=result,
+                selected_profile_id="test-profile",
+                all_providers_failed=False,
+            )
+
+        return self.echo.generate(
+            request,
+            estimated_cost_usd=estimated_cost_usd,
+            profile_ids=profile_ids,
+        )
+
+
+def _job_with_blocking_finding() -> tuple[ContentIntelligencePipeline, VideoJob]:
     stub = _FindingStubLLMService()
     pipeline = ContentIntelligencePipeline(llm_service=stub)  # type: ignore[arg-type]
 
@@ -556,6 +591,12 @@ def test_run_revision_clears_the_stale_critique_and_quality_report() -> None:
     job = pipeline.run_script(job)
     job = pipeline.run_editorial_critique(job)
     job = pipeline.run_quality_gate(job)
+
+    return pipeline, job
+
+
+def test_run_revision_clears_the_stale_critique_and_quality_report() -> None:
+    pipeline, job = _job_with_blocking_finding()
 
     assert job.script_quality_report is not None
     assert job.script_quality_report.status.value == "needs_revision"
@@ -574,6 +615,83 @@ def test_run_revision_clears_the_stale_critique_and_quality_report() -> None:
     assert job.script_version_history.current_version.version_number == 2
     assert job.script_version_history.current_version.parent_version_number == 1
     assert job.script_version_history.current_version.change_class.value == "narrative"
+
+
+def test_run_revision_with_finding_ids_only_addresses_the_selected_findings() -> None:
+    """Content Studio Redesign, Phase 13: "Apply Selected Fixes"."""
+
+    pipeline, job = _job_with_blocking_finding()
+    assert job.editorial_critique is not None
+    finding_id = job.editorial_critique.findings[0].id
+
+    job = pipeline.run_revision(job, finding_ids=[finding_id])
+
+    assert job.editorial_critique is None
+    assert job.script_quality_report is None
+    assert job.script_version_history is not None
+    assert job.script_version_history.current_version.version_number == 2
+
+
+def test_run_ignore_finding_records_a_resolution_without_changing_the_script() -> None:
+    """Content Studio Redesign, Phase 13: "Store ignored findings with
+    user reason" - ignoring never mutates the script itself."""
+
+    pipeline, job = _job_with_blocking_finding()
+    assert job.script_quality_report is not None
+    finding_id = job.script_quality_report.blocking_findings[0].id
+    original_narration = job.generated_script.full_narration  # type: ignore[union-attr]
+
+    job = pipeline.run_ignore_finding(
+        job, finding_id=finding_id, reason="Confirmed acceptable for this project."
+    )
+
+    assert job.script_quality_report is not None
+    resolution = job.script_quality_report.resolution_for(finding_id)
+    assert resolution is not None
+    assert resolution.reason == "Confirmed acceptable for this project."
+    assert job.script_quality_report.unresolved_blocking_findings == []
+    assert job.generated_script.full_narration == original_narration  # type: ignore[union-attr]
+
+
+def test_run_ignore_finding_requires_an_existing_quality_report() -> None:
+    pipeline, _ = _pipeline()
+
+    with pytest.raises(RuntimeError, match="no quality report"):
+        pipeline.run_ignore_finding(
+            _job(), finding_id=uuid4(), reason="Doesn't matter."
+        )
+
+
+def test_run_script_selection_edit_invalidates_a_stale_quality_report() -> None:
+    """
+    Content Studio Redesign, Phase 13: "Quality result invalidation
+    after script change" applies to every script-mutating path, not
+    only the critique-driven run_revision.
+    """
+
+    pipeline, job = _job_with_blocking_finding()
+    assert job.script_quality_report is not None
+    target_segment = job.generated_script.segments[0].segment_number  # type: ignore[union-attr]
+
+    job = pipeline.run_script_selection_edit(
+        job,
+        request=SelectionEditRequest(
+            segment_number=target_segment, operation=SelectionEditOperation.REWRITE
+        ),
+    )
+
+    assert job.editorial_critique is None
+    assert job.script_quality_report is None
+
+
+def test_run_script_restore_invalidates_a_stale_quality_report() -> None:
+    pipeline, job = _job_with_blocking_finding()
+    assert job.script_quality_report is not None
+
+    job = pipeline.run_script_restore(job, version_number=1)
+
+    assert job.editorial_critique is None
+    assert job.script_quality_report is None
 
 
 def _job_with_script() -> tuple[ContentIntelligencePipeline, VideoJob]:

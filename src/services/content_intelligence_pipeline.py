@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import UUID
+
 from src.agents.research_agent.agent import ResearchAgent
 from src.agents.scene_planner.agent import ScenePlannerAgent
 from src.models.approval import ApprovalDecision, HumanApprovalAction
@@ -646,7 +648,14 @@ class ContentIntelligencePipeline:
         return job
 
     def run_quality_gate(self, job: VideoJob) -> VideoJob:
-        """Stage 9: aggregate the critique against genre thresholds."""
+        """
+        Stage 9: aggregate the critique against genre thresholds.
+
+        Content Studio Redesign, Phase 13: the resulting report is
+        bound to the exact script version/hash it was computed
+        against, so a later script change can be told apart from a
+        stale-but-still-displayed report.
+        """
 
         if job.editorial_critique is None:
             raise RuntimeError("The quality gate requires an editorial critique.")
@@ -658,17 +667,33 @@ class ContentIntelligencePipeline:
         job.script_quality_report = self.script_quality_gate_service.evaluate(
             critique=job.editorial_critique,
             editorial_profile=editorial_profile,
+            script=job.generated_script,
+            script_version_number=(
+                job.script_version_history.current_version.version_number
+                if job.script_version_history is not None
+                else None
+            ),
         )
 
         return job
 
-    def run_revision(self, job: VideoJob) -> VideoJob:
+    def run_revision(
+        self,
+        job: VideoJob,
+        *,
+        finding_ids: list[UUID] | None = None,
+    ) -> VideoJob:
         """
         Stage 10: revise the script to address the current critique's
         findings. The critique and quality report describe the
         pre-revision script, so both are cleared afterward - a fresh
         run_editorial_critique/run_quality_gate pass on the revised
         script is required before it can be approved.
+
+        finding_ids is optional (Content Studio Redesign, Phase 13:
+        "Apply Selected Fixes" vs "Fix All Safe Issues") - omitting it
+        addresses every finding, reproducing this method's exact prior
+        behavior.
         """
 
         if job.generated_script is None or job.editorial_critique is None:
@@ -682,6 +707,7 @@ class ContentIntelligencePipeline:
         job.generated_script = self.script_revision_service.revise(
             script=job.generated_script,
             critique=critique,
+            finding_ids=finding_ids,
         )
 
         if job.script_version_history is not None:
@@ -698,6 +724,31 @@ class ContentIntelligencePipeline:
 
         return job
 
+    def run_ignore_finding(
+        self,
+        job: VideoJob,
+        *,
+        finding_id: UUID,
+        reason: str,
+    ) -> VideoJob:
+        """
+        Content Studio Redesign, Phase 13: "Store ignored findings
+        with user reason." Does not touch the script or clear the
+        quality report - ignoring a finding is a disposition on the
+        finding itself, not a script change.
+        """
+
+        if job.script_quality_report is None:
+            raise RuntimeError("There is no quality report to ignore a finding on.")
+
+        job.script_quality_report = self.script_quality_gate_service.ignore_finding(
+            report=job.script_quality_report,
+            finding_id=finding_id,
+            reason=reason,
+        )
+
+        return job
+
     def run_script_selection_edit(
         self,
         job: VideoJob,
@@ -710,9 +761,11 @@ class ContentIntelligencePipeline:
         Natural/Improve Transition/Custom Instruction) to a single
         script segment, on a person's direct request - distinct from
         run_revision, which applies a whole EditorialCritique. Records
-        one new manual-edit version; does not touch or clear any
-        existing critique/quality-gate state, since a selection edit
-        was not produced by, and does not respond to, either of those.
+        one new manual-edit version. Any existing critique/quality-gate
+        report describes the pre-edit script, so both are cleared here
+        too, exactly like run_revision does (Phase 13: "Quality result
+        invalidation after script change" applies to every script-
+        mutating path, not only the critique-driven one).
         """
 
         if job.generated_script is None:
@@ -742,6 +795,9 @@ class ContentIntelligencePipeline:
                 change_summary=change_summary,
             )
 
+        job.editorial_critique = None
+        job.script_quality_report = None
+
         self.invalidation_service.on_script_changed(job)
 
         return job
@@ -756,7 +812,10 @@ class ContentIntelligencePipeline:
         Content Studio Redesign, Phase 12: restore an earlier script
         version's content as a new version (never destructive - the
         restored-from version, and everything in between, remains in
-        history exactly as it was).
+        history exactly as it was). Any existing critique/quality-gate
+        report describes the pre-restore script, so both are cleared
+        here too (Phase 13: invalidation applies to every script-
+        mutating path).
         """
 
         if job.script_version_history is None:
@@ -767,6 +826,9 @@ class ContentIntelligencePipeline:
             version_number=version_number,
         )
         job.generated_script = job.script_version_history.current_version.script
+
+        job.editorial_critique = None
+        job.script_quality_report = None
 
         self.invalidation_service.on_script_changed(job)
 

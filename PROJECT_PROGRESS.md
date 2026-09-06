@@ -5,6 +5,80 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-06 - Content Studio Redesign: Phase 13 Script Critique and Formal Quality Gate
+
+**KEEP/MODIFY/REUSE first.** `EditorialCritiqueService`,
+`ScriptQualityGateService`, and `ScriptRevisionService` already
+existed and already separated advisory critique from a formal
+pass/needs-revision/needs-review decision - confirmed by direct code
+inspection. Real new scope: selective fix application, safe-vs-needs-
+review classification, ignore-with-reason tracking, and version/hash
+binding.
+
+**Safe vs needs-review, defined mechanically.** `CriticFinding` gained
+`is_safe_to_auto_fix` - true for every severity except BLOCKING, since
+`ScriptRevisionService` never restructures a script regardless of
+severity (structure is always preserved); a BLOCKING finding is
+excluded from an unattended "Fix All Safe Issues" pass specifically
+because its severity means a person should look at it first.
+
+**Apply Selected Fixes.** `ScriptRevisionService.revise()` gained an
+optional `finding_ids` filter - omitting it addresses every finding,
+reproducing exact prior behavior; supplying it addresses only those.
+Combined with `is_safe_to_auto_fix`, this covers both "Apply Selected
+Fixes" and "Fix All Safe Issues" with one mechanism, no duplicate
+service method needed.
+
+**Ignore with reason.** New `FindingResolution`/`FindingResolutionAction`
+- `ScriptQualityReport.resolutions` is append-only, like every other
+audit trail in this codebase. `ScriptQualityGateService.ignore_finding()`
+validates a non-empty reason, rejects an unknown finding id, and
+rejects re-resolving an already-resolved finding.
+
+**Quality result binds to exact Script version/hash.** `ScriptQualityReport`
+gained optional `script_version_number`/`script_content_hash`; the
+hash is a deterministic sha256 over every segment's narration+timing.
+The Quality Gate panel now shows a staleness warning when the
+displayed report's bound version no longer matches the script's
+current version.
+
+**A retroactive fix, not new scope.** While implementing this phase's
+own "Quality result invalidation after script change" requirement,
+found that Phase 12's `run_script_selection_edit()`/`run_script_restore()`
+(and the GUI's raw "Save typed edit" path) mutated the script without
+clearing a stale `editorial_critique`/`script_quality_report`, unlike
+`run_revision()`. Fixed to match `run_revision()`'s existing behavior
+exactly, so every script-mutating path now invalidates consistently -
+this is exactly the kind of gap this phase's own test requirement is
+supposed to catch, so fixing it here rather than filing it away was
+the right call.
+
+**GUI.** The Quality Gate panel now shows a checkbox per unresolved
+finding (severity, location, safe/needs-review tag) with an inline
+"Ignore with reason" input+button, plus "Apply selected fixes," "Fix
+all safe issues," and "Return to script" actions. "Run Critique Again"
+needed no new work - the existing generic per-stage "Run" button
+already re-runs any stage.
+
+**Tests:** `test_editorial_critique_model.py` (+4), `test_script_quality_report_model.py`
+(+9, rewritten to explicit-keyword construction so the model's 3 new
+fields didn't add mypy noise to the file's existing `**dict`-unpacking
+helper), `test_script_quality_gate_service.py` (+9), `test_script_revision_service.py`
+(+3), 6 new pipeline cases, 6 new GUI cases. mypy/ruff/black clean;
+the pre-existing `test_content_intelligence_pipeline.py` mypy baseline
+(60 errors) is unchanged, confirmed via `git stash` diff. All 53
+pipeline tests and all targeted GUI tests pass.
+
+**Deliberately not built this pass:** `ScriptQualityReport` still only
+carries BLOCKING/MAJOR findings, not the full MINOR/MODERATE/MAJOR/
+BLOCKING spread the source document's wording implies - a pre-existing
+model limitation from an earlier sprint, not something this pass
+changed; no "Fix All" beyond "Fix All *Safe*" - unattended-fixing a
+BLOCKING finding is exactly what the safe/needs-review split exists to
+prevent.
+
+---
+
 ## 2026-09-06 - Content Studio Redesign: Phase 12 Script Generation, Rich Editor and Version Control
 
 **KEEP/MODIFY/REUSE first.** Direct code inspection (not assumed) found
