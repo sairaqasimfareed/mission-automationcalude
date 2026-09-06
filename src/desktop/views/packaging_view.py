@@ -3,8 +3,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from uuid import UUID
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
+    QApplication,
     QFrame,
     QLineEdit,
     QScrollArea,
@@ -22,6 +24,7 @@ from src.desktop.widgets import (
     status_label,
     subheading,
 )
+from src.models.final_export import FinalExportPackage
 from src.models.video_job import VideoJob
 from src.services.final_export.final_export_service import FinalExportService
 from src.services.seo.seo_context_builder import SEOContextBuilder
@@ -165,13 +168,42 @@ class PackagingView(QWidget):
         thumbnail = self._job_store.get_thumbnail(self._job_id)
 
         if final_export is not None:
+            status_role = (
+                "success" if final_export.status.value == "approved" else "warning"
+            )
+
             layout.addWidget(
-                status_label(f"Status: {final_export.status.value}", role="success")
+                status_label(f"Status: {final_export.status.value}", role=status_role)
             )
             layout.addWidget(small_muted(f"Video: {final_export.final_video_path}"))
             layout.addWidget(
                 small_muted(f"Export directory: {final_export.export_directory}")
             )
+
+            self._build_qc_summary(layout, final_export)
+
+            actions_row_widgets: list[QWidget] = []
+
+            open_folder_button = button(
+                "Open output folder",
+                icon_name="folder",
+            )
+            open_folder_button.clicked.connect(
+                lambda: self._handle_open_output_folder(final_export),
+            )
+            actions_row_widgets.append(open_folder_button)
+
+            if final_export.manifest_path is not None:
+                copy_manifest_button = button(
+                    "Copy manifest path",
+                )
+                copy_manifest_button.clicked.connect(
+                    lambda: self._handle_copy_manifest_path(final_export),
+                )
+                actions_row_widgets.append(copy_manifest_button)
+
+            for action_widget in actions_row_widgets:
+                layout.addWidget(action_widget, alignment=_LEFT)
         elif render_result is not None and render_result.success:
             if seo_package is not None and thumbnail is not None:
                 layout.addWidget(small_muted("Not built yet."))
@@ -193,6 +225,56 @@ class PackagingView(QWidget):
             )
 
         self._layout.addWidget(frame)
+
+    def _build_qc_summary(
+        self,
+        layout: QVBoxLayout,
+        final_export: FinalExportPackage,
+    ) -> None:
+        """
+        Show the Final Package screen's QC summary.
+
+        Re-runs the same, cheap, deterministic (no LLM/network calls)
+        validation the build step already ran, so the summary always
+        reflects the package's current on-disk state rather than a
+        stale snapshot from whenever it was last built.
+        """
+
+        validation = self._final_export_service.validation_service.validate(
+            final_export
+        )
+
+        if validation.is_valid and not validation.has_warnings:
+            layout.addWidget(status_label("QC: all checks passed.", role="success"))
+            return
+
+        for issue in validation.errors:
+            layout.addWidget(status_label(f"QC error: {issue.message}", role="error"))
+
+        for issue in validation.warnings:
+            layout.addWidget(
+                status_label(f"QC warning: {issue.message}", role="warning")
+            )
+
+    def _handle_open_output_folder(
+        self,
+        final_export: FinalExportPackage,
+    ) -> None:
+        QDesktopServices.openUrl(
+            QUrl.fromLocalFile(final_export.export_directory),
+        )
+
+    def _handle_copy_manifest_path(
+        self,
+        final_export: FinalExportPackage,
+    ) -> None:
+        if final_export.manifest_path is None:
+            return
+
+        clipboard = QApplication.clipboard()
+
+        if clipboard is not None:
+            clipboard.setText(final_export.manifest_path)
 
     def _handle_generate_seo(self, target_audience: str) -> None:
         job = self._current_job()

@@ -23,6 +23,13 @@ class FinalExportValidationCode(str, Enum):
     INVALID_DURATION = "invalid_duration"
     MANIFEST_MISSING = "manifest_missing"
 
+    # Post-Script-Approval Production Plan, Phase 15: "Run media
+    # integrity checks: readable file, duration, resolution, aspect
+    # ratio, audio present, no empty output."
+    MEDIA_NOT_READABLE = "media_not_readable"
+    MEDIA_NO_AUDIO_STREAM = "media_no_audio_stream"
+    MEDIA_RESOLUTION_MISMATCH = "media_resolution_mismatch"
+
 
 class FinalExportValidationIssue(MissionBaseModel):
     """One warning or error discovered during final export validation."""

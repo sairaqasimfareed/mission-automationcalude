@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import Field, field_validator
 
 from src.models.base import MissionBaseModel
+from src.models.production_provenance import ProductionProvenance
 from src.models.seo import SEOPackage
 from src.models.thumbnail import ThumbnailArtifact
 
@@ -46,6 +47,11 @@ class FinalExportPackage(MissionBaseModel):
     manifest_path: str | None = None
 
     status: FinalExportStatus = FinalExportStatus.DRAFT
+
+    # Post-Script-Approval Production Plan, Phase 15: optional so a
+    # package built before this field existed, or by a caller that
+    # has no provenance source available, is unaffected.
+    provenance: ProductionProvenance | None = None
 
     warnings: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)

@@ -6,6 +6,7 @@ from pathlib import Path
 from uuid import UUID
 
 from src.models.final_export import FinalExportPackage
+from src.models.production_provenance import ProductionProvenance
 from src.models.seo import SEOPackage
 from src.models.thumbnail import ThumbnailArtifact
 
@@ -44,8 +45,16 @@ class FinalExportPackagingService:
         duration_seconds: int,
         seo_package: SEOPackage,
         thumbnail_artifact: ThumbnailArtifact,
+        provenance: ProductionProvenance | None = None,
     ) -> FinalExportPackage:
-        """Build the export directory and return the resulting package."""
+        """
+        Build the export directory and return the resulting package.
+
+        provenance is optional (Post-Script-Approval Production Plan,
+        Phase 15) - omitting it reproduces this method's exact prior
+        behavior; a caller that has a VideoJob/RenderResult to draw
+        from computes it separately and passes it through.
+        """
 
         normalized_project_id = self._sanitize_identifier(project_id)
 
@@ -113,17 +122,46 @@ class FinalExportPackagingService:
             seo_package=seo_package,
             thumbnail_artifact=registered_thumbnail_artifact,
             export_directory=str(project_directory),
+            provenance=provenance,
             warnings=warnings,
         )
 
         manifest_path = metadata_directory / "export_manifest.json"
+
+        package = package.model_copy(update={"manifest_path": str(manifest_path)})
 
         self._write_json(
             manifest_path,
             json.loads(package.model_dump_json()),
         )
 
-        return package.model_copy(update={"manifest_path": str(manifest_path)})
+        return package
+
+    def rewrite_manifest(
+        self,
+        package: FinalExportPackage,
+    ) -> None:
+        """
+        Re-write the on-disk manifest to reflect a package's final
+        state.
+
+        Post-Script-Approval Production Plan, Phase 15: the manifest
+        is written once inside `package()` before QC status is known,
+        so a caller that later finalizes `status` (APPROVED/
+        UNDER_REVIEW, see FinalExportService.build()) calls this to
+        keep the on-disk manifest consistent with the returned
+        package rather than leaving a stale copy behind.
+        """
+
+        if package.manifest_path is None:
+            raise ValueError(
+                "Cannot rewrite a manifest for a package " "that was never packaged."
+            )
+
+        self._write_json(
+            Path(package.manifest_path),
+            json.loads(package.model_dump_json()),
+        )
 
     @staticmethod
     def _register_file(

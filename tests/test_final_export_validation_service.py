@@ -17,6 +17,46 @@ from src.models.thumbnail import (
 from src.services.final_export.final_export_validation_service import (
     FinalExportValidationService,
 )
+from src.services.media_technical_validation_service import (
+    MediaTechnicalValidationService,
+)
+
+_GOOD_PROBE_OUTPUT = """
+{
+    "format": {"duration": "120.0"},
+    "streams": [
+        {"codec_type": "video", "width": 1920, "height": 1080},
+        {"codec_type": "audio"}
+    ]
+}
+"""
+
+_NO_AUDIO_PROBE_OUTPUT = """
+{
+    "format": {"duration": "120.0"},
+    "streams": [
+        {"codec_type": "video", "width": 1920, "height": 1080}
+    ]
+}
+"""
+
+_WRONG_RESOLUTION_PROBE_OUTPUT = """
+{
+    "format": {"duration": "120.0"},
+    "streams": [
+        {"codec_type": "video", "width": 1280, "height": 720},
+        {"codec_type": "audio"}
+    ]
+}
+"""
+
+
+def _stubbed_technical_validation_service(
+    probe_output: str,
+) -> MediaTechnicalValidationService:
+    return MediaTechnicalValidationService(
+        runner=lambda _command: probe_output,
+    )
 
 
 def _seo_package(**overrides: object) -> SEOPackage:
@@ -175,3 +215,140 @@ def test_validate_warns_when_seo_package_not_approved(tmp_path: Path) -> None:
     codes = [issue.code for issue in result.warnings]
 
     assert FinalExportValidationCode.SEO_PACKAGE_NOT_READY in codes
+
+
+def test_validate_accepts_a_real_video_file_that_passes_technical_checks(
+    tmp_path: Path,
+) -> None:
+    video_file = tmp_path / "final_video.mp4"
+    video_file.write_bytes(b"fake video bytes")
+
+    manifest_file = tmp_path / "export_manifest.json"
+    manifest_file.write_text("{}", encoding="utf-8")
+
+    package = _package(
+        final_video_path=str(video_file),
+        resolution="1920x1080",
+        manifest_path=str(manifest_file),
+    )
+
+    service = FinalExportValidationService(
+        technical_validation_service=(
+            _stubbed_technical_validation_service(_GOOD_PROBE_OUTPUT)
+        ),
+    )
+
+    result = service.validate(package)
+
+    codes = [issue.code for issue in result.errors]
+
+    assert FinalExportValidationCode.MEDIA_NOT_READABLE not in codes
+    assert FinalExportValidationCode.MEDIA_NO_AUDIO_STREAM not in codes
+    assert FinalExportValidationCode.MEDIA_RESOLUTION_MISMATCH not in codes
+
+
+def test_validate_flags_final_video_with_no_audio_stream(
+    tmp_path: Path,
+) -> None:
+    video_file = tmp_path / "final_video.mp4"
+    video_file.write_bytes(b"fake video bytes")
+
+    manifest_file = tmp_path / "export_manifest.json"
+    manifest_file.write_text("{}", encoding="utf-8")
+
+    package = _package(
+        final_video_path=str(video_file),
+        resolution="1920x1080",
+        manifest_path=str(manifest_file),
+    )
+
+    service = FinalExportValidationService(
+        technical_validation_service=(
+            _stubbed_technical_validation_service(_NO_AUDIO_PROBE_OUTPUT)
+        ),
+    )
+
+    result = service.validate(package)
+
+    codes = [issue.code for issue in result.errors]
+
+    assert result.is_valid is False
+    assert FinalExportValidationCode.MEDIA_NO_AUDIO_STREAM in codes
+
+
+def test_validate_flags_final_video_resolution_mismatch(
+    tmp_path: Path,
+) -> None:
+    video_file = tmp_path / "final_video.mp4"
+    video_file.write_bytes(b"fake video bytes")
+
+    manifest_file = tmp_path / "export_manifest.json"
+    manifest_file.write_text("{}", encoding="utf-8")
+
+    package = _package(
+        final_video_path=str(video_file),
+        resolution="1920x1080",
+        manifest_path=str(manifest_file),
+    )
+
+    service = FinalExportValidationService(
+        technical_validation_service=(
+            _stubbed_technical_validation_service(_WRONG_RESOLUTION_PROBE_OUTPUT)
+        ),
+    )
+
+    result = service.validate(package)
+
+    codes = [issue.code for issue in result.errors]
+
+    assert result.is_valid is False
+    assert FinalExportValidationCode.MEDIA_RESOLUTION_MISMATCH in codes
+
+
+def test_validate_flags_unreadable_final_video(
+    tmp_path: Path,
+) -> None:
+    video_file = tmp_path / "final_video.mp4"
+    video_file.write_bytes(b"fake video bytes")
+
+    manifest_file = tmp_path / "export_manifest.json"
+    manifest_file.write_text("{}", encoding="utf-8")
+
+    package = _package(
+        final_video_path=str(video_file),
+        manifest_path=str(manifest_file),
+    )
+
+    def _raising_runner(_command: list[str]) -> str:
+        raise RuntimeError("ffprobe is not installed")
+
+    service = FinalExportValidationService(
+        technical_validation_service=MediaTechnicalValidationService(
+            runner=_raising_runner,
+        ),
+    )
+
+    result = service.validate(package)
+
+    codes = [issue.code for issue in result.errors]
+
+    assert result.is_valid is False
+    assert FinalExportValidationCode.MEDIA_NOT_READABLE in codes
+
+
+def test_validate_skips_technical_checks_for_uri_scheme_paths() -> None:
+    package = _package(final_video_path="dry-run://render/output.mp4")
+
+    service = FinalExportValidationService(
+        technical_validation_service=(
+            _stubbed_technical_validation_service(_NO_AUDIO_PROBE_OUTPUT)
+        ),
+    )
+
+    result = service.validate(package)
+
+    codes = [issue.code for issue in result.errors]
+
+    assert FinalExportValidationCode.MEDIA_NOT_READABLE not in codes
+    assert FinalExportValidationCode.MEDIA_NO_AUDIO_STREAM not in codes
+    assert FinalExportValidationCode.MEDIA_RESOLUTION_MISMATCH not in codes

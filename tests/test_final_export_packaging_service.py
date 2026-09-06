@@ -5,6 +5,8 @@ from pathlib import Path
 from uuid import uuid4
 
 from src.models.enums import Platform
+from src.models.final_export import FinalExportPackage, FinalExportStatus
+from src.models.production_provenance import ProductionProvenance
 from src.models.seo import SEOPackage, SEOPlatformMetadata, TitleCandidate
 from src.models.thumbnail import (
     ThumbnailArtifact,
@@ -229,3 +231,123 @@ def test_package_sanitizes_project_id_for_the_directory_name(
 
     assert package.project_id == "Deep_Sea___Doc"
     assert "Deep_Sea___Doc" in package.export_directory
+
+
+def test_package_stores_and_persists_provenance(tmp_path: Path) -> None:
+    video_source = tmp_path / "render_output.mp4"
+    video_source.write_bytes(b"fake-video-bytes")
+
+    service = FinalExportPackagingService(export_root=tmp_path / "exports")
+
+    provenance = ProductionProvenance(
+        script_lock_hash="abc123",
+        script_version_number=3,
+        video_item_count=5,
+        audio_track_count=2,
+        voice_track_count=1,
+        render_engine="ffmpeg",
+        render_exit_code=0,
+        render_ffmpeg_command=["ffmpeg", "-y", "-i", "in.mp4", "out.mp4"],
+    )
+
+    package = service.package(
+        video_job_id=uuid4(),
+        project_id="deep-sea-doc",
+        final_video_source_path=str(video_source),
+        resolution="1920x1080",
+        frame_rate=30,
+        duration_seconds=600,
+        seo_package=_seo_package(),
+        thumbnail_artifact=_thumbnail_artifact(
+            file_path="dry-run://thumbnail/1280x720.png",
+        ),
+        provenance=provenance,
+    )
+
+    assert package.provenance == provenance
+
+    assert package.manifest_path is not None
+
+    with Path(package.manifest_path).open(encoding="utf-8") as handle:
+        payload = json.load(handle)
+
+    assert payload["provenance"]["script_lock_hash"] == "abc123"
+    assert payload["provenance"]["render_exit_code"] == 0
+
+
+def test_package_without_provenance_leaves_it_unset(tmp_path: Path) -> None:
+    video_source = tmp_path / "render_output.mp4"
+    video_source.write_bytes(b"fake-video-bytes")
+
+    service = FinalExportPackagingService(export_root=tmp_path / "exports")
+
+    package = service.package(
+        video_job_id=uuid4(),
+        project_id="deep-sea-doc",
+        final_video_source_path=str(video_source),
+        resolution="1920x1080",
+        frame_rate=30,
+        duration_seconds=600,
+        seo_package=_seo_package(),
+        thumbnail_artifact=_thumbnail_artifact(
+            file_path="dry-run://thumbnail/1280x720.png",
+        ),
+    )
+
+    assert package.provenance is None
+
+
+def test_rewrite_manifest_updates_the_on_disk_file(tmp_path: Path) -> None:
+    video_source = tmp_path / "render_output.mp4"
+    video_source.write_bytes(b"fake-video-bytes")
+
+    service = FinalExportPackagingService(export_root=tmp_path / "exports")
+
+    package = service.package(
+        video_job_id=uuid4(),
+        project_id="deep-sea-doc",
+        final_video_source_path=str(video_source),
+        resolution="1920x1080",
+        frame_rate=30,
+        duration_seconds=600,
+        seo_package=_seo_package(),
+        thumbnail_artifact=_thumbnail_artifact(
+            file_path="dry-run://thumbnail/1280x720.png",
+        ),
+    )
+
+    assert package.manifest_path is not None
+
+    updated_package = package.model_copy(update={"status": FinalExportStatus.APPROVED})
+
+    service.rewrite_manifest(updated_package)
+
+    with Path(package.manifest_path).open(encoding="utf-8") as handle:
+        payload = json.load(handle)
+
+    assert payload["status"] == "approved"
+
+
+def test_rewrite_manifest_rejects_a_package_never_packaged() -> None:
+    service = FinalExportPackagingService(export_root="exports")
+
+    package = FinalExportPackage(
+        video_job_id=uuid4(),
+        project_id="deep-sea-doc",
+        final_video_path="dry-run://render/output.mp4",
+        resolution="1920x1080",
+        frame_rate=30,
+        duration_seconds=600,
+        seo_package=_seo_package(),
+        thumbnail_artifact=_thumbnail_artifact(
+            file_path="dry-run://thumbnail/1280x720.png",
+        ),
+        export_directory="exports/deep-sea-doc",
+    )
+
+    try:
+        service.rewrite_manifest(package)
+    except ValueError as error:
+        assert "never packaged" in str(error)
+    else:
+        raise AssertionError("Expected ValueError.")

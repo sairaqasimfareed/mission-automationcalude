@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from src.models.enums import Platform
 from src.models.final_export import FinalExportPackage, FinalExportStatus
+from src.models.production_provenance import ProductionProvenance
 from src.models.seo import SEOPackage, SEOPlatformMetadata, TitleCandidate
 from src.models.thumbnail import (
     ThumbnailArtifact,
@@ -100,3 +101,30 @@ def test_is_ready_for_publish_requires_approval_of_everything() -> None:
 
     assert incomplete.is_ready_for_publish is False
     assert complete.is_ready_for_publish is True
+
+
+def test_package_provenance_defaults_to_unset() -> None:
+    package = _package()
+
+    assert package.provenance is None
+
+
+def test_package_stores_and_round_trips_provenance() -> None:
+    provenance = ProductionProvenance(
+        script_lock_hash="abc123",
+        script_version_number=1,
+        video_item_count=4,
+        audio_track_count=2,
+        voice_track_count=1,
+        render_engine="ffmpeg",
+        render_exit_code=0,
+        render_ffmpeg_command=["ffmpeg", "-y", "-i", "in.mp4", "out.mp4"],
+    )
+
+    package = _package(provenance=provenance)
+
+    assert package.provenance == provenance
+
+    restored = package.__class__.model_validate_json(package.model_dump_json())
+
+    assert restored.provenance == provenance
