@@ -5,6 +5,92 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-06 - Post-Script-Approval Production Plan: Phase 1 Production Semantic Brief / Directive Bible
+
+**A deterministic, no-LLM-call phase - everything it needed already
+existed on the locked script.** The plan asks for "time-bounded
+production intent" covering the full script timeline without gaps.
+`GeneratedScript.segments` already are exactly that: each segment
+carries `start_seconds`/`end_seconds`, `narrative_function`,
+`tension_level`, `related_curiosity_loop`, and
+`source_claim_references`, and `GeneratedScript`'s own validator
+already guarantees they're gapless and ordered. So "every second of
+the production timeline is owned by a semantic segment" holds by
+construction the moment the brief is built as a one-to-one projection
+of those segments, rather than something a service has to separately
+verify. New `src/models/production_semantic_brief.py`
+(`ProductionSemanticSegment`/`ProductionSemanticBrief`) still enforces
+the coverage gate mechanically anyway (`validate_full_coverage()`), so
+that guarantee is checked, not merely assumed.
+
+**Intent, not resolved directives.** The plan's own wording says
+"intent," not "resolved shot specification" - that resolution is
+explicitly Phases 3-4's job (Shot Plan, Cinematic Prompt Package). So
+each segment's visual/voice/music/SFX/editing/transition fields are
+short descriptive strings, deterministically derived from the
+project's genre profile (the same `camera_preset_id`/
+`transition_in_preset_id`/`music_preset_id`/etc. fields
+`GenreDirectiveGenerationService` already reads for Scene-level
+directives, just resolved one phase earlier and expressed as intent
+rather than a fully wired directive object). No LLM call was needed
+anywhere in this service - `ProductionSemanticBriefService.generate()`
+is pure and fully reproducible from unchanged inputs, which is exactly
+what "persist an artifact hash/version for downstream staleness
+detection" requires: two generations from identical input produce the
+identical `content_hash`.
+
+**Beat binding reuses an established pattern, not a new one.**
+`beat_id` matches a `StoryBlueprint` beat by real-seconds time range -
+the exact same trick Content Studio Redesign Phase 9's
+`_bind_curiosity_roles()` already established for tying a script
+segment back to its originating beat. This codebase has no separate
+"section" concept distinct from a beat, so `beat_type` doubles as the
+plan's "section_id" - documented here as a deliberate simplification,
+not a silently-guessed one.
+
+**Reveal protection reuses an existing signal instead of re-deriving
+it.** `reveal_protected` is simply `segment.related_curiosity_loop is
+not None` - the script segment is already tagged as advancing a
+tracked curiosity loop by earlier Content Studio Redesign work, so
+reusing that tag directly avoids a second, potentially-drifting
+notion of "this segment needs spoiler care" built from
+`InformationRevealMap`'s normalized positions a different way.
+
+**Hard-gated on the lock, not just the script.** Unlike every Content
+Studio Redesign stage (which requires only `job.generated_script`),
+`run_production_semantic_brief()` requires `job.script_lock is not
+None` - this plan's own contract names `FinalScriptLock` as the
+primary input, and this is the first Post-Script-Approval phase where
+that distinction actually matters in code.
+
+**GUI.** The Production Handoff card (Phase 0) gained a "Production
+Directives" section - the plan's own wording calls this a "tab/
+inspector," not a standalone screen, so it lives inside the existing
+card rather than growing a new one. Shows each segment's time range,
+beat, and visual/voice/music intent, a staleness banner when the
+brief's bound hash no longer matches the current lock, and Generate/
+Regenerate buttons.
+
+**Tests:** `test_production_semantic_brief_model.py` (7: coverage
+gate - gap, overlap, non-zero start all rejected; hash stability and
+sensitivity; field defaults), `test_production_semantic_brief_service.py`
+(5: one segment per script segment, reveal/claims passthrough, beat
+binding with and without a blueprint, hash reproducibility), 3 new
+pipeline cases, 3 new GUI cases. Full combined regression (pipeline,
+GUI, both new model/service files, video job, migration): 224 passed.
+mypy/ruff/black clean.
+
+**Deliberately not built this pass:** no manual-override/revision
+mechanism for the brief ("manual override creates a directive
+revision and invalidates only dependent artifacts") - nothing
+downstream of the brief exists yet to actually invalidate, so building
+that machinery now would have nothing real to point at; honestly
+documented rather than invented: SFX intent is a generic genre-default
+phrase, since this codebase's genre profile has no dedicated
+per-segment SFX-cue field, only `music_preset_id`.
+
+---
+
 ## 2026-09-06 - Post-Script-Approval Production Plan: Phase 0 Canonical Script Lock and Production Handoff
 
 **Starting the second PDF (Post-Script-Approval Production Plan),

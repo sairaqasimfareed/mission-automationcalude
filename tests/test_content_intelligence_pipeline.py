@@ -1305,6 +1305,52 @@ def test_compute_production_handoff_status_is_building_package_when_scenes_are_s
     assert status.state == ProductionHandoffState.BUILDING_PACKAGE
 
 
+def test_run_production_semantic_brief_requires_a_script_lock() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_audience_promise(_job())
+    job = pipeline.run_research(job)
+    job = pipeline.run_story_angles(job)
+    job = pipeline.run_narrative_architecture(job)
+    job = pipeline.run_hooks(job)
+    job = pipeline.run_script(job)
+
+    with pytest.raises(RuntimeError, match="requires a locked script"):
+        pipeline.run_production_semantic_brief(job)
+
+
+def test_run_production_semantic_brief_covers_the_full_locked_script() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_all(_job())
+    assert job.script_lock is not None
+
+    job = pipeline.run_production_semantic_brief(job)
+
+    assert job.production_semantic_brief is not None
+    assert job.production_semantic_brief.script_lock_hash == (
+        job.script_lock.script_content_hash
+    )
+    assert len(job.production_semantic_brief.segments) == len(
+        job.generated_script.segments
+    )
+
+
+def test_run_production_semantic_brief_records_a_generation_event() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_all(_job())
+    job = pipeline.run_production_semantic_brief(job)
+
+    matching = [
+        record
+        for record in job.content_decisions
+        if record.stage == "production_semantic_brief"
+    ]
+    assert len(matching) == 1
+    assert matching[0].category == "generation"
+
+
 def test_run_continuity_bible_requires_a_generated_script() -> None:
     pipeline, _ = _pipeline()
 

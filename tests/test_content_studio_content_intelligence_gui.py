@@ -2748,3 +2748,56 @@ def test_retry_production_handoff_button_replans_scenes(qapp: QApplication) -> N
 
     status_after = pipeline.compute_production_handoff_status(job)
     assert status_after.state == ProductionHandoffState.PACKAGE_READY
+
+
+# --- Post-Script-Approval Production Plan, Phase 1: Production Semantic Brief ---
+
+
+def test_production_directives_section_renders_generate_button_when_absent(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job.approval_policy = ApprovalPolicyConfig.full_auto()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    view._handle_run_automation()
+    view.refresh(job)  # must not raise; script_lock exists, brief does not yet
+
+    assert job.script_lock is not None
+    assert job.production_semantic_brief is None
+
+
+def test_generate_production_directives_populates_the_brief(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job.approval_policy = ApprovalPolicyConfig.full_auto()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    view._handle_run_automation()
+
+    view._handle_generate_production_semantic_brief()
+
+    assert job.production_semantic_brief is not None
+    assert len(job.production_semantic_brief.segments) == len(
+        job.generated_script.segments
+    )
+
+    view.refresh(job)  # must not raise while the brief renders
+
+
+def test_generate_production_directives_is_a_noop_without_a_job(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    view = _view(job_store)
+
+    view._handle_generate_production_semantic_brief()  # must not raise

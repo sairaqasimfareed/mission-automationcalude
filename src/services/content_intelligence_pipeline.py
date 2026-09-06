@@ -46,6 +46,9 @@ from src.services.llm.llm_service import LLMService
 from src.services.narrative_compression_service import NarrativeCompressionService
 from src.services.packaging_hypothesis_service import PackagingHypothesisService
 from src.services.production_ambiguity_service import ProductionAmbiguityService
+from src.services.production_semantic_brief_service import (
+    ProductionSemanticBriefService,
+)
 from src.services.re_hook_planning_service import ReHookPlanningService
 from src.services.research_planning_service import ResearchPlanningService
 from src.services.retention_audit_service import RetentionAuditService
@@ -196,6 +199,7 @@ class ContentIntelligencePipeline:
             estimated_cost_usd=estimated_cost_usd,
         )
         self.script_production_readiness_service = ScriptProductionReadinessService()
+        self.production_semantic_brief_service = ProductionSemanticBriefService()
         self.continuity_bible_extraction_service = ContinuityBibleExtractionService(
             llm_service=llm_service,
             profile_ids=profile_ids,
@@ -1093,6 +1097,47 @@ class ContentIntelligencePipeline:
         """
 
         return self.script_lock_service.compute_unlock_impact(job)
+
+    def run_production_semantic_brief(self, job: VideoJob) -> VideoJob:
+        """
+        Post-Script-Approval Production Plan, Phase 1: "Translate the
+        locked narrative into time-bounded production intent before
+        any media is generated." Unlike every Content Studio
+        Redesign stage above, this one hard-requires a script lock
+        (job.script_lock is not None) rather than merely a generated
+        script - this plan's whole chain hangs off the lock, not off
+        the script directly, since "primary inputs: FinalScriptLock"
+        is this phase's own stated contract.
+        """
+
+        if job.generated_script is None or job.script_lock is None:
+            raise RuntimeError("Production semantic brief requires a locked script.")
+
+        genre_resolution = self.genre_registry.resolve(job.genre_id)
+
+        if genre_resolution.profile is None:
+            raise RuntimeError(
+                f"Could not resolve a genre profile for '{job.genre_id}'."
+            )
+
+        job.production_semantic_brief = self.production_semantic_brief_service.generate(
+            script=job.generated_script,
+            genre_profile=genre_resolution.profile,
+            script_lock_hash=job.script_lock.script_content_hash,
+            story_blueprint=job.story_blueprint,
+        )
+
+        self.approval_gate_service.record_event(
+            job=job,
+            stage="production_semantic_brief",
+            summary=(
+                "Production semantic brief generated "
+                f"({len(job.production_semantic_brief.segments)} segment(s))."
+            ),
+            category=DecisionCategory.GENERATION,
+        )
+
+        return job
 
     def run_packaging_hypothesis(self, job: VideoJob) -> VideoJob:
         """

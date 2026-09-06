@@ -1233,7 +1233,89 @@ class ContentStudioView(QWidget):
             )
             layout.addWidget(retry_button, alignment=_LEFT)
 
+        if job.script_lock is not None:
+            layout.addWidget(separator())
+            self._render_production_semantic_brief_section(layout, job)
+
         self._layout.addWidget(frame)
+
+    def _render_production_semantic_brief_section(
+        self, layout: QVBoxLayout, job: VideoJob
+    ) -> None:
+        """
+        Post-Script-Approval Production Plan, Phase 1: "Production
+        Directives tab/inspector" - time range, beat, and visual/
+        voice/music/SFX/edit/transition intent per segment. Lives
+        inside the Production Handoff card rather than a separate one
+        (this plan's own wording calls it a "tab/inspector," not a
+        standalone screen), gated on a script lock existing since the
+        brief's own primary input is the lock, not just the script.
+        """
+
+        brief = job.production_semantic_brief
+
+        if brief is None:
+            layout.addWidget(small_muted("No production directives generated yet."))
+            generate_button = button(
+                "Generate production directives", variant="primary"
+            )
+            generate_button.clicked.connect(
+                self._handle_generate_production_semantic_brief
+            )
+            layout.addWidget(generate_button, alignment=_LEFT)
+
+            return
+
+        is_stale = job.script_lock is not None and (
+            brief.script_lock_hash != job.script_lock.script_content_hash
+        )
+
+        layout.addWidget(
+            badge(f"Production directives · {len(brief.segments)} segment(s)")
+        )
+
+        if is_stale:
+            layout.addWidget(
+                status_label(
+                    "Stale - the script was re-locked since these directives "
+                    "were generated.",
+                    role="warning",
+                )
+            )
+
+        for segment in brief.segments:
+            layout.addWidget(
+                small_muted(
+                    f"{segment.start_seconds:.0f}s-{segment.end_seconds:.0f}s "
+                    f"({segment.beat_type}): {segment.visual_intent} "
+                    f"{segment.voice_intent} {segment.music_intent}"
+                )
+            )
+
+        regenerate_button = button("Regenerate production directives", variant="ghost")
+        regenerate_button.clicked.connect(
+            self._handle_generate_production_semantic_brief
+        )
+        layout.addWidget(regenerate_button, alignment=_LEFT)
+
+    def _handle_generate_production_semantic_brief(self) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        try:
+            self._content_intelligence_pipeline.run_production_semantic_brief(job)
+        except (RuntimeError, ValueError) as error:
+            self._record_error(
+                job,
+                f"Could not generate production directives: {error}",
+                on_retry=self._handle_generate_production_semantic_brief,
+            )
+
+            return
+
+        self._on_change()
 
     def _build_ci_stage_panel(
         self,

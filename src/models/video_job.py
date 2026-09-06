@@ -37,6 +37,7 @@ from src.models.originality import OriginalityResult
 from src.models.packaging_hypothesis import PackagingHypothesis
 from src.models.policy import PolicyComplianceReport
 from src.models.production_ambiguity import ProductionAmbiguity
+from src.models.production_semantic_brief import ProductionSemanticBrief
 from src.models.provider_preferences import ProviderPreferences
 from src.models.re_hook import ReHookPlan
 from src.models.render_result import RenderResult
@@ -197,6 +198,10 @@ class VideoJob(MissionBaseModel):
     production_ambiguities: list[ProductionAmbiguity] = Field(default_factory=list)
     continuity_bible: ContinuityBible | None = None
     continuity_validation: ContinuityValidationResult | None = None
+    # Post-Script-Approval Production Plan, Phase 1: time-bounded
+    # production intent for the locked script - None until generated,
+    # requires script_lock to exist first.
+    production_semantic_brief: ProductionSemanticBrief | None = None
 
     content_decisions: list[ContentDecisionRecord] = Field(default_factory=list)
     stale_artifacts: list[StaleArtifact] = Field(default_factory=list)
