@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from enum import Enum
 
 from pydantic import Field, field_validator, model_validator
@@ -128,6 +129,14 @@ class ProviderProfile(MissionBaseModel):
 
     health_status: ProviderHealthStatus = ProviderHealthStatus.UNKNOWN
 
+    # Google Flow External UI Automation, GF-3: "Router should
+    # consider: enabled, authenticated, healthy, cooldown, priority."
+    # Generic across every provider category (a temporary
+    # unavailability window - e.g. after a rate-limit hit - is not a
+    # Flow-specific idea), not only used by the account router built
+    # for this initiative. None means "never in cooldown."
+    cooldown_until: datetime | None = None
+
     capabilities: list[str] = Field(
         default_factory=list,
     )
@@ -154,6 +163,17 @@ class ProviderProfile(MissionBaseModel):
             raise ValueError("Provider profile text fields cannot be empty.")
 
         return cleaned
+
+    @field_validator("cooldown_until")
+    @classmethod
+    def require_timezone_aware_cooldown(
+        cls,
+        value: datetime | None,
+    ) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            raise ValueError("cooldown_until must be timezone-aware.")
+
+        return value
 
     @field_validator("capabilities")
     @classmethod
@@ -236,9 +256,14 @@ class ProviderProfile(MissionBaseModel):
         else:
             has_credential = self.secret_reference is not None
 
+        in_cooldown = (
+            self.cooldown_until is not None and self.cooldown_until > datetime.now(UTC)
+        )
+
         return (
             self.enabled
             and has_credential
+            and not in_cooldown
             and self.health_status
             in {
                 ProviderHealthStatus.HEALTHY,

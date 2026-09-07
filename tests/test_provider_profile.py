@@ -1,3 +1,5 @@
+from datetime import UTC, datetime, timedelta
+
 from pydantic import ValidationError
 
 from src.models.provider_profile import (
@@ -224,5 +226,48 @@ disabled_flow_profile = ProviderProfile(
 )
 
 assert disabled_flow_profile.usable is False
+
+
+# --- GF-3: cooldown ---
+
+cooled_down_profile = ProviderProfile(
+    profile_id="flow-cooldown",
+    display_name="Flow Cooldown",
+    provider_name="Google Flow",
+    category=ProviderCategory.EXTERNAL_UI_VIDEO,
+    enabled=True,
+    health_status=ProviderHealthStatus.HEALTHY,
+    browser_profile_reference="flow_profiles/flow-cooldown",
+    cooldown_until=datetime.now(UTC) + timedelta(minutes=30),
+)
+
+assert cooled_down_profile.usable is False
+
+past_cooldown_profile = ProviderProfile(
+    profile_id="flow-past-cooldown",
+    display_name="Flow Past Cooldown",
+    provider_name="Google Flow",
+    category=ProviderCategory.EXTERNAL_UI_VIDEO,
+    enabled=True,
+    health_status=ProviderHealthStatus.HEALTHY,
+    browser_profile_reference="flow_profiles/flow-past-cooldown",
+    cooldown_until=datetime.now(UTC) - timedelta(minutes=1),
+)
+
+assert past_cooldown_profile.usable is True
+
+try:
+    ProviderProfile(
+        profile_id="flow-naive-cooldown",
+        display_name="Flow Naive Cooldown",
+        provider_name="Google Flow",
+        category=ProviderCategory.EXTERNAL_UI_VIDEO,
+        cooldown_until=datetime.now(),  # naive - no tzinfo
+    )
+except ValidationError:
+    print("Naive cooldown_until successfully blocked.")
+else:
+    raise AssertionError("cooldown_until must be timezone-aware.")
+
 
 print("Provider Profile tests completed successfully.")
