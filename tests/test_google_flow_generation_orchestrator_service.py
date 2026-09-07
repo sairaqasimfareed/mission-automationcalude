@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from src.models.google_flow_generation import (
@@ -30,7 +33,27 @@ from src.services.google_flow_generation_ledger_service import (
 from src.services.google_flow_generation_orchestrator_service import (
     GoogleFlowGenerationOrchestratorService,
 )
+from src.services.media_technical_validation_service import (
+    MediaTechnicalValidationService,
+)
 from src.services.registry.provider_registry import ProviderRegistry
+
+_GOOD_PROBE = json.dumps(
+    {
+        "format": {"duration": "8.0"},
+        "streams": [
+            {"codec_type": "video", "width": 1920, "height": 1080},
+            {"codec_type": "audio"},
+        ],
+    }
+)
+
+_TOO_SHORT_PROBE = json.dumps(
+    {
+        "format": {"duration": "0.1"},
+        "streams": [{"codec_type": "video", "width": 1920, "height": 1080}],
+    }
+)
 
 
 def _job() -> VideoJob:
@@ -333,3 +356,79 @@ def test_in_flight_counts_exclude_terminal_attempts() -> None:
     second = _submit(orchestrator, job, scene_number=2, idempotency_key="req-2")
 
     assert second.request.profile_id == "flow.primary"
+
+
+# --- validate_downloaded_attempt (GF-9: REUSE, not duplicated) ---
+
+
+def _downloaded_attempt(
+    orchestrator: GoogleFlowGenerationOrchestratorService,
+    job: VideoJob,
+    *,
+    downloaded_file: str,
+) -> GoogleFlowGenerationAttempt:
+    submitted = _submit(orchestrator, job)
+    downloaded = submitted
+    for state in (
+        GoogleFlowGenerationState.READY_TO_DOWNLOAD,
+        GoogleFlowGenerationState.DOWNLOADED,
+    ):
+        downloaded = downloaded.with_transition(state)
+    downloaded = downloaded.model_copy(update={"downloaded_file": downloaded_file})
+    GoogleFlowGenerationLedgerService.replace_attempt(job, downloaded)
+
+    return downloaded
+
+
+def _orchestrator_with_stub_ffprobe(
+    probe_output: str,
+) -> tuple[GoogleFlowGenerationOrchestratorService, VideoJob]:
+    registry = ProviderRegistry(profiles=[_flow_profile()])
+    router = GoogleFlowAccountRouterService(registry)
+    orchestrator = GoogleFlowGenerationOrchestratorService(
+        provider=FakeAdvancingProvider(),
+        account_router=router,
+        technical_validation_service=MediaTechnicalValidationService(
+            runner=lambda command: probe_output
+        ),
+    )
+    return orchestrator, _job()
+
+
+def test_validate_downloaded_attempt_accepts_valid_media(tmp_path: Path) -> None:
+    orchestrator, job = _orchestrator_with_stub_ffprobe(_GOOD_PROBE)
+    file_path = tmp_path / "generation.mp4"
+    file_path.write_bytes(b"fake but present video bytes")
+    attempt = _downloaded_attempt(orchestrator, job, downloaded_file=str(file_path))
+
+    result = orchestrator.validate_downloaded_attempt(job, attempt)
+
+    assert result.state == GoogleFlowGenerationState.DOWNLOADED
+    assert result.technical_validation is not None
+    assert result.technical_validation.is_valid is True
+    assert result.checksum is not None
+    assert job.flow_generation_attempts[0].checksum == result.checksum
+
+
+def test_validate_downloaded_attempt_rejects_invalid_media(tmp_path: Path) -> None:
+    orchestrator, job = _orchestrator_with_stub_ffprobe(_TOO_SHORT_PROBE)
+    file_path = tmp_path / "generation.mp4"
+    file_path.write_bytes(b"fake but present video bytes")
+    attempt = _downloaded_attempt(orchestrator, job, downloaded_file=str(file_path))
+
+    result = orchestrator.validate_downloaded_attempt(job, attempt)
+
+    assert result.state == GoogleFlowGenerationState.QC_FAILED
+    assert result.qc_result is not None
+    assert result.qc_result.outcome == GoogleFlowQCOutcome.INVALID
+    assert result.failure is not None
+    assert result.failure.occurred_after_possible_credit_exposure is True
+    assert job.flow_generation_attempts[0].state == GoogleFlowGenerationState.QC_FAILED
+
+
+def test_validate_downloaded_attempt_requires_a_downloaded_file() -> None:
+    orchestrator, job = _orchestrator_with_stub_ffprobe(_GOOD_PROBE)
+    submitted = _submit(orchestrator, job)
+
+    with pytest.raises(ValueError, match="no downloaded_file"):
+        orchestrator.validate_downloaded_attempt(job, submitted)

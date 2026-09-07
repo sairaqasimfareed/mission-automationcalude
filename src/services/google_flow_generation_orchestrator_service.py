@@ -1,20 +1,31 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from src.models.google_flow_generation import (
     GoogleFlowExecutionSettings,
+    GoogleFlowFailure,
+    GoogleFlowFailureCode,
     GoogleFlowGenerationAttempt,
     GoogleFlowGenerationRequest,
+    GoogleFlowGenerationState,
+    GoogleFlowQCOutcome,
+    GoogleFlowQCResult,
     GoogleFlowReferenceAsset,
     is_terminal_state,
 )
 from src.models.video_job import VideoJob
 from src.providers.external_ui_generation_provider import ExternalUIGenerationProvider
+from src.services.asset_provenance_service import AssetProvenanceService
 from src.services.budget.provider_budget_service import ProviderBudgetService
 from src.services.google_flow_account_router_service import (
     GoogleFlowAccountRouterService,
 )
 from src.services.google_flow_generation_ledger_service import (
     GoogleFlowGenerationLedgerService,
+)
+from src.services.media_technical_validation_service import (
+    MediaTechnicalValidationService,
 )
 
 
@@ -51,11 +62,25 @@ class GoogleFlowGenerationOrchestratorService:
         account_router: GoogleFlowAccountRouterService,
         budget_service: ProviderBudgetService | None = None,
         max_in_flight_per_account: int = 1,
+        technical_validation_service: MediaTechnicalValidationService | None = None,
+        provenance_service: AssetProvenanceService | None = None,
     ) -> None:
         self._provider = provider
         self._account_router = account_router
         self._budget_service = budget_service
         self._max_in_flight_per_account = max_in_flight_per_account
+        # GF-9: REUSE, not duplicated - the same technical-validation
+        # and checksum services already used for manual-upload/stock
+        # clips (Post-Script-Approval Production Plan Phases 6/8).
+        # Default to real instances rather than None, matching this
+        # codebase's own "no existing behavior for a default-off
+        # posture to protect" reasoning (AudioCuePolicyService,
+        # FlowBrowserWorker's own defaults) - a downloaded generation
+        # has no prior "unvalidated" behavior worth preserving.
+        self._technical_validation_service = (
+            technical_validation_service or MediaTechnicalValidationService()
+        )
+        self._provenance_service = provenance_service or AssetProvenanceService()
 
     def submit_new_attempt(
         self,
@@ -160,6 +185,74 @@ class GoogleFlowGenerationOrchestratorService:
         GoogleFlowGenerationLedgerService.replace_attempt(job, result)
 
         return result
+
+    def validate_downloaded_attempt(
+        self,
+        job: VideoJob,
+        attempt: GoogleFlowGenerationAttempt,
+    ) -> GoogleFlowGenerationAttempt:
+        """
+        GF-9: technical validation and checksum for a downloaded
+        generation - REUSE, not a new implementation.
+        MediaTechnicalValidationService/AssetProvenanceService already
+        exist, already tested, and already do exactly this for every
+        other acquisition path (manual upload, stock footage); Google
+        Flow's download gets no separate, competing implementation.
+
+        "Downloaded does NOT mean READY" (GF-9's own words): a failing
+        technical validation transitions the attempt to QC_FAILED with
+        an INVALID GoogleFlowQCResult carrying ffprobe's own findings -
+        never silently accepted. A passing technical validation leaves
+        the attempt at DOWNLOADED with technical_validation/checksum
+        now populated, ready for a genuine semantic/multimodal QC pass
+        (GF-10) to actually accept it into READY - that pass is a
+        real, disclosed gap, not built here, since this codebase has
+        no existing vision-capable QC integration to reuse and
+        fabricating one would mean inventing an unverified capability
+        rather than honestly deferring it.
+        """
+
+        if attempt.downloaded_file is None:
+            raise ValueError("Cannot validate an attempt with no downloaded_file set.")
+
+        technical_validation = self._technical_validation_service.validate(
+            Path(attempt.downloaded_file)
+        )
+        checksum = self._provenance_service.compute_checksum(attempt.downloaded_file)
+
+        annotated = attempt.model_copy(
+            update={
+                "technical_validation": technical_validation,
+                "checksum": checksum,
+            }
+        )
+
+        if not technical_validation.is_valid:
+            qc_result = GoogleFlowQCResult(
+                outcome=GoogleFlowQCOutcome.INVALID,
+                findings=list(technical_validation.issues),
+            )
+            annotated = annotated.model_copy(
+                update={
+                    "qc_result": qc_result,
+                    "failure": GoogleFlowFailure(
+                        code=GoogleFlowFailureCode.DOWNLOAD_FAILED,
+                        message=(
+                            "Downloaded media failed technical validation: "
+                            + "; ".join(technical_validation.issues)
+                        ),
+                        occurred_after_possible_credit_exposure=True,
+                    ),
+                }
+            )
+            annotated = annotated.with_transition(
+                GoogleFlowGenerationState.QC_FAILED,
+                detail="Technical validation failed - never reaches READY.",
+            )
+
+        GoogleFlowGenerationLedgerService.replace_attempt(job, annotated)
+
+        return annotated
 
     @staticmethod
     def _in_flight_counts_by_profile(job: VideoJob) -> dict[str, int]:

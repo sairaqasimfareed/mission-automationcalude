@@ -45,9 +45,10 @@ class MediaTechnicalValidationService:
     checks first: readability, duration, dimensions/aspect ratio and
     basic media validity" - applicable to any acquired clip in this
     codebase's actual acquisition paths (manual upload, stock
-    footage), not only a Google-Flow-generated one (that download
-    step is out of scope per this implementation's standing
-    exclusion, and no such service exists in this repository anyway).
+    footage), and, since the Google Flow External UI Automation
+    initiative's own GF-9, a Google-Flow-generated download too -
+    reused there directly rather than duplicated (see
+    GoogleFlowGenerationOrchestratorService.validate_and_accept_download()).
 
     `runner` is injectable (mirroring this codebase's LLM-service
     injection pattern) so tests can stub ffprobe's output without a
