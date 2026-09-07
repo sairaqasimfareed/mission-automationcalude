@@ -282,6 +282,110 @@ def test_scroll_restore_survives_an_intermediate_zero_range_firing(
         assert scroll_bar.value() == 1138
 
 
+def test_a_rapid_second_refresh_cancels_the_first_cycle_and_wins(
+    qapp: QApplication,
+) -> None:
+    """
+    Fourth-pass real-world finding (via a runtime log showing ~6
+    refresh() calls for one user action, e.g. "Run audience promise"):
+    each refresh() call in a rapid burst starts its OWN listen-and-
+    restore cycle (its own `rangeChanged` connection and 50ms timer),
+    each carrying whatever value the scrollbar showed when THAT call
+    started - individually always accurate. But with several such
+    cycles alive at once, whichever cycle's signal or timer fired LAST
+    decided the final value, with no guarantee that was the most
+    recent, most relevant call's own cycle.
+
+    Simulated: two refresh() calls in immediate succession (matching
+    the real burst pattern from the log) must each start a genuinely
+    separate cycle - not resume/stack onto the first one - and the
+    first cycle must actually be superseded (its own cleanup callable
+    a second time without error, and no longer the view's active one)
+    rather than left alive to race the second. The exact end-to-end
+    scrollbar value for this specific mechanism (a cycle's
+    `rangeChanged`/timer firing after being superseded must not
+    clobber a newer one) is covered directly and more robustly by
+    `test_an_earlier_scroll_restore_cycle_cannot_clobber_a_newer_one`,
+    which drives `_schedule_scroll_restore()` without the added
+    variability of two full, real card-rebuilding refresh() calls.
+    """
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    with patch("src.desktop.views.content_studio_view.QTimer.singleShot"):
+        view.refresh(job)  # first call in the burst
+
+        first_cycle_cleanup = view._active_scroll_restore_cleanup  # noqa: SLF001
+        assert first_cycle_cleanup is not None
+
+        view.refresh(job)  # second call in the burst, immediately after
+
+        second_cycle_cleanup = view._active_scroll_restore_cleanup  # noqa: SLF001
+        assert second_cycle_cleanup is not None
+        assert second_cycle_cleanup is not first_cycle_cleanup
+
+        # The first cycle was genuinely superseded, not merely
+        # replaced in bookkeeping - its own cleanup must already be
+        # safe to invoke again (its belated real 50ms timer will do
+        # exactly this later) without disturbing the second cycle.
+        first_cycle_cleanup()
+        assert (
+            view._active_scroll_restore_cleanup is second_cycle_cleanup
+        )  # noqa: SLF001
+
+
+def test_an_earlier_scroll_restore_cycle_cannot_clobber_a_newer_one(
+    qapp: QApplication,
+) -> None:
+    """
+    Fourth-pass real-world finding: several refresh() calls for one
+    action each started their OWN rangeChanged connection and 50ms
+    timer, all racing to be the one that "wins" - whichever fired last
+    determined the final scrollbar value, with no guarantee that was
+    the cycle carrying the correct value. Simulated directly: an
+    earlier cycle's own 50ms timer is invoked LATE, deliberately after
+    a newer cycle has already applied its own, different, correct
+    value - the earlier cycle's belated timer must be a genuine no-op,
+    never overwriting the newer cycle's result.
+    """
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    with patch(
+        "src.desktop.views.content_studio_view.QTimer.singleShot"
+    ) as fake_single_shot:
+        view._schedule_scroll_restore(100)  # noqa: SLF001
+        first_cycle_stop_listening = fake_single_shot.call_args.args[-1]
+
+        scroll_bar = view._scroll_area.verticalScrollBar()  # noqa: SLF001
+        scroll_bar.setRange(0, 500)
+        assert scroll_bar.value() == 100
+
+        # A newer cycle starts before the first cycle's own timer ever
+        # fires - this must cancel the first cycle outright.
+        view._schedule_scroll_restore(200)  # noqa: SLF001
+        scroll_bar.setRange(0, 0)
+        scroll_bar.setRange(0, 700)
+        assert scroll_bar.value() == 200
+
+        # The first cycle's own timer finally fires, late - it must be
+        # a no-op now, not a stale re-application of 100.
+        first_cycle_stop_listening()
+        assert scroll_bar.value() == 200
+
+
 def test_refresh_resets_scroll_position_when_switching_projects(
     qapp: QApplication,
 ) -> None:

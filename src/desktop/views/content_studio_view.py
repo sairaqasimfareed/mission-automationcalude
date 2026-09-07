@@ -201,6 +201,16 @@ class ContentStudioView(QWidget):
         # position preservation possible.
         self._last_refreshed_job_id: UUID | None = None
 
+        # Fourth-pass fix state (see _schedule_scroll_restore()'s own
+        # docstring): a single user action can trigger refresh()
+        # several times in quick succession (confirmed via a real
+        # runtime log showing ~6 calls for one click), each starting
+        # its own listen-and-restore cycle - this tracks whichever one
+        # is currently active so a new cycle can cancel it, making the
+        # LATEST refresh() call's cycle the sole one that ends up
+        # applying a value, instead of several racing independently.
+        self._active_scroll_restore_cleanup: Callable[[], None] | None = None
+
         # Transient - a review is a read-only critique, never persisted
         # to VideoJob (the Reviewer never becomes the author). Keyed by
         # stage_key so switching stages doesn't lose a prior result,
@@ -273,6 +283,15 @@ class ContentStudioView(QWidget):
         project, something happened" (job.id itself is already updated
         by set_job() before refresh() ever runs, so it can't be used
         for that comparison).
+
+        A single user action can trigger this method several times in
+        quick succession (confirmed via a real runtime log showing
+        around 6 calls for one click) - each call still captures
+        whatever the scrollbar shows at ITS OWN start, which is always
+        accurate for that call. What previously went wrong was not the
+        capture itself but what happened AFTER: see
+        `_schedule_scroll_restore()`'s own docstring for the real,
+        confirmed fix for the resulting multi-cycle race.
         """
 
         is_same_job = job.id == self._last_refreshed_job_id
@@ -321,36 +340,86 @@ class ContentStudioView(QWidget):
         applying on that first, still-zero firing silently clamped the
         restore to 0 - exactly the reported "still resets to top"
         symptom, even though the captured value itself was always
-        correct.
+        correct. Fixed (second pass): reapply `setValue(value)` on
+        EVERY `rangeChanged` firing while the connection is alive, not
+        just the first.
 
-        Fixed: reapply `setValue(value)` on EVERY `rangeChanged` firing
-        while the connection is alive, not just the first - an early,
-        too-small range just clamps harmlessly, and a later firing
-        (once the range has actually grown enough) re-applies and
-        correctly sticks. The connection stays alive until the
-        `QTimer.singleShot` fallback fires (50ms) and disconnects -
-        that same fallback is also what handles the case where
-        `rangeChanged` never fires at all (rebuilt content coincidentally
-        ending up the same height as before).
+        That fix alone still didn't hold up against a real, more
+        complex project (third pass -> fourth pass, this method): a
+        single user action triggers refresh() several times in quick
+        succession (confirmed via a real runtime log showing around 6
+        calls for one click), so several of these listen-and-restore
+        cycles were starting while an EARLIER one from the same action
+        was still alive - each with its own `rangeChanged` connection
+        and its own 50ms timer, all racing to be the one that "wins"
+        and sets the scrollbar's final value. Each cycle's OWN captured
+        value is accurate for the moment its own refresh() call
+        started (`refresh()` captures it before touching any widget),
+        but whichever cycle's timer or signal fired LAST determined the
+        actual outcome regardless of which call was the most recent -
+        an unpredictable race, not a guarantee the latest, most
+        relevant call's value would be the one that stuck.
+
+        Fixed: `_active_scroll_restore_cleanup` tracks the one
+        currently-alive cycle's own cancellation function. Starting a
+        new cycle immediately cancels whatever cycle was still active
+        for this view - there is only ever at most one live
+        `rangeChanged` connection at a time, so the most recently
+        *started* cycle is unambiguously the one that ends up applying
+        its value, instead of an unpredictable race between several.
+
+        A cancelled cycle's own 50ms `QTimer.singleShot` callback is
+        still going to fire later regardless (Qt gives no way to
+        cancel an already-scheduled `singleShot` from here) - a `bool`
+        flag closed over by that cycle's own callbacks is what makes
+        that later firing a genuine no-op instead of a stale,
+        out-of-order `setValue()` call clobbering whatever a newer
+        cycle already correctly restored.
         """
 
         scroll_bar = self._scroll_area.verticalScrollBar()
+        cancelled = False
 
         def _apply() -> None:
+            if cancelled:
+                return
             scroll_bar.setValue(value)
 
         def _on_range_changed(_minimum: int, _maximum: int) -> None:
             _apply()
 
-        def _stop_listening() -> None:
+        def _disconnect() -> None:
             try:
                 scroll_bar.rangeChanged.disconnect(_on_range_changed)
             except (TypeError, RuntimeError):
                 # Already disconnected - harmless.
                 pass
 
+        def _cancel() -> None:
+            # Called only by a NEWER cycle superseding this one -
+            # never by this cycle's own natural completion.
+            nonlocal cancelled
+            cancelled = True
+            _disconnect()
+
+        def _stop_listening() -> None:
+            # This cycle's own 50ms timer firing - a no-op if a newer
+            # cycle already cancelled this one in the meantime, so a
+            # cancelled cycle's belated timer can never re-apply its
+            # now-stale value over a newer, correct restore.
+            if cancelled:
+                return
+
+            _disconnect()
             _apply()  # one last attempt in case rangeChanged never fired
 
+            if self._active_scroll_restore_cleanup is _cancel:
+                self._active_scroll_restore_cleanup = None
+
+        if self._active_scroll_restore_cleanup is not None:
+            self._active_scroll_restore_cleanup()
+
+        self._active_scroll_restore_cleanup = _cancel
         scroll_bar.rangeChanged.connect(_on_range_changed)
         _apply()  # in case the range is already correct right now
         QTimer.singleShot(50, _stop_listening)
