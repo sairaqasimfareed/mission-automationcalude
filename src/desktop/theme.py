@@ -254,6 +254,12 @@ def _build_stylesheet() -> str:
         width: 24px;
     }}
 
+    QComboBox::down-arrow {{
+        image: url(data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'><path d='M2.5 4.5L6 8L9.5 4.5' stroke='%23{TEXT_SECONDARY[1:]}' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>);
+        width: 10px;
+        height: 10px;
+    }}
+
     QSpinBox::up-button, QSpinBox::down-button {{
         width: 16px;
         border: none;

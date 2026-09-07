@@ -26,6 +26,27 @@ def test_apply_theme_does_not_raise(qapp: QApplication) -> None:
     assert qapp.styleSheet()
 
 
+def test_combo_box_down_arrow_has_an_explicit_visible_color() -> None:
+    """
+    Real-world finding: QComboBox::drop-down had its border/background
+    stripped for the dark theme, but QComboBox::down-arrow was never
+    given an explicit color - Qt's default arrow glyph rendered too
+    dark to see against this app's dark background, making a
+    genuinely functional dropdown (e.g. Provider Manager's "Provider
+    name") look indistinguishable from a plain text field.
+    """
+
+    from src.desktop.theme import TEXT_SECONDARY, _build_stylesheet
+
+    css = _build_stylesheet()
+    arrow_rule_index = css.find("QComboBox::down-arrow")
+
+    assert arrow_rule_index != -1
+    arrow_rule = css[arrow_rule_index : arrow_rule_index + 400]
+    assert "image:" in arrow_rule
+    assert TEXT_SECONDARY[1:] in arrow_rule
+
+
 @pytest.mark.parametrize("name", sorted(_ICONS))
 def test_every_defined_icon_renders(qapp: QApplication, name: str) -> None:
     result = icon(name)

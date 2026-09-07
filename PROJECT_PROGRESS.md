@@ -5,6 +5,16 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-07 - Theme: QComboBox dropdowns had an invisible arrow on the dark theme
+
+Traced from the user reporting the Provider Manager dropdown fix "wasn't visible" after a genuinely correct, verified restart (right commit, right folder, confirmed via `git log -1`). Root cause found by reading the shared stylesheet: `QComboBox::drop-down` had its border/background stripped for the dark theme, but `QComboBox::down-arrow` was never given an explicit color - Qt's default arrow glyph rendered too dark to see against this app's near-black background. The combo box was genuinely working the whole time; there was just no visible cue it was a dropdown at all, on **every** combo box in the app, not only the one just added.
+
+**Fixed**: `QComboBox::down-arrow` now gets an explicit, visible chevron via an inline SVG data URI colored with the existing `TEXT_SECONDARY` token (`#A6ACBA`) - no new asset file, no new dependency, derived from the same constant the rest of the theme already uses rather than a hardcoded duplicate.
+
+**Tests**: 1 new in `test_desktop_theme_and_icons.py` confirming the down-arrow rule exists and references a real, visible color. Full theme suite (26 cases) and the full desktop integration suite (10 cases): all passed. mypy/ruff/black clean.
+
+---
+
 ## 2026-09-07 - Content Studio: fixed the screen snapping back to the top after every action
 
 The user reported it directly: on the Content screen, pressing any button (selecting a topic, running a stage, saving an edit) always jumped back to the top of the page, forcing a re-scroll every single time.
