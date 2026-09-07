@@ -279,6 +279,14 @@ class ContentStudioView(QWidget):
         scroll_value = (
             self._scroll_area.verticalScrollBar().value() if is_same_job else 0
         )
+        print(  # noqa: T201 - TEMPORARY diagnostic, see chat
+            f"SCROLL_DEBUG refresh(): job.id={job.id} "
+            f"last_refreshed_job_id={self._last_refreshed_job_id} "
+            f"is_same_job={is_same_job} "
+            f"current_scrollbar_value={self._scroll_area.verticalScrollBar().value()} "
+            f"current_scrollbar_max={self._scroll_area.verticalScrollBar().maximum()} "
+            f"captured_scroll_value={scroll_value}"
+        )
         self._last_refreshed_job_id = job.id
 
         while self._layout.count():
@@ -332,7 +340,7 @@ class ContentStudioView(QWidget):
         scroll_bar = self._scroll_area.verticalScrollBar()
         applied = False
 
-        def _apply() -> None:
+        def _apply(source: str = "timer_fallback") -> None:
             nonlocal applied
 
             if applied:
@@ -349,9 +357,14 @@ class ContentStudioView(QWidget):
                 pass
 
             scroll_bar.setValue(value)
+            print(  # noqa: T201 - TEMPORARY diagnostic, see chat
+                f"SCROLL_DEBUG _apply(): source={source} target_value={value} "
+                f"scrollbar_max_now={scroll_bar.maximum()} "
+                f"scrollbar_value_after_setValue={scroll_bar.value()}"
+            )
 
         def _on_range_changed(_minimum: int, _maximum: int) -> None:
-            _apply()
+            _apply(source="rangeChanged")
 
         scroll_bar.rangeChanged.connect(_on_range_changed)
         QTimer.singleShot(50, _apply)
