@@ -5,6 +5,16 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-07 - Google Flow External UI Automation: real base URL confirmed (`https://flow.google.com`)
+
+**The first genuinely real, verified fact about the actual product in this whole initiative - not fabricated, not guessed.** The user supplied `https://flow.google.com/about` and asked what's needed to finish GF-17. Rather than take the URL on faith, it was visited directly (public marketing content, no login involved, nothing credential-related touched): the page redirects to `https://flow.google.com`, titled "Google Flow - AI Creative Studio for Video, Images & Custom Tools," confirming the product, its real model names (Gemini Omni, Nano Banana, Veo 3.1), and its credit-based pricing tiers. Clicking "Create with Google Flow" correctly redirected to `https://accounts.google.com` - Google's own standard OAuth sign-in - confirming exactly the "normal browser authentication experience" this whole initiative was designed around, and the browser was navigated away immediately without touching that login page at all, per the hard boundary that's held since GF-0.
+
+**What this does and doesn't change.** New `VERIFIED_FLOW_BASE_URL = "https://flow.google.com"` in `src/providers/google_flow/locators.py`, documented as genuinely confirmed (not a placeholder) - unlike `GoogleFlowLocators`' own selectors, which remain fixture-only until a human actually signs in and the real authenticated app's DOM can be inspected. `GoogleFlowProviderPanelView`'s "Flow URL" field now pre-fills new/unconfigured accounts with this real default instead of a blank field with a generic placeholder - still fully editable, never forced - so an operator adding their first account doesn't have to already know or type the URL themselves. This is genuinely useful, real progress toward GF-17, but it is not GF-17 itself: the authenticated app's actual selectors are still unknown, and only a human completing real sign-in can supply that next piece.
+
+**Tests**: 1 new case in `test_google_flow_provider_panel_view.py` confirming the real default pre-fills correctly; the 2 existing "no URL configured" warning tests updated to explicitly clear the field first, since a real default now exists to clear (both still correctly prove the warning path fires when the field is genuinely empty). Broader `-k "google_flow"` regression (117 cases, excluding the two real-browser suites already verified independently and unaffected by this change): 117 passed. mypy/ruff/black clean.
+
+---
+
 ## 2026-09-07 - Google Flow External UI Automation: status after GF-0 through GF-16
 
 **Full-suite regression, run once at the end of this whole initiative's session rather than only per-phase: 2283 passed, 0 failed.** Every phase built today (GF-0, GF-1, GF-2, GF-3, GF-4, GF-5/GF-6 folded into GF-4's adapter, GF-9, GF-11/GF-12, GF-13, GF-14, GF-15, GF-16 folded into GF-4) plus the entire pre-existing codebase from every earlier initiative in this repository, together, green.

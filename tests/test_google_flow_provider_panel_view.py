@@ -138,6 +138,40 @@ def test_selecting_an_account_populates_the_detail_panel(qapp: QApplication) -> 
     assert view._flow_url_input.text() == "https://example.invalid/flow"  # noqa: SLF001
 
 
+def test_selecting_an_account_with_no_saved_url_prefills_the_verified_default(
+    qapp: QApplication,
+) -> None:
+    """
+    flow.google.com was confirmed real by actually visiting the
+    public Google Flow marketing page (no login involved) - a newly
+    added account with no flow_url saved yet starts from that real
+    default rather than an empty field, though it stays fully
+    editable and is never silently forced.
+    """
+
+    from src.providers.google_flow.locators import VERIFIED_FLOW_BASE_URL
+
+    service = _management_service()
+    from src.models.provider_profile_management import ProviderProfileUpsertCommand
+
+    service.upsert_profile(
+        ProviderProfileUpsertCommand(
+            profile_id="flow.primary",
+            display_name="Flow Primary",
+            provider_name="Google Flow",
+            category=ProviderCategory.EXTERNAL_UI_VIDEO,
+            enabled=False,
+            browser_profile_reference="flow_profiles/flow.primary",
+        )
+    )
+
+    view = _view(qapp, service=service)
+    view.refresh()
+    view._list.setCurrentRow(0)  # noqa: SLF001
+
+    assert view._flow_url_input.text() == VERIFIED_FLOW_BASE_URL  # noqa: SLF001
+
+
 def test_save_persists_the_flow_url_and_priority(qapp: QApplication) -> None:
     service = _management_service()
     from src.models.provider_profile_management import ProviderProfileUpsertCommand
@@ -184,6 +218,11 @@ def test_open_login_without_a_flow_url_shows_a_warning(qapp: QApplication) -> No
     view = _view(qapp, service=service)
     view.refresh()
     view._list.setCurrentRow(0)  # noqa: SLF001
+    # A newly-added account with no saved flow_url is pre-filled with
+    # the real, verified default (flow.google.com) rather than left
+    # blank - simulate an operator who deliberately cleared it, since
+    # that's the actual condition this warning guards against.
+    view._flow_url_input.clear()  # noqa: SLF001
 
     view._handle_open_login_clicked()  # noqa: SLF001
 
@@ -275,6 +314,7 @@ def test_check_connection_without_a_flow_url_shows_a_warning(
     view = _view(qapp, service=service)
     view.refresh()
     view._list.setCurrentRow(0)  # noqa: SLF001
+    view._flow_url_input.clear()  # noqa: SLF001
 
     view._handle_check_connection_clicked()  # noqa: SLF001
 

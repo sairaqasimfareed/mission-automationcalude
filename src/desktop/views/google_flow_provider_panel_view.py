@@ -24,6 +24,7 @@ from src.models.provider_profile_management import (
     ProviderProfileUpsertCommand,
 )
 from src.providers.google_flow.adapter import GoogleFlowUIAdapter
+from src.providers.google_flow.locators import VERIFIED_FLOW_BASE_URL
 from src.services.provider_profile_management_service import (
     ProviderProfileManagementService,
 )
@@ -115,7 +116,7 @@ class GoogleFlowProviderPanelView(QWidget):
         form.addRow("Account", self._display_name_value)
 
         self._flow_url_input = QLineEdit()
-        self._flow_url_input.setPlaceholderText("https://…")
+        self._flow_url_input.setPlaceholderText(VERIFIED_FLOW_BASE_URL)
         form.addRow("Flow URL", self._flow_url_input)
 
         self._priority_input = QSpinBox()
@@ -212,7 +213,13 @@ class GoogleFlowProviderPanelView(QWidget):
         self._priority_input.setValue(profile.priority)
         self._enabled_checkbox.setChecked(profile.enabled)
         self._flow_url_input.setText(
-            self._flow_urls.get(profile_id) or profile.metadata.get("flow_url", "")
+            self._flow_urls.get(profile_id)
+            or profile.metadata.get("flow_url")
+            # A real, verified default now that the base URL has
+            # actually been confirmed by visiting the public Google
+            # Flow marketing page (no login involved) - still just a
+            # starting point the operator can edit, never forced.
+            or VERIFIED_FLOW_BASE_URL
         )
         self._health_badge.setText(profile.health_status.value)
 
