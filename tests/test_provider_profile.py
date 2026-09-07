@@ -161,4 +161,68 @@ restored = ProviderProfile.model_validate_json(serialized)
 assert restored == profile
 assert restored.schema_version == "1.0"
 
+
+# --- Google Flow External UI Automation, GF-2: EXTERNAL_UI_VIDEO
+# authenticates via a persistent browser profile, never a secret. ---
+
+try:
+    ProviderProfile(
+        profile_id="flow-primary",
+        display_name="Flow Primary",
+        provider_name="Google Flow",
+        category=ProviderCategory.EXTERNAL_UI_VIDEO,
+        enabled=True,
+    )
+except ValidationError:
+    print("Flow profile without a browser_profile_reference successfully blocked.")
+else:
+    raise AssertionError(
+        "An enabled EXTERNAL_UI_VIDEO profile requires a " "browser_profile_reference."
+    )
+
+
+try:
+    ProviderProfile(
+        profile_id="flow-primary",
+        display_name="Flow Primary",
+        provider_name="Google Flow",
+        category=ProviderCategory.EXTERNAL_UI_VIDEO,
+        enabled=True,
+        secret_reference="secret://this-should-not-be-required",
+    )
+except ValidationError:
+    print(
+        "Flow profile with only a secret_reference (no browser profile) "
+        "successfully blocked."
+    )
+else:
+    raise AssertionError(
+        "A secret_reference alone must not satisfy an EXTERNAL_UI_VIDEO "
+        "profile's credential requirement."
+    )
+
+
+flow_profile = ProviderProfile(
+    profile_id="flow-primary",
+    display_name="Flow Primary",
+    provider_name="Google Flow",
+    category=ProviderCategory.EXTERNAL_UI_VIDEO,
+    enabled=True,
+    health_status=ProviderHealthStatus.HEALTHY,
+    browser_profile_reference="flow_profiles/flow-primary",
+)
+
+assert flow_profile.secret_reference is None
+assert flow_profile.usable is True
+
+disabled_flow_profile = ProviderProfile(
+    profile_id="flow-secondary",
+    display_name="Flow Secondary",
+    provider_name="Google Flow",
+    category=ProviderCategory.EXTERNAL_UI_VIDEO,
+    enabled=False,
+)
+
+assert disabled_flow_profile.usable is False
+
 print("Provider Profile tests completed successfully.")

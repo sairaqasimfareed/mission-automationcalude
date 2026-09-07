@@ -72,6 +72,16 @@ class ProviderProfile(MissionBaseModel):
 
     secret_reference: str | None = None
 
+    # Google Flow External UI Automation, GF-2: an EXTERNAL_UI_VIDEO
+    # profile authenticates through a persistent, local Chromium
+    # profile directory - never an API secret - so it needs its own
+    # "credential present" identifier. Deliberately just a reference
+    # (a profile id/path), never the browser's actual cookies/storage;
+    # GF-15's security rule ("never persist/log/export cookies,
+    # tokens, browser storage") means the real session data must
+    # never round-trip through this or any other persisted model.
+    browser_profile_reference: str | None = None
+
     base_url: str | None = None
     organization_id: str | None = None
     project_id: str | None = None
@@ -168,7 +178,14 @@ class ProviderProfile(MissionBaseModel):
     def validate_provider_profile(
         self,
     ) -> ProviderProfile:
-        if self.enabled and not self.secret_reference:
+        if self.enabled and self.category == ProviderCategory.EXTERNAL_UI_VIDEO:
+            if not self.browser_profile_reference:
+                raise ValueError(
+                    "An enabled EXTERNAL_UI_VIDEO provider profile requires "
+                    "a browser_profile_reference (it authenticates through a "
+                    "persistent browser profile, not a secret_reference)."
+                )
+        elif self.enabled and not self.secret_reference:
             raise ValueError(
                 "An enabled provider profile requires " "a secret_reference."
             )
@@ -214,9 +231,14 @@ class ProviderProfile(MissionBaseModel):
     def usable(self) -> bool:
         """Return whether provider selection may use this profile."""
 
+        if self.category == ProviderCategory.EXTERNAL_UI_VIDEO:
+            has_credential = self.browser_profile_reference is not None
+        else:
+            has_credential = self.secret_reference is not None
+
         return (
             self.enabled
-            and self.secret_reference is not None
+            and has_credential
             and self.health_status
             in {
                 ProviderHealthStatus.HEALTHY,
