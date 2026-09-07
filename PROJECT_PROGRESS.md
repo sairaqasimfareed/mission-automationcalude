@@ -5,6 +5,18 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-07 - GUI-6 (second slice): tab-order audit for the New Project form (Unified GUI & Release Hardening)
+
+Continued GUI-6's disclosed remaining scope with the next bounded piece: verifying keyboard tab order actually follows visual layout order, since this codebase has zero explicit `setTabOrder()` calls anywhere - tab order is entirely implicit, derived from widget *construction* order, which silently diverges from *visual* order if a field is ever added to a layout in a different sequence than it was constructed.
+
+**Method**: rather than assume from reading code, walked the real Qt focus chain (`QWidget.nextInFocusChain()`) on the largest, most complex real form (`ProjectFormView` - 17 named fields plus a 12-row dynamic decision-point panel), filtered to only focus-policy-accepting widgets (reproducing exactly what `QWidget.focusNextPrevChild()` - real Tab-key handling - actually stops on, not the raw unfiltered chain which also walks through non-focusable QLabels). Confirmed the real, effective order: project name → channel → topic → video type → niche → genre → duration → language → country → audience → platform → approval mode → all 12 decision-point selects in their declared pipeline order → primary/reviewer/fallback LLM - correct, matching the visual layout exactly. No bug found here to fix; this is deliberately reported as a clean result rather than manufacturing a fix to justify the pass.
+
+**Tests**: new `test_tab_order_follows_the_forms_visual_top_to_bottom_layout` in `tests/test_project_form_view.py`, with a reusable `_focus_chain_from()` helper (the same focus-policy-filtering technique above). This locks in the now-verified-correct order as a real regression guard - a future field added in the wrong construction position would fail this test even though nothing about it would look wrong to a mouse user. Verified the test is sensitive to real ordering (not trivially passing) via an actual bug caught mid-authoring: an off-by-one in the test's own expected-list construction (the walk starts *after* the given widget, so that widget itself isn't in the walked chain) produced a genuine assertion failure, confirming the check has real teeth. Full `test_project_form_view.py` (8 tests) and combined with `test_desktop_app_integration.py` (18 total): all passed. mypy/ruff/black clean.
+
+Still-disclosed remaining GUI-6 scope: high-DPI/display-scaling verification and resize/clipping behavior at low resolutions; tab-order audits for the other, less complex forms were judged lower-value after this form (the largest and most structurally complex one) came back clean.
+
+---
+
 ## 2026-09-07 - GUI-6 (scoped slice): WCAG contrast audit + visible keyboard focus (Unified GUI & Release Hardening)
 
 Started GUI-6 with a bounded, concrete first slice rather than an open-ended "accessibility pass" - a real, numeric WCAG 2.1 AA contrast audit across every live text/background pairing in both themes, plus visible keyboard-focus indicators (previously missing on buttons).
