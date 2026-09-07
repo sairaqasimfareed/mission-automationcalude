@@ -232,6 +232,28 @@ GUI-0 audit rather than a from-scratch rebuild).
 | GUI-7: Legacy retirement and release reconciliation | Not applicable (pre-empted) | GUI-0's audit found no misleading duplicate entry points to retire | | | |
 | GUI-8: Full GUI validation | Partial | Whole-repo static checks: ruff/black/compileall clean, and this project's own configured mypy gate (`files = ["src"]`, `tests/` explicitly excluded by the project's own config) - 418 source files, zero issues. Attempted full-suite pytest validation surfaced a genuine, real finding instead of a clean pass: running the entire suite as one process reproducibly hangs, bisected and reproduced deterministically down to 2 specific files/48 tests, correlated to (not yet fully diagnosed from) the already-known-flaky render-progress QThread test's failure path. Documented rather than hidden - a real GUI-8 deliverable in its own right | None new | Not applicable - a validation pass, no UI change | Coverage achieved via the same per-file/small-group method used successfully throughout this entire session (never hit the hang) - every GUI-0/1/6/8 file individually and in combination, all green except the one pre-existing, isolation-confirmed flake | New `docs/GUI8_VALIDATION_REPORT.md` (full writeup) and a new checklist item in `docs/REMAINING_GAPS.md`. The monolithic-full-suite hang itself remains unresolved - needs a debugger attached to a live repro to properly root-cause, not attempted in this pass |
 
+## Pre-Installer Master Audit
+
+A sixth, separate initiative: a 10-phase (MRA-PRE-0 through MRA-PRE-9)
+whole-application audit per
+`Step 5_Pre_Installer_Master_Audit_Plan.pdf`, run after feature work
+is complete and before installer packaging. Explicitly freezes feature
+scope from MRA-PRE-0 forward - only audit-discovered defects may be
+fixed from this point on.
+
+| Capability | Status | Notes |
+|---|---|---|
+| MRA-PRE-0: Freeze and evidence capture | Done | Real git baseline (branch/HEAD/worktree state, one stray worktree reconfirmed stale), authoritative docs inventory, schema versions (49 fields, all at baseline "1.0"), validator inventory, GUI entry points (referencing GUI-0's own matrix), a project/provider-profile snapshot, and a fresh full static-check run at this exact HEAD (`0194c78`, ruff/black/mypy/compileall all clean) - all real evidence, not descriptions. Found and recorded (not fixed): no currently-existing project is advanced enough for MRA-PRE-3's own requirement; `data/checkpoints/` and `data/final_exports/` show real contamination from local test runs writing to production paths. Two known-open items (the GUI-8 pytest-hang finding, the unresolved scroll bug) explicitly carried forward rather than hidden. Deliverable: `docs/MRA_PRE_0_BASELINE.md` - the baseline record plus a defined, reusable evidence format (claim/method/evidence/verdict/HEAD) for every subsequent MRA-PRE phase |
+| MRA-PRE-1: Authority and architecture audit | Missing | Not started |
+| MRA-PRE-2: Persistence/restart/migration audit | Missing | Not started - MRA-PRE-0 already flagged a real, relevant finding (test-run contamination of production `data/` paths) this phase should address |
+| MRA-PRE-3: Canonical lifecycle audit | Missing | Not started - MRA-PRE-0 found no currently-existing project is advanced enough to trace; this phase will need to drive one through the pipeline first |
+| MRA-PRE-4: Genre/audience/brand anti-drift audit | Missing | Not started - genre/locale propagation substantially covered by prior sprints per this session's own review; whether a "Brand" feature exists in this codebase at all needs direct confirmation before this phase can be scoped |
+| MRA-PRE-5: Provider/runtime/failure audit | Missing | Not started - substantially already covered by GF-0 through GF-17's own work per this session's own review, needs re-verification not a from-scratch pass |
+| MRA-PRE-6: Publishing/package audit | Missing | Not started - substantially already covered by SEO-1 through SEO-9's own work per this session's own review |
+| MRA-PRE-7: GUI and operator workflow audit | Missing | Not started - overlaps heavily with GUI-0/1/6/8; "long content" and "disabled/loading/error states" specifically were not in GUI-6's own scoped slices, a real remaining gap for this phase |
+| MRA-PRE-8: Performance and stability baseline | Missing | Not started - no deliberate stress/stability pass exists yet |
+| MRA-PRE-9: Pre-installer certification | Missing | Not started - already effectively attempted once via GUI-8, which found this phase's own exit gate (full local validation green) is currently blocked by the full-suite pytest hang |
+
 ## How this document is maintained
 
 Every phase of the production-hardening work (see `docs/ARCHITECTURE.md`

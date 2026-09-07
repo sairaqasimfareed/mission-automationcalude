@@ -5,6 +5,20 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-07 - MRA-PRE-0: Freeze and evidence capture (Pre-Installer Master Audit)
+
+Started the Pre-Installer Master Audit per `Step 5_Pre_Installer_Master_Audit_Plan.pdf` - a 10-phase (MRA-PRE-0 through MRA-PRE-9) whole-application audit that runs after feature work is complete and before installer packaging, explicitly freezing feature scope from this point forward (only audit-discovered defects may be fixed). Reviewed the document first (read-only), gave a phase-by-phase honest assessment of what's already substantially covered by this session's own prior work versus genuinely new, and the user confirmed starting with MRA-PRE-0.
+
+**Recorded**: exact git baseline (branch `main`, HEAD `0194c78`, clean tree, the one stray worktree reconfirmed stale/unrelated), the full authoritative docs inventory, schema versions (49 model fields, all still at baseline `"1.0"` - no breaking schema change has happened yet), the two dedicated validator services plus `StartupDiagnosticsReporter`, and GUI entry points (referencing GUI-0's own `docs/GUI_INVENTORY_MATRIX.md` rather than redoing that work). Re-ran the full static-check suite fresh at this exact HEAD (ruff/black/mypy/compileall all clean, matching GUI-8's earlier result at an older commit).
+
+**Real findings, not glossed over**: the live `data/projects/` directory holds only 3 early-stage scratch/test projects - none advanced enough to serve as MRA-PRE-3's own "trace a real project from script approval through Phase 15" requirement, a genuine gap that phase will need to address directly. Also found `data/checkpoints/` holding 566 checkpoint directories against only 3 real projects, and a `data/final_exports/Deep_Sea_Documentary` entry matching this test suite's own fixture name - strong evidence local test runs have been writing real artifacts into production `data/` paths instead of an isolated `tmp_path` over this project's history. Not fixed here (out of MRA-PRE-0's own scope, and `data/` is gitignored so nothing ships) - flagged as a candidate MRA-PRE-2/MRA-PRE-8 finding.
+
+**Two known-open items explicitly carried into the audit, not hidden**: the full-suite pytest hang found during GUI-8, and the still-unresolved Content Studio scroll-position bug (parked at the user's explicit request). Both are recorded in the new baseline doc's own section rather than treated as surprises when MRA-PRE-9/MRA-PRE-7 eventually reach them.
+
+**Deliverable**: `docs/MRA_PRE_0_BASELINE.md` - the full baseline record, plus a defined, reusable evidence format (claim/method/evidence/verdict/HEAD) every subsequent MRA-PRE phase's findings will be recorded in, so evidence stays comparable and reproducible across the whole audit. A local project/provider-profile snapshot was taken to `audit/baseline_2026-09-07/` (gitignored, same reasoning as `data/` itself - real project data never belongs in version control).
+
+---
+
 ## 2026-09-07 - Content Studio: scroll-position fix, fourth pass
 
 Resumed the scroll-position-reset bug (parked earlier this session at the user's request after three fix attempts). The third pass (reapply `setValue()` on every `rangeChanged` firing) was already correctly reapplying, but a single user action still triggers `refresh()` multiple times in quick succession (confirmed via a real runtime log referenced earlier this session, ~6 calls for one click) - each call started its OWN independent `rangeChanged` connection and 50ms fallback timer, all left alive simultaneously and racing to be the one that "wins" and sets the final scrollbar value. Whichever cycle's signal or timer fired LAST decided the outcome, with no guarantee that was the most recent, most relevant call's own cycle - a genuinely different bug from what the third pass fixed, not a re-occurrence of it.

@@ -31,3 +31,9 @@ pipeline_stage_search.txt
 project_structure.txt
 render_retry_fixture_inspection.txt
 output.txt
+
+# Pre-Installer Master Audit (MRA-PRE-0): local data snapshots for the
+# audit baseline - real project/provider-profile copies, same reasoning
+# as data/ itself (not project docs, not meant for version control).
+# The audit's own findings/reports still live under docs/ and ARE committed.
+audit/
