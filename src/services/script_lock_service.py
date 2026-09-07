@@ -64,11 +64,25 @@ class ScriptLockService:
             override_reason.strip() if override_reason is not None else None
         )
 
+        # Found via external audit: Phase 0 explicitly names "topic,
+        # angle, target duration, genre/profile references" among what
+        # a lock must persist. topic/target_duration_seconds/genre_id
+        # always exist on VideoJob (non-optional, defaulted fields);
+        # angle only exists once the newer content-intelligence
+        # pipeline has selected one, so a job locked through the
+        # older, still-live flow honestly records None rather than a
+        # fabricated angle.
+        selected_angle = job.selected_story_angle
+
         return ScriptLock(
             script_version_number=current.version_number,
             script_content_hash=job.generated_script.content_hash,
             provenance=provenance,
             quality_status=report.status if report is not None else None,
+            topic=job.topic,
+            angle=selected_angle.description if selected_angle is not None else None,
+            target_duration_seconds=job.target_duration_seconds,
+            genre_id=job.genre_id,
             override_reason=cleaned_override_reason or None,
         )
 

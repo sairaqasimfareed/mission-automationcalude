@@ -305,6 +305,9 @@ def test_build_computes_production_provenance_from_the_job(
         script_version_number=2,
         script_content_hash="deadbeef" * 4,
         provenance=ScriptProvenance.INTERNAL,
+        topic=job.topic,
+        target_duration_seconds=job.target_duration_seconds,
+        genre_id=job.genre_id,
     )
 
     assert job.audio_timeline is not None

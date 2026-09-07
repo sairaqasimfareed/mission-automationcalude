@@ -11,6 +11,7 @@ from src.models.generated_script import GeneratedScript, ScriptSegment
 from src.models.script_lock import ScriptProvenance
 from src.models.script_quality_report import ScriptQualityReport, ScriptQualityStatus
 from src.models.script_version import ScriptVersion, ScriptVersionHistory
+from src.models.story_angle import StoryAngle, StoryAngleStyle
 from src.models.story_blueprint import StoryBeatType
 from src.models.video_job import VideoJob
 from src.services.script_lock_service import ScriptLockService
@@ -102,6 +103,60 @@ def test_build_lock_captures_version_and_hash() -> None:
     assert lock.script_version_number == 1
     assert lock.script_content_hash == job.generated_script.content_hash  # type: ignore[union-attr]
     assert lock.provenance == ScriptProvenance.INTERNAL
+
+
+def test_build_lock_captures_topic_duration_and_genre_from_the_job() -> None:
+    """
+    External audit finding: Post-Script-Approval Production Plan Phase
+    0 explicitly names "topic, angle, target duration, genre/profile
+    references" among what a lock must persist - previously the lock
+    only ever carried version/hash/provenance/quality status.
+    """
+
+    job = _job()
+
+    lock = ScriptLockService.build_lock(job=job)
+
+    assert lock.topic == "The Mary Celeste"
+    assert lock.target_duration_seconds == 180
+    assert lock.genre_id == "genre.mystery"
+    assert lock.angle is None
+
+
+def test_build_lock_captures_the_selected_story_angle_when_present() -> None:
+    job = _job()
+    job.selected_story_angle = StoryAngle(
+        style=StoryAngleStyle.MYSTERY,
+        title="The vanishing crew",
+        description="A ghost-ship investigation framed around unanswered questions.",
+    )
+
+    lock = ScriptLockService.build_lock(job=job)
+
+    assert (
+        lock.angle == "A ghost-ship investigation framed around unanswered questions."
+    )
+
+
+def test_build_lock_snapshots_topic_duration_and_genre_at_lock_time() -> None:
+    """
+    Snapshotted, not referenced live - a later change to the job's own
+    topic/duration/genre must never retroactively change what an
+    already-issued lock attests to, matching how quality_status is
+    already snapshotted rather than re-read from the job.
+    """
+
+    job = _job()
+
+    lock = ScriptLockService.build_lock(job=job)
+
+    job.topic = "A completely different topic"
+    job.target_duration_seconds = 999
+    job.genre_id = "genre.horror"
+
+    assert lock.topic == "The Mary Celeste"
+    assert lock.target_duration_seconds == 180
+    assert lock.genre_id == "genre.mystery"
 
 
 def test_build_lock_snapshots_the_quality_status() -> None:

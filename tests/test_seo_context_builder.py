@@ -128,6 +128,9 @@ def test_build_carries_script_lock_identity_when_locked() -> None:
         script_version_number=2,
         script_content_hash="deadbeef" * 4,
         provenance=ScriptProvenance.INTERNAL,
+        topic=job.topic,
+        target_duration_seconds=job.target_duration_seconds,
+        genre_id=job.genre_id,
     )
 
     context = SEOContextBuilder().build(

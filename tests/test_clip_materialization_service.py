@@ -46,6 +46,9 @@ def _lock() -> ScriptLock:
         script_version_number=1,
         script_content_hash="hash123",
         provenance=ScriptProvenance.INTERNAL,
+        topic="A ship at sea",
+        target_duration_seconds=180,
+        genre_id="genre.mystery",
     )
 
 

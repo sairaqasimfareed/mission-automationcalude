@@ -249,6 +249,9 @@ def test_seo_card_shows_staleness_banner_when_script_lock_hash_mismatches(
         script_version_number=2,
         script_content_hash="current-hash",
         provenance=ScriptProvenance.INTERNAL,
+        topic=job.topic,
+        target_duration_seconds=job.target_duration_seconds,
+        genre_id=job.genre_id,
     )
 
     view._job_store.add(job)
@@ -277,6 +280,9 @@ def test_seo_card_no_staleness_banner_when_hashes_match(
         script_version_number=2,
         script_content_hash="current-hash",
         provenance=ScriptProvenance.INTERNAL,
+        topic=job.topic,
+        target_duration_seconds=job.target_duration_seconds,
+        genre_id=job.genre_id,
     )
 
     view._job_store.add(job)
@@ -306,6 +312,9 @@ def test_seo_card_shows_unlocked_banner_when_package_predates_the_lock(
         script_version_number=1,
         script_content_hash="current-hash",
         provenance=ScriptProvenance.INTERNAL,
+        topic=job.topic,
+        target_duration_seconds=job.target_duration_seconds,
+        genre_id=job.genre_id,
     )
 
     view._job_store.add(job)
