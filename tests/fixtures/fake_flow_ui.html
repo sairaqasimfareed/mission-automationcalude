@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<!--
+  Google Flow External UI Automation, GF-16: a deterministic local
+  fake/fixture Flow UI.
+
+  This page's markup and ids are NOT Google Flow's real DOM - nobody
+  building this adapter has verified Google Flow's actual current
+  structure. Everything the GoogleFlowUIAdapter locators point at here
+  is a stand-in, invented specifically so the adapter's own logic
+  (preflight, settings selection/verification, exact prompt insertion,
+  analyze -> confirm handling, UI_CHANGED detection) can be exercised
+  against a real, running Playwright-driven browser page instead of
+  being left completely untested until a human runs real-account
+  certification (GF-17). Before any real-account use, GoogleFlowLocators
+  must be re-pointed at Google Flow's actual, verified selectors.
+
+  Query-string switches this page understands, each simulating one
+  real-world condition the adapter must handle correctly:
+
+    ?simulate=auth_required   -> renders a "sign in again" banner
+                                 instead of the generation form
+    ?simulate=ui_changed      -> renames every control's id/data
+                                 attribute so the adapter's locators
+                                 cannot find them
+    ?no_confirm=1             -> skips the analyze/confirm step and
+                                 goes straight from "Generate" to
+                                 "Generating..." (GF-0's confirmation-
+                                 optional path)
+    ?fail=1                   -> the generation ends in a failure
+                                 state instead of completing
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Fake Flow</title>
+</head>
+<body>
+  <div id="auth-required-banner" data-flow-role="auth-required" hidden>
+    <p>Your session has expired. Please sign in again.</p>
+  </div>
+
+  <main id="flow-app" data-flow-role="app">
+    <section id="composer" data-flow-role="composer">
+      <label for="prompt-input">Prompt</label>
+      <textarea id="prompt-input" data-flow-role="prompt-input"></textarea>
+
+      <label for="model-family-select">Model</label>
+      <select id="model-family-select" data-flow-role="model-family-select">
+        <option value="">Select a model</option>
+        <option value="standard">Standard</option>
+        <option value="premium">Premium</option>
+      </select>
+
+      <div
+        id="reference-drop-zone"
+        data-flow-role="reference-drop-zone"
+        style="min-height: 32px; min-width: 120px; border: 1px dashed #999;"
+      >
+        <span id="reference-attached-label" data-flow-role="reference-attached-label" hidden>
+          1 reference attached
+        </span>
+      </div>
+
+      <button id="generate-button" data-flow-role="generate-button" disabled>
+        Generate
+      </button>
+    </section>
+
+    <section id="analysis-panel" data-flow-role="analysis-panel" hidden>
+      <p id="analysis-status" data-flow-role="analysis-status">Analyzing your prompt&hellip;</p>
+      <button id="confirm-button" data-flow-role="confirm-button" hidden>
+        Confirm generation
+      </button>
+    </section>
+
+    <section id="generation-panel" data-flow-role="generation-panel" hidden>
+      <p id="generation-status" data-flow-role="generation-status">Generating&hellip;</p>
+    </section>
+
+    <section id="result-panel" data-flow-role="result-panel" hidden>
+      <p id="result-status" data-flow-role="result-status"></p>
+      <a
+        id="download-link"
+        data-flow-role="download-link"
+        href="data:text/plain;base64,ZmFrZS12aWRlby1ieXRlcw=="
+        download="fake-generation.mp4"
+        hidden
+      >Download</a>
+    </section>
+  </main>
+
+<script>
+(function () {
+  const params = new URLSearchParams(window.location.search);
+  const simulate = params.get("simulate");
+  const noConfirm = params.get("no_confirm") === "1";
+  const shouldFail = params.get("fail") === "1";
+
+  if (simulate === "auth_required") {
+    document.getElementById("flow-app").hidden = true;
+    document.getElementById("auth-required-banner").hidden = false;
+    return;
+  }
+
+  if (simulate === "ui_changed") {
+    // Rename every data-flow-role marker and id so a locator strategy
+    // built against the "real" markup above finds nothing - exactly
+    // what a genuine, unannounced Google Flow UI change would look
+    // like from the adapter's point of view.
+    document.querySelectorAll("[data-flow-role]").forEach((el) => {
+      el.removeAttribute("data-flow-role");
+    });
+    document.querySelectorAll("[id]").forEach((el) => {
+      el.id = "renamed-" + el.id;
+    });
+    return;
+  }
+
+  const promptInput = document.getElementById("prompt-input");
+  const generateButton = document.getElementById("generate-button");
+  const referenceDropZone = document.getElementById("reference-drop-zone");
+  const referenceAttachedLabel = document.getElementById(
+    "reference-attached-label"
+  );
+
+  function refreshGenerateEnabled() {
+    generateButton.disabled = promptInput.value.trim().length === 0;
+  }
+
+  promptInput.addEventListener("input", refreshGenerateEnabled);
+
+  // Simulates a reference file having been attached (a real adapter
+  // would drive an actual file input; this fixture only needs to
+  // prove the adapter correctly *verifies* attachment afterward).
+  // ?simulate=reference_drop simulates Flow silently failing to
+  // attach it - the adapter must detect this and stop before
+  // generation, never proceed as if it attached.
+  referenceDropZone.addEventListener("click", function () {
+    if (simulate === "reference_drop") {
+      return;
+    }
+    referenceAttachedLabel.hidden = false;
+    referenceDropZone.setAttribute("data-reference-count", "1");
+  });
+
+  generateButton.addEventListener("click", function () {
+    document.getElementById("composer").hidden = true;
+    document.getElementById("analysis-panel").hidden = false;
+
+    if (noConfirm) {
+      startGenerating();
+      return;
+    }
+
+    setTimeout(function () {
+      document.getElementById("analysis-status").textContent =
+        "Analysis complete.";
+      document.getElementById("confirm-button").hidden = false;
+    }, 150);
+  });
+
+  document
+    .getElementById("confirm-button")
+    .addEventListener("click", startGenerating);
+
+  function startGenerating() {
+    document.getElementById("analysis-panel").hidden = true;
+    document.getElementById("generation-panel").hidden = false;
+
+    setTimeout(function () {
+      document.getElementById("generation-panel").hidden = true;
+      document.getElementById("result-panel").hidden = false;
+
+      if (shouldFail) {
+        document.getElementById("result-status").textContent =
+          "Generation failed.";
+      } else {
+        document.getElementById("result-status").textContent =
+          "Your video is ready.";
+        document.getElementById("download-link").hidden = false;
+      }
+    }, 200);
+  }
+
+  refreshGenerateEnabled();
+})();
+</script>
+</body>
+</html>

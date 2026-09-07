@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TypeVar
 
 from playwright.sync_api import (
+    Browser,
     BrowserContext,
     Playwright,
     sync_playwright,
@@ -91,6 +92,30 @@ class FlowBrowserWorker:
             return context
 
         return self.submit(_open)
+
+    def launch_ephemeral_browser(self, *, headless: bool) -> Browser:
+        """
+        Launch a plain, non-persistent browser instance - distinct
+        from open_persistent_context's profile-bound persistent
+        contexts, for callers (like the Google Flow adapter) that
+        don't yet need a persistent, reusable profile.
+
+        Must only ever be called from a callable already running
+        inside the worker thread (i.e. from within a function passed
+        to submit()) - unlike every other public method here, this
+        one does NOT submit itself, so calling it directly from
+        another thread would touch Playwright off its owning thread.
+        Calling submit() a second time from inside an already-running
+        submitted callable would deadlock this single-worker pool
+        (the one worker thread is busy running the outer callable, so
+        the inner one could never start) - this method exists
+        specifically so callers already on the worker thread never
+        need to.
+        """
+
+        playwright = self._ensure_playwright()
+
+        return playwright.chromium.launch(headless=headless)
 
     def is_context_open(self, profile_id: str) -> Future[bool]:
         return self.submit(lambda: profile_id in self._contexts)
