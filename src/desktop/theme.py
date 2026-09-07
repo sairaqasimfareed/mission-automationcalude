@@ -35,12 +35,36 @@ _DARK_TOKENS: dict[str, str] = {
     "BORDER_STRONG": "#3A4050",
     "TEXT_PRIMARY": "#F3F4F7",
     "TEXT_SECONDARY": "#A6ACBA",
-    "TEXT_MUTED": "#6B7280",
-    "ACCENT": "#7C5CFC",
-    "ACCENT_HOVER": "#8F72FF",
+    # GUI-6 contrast audit: #6B7280 measured 3.44-3.81:1 against this
+    # theme's own surfaces (WCAG AA requires 4.5:1 for normal-size
+    # text, and "small-muted" text is 11px - not "large text", so no
+    # exemption applies) - lightened to a value that clears 4.5:1
+    # against every surface it's actually drawn on (worst case
+    # BG_ELEVATED, computed and verified, not guessed).
+    "TEXT_MUTED": "#8C919C",
+    # #7C5CFC (contrast 4.38:1 with white button text) measured just
+    # under WCAG AA's 4.5:1 - GUI-6 darkened it slightly (barely
+    # perceptible) to genuinely clear the threshold rather than leave
+    # a real, measured near-miss.
+    "ACCENT": "#7859F4",
+    # GUI-6: the original #8F72FF (lighter than ACCENT, "hover should
+    # be lighter") measured only 3.49:1 with the primary button's
+    # white text - a real, live fail on hover. Replaced with a value
+    # between ACCENT and ACCENT_PRESSED (still visually a distinct
+    # third shade) that clears 4.5:1.
+    "ACCENT_HOVER": "#7152EC",
     "ACCENT_PRESSED": "#6647E0",
     "ACCENT_SOFT": "rgba(124, 92, 252, 0.18)",
     "ACCENT_SOFT_STRONG": "rgba(124, 92, 252, 0.32)",
+    # Text drawn on top of ACCENT_SOFT/ACCENT_SOFT_STRONG (badge
+    # labels, the active toolbar tab) - GUI-6 found the previous
+    # ACCENT_HOVER-on-ACCENT_SOFT pairing measured 3.40-4.37:1
+    # (translucent accent-tinted text on an accent-tinted background
+    # is inherently low-contrast, no amount of background-opacity
+    # tuning fixes that - verified by search, not assumed). A plain
+    # light text color against this theme's dark-tinted blend clears
+    # 9.1-12.5:1 comfortably.
+    "ACCENT_ON_SOFT": "#F3F4F7",
     "SUCCESS": "#3DD68C",
     "WARNING": "#F5A623",
     "ERROR": "#FF5C6C",
@@ -56,16 +80,36 @@ _LIGHT_TOKENS: dict[str, str] = {
     "BORDER_STRONG": "#C0C4D0",
     "TEXT_PRIMARY": "#1B1E27",
     "TEXT_SECONDARY": "#585F70",
-    "TEXT_MUTED": "#8B92A3",
+    # GUI-6: #8B92A3 measured 2.89-3.12:1 against this theme's
+    # surfaces - a real fail (WCAG AA needs 4.5:1). Darkened to clear
+    # 4.5:1 against BG_WINDOW, the worst case (its luminance is
+    # slightly below the pure-white BG_SURFACE/BG_ELEVATED, so it is
+    # marginally harder to contrast against, not easier - verified
+    # numerically rather than assumed).
+    "TEXT_MUTED": "#6B707E",
     "ACCENT": "#6647E0",
-    "ACCENT_HOVER": "#7C5CFC",
+    # GUI-6: the original #7C5CFC measured only 4.38:1 with the
+    # primary button's white hover text - a real fail. Replaced with
+    # a value between ACCENT and ACCENT_PRESSED that clears 4.5:1.
+    "ACCENT_HOVER": "#5F40D5",
     "ACCENT_PRESSED": "#5535C4",
     "ACCENT_SOFT": "rgba(102, 71, 224, 0.10)",
     "ACCENT_SOFT_STRONG": "rgba(102, 71, 224, 0.20)",
-    "SUCCESS": "#1E9E63",
-    "WARNING": "#B9740A",
+    # Text on ACCENT_SOFT/ACCENT_SOFT_STRONG (badge labels, the active
+    # toolbar tab) - GUI-6 found ACCENT_HOVER-on-ACCENT_SOFT measured
+    # 3.51-3.80:1 here too. ACCENT_PRESSED against this theme's light
+    # accent-tinted blend clears 6.2-6.8:1 while still reading as
+    # accent-colored (unlike falling back to plain TEXT_PRIMARY).
+    "ACCENT_ON_SOFT": "#5535C4",
+    # GUI-6: SUCCESS/WARNING/INFO below are all darkened from their
+    # original values, which measured 3.17-4.49:1 against this
+    # theme's white/off-white surfaces - the dark theme's
+    # pastel-bright semantic colors read as washed out on a white
+    # ground even before this audit; the audit is what quantified it.
+    "SUCCESS": "#188050",
+    "WARNING": "#9F6409",
     "ERROR": "#D3273D",
-    "INFO": "#2A72C7",
+    "INFO": "#2A71C5",
 }
 
 _TOKENS_BY_RESOLVED_MODE: dict[ThemeMode, dict[str, str]] = {
@@ -99,6 +143,7 @@ ACCENT_HOVER = _DARK_TOKENS["ACCENT_HOVER"]
 ACCENT_PRESSED = _DARK_TOKENS["ACCENT_PRESSED"]
 ACCENT_SOFT = _DARK_TOKENS["ACCENT_SOFT"]
 ACCENT_SOFT_STRONG = _DARK_TOKENS["ACCENT_SOFT_STRONG"]
+ACCENT_ON_SOFT = _DARK_TOKENS["ACCENT_ON_SOFT"]
 
 SUCCESS = _DARK_TOKENS["SUCCESS"]
 WARNING = _DARK_TOKENS["WARNING"]
@@ -238,7 +283,13 @@ def _build_palette() -> QPalette:
     palette.setColor(QPalette.ColorRole.ToolTipText, QColor(TEXT_PRIMARY))
     palette.setColor(QPalette.ColorRole.PlaceholderText, QColor(TEXT_MUTED))
     palette.setColor(QPalette.ColorRole.Highlight, QColor(ACCENT))
-    palette.setColor(QPalette.ColorRole.HighlightedText, QColor(TEXT_PRIMARY))
+    # GUI-6 contrast audit: TEXT_PRIMARY on ACCENT (selected-text
+    # color on the selection-highlight background, e.g. selecting text
+    # inside a QLineEdit) measured only 2.81-3.98:1 against this app's
+    # two themes - a real, live fail below WCAG AA's 4.5:1. Plain
+    # white clears 4.5:1+ against both themes' ACCENT (verified, not
+    # assumed), since ACCENT is always a saturated mid-to-dark violet.
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor("white"))
     palette.setColor(QPalette.ColorRole.Link, QColor(ACCENT))
 
     palette.setColor(
@@ -318,7 +369,7 @@ def _build_stylesheet() -> str:
 
     QLabel[role="badge"] {{
         background: {ACCENT_SOFT};
-        color: {ACCENT_HOVER};
+        color: {ACCENT_ON_SOFT};
         border-radius: {RADIUS_SM}px;
         padding: 2px {SPACE_SM}px;
         font-size: {SIZE_SMALL}px;
@@ -382,6 +433,17 @@ def _build_stylesheet() -> str:
         background: {BG_SURFACE};
         color: {TEXT_MUTED};
         border-color: {BORDER};
+    }}
+
+    /* GUI-6: once a widget has ANY QSS border rule, Fusion's own
+       native dashed keyboard-focus rectangle stops rendering reliably
+       - a real, live gap for keyboard-only navigation (there was no
+       visible way to tell which button had focus). An explicit accent
+       border on :focus restores that signal, matching the existing
+       QLineEdit/QComboBox/QSpinBox :focus convention below. */
+    QPushButton:focus {{
+        border: 1px solid {ACCENT};
+        outline: none;
     }}
 
     QPushButton[variant="primary"] {{
@@ -471,7 +533,12 @@ def _build_stylesheet() -> str:
 
     QToolButton:pressed, QToolButton:checked {{
         background: {ACCENT_SOFT};
-        color: {ACCENT_HOVER};
+        color: {ACCENT_ON_SOFT};
+    }}
+
+    QToolButton:focus {{
+        border: 1px solid {ACCENT};
+        outline: none;
     }}
 
     QTableWidget {{
