@@ -138,6 +138,13 @@ def test_main_window_constructs_and_navigates(
     qapp: QApplication,
     no_blocking_dialogs: None,
 ) -> None:
+    """
+    GUI-0 (Unified GUI & Release Hardening, live inventory): every
+    MainWindow toolbar action, not just some of them - a real,
+    confirmed gap this test used to leave open (Providers and Google
+    Flow were reachable in the real app but never exercised here).
+    """
+
     window = MainWindow(job_store=InMemoryJobStore())
 
     window.show_new_project()
@@ -145,6 +152,12 @@ def test_main_window_constructs_and_navigates(
 
     window.show_settings()
     assert window._stack.currentWidget() is window._settings_view
+
+    window.show_provider_manager()
+    assert window._stack.currentWidget() is window._provider_manager_view
+
+    window.show_google_flow_provider_panel()
+    assert window._stack.currentWidget() is window._google_flow_provider_panel_view
 
     window.show_dashboard()
     assert window._stack.currentWidget() is window._dashboard_view

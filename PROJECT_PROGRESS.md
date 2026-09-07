@@ -5,6 +5,24 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-07 - GUI-0: Live GUI inventory audit (Unified GUI & Release Hardening)
+
+The user shared a new 9-phase plan document (`Step 3_Unified_GUI_Release_Hardening_Implementation_Plan.pdf`, GUI-0 through GUI-8) and asked for a read-only assessment first ("we will repair it later, check this document, what can be done"). Read the plan and cross-referenced every claim against the actual codebase (`main_window.py`, `project_workspace_view.py`, all 13 `src/desktop/views/*.py` files) rather than accepting the plan's own generic framing - reported back that much of GUI-2 through GUI-5's stated exit gates are already substantially met by existing, working code, with the plan's assumption of "misleading duplicate entry points" not holding up under inspection. The user confirmed proceeding with the recommended starting point: a real GUI-0 audit before any rebuild.
+
+**Findings, evidenced not assumed**: every one of the 13 desktop view files maps to exactly one reachable navigation entry point (5 `MainWindow` toolbar actions + 7 `ProjectWorkspaceView` tabs) - zero orphaned, hidden, duplicate, or unreachable views anywhere in the desktop codebase. `recovery_dialog.py`'s `show_recoverable_error()` is confirmed as one real, shared recovery mechanism reused across 6+ view modules, not six divergent implementations. Reviewer/approval visual separation (GUI-3's core requirement) is already built: `ContentStudioView._render_review_result()` renders Reviewer feedback under its own heading, severity-mapped, visually distinct from operator approval/hard-blocker status shown elsewhere. `ProjectWorkspaceView`'s header row already shows project/mode/stage/approval/quality/budget/automation/readiness continuously, rebuilt from `ProductionReadinessService` (matches GUI-2). `quality_center_view.py` already has readiness/checklist/final-preview/policy-compliance cards (matches GUI-5). GUI-only transient state in `ContentStudioView` (review results, script-segment editors, filter selections) was checked against "should this actually be persisted" and found correctly transient throughout - nothing found that needs to become a persisted projection.
+
+**Genuine gaps confirmed** (not invented to match the plan's template): `theme.py` is dark-only with no Light/System option and no persisted theme preference anywhere (GUI-1's actual, real gap); no formal GUI-0 audit document existed before this one; a real, evidenced ongoing need for GUI-6's Windows-hardening pass, backed by three genuine Windows-rendering bugs already found and fixed reactively this session (the missing-QPalette combo-box-arrow bug, the cut-off Playwright browser window, and an earlier overlapping-rows Provider Manager layout fix) rather than by any deliberate accessibility/hardening pass.
+
+**One real test-coverage gap found and closed while auditing**: `test_main_window_constructs_and_navigates` only exercised 3 of the 5 toolbar actions (Dashboard/New Project/Settings) - Providers and Google Flow were reachable in the real app but never asserted here. Extended to cover all 5.
+
+**Deliverable**: `docs/GUI_INVENTORY_MATRIX.md` - the complete per-surface keep/refactor/retire matrix, navigation map, approval/reviewer surface map, and the real-gap list above, meeting GUI-0's own exit gate ("Complete GUI matrix with exact keep/refactor/retire decisions").
+
+**Tests**: `test_main_window_constructs_and_navigates` extended (13 lines, purely additive, confirmed via `git diff --stat`); full `test_desktop_app_integration.py` (10 cases) passed. mypy/ruff/black clean (3 pre-existing, unrelated mypy findings in this file - `QLayoutItem | None` narrowing, a callback typed `object` called directly - confirmed pre-existing via `git diff`, not introduced here).
+
+Recommended next real work, per the matrix's own conclusion: GUI-1 (Light/System theme + persisted preference) and GUI-6 (a deliberate Windows/accessibility hardening pass) are the genuinely open items; GUI-2 through GUI-5 do not need green-field rebuilds.
+
+---
+
 ## 2026-09-07 - Theme: QComboBox dropdowns had an invisible arrow on the dark theme (real fix: a missing QPalette)
 
 Traced from the user reporting the Provider Manager dropdown fix "wasn't visible" after a genuinely correct, verified restart (right commit, right folder, confirmed via `git log -1`, confirmed no stale process via `Get-CimInstance`). The user then confirmed a first attempted fix (a custom SVG image for `QComboBox::down-arrow`) *also* didn't render - clicking directly inside "Provider name" just placed a text cursor, never opened a list, proving no arrow ever appeared to click on in the first place.
