@@ -25,6 +25,7 @@ _ALL_DECISION_POINTS = (
     "budget",
     "final_preview",
     "publishing",
+    "external_ui_generation",
 )
 
 
@@ -50,6 +51,9 @@ def test_review_critical_stages_matches_the_conservative_default() -> None:
     assert policy.story_angle == ApprovalPolicy.REVIEW
     assert policy.narrative_architecture == ApprovalPolicy.REVIEW
     assert policy.topic == ApprovalPolicy.AUTO
+    # Google Flow Agent-mode generation is a real, metered spend - same
+    # conservative posture as budget.
+    assert policy.external_ui_generation == ApprovalPolicy.REVIEW
 
 
 def test_the_three_presets_are_mutually_distinct() -> None:

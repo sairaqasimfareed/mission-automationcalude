@@ -265,6 +265,43 @@ def test_constructor_requires_exactly_one_of_base_url_or_resolver() -> None:
         pass
 
 
+# --- set_confirm_before_generating() ---
+
+
+def test_set_confirm_before_generating_never_clicks_the_real_sequence() -> None:
+    page = _authenticated_page()
+    agent_button = _FakeLocator()
+    page.register_role("button", "Agent", agent_button)
+    settings_button = _FakeLocator()
+    page.register_role("button", "Settings trigger", settings_button)
+    never_radio = _FakeLocator()
+    page.register_role("radio", "Never", never_radio)
+    save_button = _FakeLocator()
+    page.register_role("button", "Save", save_button)
+    adapter = _adapter(page)
+
+    adapter.set_confirm_before_generating("flow.primary", always=False)
+
+    assert agent_button.click_calls == 2  # on, then restored off
+    assert settings_button.click_calls == 1
+    assert never_radio.click_calls == 1
+    assert save_button.click_calls == 1
+
+
+def test_set_confirm_before_generating_always_clicks_the_always_radio() -> None:
+    page = _authenticated_page()
+    page.register_role("button", "Agent", _FakeLocator())
+    page.register_role("button", "Settings trigger", _FakeLocator())
+    always_radio = _FakeLocator()
+    page.register_role("radio", "Always", always_radio)
+    page.register_role("button", "Save", _FakeLocator())
+    adapter = _adapter(page)
+
+    adapter.set_confirm_before_generating("flow.primary", always=True)
+
+    assert always_radio.click_calls == 1
+
+
 # --- submit(): happy path ---
 
 
@@ -401,6 +438,34 @@ def test_submit_applies_a_known_model_family_and_real_settings() -> None:
     assert duration_radio.click_calls == 1
     assert variation_radio.click_calls == 1
     assert page.keyboard.pressed == ["Escape"]
+
+
+def test_submit_clicks_the_real_agent_toggle_when_requested() -> None:
+    page = _authenticated_page()
+    agent_button = _FakeLocator()
+    page.register_role("button", "Agent", agent_button)
+    adapter = _adapter(page)
+    request = _request(execution_settings={"agent_mode": True})
+
+    result = adapter.submit(request, _attempt(request))
+
+    assert result.state == GoogleFlowGenerationState.GENERATING
+    assert agent_button.click_calls == 1
+    # agent_mode is the only setting requested here - no popover-
+    # related control should ever be touched.
+    assert page.keyboard.pressed == []
+
+
+def test_submit_never_clicks_agent_toggle_when_not_requested() -> None:
+    page = _authenticated_page()
+    adapter = _adapter(page)
+    request = _request()  # agent_mode defaults to None
+
+    result = adapter.submit(request, _attempt(request))
+
+    assert result.state == GoogleFlowGenerationState.GENERATING
+    # "Agent" was never registered on this page at all - if the
+    # adapter tried to click it, _MISSING's click() would raise.
 
 
 # --- observe() ---

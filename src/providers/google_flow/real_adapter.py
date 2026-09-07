@@ -190,6 +190,66 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
             timeout=self._operation_timeout_seconds * 3
         )
 
+    def set_confirm_before_generating(self, profile_id: str, *, always: bool) -> None:
+        """
+        Explicit, standalone action - never bundled silently into a
+        generation request - that flips Google Flow's own real, saved
+        "Confirm before generating" account setting
+        (docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md section 4a).
+
+        This is deliberately the ONE place in this codebase that
+        touches that Flow-side setting at all: every generation this
+        adapter drives is instead gated by this app's OWN,
+        independent approval policy
+        (GoogleFlowGenerationOrchestratorService's Agent-mode gate),
+        which never depends on what this Flow-side toggle is set to.
+        Call this only in direct response to an explicit operator
+        action (e.g. a clearly-labeled GUI button), never as a side
+        effect of anything else.
+
+        Confirmed real click path: Agent settings is the SAME
+        "Settings trigger" popover, showing this content only once
+        Agent mode is on - so this method clicks Agent on, opens
+        Settings, sets the radio, saves, then clicks Agent again to
+        restore it to its confirmed real default (off) - assumes the
+        toggle started off, matching that confirmed default; there is
+        no verified way to detect its current state first.
+        """
+
+        def _run() -> None:
+            page = self._get_or_open_page(profile_id)
+            page.goto(
+                self._base_url_resolver(profile_id), timeout=self._action_timeout_ms
+            )
+
+            page.get_by_role("button", name=self._names.agent_toggle_button).click(
+                timeout=self._action_timeout_ms
+            )
+            page.get_by_role("button", name=self._names.settings_trigger_button).click(
+                timeout=self._action_timeout_ms
+            )
+
+            radio_name = (
+                self._names.confirm_before_generating_always_radio
+                if always
+                else self._names.confirm_before_generating_never_radio
+            )
+            page.get_by_role("radio", name=radio_name).click(
+                timeout=self._action_timeout_ms
+            )
+            page.get_by_role("button", name=self._names.save_settings_button).click(
+                timeout=self._action_timeout_ms
+            )
+
+            # Restore the Agent toggle to its confirmed real default
+            # (off) - this method's job is only the saved confirmation
+            # preference, not leaving Agent mode itself switched on.
+            page.get_by_role("button", name=self._names.agent_toggle_button).click(
+                timeout=self._action_timeout_ms
+            )
+
+        self._worker.submit(_run).result(timeout=self._operation_timeout_seconds * 3)
+
     def submit(
         self,
         request: GoogleFlowGenerationRequest,
@@ -435,12 +495,30 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
         self, page: Page, settings: GoogleFlowExecutionSettings
     ) -> None:
         """
-        Open the real settings popover and click the radio/menu option
-        matching each requested dimension - never silent substitution,
-        matching GoogleFlowUIAdapter's own rule: a requested value this
-        method cannot find raises _FlowSettingsUnavailableError rather
-        than leaving Flow's current default silently in place.
+        Click the real "Agent" toggle if requested, then open the real
+        settings popover and click the radio/menu option matching each
+        requested dimension - never silent substitution, matching
+        GoogleFlowUIAdapter's own rule: a requested value this method
+        cannot find raises _FlowSettingsUnavailableError rather than
+        leaving Flow's current default silently in place.
         """
+
+        if settings.agent_mode:
+            # A separate control from the popover below (it lives on
+            # the main compose bar, not inside "Settings trigger") -
+            # docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md section 3 confirms
+            # its default is OFF/unclicked, so a single click reliably
+            # turns it on for a freshly loaded project page. Whether
+            # it stays on across multiple submissions on the SAME
+            # cached page (this adapter reuses one page per profile,
+            # _get_or_open_page) is NOT verified - only ever requesting
+            # agent_mode=True is safe; there is no verified way to
+            # detect/force it back off yet, so agent_mode=False is
+            # treated the same as None (never touched) rather than
+            # guessed at.
+            page.get_by_role("button", name=self._names.agent_toggle_button).click(
+                timeout=self._action_timeout_ms
+            )
 
         if not any(
             (
@@ -451,9 +529,9 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
                 settings.variation_count,
             )
         ):
-            # Nothing requested - Flow's own current defaults for this
-            # project stand, matching "never guess a value the caller
-            # didn't ask for".
+            # Nothing else requested - Flow's own current defaults for
+            # this project stand, matching "never guess a value the
+            # caller didn't ask for".
             return
 
         page.get_by_role("button", name=self._names.settings_trigger_button).click(

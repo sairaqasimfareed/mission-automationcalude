@@ -5,7 +5,9 @@ from pathlib import Path
 
 import pytest
 
+from src.models.approval import ApprovalPolicy, ApprovalPolicyConfig
 from src.models.google_flow_generation import (
+    GoogleFlowExecutionSettings,
     GoogleFlowGenerationAttempt,
     GoogleFlowGenerationRequest,
     GoogleFlowGenerationState,
@@ -31,6 +33,7 @@ from src.services.google_flow_generation_ledger_service import (
     GoogleFlowGenerationLedgerService,
 )
 from src.services.google_flow_generation_orchestrator_service import (
+    GoogleFlowAgentConfirmationRequiredError,
     GoogleFlowGenerationOrchestratorService,
 )
 from src.services.media_technical_validation_service import (
@@ -187,6 +190,7 @@ def _submit(
     scene_number: int = 1,
     idempotency_key: str = "req-1",
     estimated_cost_usd: float = 0.0,
+    execution_settings: GoogleFlowExecutionSettings | None = None,
 ) -> GoogleFlowGenerationAttempt:
     return orchestrator.submit_new_attempt(
         job,
@@ -195,6 +199,7 @@ def _submit(
         prompt_version="v1",
         idempotency_key=idempotency_key,
         estimated_cost_usd=estimated_cost_usd,
+        execution_settings=execution_settings,
     )
 
 
@@ -207,6 +212,77 @@ def test_submit_new_attempt_routes_persists_and_returns_the_result() -> None:
     assert result.state == GoogleFlowGenerationState.GENERATING
     assert job.flow_generation_attempts == [result]
     assert provider.submit_calls[0].profile_id == "flow.primary"
+
+
+def test_non_agent_mode_requests_are_never_gated_by_approval() -> None:
+    """
+    The Agent-mode confirmation gate only applies when
+    execution_settings.agent_mode is explicitly True - a job's
+    conservative default approval policy (REVIEW for
+    external_ui_generation) must never block an ordinary, non-Agent
+    submission.
+    """
+
+    orchestrator, provider = _orchestrator()
+    job = _job()
+    assert job.approval_policy.external_ui_generation == ApprovalPolicy.REVIEW
+
+    result = _submit(
+        orchestrator, job, execution_settings=GoogleFlowExecutionSettings()
+    )
+
+    assert result.state == GoogleFlowGenerationState.GENERATING
+    assert provider.submit_calls
+
+
+def test_agent_mode_without_approval_raises_before_anything_credit_sensitive() -> None:
+    orchestrator, provider = _orchestrator()
+    job = _job()  # default approval_policy: external_ui_generation is REVIEW
+
+    with pytest.raises(GoogleFlowAgentConfirmationRequiredError):
+        _submit(
+            orchestrator,
+            job,
+            execution_settings=GoogleFlowExecutionSettings(agent_mode=True),
+        )
+
+    # Never even reached routing/the ledger/the provider - this app's
+    # own gate, checked before anything else.
+    assert job.flow_generation_attempts == []
+    assert provider.submit_calls == []
+
+
+def test_agent_mode_confirmation_error_carries_the_resolved_decision() -> None:
+    orchestrator, _ = _orchestrator()
+    job = _job()
+
+    with pytest.raises(GoogleFlowAgentConfirmationRequiredError) as excinfo:
+        _submit(
+            orchestrator,
+            job,
+            execution_settings=GoogleFlowExecutionSettings(agent_mode=True),
+        )
+
+    decision = excinfo.value.decision
+    assert decision.decision_point == "external_ui_generation"
+    assert decision.policy == ApprovalPolicy.REVIEW
+    assert decision.requires_human_action is True
+
+
+def test_agent_mode_with_full_auto_policy_proceeds_without_raising() -> None:
+    orchestrator, provider = _orchestrator()
+    job = _job()
+    job.approval_policy = ApprovalPolicyConfig.full_auto()
+
+    result = _submit(
+        orchestrator,
+        job,
+        execution_settings=GoogleFlowExecutionSettings(agent_mode=True),
+    )
+
+    assert result.state == GoogleFlowGenerationState.GENERATING
+    assert job.flow_generation_attempts == [result]
+    assert provider.submit_calls
 
 
 def test_submit_new_attempt_raises_when_no_account_is_eligible() -> None:

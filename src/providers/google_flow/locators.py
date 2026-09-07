@@ -112,6 +112,14 @@ class GoogleFlowRealAccessibleNames(BaseModel):
     download_scene_button: str = "Download scene"
     done_editing_scene_button: str = "Done editing scene"
 
+    # Agent settings (docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md section 4a):
+    # confirmed to be the SAME "Settings trigger" popover, showing this
+    # content instead of the normal per-generation controls once Agent
+    # mode is on - not a separate entry point.
+    confirm_before_generating_always_radio: str = "Always"
+    confirm_before_generating_never_radio: str = "Never"
+    save_settings_button: str = "Save"
+
 
 class GoogleFlowLocators(BaseModel):
     """Every selector the Google Flow adapter needs, in one place."""

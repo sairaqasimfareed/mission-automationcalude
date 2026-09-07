@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from src.models.approval import ApprovalDecision, ApprovalState
 from src.models.google_flow_generation import (
     GoogleFlowExecutionSettings,
     GoogleFlowFailure,
@@ -16,6 +17,7 @@ from src.models.google_flow_generation import (
 )
 from src.models.video_job import VideoJob
 from src.providers.external_ui_generation_provider import ExternalUIGenerationProvider
+from src.services.approval_service import ApprovalService
 from src.services.asset_provenance_service import AssetProvenanceService
 from src.services.budget.provider_budget_service import ProviderBudgetService
 from src.services.google_flow_account_router_service import (
@@ -27,6 +29,36 @@ from src.services.google_flow_generation_ledger_service import (
 from src.services.media_technical_validation_service import (
     MediaTechnicalValidationService,
 )
+
+_AGENT_CONFIRMATION_DECISION_POINT = "external_ui_generation"
+
+
+class GoogleFlowAgentConfirmationRequiredError(RuntimeError):
+    """
+    Raised before anything credit-sensitive happens when a request
+    asks for Agent mode (GoogleFlowExecutionSettings.agent_mode=True)
+    and the job's own approval policy has not auto-approved it.
+
+    This app never flips Google Flow's own "Confirm before generating"
+    account setting (a deliberate design choice - see
+    docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md section 4a and
+    PROJECT_PROGRESS.md); this is the independent, provider-agnostic
+    gate this codebase already has for exactly this kind of decision
+    (ApprovalPolicyConfig/ApprovalService), applied here for the first
+    time to a real, metered spend risk. Carries the resolved
+    ApprovalDecision so a caller (a future GUI) can show the operator
+    what needs their attention and why, matching the existing pattern
+    for other approval-gated decision points.
+    """
+
+    def __init__(self, decision: ApprovalDecision) -> None:
+        self.decision = decision
+
+        super().__init__(
+            "Agent-mode Google Flow generation requires human confirmation "
+            f"first (policy: {decision.policy.value}, state: "
+            f"{decision.state.value}) - see .decision for details."
+        )
 
 
 class GoogleFlowGenerationOrchestratorService:
@@ -103,13 +135,28 @@ class GoogleFlowGenerationOrchestratorService:
         Raises before anything credit-sensitive happens if: no
         eligible account exists (NoEligibleGoogleFlowAccountError),
         this scene already has a non-terminal attempt (ValueError,
-        from create_attempt's own in-flight guard), or the budget
-        gate rejects the estimated cost (ValueError, from
-        ProviderBudgetService.reserve()). A reservation already made
-        is released if the adapter's own submit() call raises an
-        exception this orchestrator did not expect - never left
-        stranded reserved-but-unspent.
+        from create_attempt's own in-flight guard), the budget gate
+        rejects the estimated cost (ValueError, from
+        ProviderBudgetService.reserve()), or the request asks for
+        Agent mode and the job's own approval policy has not
+        auto-approved it (GoogleFlowAgentConfirmationRequiredError) -
+        this app's own independent confirmation gate, never Flow's own
+        account setting (see that error's own docstring). A
+        reservation already made is released if the adapter's own
+        submit() call raises an exception this orchestrator did not
+        expect - never left stranded reserved-but-unspent.
         """
+
+        if execution_settings is not None and execution_settings.agent_mode:
+            decision = ApprovalService().open_decision(
+                decision_point=_AGENT_CONFIRMATION_DECISION_POINT,
+                policy=job.approval_policy.policy_for(
+                    _AGENT_CONFIRMATION_DECISION_POINT
+                ),
+            )
+
+            if decision.state != ApprovalState.APPROVED:
+                raise GoogleFlowAgentConfirmationRequiredError(decision)
 
         in_flight_counts = self._in_flight_counts_by_profile(job)
 

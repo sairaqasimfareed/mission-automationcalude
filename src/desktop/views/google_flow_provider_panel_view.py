@@ -159,6 +159,18 @@ class GoogleFlowProviderPanelView(QWidget):
         self._model_family_select.addItems(list(VERIFIED_MODEL_FAMILIES))
         form.addRow("Model", self._model_family_select)
 
+        # Default OFF, matching Flow's own real default
+        # (docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md section 3). This app
+        # never flips Flow's own account-level "Confirm before
+        # generating" setting as a side effect of checking this box -
+        # see the "Flow Confirmation Policy" button below for that,
+        # kept as its own explicit, separate action. When Agent is
+        # checked, a real generation is instead gated by this app's
+        # OWN approval policy (ApprovalPolicyConfig.external_ui_generation),
+        # independent of whatever Flow's own account setting is.
+        self._agent_default_checkbox = QCheckBox("Agent (default for new generations)")
+        form.addRow("", self._agent_default_checkbox)
+
         self._priority_input = QSpinBox()
         self._priority_input.setRange(1, 1000)
         form.addRow("Priority", self._priority_input)
@@ -187,6 +199,23 @@ class GoogleFlowProviderPanelView(QWidget):
         card_layout.addLayout(
             row(open_login_button, check_button, save_button, delete_button)
         )
+
+        card_layout.addWidget(
+            muted(
+                "The button below changes a real setting on this Google "
+                "account (Flow's own Agent 'Confirm before generating'), "
+                "not just this app's configuration - kept separate from "
+                "Save on purpose."
+            )
+        )
+
+        flow_confirmation_never_button = button(
+            "Set Flow Confirmation: Never", variant="danger"
+        )
+        flow_confirmation_never_button.clicked.connect(
+            self._handle_set_flow_confirmation_never_clicked
+        )
+        card_layout.addLayout(row(flow_confirmation_never_button))
 
         self._detail_frame = frame
         self._detail_frame.setEnabled(False)
@@ -270,6 +299,9 @@ class GoogleFlowProviderPanelView(QWidget):
             # any account can be switched to any of the 4 real models.
             or RECOMMENDED_UNLIMITED_MODEL_FAMILY
         )
+        self._agent_default_checkbox.setChecked(
+            profile.metadata.get("agent_mode") == "true"
+        )
         self._health_badge.setText(profile.health_status.value)
 
     def _handle_add_clicked(self) -> None:
@@ -320,6 +352,7 @@ class GoogleFlowProviderPanelView(QWidget):
         flow_url = self._flow_url_input.text().strip()
         self._flow_urls[profile_id] = flow_url
         model_family = self._model_family_select.currentText()
+        agent_mode = "true" if self._agent_default_checkbox.isChecked() else "false"
 
         try:
             self._service.upsert_profile(
@@ -335,6 +368,7 @@ class GoogleFlowProviderPanelView(QWidget):
                         **profile.metadata,
                         "flow_url": flow_url,
                         "model_family": model_family,
+                        "agent_mode": agent_mode,
                     },
                 )
             )
@@ -513,6 +547,68 @@ class GoogleFlowProviderPanelView(QWidget):
                 "then try Check Connection again.",
                 role="warning",
             )
+
+    def _handle_set_flow_confirmation_never_clicked(self) -> None:
+        """
+        Explicit, standalone action: flips Google Flow's own real,
+        saved "Confirm before generating" setting to Never for this
+        account. Deliberately never bundled into the Agent checkbox
+        above or into Save - this changes something on the operator's
+        real Google account, not just this app's own configuration,
+        so it always requires its own separate click plus an explicit
+        confirmation dialog.
+
+        This app's own generations are gated independently
+        (GoogleFlowGenerationOrchestratorService's Agent-mode approval
+        policy) regardless of what this Flow-side setting is - using
+        this button is a convenience for an operator who also wants
+        zero friction directly from Flow itself, never required for
+        this app's own automation to work.
+        """
+
+        if self._selected_profile_id is None:
+            return
+
+        flow_url = self._flow_url_input.text().strip()
+
+        if not flow_url:
+            self._show_status("Set the Flow URL above first.", role="warning")
+            return
+
+        confirmation = QMessageBox.question(
+            self,
+            "Set Flow Confirmation: Never",
+            "This will change a real setting on this Google account: "
+            'Google Flow\'s own "Confirm before generating" preference '
+            "will be set to Never. This is separate from anything this "
+            "app itself does - it affects Flow directly, including if "
+            "you use it manually outside this app. Continue?",
+        )
+
+        if confirmation != QMessageBox.StandardButton.Yes:
+            return
+
+        adapter = GoogleFlowRealUIAdapter(
+            worker=self._browser_worker,
+            base_url=flow_url,
+            headless=False,
+        )
+
+        try:
+            adapter.set_confirm_before_generating(
+                self._selected_profile_id, always=False
+            )
+        except Exception as error:  # noqa: BLE001
+            self._show_status(
+                f"Could not change the Flow setting: {error}", role="error"
+            )
+            return
+
+        self._show_status(
+            "Flow's own Confirm-before-generating is now set to Never "
+            "for this account.",
+            role="success",
+        )
 
     def _show_status(self, text: str, *, role: str) -> None:
         self._status.setText(text)

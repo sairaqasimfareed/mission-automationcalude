@@ -335,6 +335,16 @@ class GoogleFlowExecutionSettings(MissionBaseModel):
     # every other field here is.
     resolution: str | None = None
     variation_count: int | None = Field(default=None, gt=0)
+    # Real, verified control (docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md
+    # section 3/4a): the "Agent" toggle. None means "leave Flow's own
+    # current toggle state alone" (this class's usual "never touch a
+    # setting the caller didn't ask for" rule) - True/False are
+    # explicit requests to turn it on/off. Agent mode can trigger a
+    # real confirmation-before-generating screen (an Agent-mode-only,
+    # explicitly configurable Flow setting, section 4a) - see
+    # GoogleFlowGenerationOrchestratorService's own agent-mode
+    # approval gate, which this field feeds.
+    agent_mode: bool | None = None
 
     @field_validator(
         "model_family",

@@ -119,6 +119,18 @@ class ApprovalPolicyConfig(MissionBaseModel):
     budget: ApprovalPolicy = ApprovalPolicy.REVIEW
     final_preview: ApprovalPolicy = ApprovalPolicy.REVIEW
     publishing: ApprovalPolicy = ApprovalPolicy.MANUAL
+    # Google Flow External UI Automation: gates one specific real-world
+    # risk - Agent-mode generation, where Google Flow's OWN
+    # confirmation-before-generating screen may appear
+    # (docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md section 4a). This app never
+    # flips that Flow-side setting itself (a deliberate design choice -
+    # see PROJECT_PROGRESS.md); this policy instead governs whether
+    # OUR OWN orchestrator proceeds to submit an Agent-mode generation
+    # without a human confirming first, independent of and never
+    # touching Flow's own account-level setting. Defaults to REVIEW,
+    # matching `budget`'s own conservative posture - both gate a real,
+    # metered spend.
+    external_ui_generation: ApprovalPolicy = ApprovalPolicy.REVIEW
 
     def policy_for(self, decision_point: str) -> ApprovalPolicy:
         """
@@ -142,6 +154,7 @@ class ApprovalPolicyConfig(MissionBaseModel):
             "budget": self.budget,
             "final_preview": self.final_preview,
             "publishing": self.publishing,
+            "external_ui_generation": self.external_ui_generation,
         }
 
         return mapping.get(decision_point, ApprovalPolicy.REVIEW)
@@ -169,6 +182,7 @@ class ApprovalPolicyConfig(MissionBaseModel):
             budget=ApprovalPolicy.AUTO,
             final_preview=ApprovalPolicy.AUTO,
             publishing=ApprovalPolicy.AUTO,
+            external_ui_generation=ApprovalPolicy.AUTO,
         )
 
     @classmethod
@@ -202,4 +216,5 @@ class ApprovalPolicyConfig(MissionBaseModel):
             budget=ApprovalPolicy.MANUAL,
             final_preview=ApprovalPolicy.MANUAL,
             publishing=ApprovalPolicy.MANUAL,
+            external_ui_generation=ApprovalPolicy.MANUAL,
         )

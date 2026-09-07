@@ -245,6 +245,85 @@ def test_save_persists_the_model_family_per_account(qapp: QApplication) -> None:
     assert saved.metadata.get("model_family") == "Veo 3.1 - Fast"
 
 
+def test_agent_default_checkbox_starts_unchecked(qapp: QApplication) -> None:
+    """
+    Matches Flow's own real default (Agent off,
+    docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md section 3) - this app never
+    forces Agent on for a new account.
+    """
+
+    service = _management_service()
+    from src.models.provider_profile_management import ProviderProfileUpsertCommand
+
+    service.upsert_profile(
+        ProviderProfileUpsertCommand(
+            profile_id="flow.primary",
+            display_name="Flow Primary",
+            provider_name="Google Flow",
+            category=ProviderCategory.EXTERNAL_UI_VIDEO,
+            enabled=False,
+            browser_profile_reference="flow_profiles/flow.primary",
+        )
+    )
+
+    view = _view(qapp, service=service)
+    view.refresh()
+    view._list.setCurrentRow(0)  # noqa: SLF001
+
+    assert view._agent_default_checkbox.isChecked() is False  # noqa: SLF001
+
+
+def test_selecting_an_account_shows_its_own_saved_agent_default(
+    qapp: QApplication,
+) -> None:
+    service = _management_service()
+    from src.models.provider_profile_management import ProviderProfileUpsertCommand
+
+    service.upsert_profile(
+        ProviderProfileUpsertCommand(
+            profile_id="flow.primary",
+            display_name="Flow Primary",
+            provider_name="Google Flow",
+            category=ProviderCategory.EXTERNAL_UI_VIDEO,
+            enabled=False,
+            browser_profile_reference="flow_profiles/flow.primary",
+            metadata={"agent_mode": "true"},
+        )
+    )
+
+    view = _view(qapp, service=service)
+    view.refresh()
+    view._list.setCurrentRow(0)  # noqa: SLF001
+
+    assert view._agent_default_checkbox.isChecked() is True  # noqa: SLF001
+
+
+def test_save_persists_the_agent_default_per_account(qapp: QApplication) -> None:
+    service = _management_service()
+    from src.models.provider_profile_management import ProviderProfileUpsertCommand
+
+    service.upsert_profile(
+        ProviderProfileUpsertCommand(
+            profile_id="flow.primary",
+            display_name="Flow Primary",
+            provider_name="Google Flow",
+            category=ProviderCategory.EXTERNAL_UI_VIDEO,
+            enabled=False,
+            browser_profile_reference="flow_profiles/flow.primary",
+        )
+    )
+
+    view = _view(qapp, service=service)
+    view.refresh()
+    view._list.setCurrentRow(0)  # noqa: SLF001
+
+    view._agent_default_checkbox.setChecked(True)  # noqa: SLF001
+    view._handle_save_clicked()  # noqa: SLF001
+
+    saved = service.get_profile("flow.primary")
+    assert saved.metadata.get("agent_mode") == "true"
+
+
 def test_save_persists_the_flow_url_and_priority(qapp: QApplication) -> None:
     service = _management_service()
     from src.models.provider_profile_management import ProviderProfileUpsertCommand
@@ -529,3 +608,112 @@ def test_delete_removes_the_account(qapp: QApplication) -> None:
         view._handle_delete_clicked()  # noqa: SLF001
 
     assert service.list_profiles() == []
+
+
+def _flow_view_with_url(
+    qapp: QApplication, *, worker: MagicMock | None = None
+) -> tuple[GoogleFlowProviderPanelView, ProviderProfileManagementService]:
+    service = _management_service()
+    from src.models.provider_profile_management import ProviderProfileUpsertCommand
+
+    service.upsert_profile(
+        ProviderProfileUpsertCommand(
+            profile_id="flow.primary",
+            display_name="Flow Primary",
+            provider_name="Google Flow",
+            category=ProviderCategory.EXTERNAL_UI_VIDEO,
+            enabled=False,
+            browser_profile_reference="flow_profiles/flow.primary",
+            metadata={"flow_url": "https://example.invalid/flow"},
+        )
+    )
+
+    view = _view(qapp, service=service, worker=worker or MagicMock())
+    view.refresh()
+    view._list.setCurrentRow(0)  # noqa: SLF001
+
+    return view, service
+
+
+def test_set_flow_confirmation_never_without_a_flow_url_shows_a_warning(
+    qapp: QApplication,
+) -> None:
+    view, _ = _flow_view_with_url(qapp)
+    view._flow_url_input.clear()  # noqa: SLF001
+
+    view._handle_set_flow_confirmation_never_clicked()  # noqa: SLF001
+
+    assert "Flow URL" in view._status.text()  # noqa: SLF001
+
+
+def test_set_flow_confirmation_never_requires_explicit_confirmation(
+    qapp: QApplication,
+) -> None:
+    """
+    This changes a real setting on the operator's Google account - it
+    must never proceed without an explicit Yes, even though the
+    button itself was already an explicit click.
+    """
+
+    view, _ = _flow_view_with_url(qapp)
+
+    with (
+        patch(
+            "src.desktop.views.google_flow_provider_panel_view.QMessageBox.question"
+        ) as question,
+        patch(
+            "src.desktop.views.google_flow_provider_panel_view.GoogleFlowRealUIAdapter"
+        ) as adapter_class,
+    ):
+        from PySide6.QtWidgets import QMessageBox
+
+        question.return_value = QMessageBox.StandardButton.No
+        view._handle_set_flow_confirmation_never_clicked()  # noqa: SLF001
+
+    adapter_class.assert_not_called()
+
+
+def test_set_flow_confirmation_never_calls_the_real_adapter_when_confirmed(
+    qapp: QApplication,
+) -> None:
+    view, _ = _flow_view_with_url(qapp)
+
+    with (
+        patch(
+            "src.desktop.views.google_flow_provider_panel_view.QMessageBox.question"
+        ) as question,
+        patch(
+            "src.desktop.views.google_flow_provider_panel_view.GoogleFlowRealUIAdapter"
+        ) as adapter_class,
+    ):
+        from PySide6.QtWidgets import QMessageBox
+
+        question.return_value = QMessageBox.StandardButton.Yes
+        view._handle_set_flow_confirmation_never_clicked()  # noqa: SLF001
+
+    adapter_class.return_value.set_confirm_before_generating.assert_called_once_with(
+        "flow.primary", always=False
+    )
+    assert "Never" in view._status.text()  # noqa: SLF001
+
+
+def test_set_flow_confirmation_never_reports_a_failure(qapp: QApplication) -> None:
+    view, _ = _flow_view_with_url(qapp)
+
+    with (
+        patch(
+            "src.desktop.views.google_flow_provider_panel_view.QMessageBox.question"
+        ) as question,
+        patch(
+            "src.desktop.views.google_flow_provider_panel_view.GoogleFlowRealUIAdapter"
+        ) as adapter_class,
+    ):
+        from PySide6.QtWidgets import QMessageBox
+
+        question.return_value = QMessageBox.StandardButton.Yes
+        adapter_class.return_value.set_confirm_before_generating.side_effect = (
+            RuntimeError("could not find the Never radio")
+        )
+        view._handle_set_flow_confirmation_never_clicked()  # noqa: SLF001
+
+    assert "Could not change" in view._status.text()  # noqa: SLF001

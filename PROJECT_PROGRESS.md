@@ -5,6 +5,24 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-07 - Google Flow External UI Automation: Agent mode + this app's own independent confirmation gate
+
+The user asked directly: should our app expose an Agent toggle, and should selecting it auto-set Google Flow's own "Confirm before generating" to Never so generation proceeds with no approval prompt at all? Recommended against the second half and the user agreed: flipping Flow's own saved account setting as a side effect of a checkbox (a) is a permanent, account-wide change (affects manual use of Flow too, not just this app), (b) removes Google's own spending safeguard entirely with nothing standing in for it, and (c) this codebase already has the right tool for "should this proceed without asking a human" - `ApprovalPolicyConfig`/`ApprovalService`, built earlier, unused until now. Built the alternative instead.
+
+**`GoogleFlowExecutionSettings.agent_mode: bool | None`** (new, additive) - `GoogleFlowRealUIAdapter` clicks the real "Agent" toggle when `True` is requested, never touched otherwise (matches every other field's "never guess a value the caller didn't ask for" rule).
+
+**`ApprovalPolicyConfig.external_ui_generation`** (new decision point, defaults to `REVIEW` like `budget` - both gate a real, metered spend) - wired into `full_auto()`/`review_critical_stages()`/`manual_editorial()` and `policy_for()`.
+
+**`GoogleFlowGenerationOrchestratorService`** gains a real gate: when a request asks for `agent_mode=True`, it calls `ApprovalService().open_decision()` against the job's own `external_ui_generation` policy *before* routing/budget/ledger - `AUTO`-approved proceeds normally, anything else raises `GoogleFlowAgentConfirmationRequiredError` (carrying the resolved `ApprovalDecision`) with zero side effects. A non-Agent request is never gated at all, regardless of policy.
+
+**The Flow-side setting itself**: still never touched implicitly. New `GoogleFlowRealUIAdapter.set_confirm_before_generating(profile_id, *, always)` - the one place in this codebase that flips it, built only after asking the user how the real "Agent settings" panel is actually reached (answer: it's the SAME "Settings trigger" popover, showing this content once Agent is on - not a separate entry point, which avoided a wrong guess). Wired to a new, deliberately separate GUI button, **"Set Flow Confirmation: Never"** (danger-styled, its own confirmation dialog explaining it changes a real Google account setting) - never bundled into the Agent checkbox or Save.
+
+**GUI**: new per-account "Agent (default for new generations)" checkbox (defaults unchecked, matching Flow's own real default), persisted into `metadata["agent_mode"]` alongside `flow_url`/`model_family`.
+
+**Tests**: 4 new in `test_google_flow_generation_orchestrator_service.py` (non-Agent requests never gated; Agent without approval raises before anything credit-sensitive; the error carries the resolved decision; `full_auto()` policy proceeds) - 16 total. 2 new for the Agent-toggle click and 2 for `set_confirm_before_generating()` in `test_google_flow_real_adapter.py` - 23 total. `external_ui_generation` added to `test_approval_policy_presets.py`'s full coverage sweep. 7 new in `test_google_flow_provider_panel_view.py` (Agent checkbox default/save/round-trip; confirmation-policy button's no-URL warning, requires-Yes, calls-the-adapter, and failure paths) - 22 total. Broader regression across every touched area (approval/orchestrator/real-adapter/panel-view/security, 116 cases) plus the full desktop integration suite (10 cases): all passed. mypy/ruff/black clean throughout.
+
+---
+
 ## 2026-09-07 - Google Flow External UI Automation: fixed a cut-off, non-scrollable Check Connection window + a major real finding on the confirmation screen
 
 **Real bug, real fix**: the operator reported the real Check Connection window's bottom being cut off (below the taskbar) with no way to scroll to the rest. Root cause: Playwright's `launch_persistent_context()` forces a fixed 1280x720 internal viewport by default even for a visible, headed window - the window's *render area* was fixed and too tall for the screen, not the page failing to scroll. Fixed in `FlowBrowserWorker.open_persistent_context_from_worker_thread()`: headed contexts (`headless=False`) now pass `viewport=None` (render at the actual OS window size) plus `--start-maximized`, so the window fills the real screen and behaves like a normal browser. Headless contexts (background/automated use) keep Playwright's fixed default unchanged - nothing is visually displayed there, and a fixed viewport keeps automated interactions predictable. Safe for every real locator this codebase uses (role/name/CSS-based, never coordinate-based). Full real-browser regression (`test_flow_browser_worker.py` + `test_google_flow_adapter.py`, 23 tests): all passed.
