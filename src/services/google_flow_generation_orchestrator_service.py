@@ -1,0 +1,185 @@
+from __future__ import annotations
+
+from src.models.google_flow_generation import (
+    GoogleFlowExecutionSettings,
+    GoogleFlowGenerationAttempt,
+    GoogleFlowGenerationRequest,
+    GoogleFlowReferenceAsset,
+    is_terminal_state,
+)
+from src.models.video_job import VideoJob
+from src.providers.external_ui_generation_provider import ExternalUIGenerationProvider
+from src.services.budget.provider_budget_service import ProviderBudgetService
+from src.services.google_flow_account_router_service import (
+    GoogleFlowAccountRouterService,
+)
+from src.services.google_flow_generation_ledger_service import (
+    GoogleFlowGenerationLedgerService,
+)
+
+
+class GoogleFlowGenerationOrchestratorService:
+    """
+    Google Flow External UI Automation, GF-11/GF-12: the one real
+    caller that ties routing (GF-3), the durable ledger (GF-1), budget
+    protection (GF-11), and the provider adapter (GF-4) together.
+
+    This is the "canonical generation orchestrator" the central design
+    rule names: "Neither Google Flow nor the REST gateway may become a
+    second creative, routing, budget, QC or production authority." All
+    of those decisions are made here, once - the adapter it calls only
+    ever executes an already-fully-resolved request.
+
+    GF-12's own bulk-resume vocabulary (READY -> skip, SUBMITTED/
+    GENERATING -> observe, SUBMISSION_UNCERTAIN -> reconcile, PLANNED
+    -> evaluate gates and submit, QC_FAILED -> deliberate recovery)
+    applies at the call-site level: a caller iterating many scenes
+    uses GoogleFlowGenerationLedgerService's own query helpers to
+    decide which action applies to each one *before* ever calling
+    submit_new_attempt() here - this method IS the "evaluate gates and
+    submit" branch of that vocabulary, and observe_attempt()/
+    download_attempt() are the "observe"/"download" branches. A full
+    queue/worker loop driving that decision automatically over many
+    scenes is not built here - this class provides the three
+    operations such a loop would call, not the loop itself.
+    """
+
+    def __init__(
+        self,
+        *,
+        provider: ExternalUIGenerationProvider,
+        account_router: GoogleFlowAccountRouterService,
+        budget_service: ProviderBudgetService | None = None,
+        max_in_flight_per_account: int = 1,
+    ) -> None:
+        self._provider = provider
+        self._account_router = account_router
+        self._budget_service = budget_service
+        self._max_in_flight_per_account = max_in_flight_per_account
+
+    def submit_new_attempt(
+        self,
+        job: VideoJob,
+        *,
+        scene_number: int,
+        prompt: str,
+        prompt_version: str,
+        idempotency_key: str,
+        execution_settings: GoogleFlowExecutionSettings | None = None,
+        reference_assets: list[GoogleFlowReferenceAsset] | None = None,
+        negative_constraints: list[str] | None = None,
+        locked_script_hash: str | None = None,
+        estimated_cost_usd: float = 0.0,
+    ) -> GoogleFlowGenerationAttempt:
+        """
+        Route to an eligible account, gate on budget, create the
+        ledger attempt, and drive it through the adapter's submit().
+
+        Raises before anything credit-sensitive happens if: no
+        eligible account exists (NoEligibleGoogleFlowAccountError),
+        this scene already has a non-terminal attempt (ValueError,
+        from create_attempt's own in-flight guard), or the budget
+        gate rejects the estimated cost (ValueError, from
+        ProviderBudgetService.reserve()). A reservation already made
+        is released if the adapter's own submit() call raises an
+        exception this orchestrator did not expect - never left
+        stranded reserved-but-unspent.
+        """
+
+        in_flight_counts = self._in_flight_counts_by_profile(job)
+
+        profile = self._account_router.select_account(
+            in_flight_counts=in_flight_counts,
+            max_in_flight_per_account=self._max_in_flight_per_account,
+        )
+
+        request = GoogleFlowGenerationRequest(
+            scene_number=scene_number,
+            locked_script_hash=locked_script_hash,
+            prompt=prompt,
+            prompt_version=prompt_version,
+            negative_constraints=negative_constraints or [],
+            reference_assets=reference_assets or [],
+            execution_settings=execution_settings or GoogleFlowExecutionSettings(),
+            profile_id=profile.profile_id,
+            estimated_cost_usd=estimated_cost_usd,
+            idempotency_key=idempotency_key,
+        )
+
+        # create_attempt() is where GF-1's own in-flight/idempotency-
+        # key guards actually live - deliberately not duplicated here.
+        attempt = GoogleFlowGenerationLedgerService.create_attempt(job, request)
+
+        reserved = False
+
+        if self._budget_service is not None and estimated_cost_usd > 0:
+            # reserve() itself performs the check; it raises ValueError
+            # with a clear reason when the estimated cost is blocked -
+            # no separate check-then-reserve race to get wrong.
+            self._budget_service.reserve(profile.profile_id, estimated_cost_usd)
+            reserved = True
+
+        try:
+            result = self._provider.submit(request, attempt)
+        except Exception:
+            if reserved:
+                # No positive evidence this ever reached a credit-
+                # sensitive boundary inside the adapter (an exception
+                # escaping submit() means it never returned a
+                # SUBMISSION_UNCERTAIN/SUBMITTED attempt at all) - safe
+                # to release rather than leave stranded.
+                self._budget_service.release(  # type: ignore[union-attr]
+                    profile.profile_id, estimated_cost_usd
+                )
+            raise
+
+        GoogleFlowGenerationLedgerService.replace_attempt(job, result)
+
+        return result
+
+    def observe_attempt(
+        self,
+        job: VideoJob,
+        attempt: GoogleFlowGenerationAttempt,
+    ) -> GoogleFlowGenerationAttempt:
+        """Observe one in-flight attempt and persist whatever changed."""
+
+        result = self._provider.observe(attempt)
+        GoogleFlowGenerationLedgerService.replace_attempt(job, result)
+
+        return result
+
+    def download_attempt(
+        self,
+        job: VideoJob,
+        attempt: GoogleFlowGenerationAttempt,
+    ) -> GoogleFlowGenerationAttempt:
+        """Download one completed attempt's result and persist it."""
+
+        result = self._provider.download(attempt)
+        GoogleFlowGenerationLedgerService.replace_attempt(job, result)
+
+        return result
+
+    @staticmethod
+    def _in_flight_counts_by_profile(job: VideoJob) -> dict[str, int]:
+        """
+        In-flight counts derived from this one job's own ledger.
+
+        A real, disclosed scoping limit (named in GF-3's own docs):
+        this only sees attempts on the job it was given, not every
+        job in the application - a Flow account shared across
+        multiple projects' jobs needs a cross-job aggregation this
+        orchestrator does not attempt, since it has no access to a
+        job store here and has no business assuming one exists.
+        """
+
+        counts: dict[str, int] = {}
+
+        for attempt in job.flow_generation_attempts:
+            if is_terminal_state(attempt.state):
+                continue
+
+            counts[attempt.profile_id] = counts.get(attempt.profile_id, 0) + 1
+
+        return counts

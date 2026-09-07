@@ -281,6 +281,33 @@ def test_ready_attempt_for_scene_returns_none_before_readiness() -> None:
     assert GoogleFlowGenerationLedgerService.ready_attempt_for_scene(job, 1) is None
 
 
+# --- replace_attempt ---
+
+
+def test_replace_attempt_stores_the_given_attempt() -> None:
+    job = _job()
+    attempt = GoogleFlowGenerationLedgerService.create_attempt(job, _request())
+
+    externally_advanced = attempt.with_transition(
+        GoogleFlowGenerationState.SETTINGS_VERIFIED
+    ).with_transition(GoogleFlowGenerationState.PROMPT_PREPARED)
+
+    GoogleFlowGenerationLedgerService.replace_attempt(job, externally_advanced)
+
+    assert job.flow_generation_attempts[0] is externally_advanced
+    assert job.flow_generation_attempts[0].state == (
+        GoogleFlowGenerationState.PROMPT_PREPARED
+    )
+
+
+def test_replace_attempt_raises_for_an_unknown_attempt() -> None:
+    job = _job()
+    unrelated = GoogleFlowGenerationLedgerService.create_attempt(_job(), _request())
+
+    with pytest.raises(ValueError, match="No Google Flow generation attempt"):
+        GoogleFlowGenerationLedgerService.replace_attempt(job, unrelated)
+
+
 def test_ready_attempt_for_scene_finds_the_ready_attempt() -> None:
     job = _job()
     attempt = GoogleFlowGenerationLedgerService.create_attempt(job, _request())

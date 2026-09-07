@@ -117,6 +117,28 @@ class GoogleFlowGenerationLedgerService:
         return updated
 
     @staticmethod
+    def replace_attempt(
+        job: VideoJob,
+        attempt: GoogleFlowGenerationAttempt,
+    ) -> None:
+        """
+        Store an attempt whose own transitions were already validated
+        elsewhere - a provider's submit()/observe()/download() builds
+        its result by chaining with_transition() calls internally
+        (each individually validated), so the orchestrator that calls
+        a provider doesn't need to replay every single transition back
+        through record_transition() one at a time; it persists the
+        provider's already-valid final result in one step.
+
+        Raises if no attempt with this id exists yet - this replaces
+        an existing entry, it never creates one (creation is
+        create_attempt()'s job alone).
+        """
+
+        index = GoogleFlowGenerationLedgerService._find_index(job, attempt.id)
+        job.flow_generation_attempts[index] = attempt
+
+    @staticmethod
     def reconcile_on_restart(
         job: VideoJob,
     ) -> list[GoogleFlowGenerationAttempt]:
