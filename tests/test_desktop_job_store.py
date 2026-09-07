@@ -9,6 +9,10 @@ import pytest
 from src.desktop.job_store import InMemoryJobStore, JobStoreError, JsonJobStore
 from src.models.enums import JobStatus, Platform, WorkflowStage
 from src.models.final_export import FinalExportPackage
+from src.models.google_flow_generation import (
+    GoogleFlowGenerationRequest,
+    GoogleFlowGenerationState,
+)
 from src.models.render_orchestration_result import RenderOrchestrationResult
 from src.models.seo import SEOPackage, SEOPlatformMetadata, TitleCandidate
 from src.models.thumbnail import (
@@ -18,6 +22,9 @@ from src.models.thumbnail import (
     ThumbnailLayout,
 )
 from src.models.video_job import VideoJob
+from src.services.google_flow_generation_ledger_service import (
+    GoogleFlowGenerationLedgerService,
+)
 
 
 def _job(project_name: str = "Test Project") -> VideoJob:
@@ -248,6 +255,50 @@ def test_json_store_persists_across_instances(tmp_path: Path) -> None:
 
     assert second_instance.get(job.id) == job
     assert [loaded.id for loaded in second_instance.list_all()] == [job.id]
+
+
+def test_json_store_flow_generation_attempts_survive_a_restart(
+    tmp_path: Path,
+) -> None:
+    """
+    Google Flow External UI Automation, GF-1: the durable attempt
+    ledger is a plain VideoJob field, persisted the exact same way as
+    every other artifact - proven here through a genuinely fresh
+    JsonJobStore instance (a real restart, not just re-reading the
+    same in-memory object), including the nested, append-only
+    state_history a real crash-reconciliation depends on.
+    """
+
+    first_instance = JsonJobStore(storage_root=tmp_path)
+    job = _job()
+
+    request = GoogleFlowGenerationRequest(
+        scene_number=1,
+        prompt="A lighthouse at dusk.",
+        prompt_version="v1",
+        profile_id="flow.primary",
+        idempotency_key="req-1",
+    )
+    attempt = GoogleFlowGenerationLedgerService.create_attempt(job, request)
+    GoogleFlowGenerationLedgerService.record_transition(
+        job, attempt.id, GoogleFlowGenerationState.SETTINGS_VERIFIED
+    )
+
+    first_instance.add(job)
+
+    second_instance = JsonJobStore(storage_root=tmp_path)
+    reloaded = second_instance.get(job.id)
+
+    assert reloaded is not None
+    assert len(reloaded.flow_generation_attempts) == 1
+
+    reloaded_attempt = reloaded.flow_generation_attempts[0]
+    assert reloaded_attempt.id == attempt.id
+    assert reloaded_attempt.state.value == "settings_verified"
+    assert [entry.state.value for entry in reloaded_attempt.state_history] == [
+        "planned",
+        "settings_verified",
+    ]
 
 
 def test_json_store_mutate_in_place_then_add_persists_across_restart(

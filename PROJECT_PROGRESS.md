@@ -5,6 +5,23 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-07 - Google Flow External UI Automation, GF-1: Persistent attempt ledger & state machine
+
+**GF-1 scope**: durable attempt persistence, built before any real generation code, per the phase's own ordering rule. New `src/services/google_flow_generation_ledger_service.py` (`GoogleFlowGenerationLedgerService`):
+
+- `create_attempt()` - also the deliberate-regeneration mechanism (calling it again for a scene that already has one or more terminal attempts is exactly what "regeneration creates a new attempt/version" means). Refuses outright to create a second attempt for a scene while a prior one is still non-terminal ("never duplicate while a submission is uncertain" - enforced structurally in the ledger, not left to caller discipline), and refuses a reused `idempotency_key` across attempts for the same scene.
+- `record_transition()` - replaces an attempt's entry in the job's list in place via `GoogleFlowGenerationAttempt.with_transition()` (GF-0), so history is extended, never overwritten or duplicated.
+- `reconcile_on_restart()` - the actual mechanical answer to GF-1's own credit-sensitive-state rule: any attempt found sitting at `SUBMITTING` when a job loads means the application stopped somewhere between "about to click generate" and "positive evidence the click landed" - reconciled to `SUBMISSION_UNCERTAIN`. Never trusted to still be genuinely in progress (nothing is running to progress it) and never assumed to have failed either, since the credit-sensitive click may well have succeeded. Actually resolving an uncertain attempt (checking the real Flow UI) needs the browser adapter and is GF-7's job - this phase only gets it to a safe, honest, never-auto-resubmitted state.
+- Query helpers (`attempts_for_scene`/`latest_attempt_for_scene`/`ready_attempt_for_scene`) for later phases (bulk resume's "READY -> skip" in GF-12) to build on.
+
+**Persistence is deliberately not a new mechanism.** `VideoJob` gained `flow_generation_attempts: list[GoogleFlowGenerationAttempt]` - a plain field, persisted through the exact same `JsonJobStore` every other artifact in this codebase already uses. No new database, no separate ledger file - both authoritative documents explicitly allow adapting to what the host project already has ("Do not force this exact filesystem if the host project already has a better equivalent structure"), and this codebase already has a proven, restart-safe persistence layer.
+
+**Tests**: `test_google_flow_generation_ledger_service.py` (26 tests: attempt creation, the in-flight guard, the idempotency-key guard, regeneration preserving old attempt history, transition replacement and history-never-overwritten, illegal-jump rejection, restart reconciliation and its own idempotency across repeated calls, every query helper). New case in `test_desktop_job_store.py` proving `flow_generation_attempts` - including its nested, append-only `state_history` - survives a genuinely fresh `JsonJobStore` instance (a real restart, not a same-object re-read), matching this session's own established restart-proof convention. Broader `-k "video_job"` regression: 20 passed. mypy/ruff/black clean on every touched file.
+
+**Deliberately not built this pass**: no orchestrator or GUI call site uses this service yet - that wiring happens naturally as GF-4 onward (settings/prompt preparation, the actual Flow adapter) needs somewhere real to persist attempts to. GF-7's deeper reconciliation (actually checking the Flow UI's real state to resolve a `SUBMISSION_UNCERTAIN` attempt) is out of scope here by design.
+
+---
+
 ## 2026-09-07 - Google Flow External UI Automation, GF-0: Product boundary, threat model & domain contracts
 
 **Standing scope note superseded, explicitly, by the user.** Every prior initiative in this repository excluded Google Flow (`AGENTS.md`'s own scope boundary: "stop and ask" before automating a third-party product's web UI outside its published API). The user was shown the concrete risk (Google ToS exposure, fragility, no public API) and explicitly chose to proceed anyway. Two things stayed non-negotiable regardless of that authorization, and remain so for every future Flow phase: no CAPTCHA/MFA bypass, and I never enter the user's Google password myself.

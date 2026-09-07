@@ -178,6 +178,12 @@ _FORWARD_TRANSITIONS: dict[
 }
 
 
+def is_terminal_state(state: GoogleFlowGenerationState) -> bool:
+    """Whether an attempt in this state will never transition again."""
+
+    return state in _TERMINAL_STATES
+
+
 def is_valid_transition(
     current: GoogleFlowGenerationState,
     next_state: GoogleFlowGenerationState,

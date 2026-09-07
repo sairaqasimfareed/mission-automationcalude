@@ -24,6 +24,7 @@ from src.models.enums import (
 )
 from src.models.final_preview import FinalPreview
 from src.models.generated_script import GeneratedScript
+from src.models.google_flow_generation import GoogleFlowGenerationAttempt
 from src.models.hook import HookCandidate, HookEvaluation
 from src.models.information_reveal_map import InformationRevealMap
 from src.models.invalidation import StaleArtifact
@@ -246,6 +247,17 @@ class VideoJob(MissionBaseModel):
     render_result: RenderResult | None = None
 
     final_previews: list[FinalPreview] = Field(default_factory=list)
+
+    # Google Flow External UI Automation, GF-1: the durable, restart-safe
+    # attempt ledger. Append-only in spirit, same convention as
+    # content_decisions/scene_asset_states above - an attempt advances by
+    # replacing its entry in this list (matching id, new state_history),
+    # never by deleting anything; a deliberate regeneration always adds a
+    # brand-new entry rather than replacing an existing one.
+    # GoogleFlowGenerationLedgerService is the only intended writer.
+    flow_generation_attempts: list[GoogleFlowGenerationAttempt] = Field(
+        default_factory=list
+    )
 
     policy_report: PolicyComplianceReport | None = None
 
