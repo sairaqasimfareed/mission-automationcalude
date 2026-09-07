@@ -124,10 +124,27 @@ verified cost figure (not a USD estimate; Google's own credit system,
 not something this codebase should try to convert to
 `estimated_cost_usd` without separately verified pricing).
 
-`"Select model family": Omni 1.1 Flash` was NOT opened further in this
-session - the other model choices Flow's marketing page mentions
-(e.g. Veo 3.1, Nano Banana) were not confirmed as selectable options
-here. Treat as unverified until actually opened.
+`"Select model family"` opened (read-only, no selection changed - the
+current selection stayed "Omni 1.1 Flash"), revealing the real, full
+list of 4 selectable model options:
+
+```
+menu:
+  - menuitem "Omni 1.1 Flash"      <- was selected; this is what the real generation in this
+                                       session used, and it consumed metered credits (12, per §4)
+  - menuitem "Veo 3.1 - Lite"      <- CONFIRMED by the account owner: this is the model their
+                                       unlimited-generation account tier actually runs on, used
+                                       WITHOUT the "Agent" toggle enabled
+  - menuitem "Veo 3.1 - Fast"
+  - menuitem "Veo 3.1 - Quality"
+```
+
+**Operationally important**: for this account, `"Veo 3.1 - Lite"` with
+the `"Agent"` toggle left OFF is the unlimited (non-credit-metered)
+path - `"Omni 1.1 Flash"` (this session's default) is metered. Any
+default `GoogleFlowExecutionSettings`/account-router logic built for
+this account should prefer `"Veo 3.1 - Lite"`, `agent=False`, not
+whatever Flow's own UI happens to default a new project to.
 
 ## 5. Generating state
 
