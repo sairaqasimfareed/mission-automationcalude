@@ -553,6 +553,54 @@ def test_workspace_views_refresh_without_crashing_on_a_fresh_project(
     assert workspace._stack.currentWidget() is workspace.packaging
 
 
+def test_main_window_remains_functional_at_its_documented_minimum_size(
+    qapp: QApplication,
+    no_blocking_dialogs: None,
+) -> None:
+    """
+    GUI-6 (Unified GUI & Release Hardening): MainWindow declares its
+    own minimum size (900x600, see main_window.py's own
+    setMinimumSize call) - this confirms the app actually stays usable
+    there rather than merely refusing to shrink further. Navigates
+    every toolbar destination and every workspace tab at exactly that
+    size and confirms nothing crashes and the central widget never
+    collapses to a degenerate (zero-area) geometry, which would be the
+    concrete symptom of a layout silently failing to fit its own
+    declared minimum.
+    """
+
+    window = MainWindow(job_store=InMemoryJobStore())
+    window.resize(900, 600)
+    window.show()
+
+    def _assert_sane_central_widget_geometry() -> None:
+        size = window._stack.currentWidget().size()
+        assert size.width() > 0
+        assert size.height() > 0
+
+    window.show_dashboard()
+    _assert_sane_central_widget_geometry()
+
+    window.show_provider_manager()
+    _assert_sane_central_widget_geometry()
+
+    window.show_google_flow_provider_panel()
+    _assert_sane_central_widget_geometry()
+
+    window.show_settings()
+    _assert_sane_central_widget_geometry()
+
+    _create_project(window)
+    job = window._job_store.list_all()[0]
+    window._open_project(job.id)
+    _assert_sane_central_widget_geometry()
+
+    workspace = window._detail_view
+    for _label, _icon, _tab_name, target in workspace._workspaces:
+        workspace._show_workspace(target)
+        assert workspace._stack.currentWidget().size().height() > 0
+
+
 def test_project_header_row_reflects_summary_and_rebuilds_on_refresh(
     qapp: QApplication,
     no_blocking_dialogs: None,

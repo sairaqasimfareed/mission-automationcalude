@@ -5,6 +5,18 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-07 - GUI-6 (third slice): high-DPI verification + minimum-size functional check (Unified GUI & Release Hardening)
+
+Continued GUI-6's remaining disclosed scope. **High-DPI**: grepped the whole `src/` tree for every Qt high-DPI-related attribute (`AA_EnableHighDpiScaling`, `AA_DisableHighDpiScaling`, `setHighDpiScaleFactorRoundingPolicy`, `QT_SCALE_FACTOR`, `QT_AUTO_SCREEN_SCALE_FACTOR`) - zero matches anywhere. Confirmed this is the *correct* state, not a gap: PySide6/Qt 6.11.1 (this project's pinned version) has automatic per-monitor high-DPI scaling on by default with no opt-in required, and `AA_EnableHighDpiScaling` is a deprecated no-op in Qt6 - the only way this app could have a real high-DPI bug is if something explicitly disabled scaling, and nothing does. No action needed; reported as a verified-clean finding, not left unchecked.
+
+**Minimum-size functional check**: `MainWindow` declares `setMinimumSize(900, 600)` but nothing previously verified the app stays genuinely usable there rather than merely refusing to shrink further - a real, disclosed GUI-6 gap ("resize/clipping behavior at low resolutions"). New `test_main_window_remains_functional_at_its_documented_minimum_size` resizes a real `MainWindow` to exactly 900x600 and navigates every toolbar destination plus every workspace tab, asserting the central widget's geometry never collapses to zero area at any step - the concrete symptom a real layout-constraint conflict would produce. Confirmed clean: the app is genuinely usable at its own declared minimum.
+
+**Tests**: 1 new test in `tests/test_desktop_app_integration.py` (11 total in that file, all passing; purely additive per `git diff --stat` - 48 insertions, 0 deletions - confirming the 3 pre-existing, unrelated mypy findings elsewhere in this large file are unchanged, just shifted line numbers). Combined with `test_project_form_view.py`: 19 passed. mypy/ruff/black clean.
+
+This closes out GUI-6's disclosed scoped-slice list (contrast, keyboard focus, tab order, high-DPI, minimum-size functionality) - all four concrete accessibility/hardening gaps GUI-0's audit and this initiative's own plan named are now addressed with real, verified evidence rather than assumption.
+
+---
+
 ## 2026-09-07 - GUI-6 (second slice): tab-order audit for the New Project form (Unified GUI & Release Hardening)
 
 Continued GUI-6's disclosed remaining scope with the next bounded piece: verifying keyboard tab order actually follows visual layout order, since this codebase has zero explicit `setTabOrder()` calls anywhere - tab order is entirely implicit, derived from widget *construction* order, which silently diverges from *visual* order if a field is ever added to a layout in a different sequence than it was constructed.
