@@ -26,25 +26,48 @@ def test_apply_theme_does_not_raise(qapp: QApplication) -> None:
     assert qapp.styleSheet()
 
 
-def test_combo_box_down_arrow_has_an_explicit_visible_color() -> None:
+def test_palette_gives_button_text_a_visible_color(qapp: QApplication) -> None:
     """
-    Real-world finding: QComboBox::drop-down had its border/background
-    stripped for the dark theme, but QComboBox::down-arrow was never
-    given an explicit color - Qt's default arrow glyph rendered too
-    dark to see against this app's dark background, making a
-    genuinely functional dropdown (e.g. Provider Manager's "Provider
-    name") look indistinguishable from a plain text field.
+    Real-world finding, in two parts. First: this app had no QPalette
+    override at all, only a QSS stylesheet - Fusion draws several
+    elements (a QComboBox's drop-down arrow being the concrete case a
+    user actually hit) from QPalette colors rather than through QSS,
+    so with no override that meant Qt's own default (light-theme)
+    palette, rendering the arrow glyph invisibly dark against this
+    app's QSS-dark background - a genuinely functional dropdown (e.g.
+    Provider Manager's "Provider name") looked indistinguishable from
+    a plain text field, and clicking its text area just placed a
+    cursor rather than opening the list.
+
+    Second: an attempted QSS-only fix (a custom SVG image for
+    QComboBox::down-arrow) turned out not to render at all in the real
+    app either, confirmed by the same symptom persisting - not worth
+    depending on SVG/data-URI support in Qt's QSS engine when the
+    real, robust fix is giving Fusion's own native arrow-drawing a
+    palette it can actually use.
     """
 
-    from src.desktop.theme import TEXT_SECONDARY, _build_stylesheet
+    from PySide6.QtGui import QPalette
 
-    css = _build_stylesheet()
-    arrow_rule_index = css.find("QComboBox::down-arrow")
+    from src.desktop.theme import TEXT_SECONDARY, _build_palette
 
-    assert arrow_rule_index != -1
-    arrow_rule = css[arrow_rule_index : arrow_rule_index + 400]
-    assert "image:" in arrow_rule
-    assert TEXT_SECONDARY[1:] in arrow_rule
+    palette = _build_palette()
+    button_text = palette.color(QPalette.ColorRole.ButtonText)
+
+    assert button_text.name().lower() == TEXT_SECONDARY.lower()
+
+
+def test_apply_theme_sets_a_real_palette_not_just_a_stylesheet(
+    qapp: QApplication,
+) -> None:
+    apply_theme(qapp)
+
+    from PySide6.QtGui import QPalette
+
+    from src.desktop.theme import TEXT_SECONDARY
+
+    button_text = qapp.palette().color(QPalette.ColorRole.ButtonText)
+    assert button_text.name().lower() == TEXT_SECONDARY.lower()
 
 
 @pytest.mark.parametrize("name", sorted(_ICONS))

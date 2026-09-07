@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QColor, QFont, QPalette
 from PySide6.QtWidgets import QApplication, QStyleFactory
 
 # Dark, cinematic palette - a video-production tool spends most of its
@@ -48,16 +48,31 @@ RADIUS_SM = 6
 
 
 def apply_theme(app: QApplication) -> None:
-    """Apply the shared font and stylesheet to the whole application.
+    """Apply the shared font, palette, and stylesheet to the whole
+    application.
 
-    Explicitly selects the "Fusion" style before applying the
-    stylesheet - found via user report: on Windows, the default
-    native ("windowsvista") style only partially honors QSS colors on
+    Explicitly selects the "Fusion" style before applying anything
+    else - found via user report: on Windows, the default native
+    ("windowsvista") style only partially honors QSS colors on
     QLineEdit/QComboBox, painting its own light native frame under the
     QSS-declared text color and producing near-invisible pale-on-pale
     text. Fusion is the one built-in Qt style that fully respects
     QSS-declared colors on every widget, so the dark theme actually
     renders as designed instead of half-applying.
+
+    Also sets a real QPalette, not stylesheet colors alone - real-
+    world finding: this app had no QPalette override at all, only the
+    QSS stylesheet below. QSS colors a widget's own background/text,
+    but several elements Fusion draws NATIVELY rather than through QSS
+    (a QComboBox's drop-down arrow being the concrete case a user
+    actually hit) are painted from QPalette colors instead - with no
+    override, that meant Qt's own default (light-theme) palette,
+    rendering a dark arrow glyph invisibly against this app's QSS-dark
+    background. An attempted QSS-only fix (a custom SVG image for
+    QComboBox::down-arrow) turned out not to render at all in the real
+    app either - not worth depending on SVG/data-URI support in Qt's
+    QSS engine when the real, robust fix is giving Fusion's own native
+    arrow-drawing a palette it can actually use.
     """
 
     if (
@@ -65,9 +80,49 @@ def apply_theme(app: QApplication) -> None:
     ):  # noqa: SIM118 - QStyleFactory.keys() is not a dict
         app.setStyle(QStyleFactory.create("Fusion"))
 
+    app.setPalette(_build_palette())
+
     font = QFont(FONT_FAMILY, SIZE_BODY)
     app.setFont(font)
     app.setStyleSheet(_build_stylesheet())
+
+
+def _build_palette() -> QPalette:
+    palette = QPalette()
+
+    palette.setColor(QPalette.ColorRole.Window, QColor(BG_WINDOW))
+    palette.setColor(QPalette.ColorRole.WindowText, QColor(TEXT_PRIMARY))
+    palette.setColor(QPalette.ColorRole.Base, QColor(BG_ELEVATED))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor(BG_SURFACE_ALT))
+    palette.setColor(QPalette.ColorRole.Text, QColor(TEXT_PRIMARY))
+    palette.setColor(QPalette.ColorRole.Button, QColor(BG_ELEVATED))
+    # ButtonText specifically is what Fusion's native combo-box
+    # drop-down arrow is drawn with - this is the one color that
+    # actually fixes the real, reported invisible-arrow bug.
+    palette.setColor(QPalette.ColorRole.ButtonText, QColor(TEXT_SECONDARY))
+    palette.setColor(QPalette.ColorRole.BrightText, QColor(TEXT_PRIMARY))
+    palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(BG_ELEVATED))
+    palette.setColor(QPalette.ColorRole.ToolTipText, QColor(TEXT_PRIMARY))
+    palette.setColor(QPalette.ColorRole.PlaceholderText, QColor(TEXT_MUTED))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor(ACCENT))
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor(TEXT_PRIMARY))
+    palette.setColor(QPalette.ColorRole.Link, QColor(ACCENT))
+
+    palette.setColor(
+        QPalette.ColorGroup.Disabled,
+        QPalette.ColorRole.WindowText,
+        QColor(TEXT_MUTED),
+    )
+    palette.setColor(
+        QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text, QColor(TEXT_MUTED)
+    )
+    palette.setColor(
+        QPalette.ColorGroup.Disabled,
+        QPalette.ColorRole.ButtonText,
+        QColor(TEXT_MUTED),
+    )
+
+    return palette
 
 
 def _build_stylesheet() -> str:
@@ -252,12 +307,6 @@ def _build_stylesheet() -> str:
     QComboBox::drop-down {{
         border: none;
         width: 24px;
-    }}
-
-    QComboBox::down-arrow {{
-        image: url(data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'><path d='M2.5 4.5L6 8L9.5 4.5' stroke='%23{TEXT_SECONDARY[1:]}' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>);
-        width: 10px;
-        height: 10px;
     }}
 
     QSpinBox::up-button, QSpinBox::down-button {{

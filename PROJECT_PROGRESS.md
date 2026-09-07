@@ -5,13 +5,15 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
-## 2026-09-07 - Theme: QComboBox dropdowns had an invisible arrow on the dark theme
+## 2026-09-07 - Theme: QComboBox dropdowns had an invisible arrow on the dark theme (real fix: a missing QPalette)
 
-Traced from the user reporting the Provider Manager dropdown fix "wasn't visible" after a genuinely correct, verified restart (right commit, right folder, confirmed via `git log -1`). Root cause found by reading the shared stylesheet: `QComboBox::drop-down` had its border/background stripped for the dark theme, but `QComboBox::down-arrow` was never given an explicit color - Qt's default arrow glyph rendered too dark to see against this app's near-black background. The combo box was genuinely working the whole time; there was just no visible cue it was a dropdown at all, on **every** combo box in the app, not only the one just added.
+Traced from the user reporting the Provider Manager dropdown fix "wasn't visible" after a genuinely correct, verified restart (right commit, right folder, confirmed via `git log -1`, confirmed no stale process via `Get-CimInstance`). The user then confirmed a first attempted fix (a custom SVG image for `QComboBox::down-arrow`) *also* didn't render - clicking directly inside "Provider name" just placed a text cursor, never opened a list, proving no arrow ever appeared to click on in the first place.
 
-**Fixed**: `QComboBox::down-arrow` now gets an explicit, visible chevron via an inline SVG data URI colored with the existing `TEXT_SECONDARY` token (`#A6ACBA`) - no new asset file, no new dependency, derived from the same constant the rest of the theme already uses rather than a hardcoded duplicate.
+**The real root cause, found on the second pass**: this app had no `QPalette` override at all, only a QSS stylesheet. Several elements Fusion draws *natively* rather than through QSS - a QComboBox's drop-down arrow being the concrete case a user actually hit - are painted from `QPalette` colors instead. With no override, that meant Qt's own default (light-theme) palette, rendering the arrow glyph invisibly dark against this app's QSS-dark background - true since this whole dark theme was first built, not something either of today's changes introduced. The first attempted fix (a custom SVG `image:` for `QComboBox::down-arrow`) turned out not to render at all either - not worth depending on SVG/data-URI support in Qt's QSS engine when the robust fix is giving Fusion's own native arrow-drawing a palette it can actually use.
 
-**Tests**: 1 new in `test_desktop_theme_and_icons.py` confirming the down-arrow rule exists and references a real, visible color. Full theme suite (26 cases) and the full desktop integration suite (10 cases): all passed. mypy/ruff/black clean.
+**Fixed properly**: `apply_theme()` now also calls `app.setPalette(_build_palette())` - a real `QPalette` with every major role (`Window`/`WindowText`/`Base`/`Text`/`Button`/`ButtonText`/`Highlight`/etc., plus a `Disabled` group) mapped from the same color tokens the QSS stylesheet already uses, so nothing native Fusion draws is ever left on Qt's own default light-theme colors again - not just this one arrow. The custom SVG `::down-arrow` rule was removed entirely; Fusion's own native arrow now renders correctly with the new `ButtonText` color.
+
+**Tests**: `test_combo_box_down_arrow_has_an_explicit_visible_color` replaced with `test_palette_gives_button_text_a_visible_color` (checks the real palette color, not a CSS string) and a new `test_apply_theme_sets_a_real_palette_not_just_a_stylesheet`. Full theme suite (27 cases), a broader `-k "desktop or theme or widgets"` sweep (63 cases), and the full desktop integration suite (10 cases): all passed. mypy/ruff/black clean.
 
 ---
 
