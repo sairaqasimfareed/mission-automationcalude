@@ -279,14 +279,6 @@ class ContentStudioView(QWidget):
         scroll_value = (
             self._scroll_area.verticalScrollBar().value() if is_same_job else 0
         )
-        print(  # noqa: T201 - TEMPORARY diagnostic, see chat
-            f"SCROLL_DEBUG refresh(): job.id={job.id} "
-            f"last_refreshed_job_id={self._last_refreshed_job_id} "
-            f"is_same_job={is_same_job} "
-            f"current_scrollbar_value={self._scroll_area.verticalScrollBar().value()} "
-            f"current_scrollbar_max={self._scroll_area.verticalScrollBar().maximum()} "
-            f"captured_scroll_value={scroll_value}"
-        )
         self._last_refreshed_job_id = job.id
 
         while self._layout.count():
@@ -317,57 +309,51 @@ class ContentStudioView(QWidget):
 
     def _schedule_scroll_restore(self, value: int) -> None:
         """
-        Real-world finding: a plain `QTimer.singleShot(0, ...)` (fire
-        on the very next event-loop tick) worked in a small test job
-        but NOT in a real project - this view rebuilds many more cards
-        than a minimal test does, and Qt's layout system can take more
-        than one event-loop tick to fully recalculate a large, deeply
-        nested widget tree's scrollable range, so the single-tick
-        restore fired too early and got silently clamped to the still-
-        stale (smaller) range.
+        Real-world finding, confirmed via runtime diagnostic logging
+        (not guessed): connecting the scrollbar's `rangeChanged` signal
+        and disconnecting after its FIRST firing (an earlier version of
+        this method) assumed that first firing always reflects the
+        final, settled range. A real log proved that false: during a
+        rebuild, `rangeChanged` can fire more than once, sometimes
+        first with `maximum() == 0` (an intermediate, still-collapsing
+        state, mid-rebuild) before growing to its true final size on a
+        LATER firing. `setValue()` clamps to `[0, maximum()]`, so
+        applying on that first, still-zero firing silently clamped the
+        restore to 0 - exactly the reported "still resets to top"
+        symptom, even though the captured value itself was always
+        correct.
 
-        Fixed with the scrollbar's own `rangeChanged` signal instead -
-        the authoritative, timing-independent signal for exactly "the
-        scrollable range has now been recalculated for the new
-        content", fired once and disconnected. A `QTimer.singleShot`
-        fallback still exists alongside it, since `rangeChanged` never
-        fires at all if the rebuilt content happens to end up exactly
-        the same height as before (a real, if less common, case this
-        view needs to keep working correctly too) - whichever fires
-        first wins, the other becomes a no-op.
+        Fixed: reapply `setValue(value)` on EVERY `rangeChanged` firing
+        while the connection is alive, not just the first - an early,
+        too-small range just clamps harmlessly, and a later firing
+        (once the range has actually grown enough) re-applies and
+        correctly sticks. The connection stays alive until the
+        `QTimer.singleShot` fallback fires (50ms) and disconnects -
+        that same fallback is also what handles the case where
+        `rangeChanged` never fires at all (rebuilt content coincidentally
+        ending up the same height as before).
         """
 
         scroll_bar = self._scroll_area.verticalScrollBar()
-        applied = False
 
-        def _apply(source: str = "timer_fallback") -> None:
-            nonlocal applied
+        def _apply() -> None:
+            scroll_bar.setValue(value)
 
-            if applied:
-                return
+        def _on_range_changed(_minimum: int, _maximum: int) -> None:
+            _apply()
 
-            applied = True
-
+        def _stop_listening() -> None:
             try:
                 scroll_bar.rangeChanged.disconnect(_on_range_changed)
             except (TypeError, RuntimeError):
-                # Already disconnected, or never connected - a race
-                # between the signal and the fallback timer, not an
-                # error.
+                # Already disconnected - harmless.
                 pass
 
-            scroll_bar.setValue(value)
-            print(  # noqa: T201 - TEMPORARY diagnostic, see chat
-                f"SCROLL_DEBUG _apply(): source={source} target_value={value} "
-                f"scrollbar_max_now={scroll_bar.maximum()} "
-                f"scrollbar_value_after_setValue={scroll_bar.value()}"
-            )
-
-        def _on_range_changed(_minimum: int, _maximum: int) -> None:
-            _apply(source="rangeChanged")
+            _apply()  # one last attempt in case rangeChanged never fired
 
         scroll_bar.rangeChanged.connect(_on_range_changed)
-        QTimer.singleShot(50, _apply)
+        _apply()  # in case the range is already correct right now
+        QTimer.singleShot(50, _stop_listening)
 
     def _build_journey_card(self, job: VideoJob) -> None:
         """

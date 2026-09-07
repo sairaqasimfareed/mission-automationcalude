@@ -207,16 +207,13 @@ def test_refresh_preserves_scroll_position_for_the_same_job(
     assert view._scroll_area.verticalScrollBar().value() == scrolled_to  # noqa: SLF001
 
 
-def test_scroll_restore_applies_via_range_changed_before_the_timer_fallback(
-    qapp: QApplication,
-) -> None:
+def test_scroll_restore_applies_via_range_changed(qapp: QApplication) -> None:
     """
     The primary mechanism, exercised directly - rangeChanged firing
     (Qt's own authoritative "the scrollable range was just
-    recalculated" signal) must apply the restore immediately, and the
-    QTimer.singleShot fallback must then correctly become a no-op
-    rather than double-applying or erroring on an already-disconnected
-    signal.
+    recalculated" signal) must apply the restore, and the
+    QTimer.singleShot fallback must then correctly stop listening
+    without erroring on an already-disconnected signal.
     """
 
     job_store = InMemoryJobStore()
@@ -237,12 +234,52 @@ def test_scroll_restore_applies_via_range_changed_before_the_timer_fallback(
         view._scroll_area.verticalScrollBar().setRange(0, 500)  # noqa: SLF001
         assert view._scroll_area.verticalScrollBar().value() == 77  # noqa: SLF001
 
-        # The fallback timer was scheduled but never actually fired in
-        # this test (QTimer.singleShot itself was mocked out) - calling
-        # the exact callback it would have called must be a safe no-op.
+        # The fallback timer's own stop-listening callback must be a
+        # safe no-op once the value has already been correctly applied
+        # (disconnecting an already-disconnected signal must not raise).
         fallback_callback = fake_single_shot.call_args.args[-1]
         fallback_callback()
         assert view._scroll_area.verticalScrollBar().value() == 77  # noqa: SLF001
+
+
+def test_scroll_restore_survives_an_intermediate_zero_range_firing(
+    qapp: QApplication,
+) -> None:
+    """
+    Real-world finding, confirmed via runtime diagnostic logging: on a
+    real project (not a small test job), rangeChanged sometimes fires
+    FIRST with maximum() == 0 - an intermediate, still-collapsing state
+    mid-rebuild - before growing to its true final size on a LATER
+    firing. Disconnecting after only the first firing (an earlier
+    version of this fix) meant the restore got silently clamped to 0
+    and never got a second chance - exactly the reported "still resets
+    to top" symptom. The fix must keep listening and reapply on every
+    firing, so a later, correctly-sized firing still sticks.
+    """
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    with patch("src.desktop.views.content_studio_view.QTimer.singleShot"):
+        view._schedule_scroll_restore(1138)  # noqa: SLF001
+
+        scroll_bar = view._scroll_area.verticalScrollBar()  # noqa: SLF001
+
+        # The intermediate, still-collapsed state a real rebuild can
+        # transiently pass through.
+        scroll_bar.setRange(0, 0)
+        assert scroll_bar.value() == 0  # correctly clamped, not yet the bug
+
+        # The range then grows to its true final size on a later
+        # firing - the restore must still land correctly here, not
+        # stay stuck at 0 from the earlier, premature firing.
+        scroll_bar.setRange(0, 1781)
+        assert scroll_bar.value() == 1138
 
 
 def test_refresh_resets_scroll_position_when_switching_projects(

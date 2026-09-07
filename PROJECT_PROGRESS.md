@@ -17,6 +17,18 @@ Traced from the user reporting the Provider Manager dropdown fix "wasn't visible
 
 ---
 
+## 2026-09-07 - Content Studio: scroll-position fix, third pass - confirmed via real runtime diagnostics, not guessed
+
+The second pass (listening for `rangeChanged`, disconnecting on its first firing) also failed - reported identically to the first attempt by the user, which was itself a strong signal something more specific than timing was wrong. Rather than guess a third time, temporary diagnostic logging was added to `refresh()`/`_schedule_scroll_restore()` and the user ran a real repro with the terminal output captured directly.
+
+**The real, confirmed root cause**: `rangeChanged` can fire more than once during a single rebuild - the captured log showed it firing FIRST with `maximum() == 0` (an intermediate, still-collapsing state mid-rebuild) before the range grew to its true final size on a later firing. The previous fix disconnected after that first firing, so `setValue(1138)` against a range of `[0, 0]` got silently clamped to 0 and never got a second chance - exactly the reported symptom, even though the *captured* scroll value (1138) was correct the entire time.
+
+**Fixed**: `_schedule_scroll_restore()` now reapplies `setValue(value)` on **every** `rangeChanged` firing while the connection is alive, not just the first - an early, too-small range just clamps harmlessly, and a later firing (once the range has actually grown enough) re-applies and correctly sticks. The connection stays alive until the `QTimer.singleShot(50, ...)` fallback fires and disconnects (which also makes one final attempt, covering the case `rangeChanged` never fires at all).
+
+**Tests**: `test_scroll_restore_applies_via_range_changed` (renamed, still covers the base case) plus a new `test_scroll_restore_survives_an_intermediate_zero_range_firing` that reproduces the exact real bug - an early `setRange(0, 0)` firing followed by a later `setRange(0, 1781)` firing, asserting the value lands correctly on the second, not stuck at 0 from the first. Full suite (129 cases) and the full desktop integration suite (10 cases): all passed. mypy/ruff/black clean. The temporary `SCROLL_DEBUG` print diagnostics used to find this have been removed.
+
+---
+
 ## 2026-09-07 - Content Studio: scroll-position fix, second pass - a single event-loop tick wasn't enough
 
 The first attempt (`QTimer.singleShot(0, ...)`) worked in a small test job but not in the real app - confirmed by the user: clicking "Run audience promise" on a real project still snapped back to the top.
