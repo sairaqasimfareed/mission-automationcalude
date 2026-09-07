@@ -105,6 +105,24 @@ def test_execution_settings_rejects_non_positive_duration() -> None:
         GoogleFlowExecutionSettings(duration_seconds=0)
 
 
+def test_execution_settings_resolution_and_variation_count() -> None:
+    """
+    Added once genuinely observed against the real, authenticated
+    product (docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md) - real Flow's
+    settings popover exposes these as their own distinct controls.
+    """
+
+    settings = GoogleFlowExecutionSettings(resolution="  360p  ", variation_count=2)
+
+    assert settings.resolution == "360p"
+    assert settings.variation_count == 2
+
+
+def test_execution_settings_rejects_non_positive_variation_count() -> None:
+    with pytest.raises(ValidationError):
+        GoogleFlowExecutionSettings(variation_count=0)
+
+
 # --- GoogleFlowReferenceAsset ---
 
 

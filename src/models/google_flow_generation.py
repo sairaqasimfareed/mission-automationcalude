@@ -325,6 +325,16 @@ class GoogleFlowExecutionSettings(MissionBaseModel):
     aspect_ratio: str | None = None
     generation_feature: str | None = None
     reference_mode: str | None = None
+    # Added once genuinely observed against the real, authenticated
+    # product (docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md) - real Flow's
+    # settings popover exposes resolution (e.g. "360p"/"720p") and a
+    # variation count (how many videos one submission generates for
+    # the same prompt, confirmed NOT to be a simple credit multiplier)
+    # as their own distinct controls, not folded into any existing
+    # field above. Still open, not a closed enum, for the same reason
+    # every other field here is.
+    resolution: str | None = None
+    variation_count: int | None = Field(default=None, gt=0)
 
     @field_validator(
         "model_family",
@@ -332,6 +342,7 @@ class GoogleFlowExecutionSettings(MissionBaseModel):
         "aspect_ratio",
         "generation_feature",
         "reference_mode",
+        "resolution",
     )
     @classmethod
     def clean_optional_text(cls, value: str | None) -> str | None:
