@@ -5,6 +5,7 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from collections.abc import Iterator  # noqa: E402
+from pathlib import Path  # noqa: E402
 from unittest.mock import MagicMock, patch  # noqa: E402
 
 import pytest  # noqa: E402
@@ -261,7 +262,17 @@ def test_open_login_launches_real_chrome_for_manual_sign_in(
     popen.assert_called_once()
     launched_args = popen.call_args.args[0]
     assert launched_args[0] == r"C:\fake\chrome.exe"
-    assert any(arg.startswith("--user-data-dir=") for arg in launched_args)
+    user_data_dir_args = [
+        arg for arg in launched_args if arg.startswith("--user-data-dir=")
+    ]
+    assert len(user_data_dir_args) == 1
+    # Regression guard for a real bug: a *relative* --user-data-dir
+    # handed to a subprocess (a separate OS process) can resolve
+    # against a different working directory than this app's own,
+    # confirmed in practice by a real sign-in landing in the wrong
+    # Chrome profile - it must always be absolute.
+    launched_directory = Path(user_data_dir_args[0].removeprefix("--user-data-dir="))
+    assert launched_directory.is_absolute()
     assert launched_args[-1] == "https://example.invalid/flow"
     information.assert_called_once()
     worker.open_persistent_context.assert_not_called()

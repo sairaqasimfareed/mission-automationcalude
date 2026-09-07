@@ -345,7 +345,16 @@ class GoogleFlowProviderPanelView(QWidget):
             return
 
         profile_id = self._selected_profile_id
-        directory = profile_directory(profile_id)
+        # .resolve() is required here, not cosmetic: a relative
+        # user-data-dir handed to a *subprocess* (real Chrome, a
+        # separate OS process) can resolve against a different
+        # working directory than this app's own - confirmed by a real
+        # sign-in that landed in the wrong Chrome profile, leaving
+        # this directory empty, when a relative path was used.
+        # FlowBrowserWorker's own Playwright calls are unaffected (all
+        # in-process, sharing this app's one cwd) - this fix is
+        # specifically for the cross-process boundary Popen crosses.
+        directory = profile_directory(profile_id).resolve()
         directory.mkdir(parents=True, exist_ok=True)
 
         chrome_executable = find_real_chrome_executable()
@@ -396,6 +405,12 @@ class GoogleFlowProviderPanelView(QWidget):
             "app never sees it), then CLOSE that Chrome window "
             "completely and come back here and click Check "
             "Connection.\n\n"
+            "If you already had Chrome open elsewhere, please fully "
+            "quit every Chrome window (check the system tray too) and "
+            "click Open Login again before signing in - otherwise "
+            "Chrome can silently sign you in to your regular, "
+            "everyday profile instead of the one this app will "
+            "actually check.\n\n"
             "The sign-in command has also been copied to your "
             "clipboard in case you need to run it again.",
         )

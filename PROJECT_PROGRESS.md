@@ -5,6 +5,18 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-07 - Google Flow External UI Automation: manual Chrome bootstrap - real bug found and fixed (relative `--user-data-dir`)
+
+**A human actually completed the manual sign-in bootstrap from the previous entry - and it revealed a second, genuinely real bug, not a hypothesis.** The user created a Flow account in the app, clicked Open Login, a real Chrome window opened, they signed in successfully and landed on the real, authenticated `flow.google.com` dashboard - confirming the manual-Chrome approach itself works against Google's real sign-in flow. But `data/google_flow_profiles/flow.primary/` was found completely empty afterward: the session never actually landed in the profile directory this app tracks, meaning Check Connection would have falsely reported "not authenticated" despite a genuinely successful sign-in.
+
+**Root cause**: `_handle_open_login_clicked` passed a *relative* path (`data/google_flow_profiles/flow.primary`) to Chrome via `--user-data-dir=` in a `subprocess.Popen` argument list. A relative path handed across a process boundary (real Chrome is a separate OS process, not in-process like `FlowBrowserWorker`'s own Playwright calls) resolves against whatever working directory that new process ends up with - on Windows this is exactly the kind of ambiguity that lets Chrome silently fall back to a different profile (most likely the operator's own regular, already-open one) instead of the isolated one this app intended. `FlowBrowserWorker`'s own Playwright calls were never affected (everything there stays in-process, sharing this app's one cwd) - this was specific to the new cross-process code from the previous entry.
+
+**Fix**: `directory = profile_directory(profile_id).resolve()` - always hand Chrome (and the clipboard fallback command, and the Explorer-opened folder) a fully absolute path, eliminating the ambiguity at the source. The empty stray `flow.primary` profile directory left behind by the miswired attempt was removed from disk.
+
+**Tests**: the existing real-Chrome-launch test now asserts the passed `--user-data-dir=` value `.is_absolute()` - a regression guard specifically for this bug, not just a happy-path check. mypy/ruff/black clean.
+
+---
+
 ## 2026-09-07 - Google Flow External UI Automation: real-world sign-in block found and fixed (manual Chrome bootstrap)
 
 **Real evidence, not a hypothesis.** The user actually clicked Check Connection/Open Login against the real product and hit Google's own rejection screen: `accounts.google.com/v3/signin/rejected` - "Couldn't sign you in. This browser or app may not be secure." This is Google's long-standing, publicly documented policy of blocking sign-in from browsers it detects as embedded/automated (Playwright's Chromium sets automation-indicating signals - `navigator.webdriver=true`, the `--enable-automation` switch - regardless of `headless=False`). It is not a selector problem, not a timing problem, and no amount of GF-4/GF-17 selector work could have fixed it - `Open Login` was structurally driving the one step Google actively blocks.
