@@ -72,14 +72,20 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
     settings popover's full real vocabulary (model family, resolution,
     duration, aspect ratio, variation count), clicking Start
     generation, the generating -> completed tile sequence, and the
-    real Download scene control. What is NOT verified and is
-    deliberately NOT built here, rather than guessed: the real
-    confirmation-required screen (Flow does show one sometimes, per
-    the account owner - it just didn't trigger for the one real prompt
-    tested), the ingredient/reference-attachment flow ("Add
-    ingredients to the prompt box" was seen but never opened), and any
-    error-state screens. A submission that unexpectedly hits any of
-    these lands on UI_CHANGED rather than a fabricated click sequence.
+    real Download scene control. Also now confirmed (docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md
+    section 4a): the confirmation-before-generating screen is an
+    Agent-mode-only, explicitly configurable setting ("Confirm before
+    generating": Always/Never, in Agent settings) - not content/
+    policy-triggered, and irrelevant to this class, since it never
+    enables Agent mode (the "Agent" toggle is never clicked - see
+    section 4's own "Operationally important" note on why Agent-off is
+    the real, working path this class drives). What IS still NOT
+    verified and deliberately NOT built here, rather than guessed:
+    the ingredient/reference-attachment flow ("Add ingredients to the
+    prompt box" was seen but never opened) and any error-state
+    screens. A submission that unexpectedly hits either lands on
+    UI_CHANGED/SUBMISSION_UNCERTAIN rather than a fabricated click
+    sequence.
 
     base_url/base_url_resolver must resolve to a SPECIFIC project URL
     (https://flow.google.com/project/<uuid>), not the bare domain -
@@ -407,16 +413,21 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
             )
 
         # No positive evidence generation actually started (no new
-        # tile, and the real confirmation screen - which the account
-        # owner confirms does appear sometimes - was not recognized,
-        # since its real structure is unverified). Never blindly
-        # retried, matching the credit-sensitive-state rule exactly.
+        # tile). This class never enables Agent mode (see the class
+        # docstring), and confirmation-before-generating is confirmed
+        # to be an Agent-mode-only setting
+        # (docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md section 4a) - so this
+        # is NOT expected to be a confirmation screen for the account/
+        # settings this class actually drives, but something else
+        # unrecognized. Never blindly retried, matching the credit-
+        # sensitive-state rule exactly.
         return current.with_transition(
             GoogleFlowGenerationState.SUBMISSION_UNCERTAIN,
             detail=(
                 "No positive evidence generation started after clicking "
-                "Start generation - possibly a real confirmation/review "
-                "screen this adapter does not yet recognize."
+                "Start generation - an unrecognized real screen (not "
+                "expected to be Agent-mode confirmation, since Agent is "
+                "never enabled by this class)."
             ),
         )
 

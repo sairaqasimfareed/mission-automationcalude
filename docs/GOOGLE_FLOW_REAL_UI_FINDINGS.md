@@ -87,15 +87,63 @@ button "Start generation"                                  <- no longer disabled
 ```
 
 **No separate "review"/"analyze" screen appeared before generation
-started** for this specific (benign) prompt - clicking "Start
-generation" went directly to the generating state. The user who ran
-this session confirmed from real, prior personal use that Google Flow
-**does** sometimes show an approve/review prompt (most likely
-content-policy-triggered, not universal) - so `GoogleFlowGenerationState`'s
+started** for this specific submission - clicking "Start generation"
+went directly to the generating state. **Now fully explained, not
+just observed** (see section 4a below): confirmation-before-generating
+is an **Agent-mode-only, explicitly configurable setting**
+("Confirm before generating": Always/Never, in Agent settings) - it
+has nothing to do with prompt content/policy, contrary to this
+document's earlier speculation. This session's one real test had the
+`"Agent"` toggle left OFF (the account's own unlimited-tier workflow,
+per section 4's own "Operationally important" note) - a plain,
+non-Agent submission apparently never shows this screen at all,
+confirmation only applies to Agent-driven generation. `GoogleFlowGenerationState`'s
 existing `CONFIRMATION_REQUIRED`/`CONFIRMING` states and the adapter's
-existing confirmation-optional branch are both real and should stay
-exactly as already built; this session's one real test simply took the
-no-confirmation path.
+existing confirmation-optional branch remain correct exactly as built
+- they model the real, general Flow state machine, and this account's
+own default path (Agent off) genuinely never enters them.
+
+## 4a. Agent settings (opened via the "Agent" button/its own settings entry)
+
+A real, distinct settings panel from the per-generation Settings
+popover (section 4) - reached from the "Agent" area near the prompt
+box, not from "Settings trigger". Real, verified fields:
+
+```
+heading: "Agent settings"
+---
+"Confirm before generating":
+  radio "Always" [checked]  - "Agent will ask for confirmation before generating media."
+  radio "Never"             - "Agent will generate media and spend credits automatically."
+---
+"Image generation default":
+  aspect ratio: 16:9 [checked] / 4:3 / 1:1 / 3:4 / 9:16   <- 5 options, MORE than video's 2 (below)
+  variation count: x1 / x2 [checked] / x3 / x4             <- same x1-x4 vocabulary as video (section 4)
+  model: "Nano Banana 2"                                    <- REAL image-generation model name (matches
+                                                                the "Nano Banana" name from the public
+                                                                marketing page, now confirmed as v2)
+---
+"Video generation default":
+  aspect ratio: 16:9 [checked] / 9:16                       <- matches section 4's video aspect-ratio set exactly
+  (further fields below this were not captured - screen was
+  cut off in the one screenshot this was observed from)
+---
+button "Save"
+```
+
+**Operationally important, confirmed by the account owner**: this
+"Confirm before generating" setting is exactly the real mechanism
+behind the confirmation-required/optional split - it is a per-account
+(or per-project) preference the operator controls, defaulting to
+`Always` on this account, not something Flow decides per-prompt. A
+future Agent-mode adapter path would need to read/respect this
+setting (or simply always expect a possible confirmation step when
+Agent is on) rather than guess whether one will appear.
+`GoogleFlowRealUIAdapter` does not drive Agent-mode generation today
+(the "Agent" toggle is never clicked - see section 4's own
+"Operationally important" note on why Agent-off is this account's
+actual working path), so this finding does not require an adapter
+code change, only this documentation update.
 
 ## 4. Settings popover (opened via the "Settings trigger" button)
 

@@ -110,9 +110,26 @@ class FlowBrowserWorker:
 
         playwright = self._ensure_playwright()
 
+        # Real-world finding, 2026-09-07: Playwright's own default
+        # forces a fixed 1280x720 internal viewport even for a
+        # visible, headed window - an operator watching Check
+        # Connection found the real Google Flow dashboard cut off at
+        # the bottom (below the taskbar) with no way to scroll to the
+        # rest, since it's the window's fixed render area that's
+        # wrong, not the page's own scrolling. viewport=None lets a
+        # headed window render at its actual OS window size instead of
+        # a forced fixed size, and --start-maximized gives that window
+        # the full screen so there is room to see the whole page.
+        # Headless contexts keep Playwright's own fixed default -
+        # nothing is visually displayed there, so this doesn't matter,
+        # and a fixed viewport keeps automated interactions
+        # predictable. Safe for every real locator this codebase uses
+        # (role/name/CSS-based, never coordinate-based).
         context = playwright.chromium.launch_persistent_context(
             user_data_dir=str(profile_directory),
             headless=headless,
+            viewport=None if not headless else {"width": 1280, "height": 720},
+            args=["--start-maximized"] if not headless else [],
         )
         self._contexts[profile_id] = context
 
