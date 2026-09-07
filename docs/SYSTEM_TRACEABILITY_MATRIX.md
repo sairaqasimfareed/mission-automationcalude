@@ -177,6 +177,17 @@ accepted production truth, never creates production authority.
 
 ---
 
+## Google Flow External UI Automation (from-scratch build)
+
+A fourth, separate initiative, built from scratch per GF-0 through
+GF-17 of `Google_Flow_External_UI_From_Scratch_Implementation_Plan.pdf`.
+Standing scope note superseded by explicit user authorization; CAPTCHA/
+MFA bypass remains categorically excluded regardless.
+
+| Capability | Model | Service | Persistence | GUI | Tests | Deliberately not built |
+|---|---|---|---|---|---|---|
+| GF-0: Domain contracts & provider-neutral interface | `src/models/google_flow_generation.py`: `GoogleFlowGenerationState` (18-state lifecycle), `GoogleFlowGenerationRequest`/`GoogleFlowExecutionSettings`/`GoogleFlowReferenceAsset`/`GoogleFlowFailure`/`GoogleFlowQCResult`/`GoogleFlowGenerationAttempt`; `ProviderCategory.EXTERNAL_UI_VIDEO` (new) | New `src/providers/external_ui_generation_provider.py`: `ExternalUIGenerationProvider(BaseProvider)` abstract contract (`submit`/`observe`/`download`/`cancel_or_abandon`/`check_profile_health`) with explicit `supported_operations`/`ensure_supported()` - **REUSE confirmed by inspection**: `MediaTechnicalValidationResult` (GF-9), `ProviderBudgetService`/`ProviderRegistry` (GF-11's budget gate, already implements check/reserve/release against a profile_id with no live-balance fabrication) reserved for later phases rather than duplicated now; found `ProviderProfile.validate_provider_profile()` hard-requires `secret_reference` whenever enabled - wrong for a browser-profile-authenticated Flow account, deferred to GF-2/GF-3 by design | `ProviderCategory.EXTERNAL_UI_VIDEO` (new, additive) | No GUI yet - GF-0 is unit-testable contracts only, no browser launched | `test_google_flow_generation_model.py` (34 tests), `test_external_ui_generation_provider.py` (6 tests). Broader provider/budget regression (122 cases) confirms zero breakage from the new enum member | GF-1 through GF-17 not yet built (this row is GF-0 only); `ProviderProfile.secret_reference` requirement not yet relaxed for Flow accounts |
+
 Maintenance: add a row here in the same change that adds a new
 Model/Service/Persistence/GUI/Tests combination. A capability that only
 has some of these columns filled in is not done - see

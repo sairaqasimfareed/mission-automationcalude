@@ -21,6 +21,13 @@ class ProviderCategory(str, Enum):
     SOUND_EFFECTS = "sound_effects"
     UPLOAD = "upload"
 
+    # Google Flow External UI Automation, GF-0: an EXTERNAL_UI account
+    # is deliberately never conflated with VIDEO (an official,
+    # documented video API) - it authenticates through a persistent
+    # browser profile, not an API key, and this codebase's own
+    # ProviderCenter GUI must never show an API Key field for it.
+    EXTERNAL_UI_VIDEO = "external_ui_video"
+
 
 class ProviderHealthStatus(str, Enum):
     """Current provider-profile health state."""
