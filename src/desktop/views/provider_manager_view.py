@@ -58,6 +58,23 @@ _CATEGORY_PLACEHOLDERS: dict[ProviderCategory, str] = {
 }
 _DEFAULT_PLACEHOLDERS = "{api_key}, {base_url}"
 
+# Real, coded provider_name values this app actually knows how to
+# dispatch to (src/services/factory/provider_factory.py's LLMProvider
+# enum, src/services/factory/provider_adapter_factory.py's _CODED_*
+# dicts) - offered as suggestions so a typo (e.g. "opena" instead of
+# "openai") can't silently produce a profile nothing recognizes. The
+# combo box stays editable: a category with no known coded adapter
+# (VIDEO/IMAGE/UPLOAD) or a deliberately custom name for the generic
+# HTTP adapter path both remain valid free-text entries.
+_KNOWN_PROVIDER_NAMES: dict[ProviderCategory, list[str]] = {
+    ProviderCategory.LLM: ["openai", "anthropic", "gemini"],
+    ProviderCategory.VOICE: ["elevenlabs"],
+    ProviderCategory.MUSIC: ["elevenlabs"],
+    ProviderCategory.SOUND_EFFECTS: ["elevenlabs"],
+    ProviderCategory.STOCK_VIDEO: ["pexels", "pixabay", "envato"],
+    ProviderCategory.STOCK_IMAGE: ["pexels", "pixabay", "envato"],
+}
+
 
 class ProviderManagerView(QWidget):
     """
@@ -104,6 +121,12 @@ class ProviderManagerView(QWidget):
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([260, 560])
+
+        # Populate provider-name suggestions for the initial category -
+        # the category combo's own currentIndexChanged never fires for
+        # the item added while building it, so this can't be left to
+        # that signal alone.
+        self._update_provider_name_options()
 
     def _build_list_panel(self) -> QWidget:
         panel = QWidget()
@@ -155,7 +178,14 @@ class ProviderManagerView(QWidget):
         self._display_name = QLineEdit()
         form.addRow("Display name", self._display_name)
 
-        self._provider_name = QLineEdit()
+        # Editable combo, not a plain text field - offers the known,
+        # real provider names for the selected category (see
+        # _KNOWN_PROVIDER_NAMES) so a typo can't silently produce a
+        # profile this app doesn't recognize, while staying free-text
+        # for categories with no coded adapter or a deliberate custom
+        # name for the generic HTTP adapter path.
+        self._provider_name = QComboBox()
+        self._provider_name.setEditable(True)
         form.addRow("Provider name", self._provider_name)
 
         self._category = QComboBox()
@@ -171,6 +201,7 @@ class ProviderManagerView(QWidget):
                 continue
             self._category.addItem(category.value, category)
         self._category.currentIndexChanged.connect(self._update_placeholder_hint)
+        self._category.currentIndexChanged.connect(self._update_provider_name_options)
         form.addRow("Category", self._category)
 
         self._default_model = QLineEdit()
@@ -343,6 +374,23 @@ class ProviderManagerView(QWidget):
             _CATEGORY_PLACEHOLDERS.get(category, _DEFAULT_PLACEHOLDERS)
         )
 
+    def _update_provider_name_options(self) -> None:
+        """
+        Repopulate the Provider name combo's suggestions for the newly
+        selected category - preserves whatever text is already typed/
+        selected (e.g. when loading an existing profile, or switching
+        category away and back), never silently clears it.
+        """
+
+        category = self._category.currentData()
+        current_text = self._provider_name.currentText()
+
+        self._provider_name.blockSignals(True)
+        self._provider_name.clear()
+        self._provider_name.addItems(_KNOWN_PROVIDER_NAMES.get(category, []))
+        self._provider_name.setCurrentText(current_text)
+        self._provider_name.blockSignals(False)
+
     def _update_response_mode_visibility(self) -> None:
         mode = self._response_mode.currentData()
 
@@ -439,12 +487,16 @@ class ProviderManagerView(QWidget):
         self._profile_id.setText(profile.profile_id)
         self._profile_id.setReadOnly(True)
         self._display_name.setText(profile.display_name)
-        self._provider_name.setText(profile.provider_name)
 
         category_index = self._category.findData(profile.category)
 
         if category_index >= 0:
             self._category.setCurrentIndex(category_index)
+
+        # After the category (so the combo's suggested items already
+        # match it) - setCurrentText works whether provider_name is
+        # one of those suggestions or a custom/generic-adapter value.
+        self._provider_name.setCurrentText(profile.provider_name)
 
         self._default_model.setText(profile.default_model or "")
         self._base_url.setText(profile.base_url or "")
@@ -471,6 +523,11 @@ class ProviderManagerView(QWidget):
         self._display_name.clear()
         self._provider_name.clear()
         self._category.setCurrentIndex(0)
+        # Explicit, not left to the currentIndexChanged signal alone -
+        # setCurrentIndex(0) is a no-op (no signal fires) when the
+        # category was already at index 0, which would otherwise leave
+        # provider_name's suggestions empty after the .clear() above.
+        self._update_provider_name_options()
         self._default_model.clear()
         self._base_url.clear()
         self._secret_value.clear()
@@ -617,7 +674,7 @@ class ProviderManagerView(QWidget):
             command = ProviderProfileUpsertCommand(
                 profile_id=self._profile_id.text(),
                 display_name=self._display_name.text(),
-                provider_name=self._provider_name.text(),
+                provider_name=self._provider_name.currentText(),
                 category=self._category.currentData(),
                 enabled=self._enabled.isChecked(),
                 priority=self._priority.value(),

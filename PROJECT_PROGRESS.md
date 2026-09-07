@@ -5,6 +5,16 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-07 - Provider Manager: "Provider name" is now a suggestion dropdown, not free text
+
+The user, looking at the Provider Manager screen, pointed out "Provider name" was a plain text field even though only a small, fixed set of values are ever actually meaningful (`openai`/`anthropic`/`gemini` for LLM, `elevenlabs` for voice/music/sound-effects, `pexels`/`pixabay`/`envato` for stock) - a typo there (e.g. "opena") would silently save a profile this app has no coded adapter for, with no error until something tried to use it.
+
+**Fixed**: `ProviderManagerView._provider_name` is now an editable `QComboBox`, repopulated with the real, coded provider names for whichever category is selected (`_KNOWN_PROVIDER_NAMES`, sourced from `provider_factory.py`'s `LLMProvider` enum and `provider_adapter_factory.py`'s `_CODED_*` dicts - not invented). Stays editable, and VIDEO/IMAGE/UPLOAD (categories with no coded provider_name dispatch at all, confirmed by reading `ProviderFactory.create()`) get no forced suggestions - free text remains fully valid there, and for a deliberate custom name used with the generic HTTP adapter path in any category. A real edge case found while wiring the reset: `QComboBox.setCurrentIndex(0)` is a no-op (fires no signal) when already at index 0, which would have left the combo's suggestions empty after `_reset_form()`'s own `.clear()` if "New provider" was clicked twice in a row on the default LLM category - fixed with an explicit repopulate call, not left to the signal alone.
+
+**Tests**: no test file existed for this view at all before this fix (a pre-existing gap, not something this change introduced) - new `tests/test_provider_manager_view.py` (7 tests: combo is editable, LLM/voice suggestions match the real coded names exactly, a category with no coded adapter gets no forced suggestions, a custom name still saves correctly, loading an existing profile shows its saved value, and the New-provider-twice-in-a-row regression case). Broader `-k "provider_manager or provider_profile"` regression (12 cases) and the full desktop integration suite (10 cases): all passed. mypy/ruff/black clean.
+
+---
+
 ## 2026-09-07 - Google Flow External UI Automation: Agent mode + this app's own independent confirmation gate
 
 The user asked directly: should our app expose an Agent toggle, and should selecting it auto-set Google Flow's own "Confirm before generating" to Never so generation proceeds with no approval prompt at all? Recommended against the second half and the user agreed: flipping Flow's own saved account setting as a side effect of a checkbox (a) is a permanent, account-wide change (affects manual use of Flow too, not just this app), (b) removes Google's own spending safeguard entirely with nothing standing in for it, and (c) this codebase already has the right tool for "should this proceed without asking a human" - `ApprovalPolicyConfig`/`ApprovalService`, built earlier, unused until now. Built the alternative instead.
