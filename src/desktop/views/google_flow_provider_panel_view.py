@@ -8,6 +8,7 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QComboBox,
     QFormLayout,
     QInputDialog,
     QLineEdit,
@@ -33,7 +34,11 @@ from src.models.provider_profile_management import (
     ProviderProfileUpsertCommand,
 )
 from src.providers.google_flow.adapter import GoogleFlowUIAdapter
-from src.providers.google_flow.locators import VERIFIED_FLOW_BASE_URL
+from src.providers.google_flow.locators import (
+    RECOMMENDED_UNLIMITED_MODEL_FAMILY,
+    VERIFIED_FLOW_BASE_URL,
+    VERIFIED_MODEL_FAMILIES,
+)
 from src.services.provider_profile_management_service import (
     ProviderProfileManagementService,
 )
@@ -141,6 +146,17 @@ class GoogleFlowProviderPanelView(QWidget):
         self._flow_url_input.setPlaceholderText(VERIFIED_FLOW_BASE_URL)
         form.addRow("Flow URL", self._flow_url_input)
 
+        # Real, verified model choices (docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md)
+        # - every account gets its own choice here, since different
+        # accounts can have different subscription tiers/entitlements
+        # (e.g. one account's unlimited tier only applies to
+        # "Veo 3.1 - Lite", another might prefer "Veo 3.1 - Quality"
+        # even if metered). Never hardcoded to one model for every
+        # account.
+        self._model_family_select = QComboBox()
+        self._model_family_select.addItems(list(VERIFIED_MODEL_FAMILIES))
+        form.addRow("Model", self._model_family_select)
+
         self._priority_input = QSpinBox()
         self._priority_input.setRange(1, 1000)
         form.addRow("Priority", self._priority_input)
@@ -243,6 +259,15 @@ class GoogleFlowProviderPanelView(QWidget):
             # starting point the operator can edit, never forced.
             or VERIFIED_FLOW_BASE_URL
         )
+        self._model_family_select.setCurrentText(
+            profile.metadata.get("model_family")
+            # Same "real, verified default, still fully editable"
+            # pattern as the Flow URL field above - a fresh account
+            # starts at the recommended unlimited-tier model rather
+            # than whatever Flow's own UI happens to default to, but
+            # any account can be switched to any of the 4 real models.
+            or RECOMMENDED_UNLIMITED_MODEL_FAMILY
+        )
         self._health_badge.setText(profile.health_status.value)
 
     def _handle_add_clicked(self) -> None:
@@ -292,6 +317,7 @@ class GoogleFlowProviderPanelView(QWidget):
         profile = next(p for p in self._profiles if p.profile_id == profile_id)
         flow_url = self._flow_url_input.text().strip()
         self._flow_urls[profile_id] = flow_url
+        model_family = self._model_family_select.currentText()
 
         try:
             self._service.upsert_profile(
@@ -303,7 +329,11 @@ class GoogleFlowProviderPanelView(QWidget):
                     enabled=self._enabled_checkbox.isChecked(),
                     priority=self._priority_input.value(),
                     browser_profile_reference=profile.browser_profile_reference,
-                    metadata={**profile.metadata, "flow_url": flow_url},
+                    metadata={
+                        **profile.metadata,
+                        "flow_url": flow_url,
+                        "model_family": model_family,
+                    },
                 )
             )
         except ValueError as error:

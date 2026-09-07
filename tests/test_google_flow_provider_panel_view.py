@@ -156,6 +156,95 @@ def test_selecting_an_account_with_no_saved_url_prefills_the_verified_default(
     assert view._flow_url_input.text() == VERIFIED_FLOW_BASE_URL  # noqa: SLF001
 
 
+def test_selecting_an_account_with_no_saved_model_prefills_the_recommended_default(
+    qapp: QApplication,
+) -> None:
+    """
+    Every account gets its own model choice (accounts can have
+    different subscription tiers/entitlements) - a newly added
+    account with no model_family saved yet starts at the confirmed
+    unlimited-tier recommendation rather than whatever Flow's own UI
+    happens to default a new project to, but any of the 4 real models
+    can be picked per account.
+    """
+
+    from src.providers.google_flow.locators import RECOMMENDED_UNLIMITED_MODEL_FAMILY
+
+    service = _management_service()
+    from src.models.provider_profile_management import ProviderProfileUpsertCommand
+
+    service.upsert_profile(
+        ProviderProfileUpsertCommand(
+            profile_id="flow.primary",
+            display_name="Flow Primary",
+            provider_name="Google Flow",
+            category=ProviderCategory.EXTERNAL_UI_VIDEO,
+            enabled=False,
+            browser_profile_reference="flow_profiles/flow.primary",
+        )
+    )
+
+    view = _view(qapp, service=service)
+    view.refresh()
+    view._list.setCurrentRow(0)  # noqa: SLF001
+
+    assert (
+        view._model_family_select.currentText()  # noqa: SLF001
+        == RECOMMENDED_UNLIMITED_MODEL_FAMILY
+    )
+
+
+def test_selecting_an_account_shows_its_own_saved_model(qapp: QApplication) -> None:
+    service = _management_service()
+    from src.models.provider_profile_management import ProviderProfileUpsertCommand
+
+    service.upsert_profile(
+        ProviderProfileUpsertCommand(
+            profile_id="flow.primary",
+            display_name="Flow Primary",
+            provider_name="Google Flow",
+            category=ProviderCategory.EXTERNAL_UI_VIDEO,
+            enabled=False,
+            browser_profile_reference="flow_profiles/flow.primary",
+            metadata={"model_family": "Veo 3.1 - Quality"},
+        )
+    )
+
+    view = _view(qapp, service=service)
+    view.refresh()
+    view._list.setCurrentRow(0)  # noqa: SLF001
+
+    assert (
+        view._model_family_select.currentText() == "Veo 3.1 - Quality"
+    )  # noqa: SLF001
+
+
+def test_save_persists_the_model_family_per_account(qapp: QApplication) -> None:
+    service = _management_service()
+    from src.models.provider_profile_management import ProviderProfileUpsertCommand
+
+    service.upsert_profile(
+        ProviderProfileUpsertCommand(
+            profile_id="flow.primary",
+            display_name="Flow Primary",
+            provider_name="Google Flow",
+            category=ProviderCategory.EXTERNAL_UI_VIDEO,
+            enabled=False,
+            browser_profile_reference="flow_profiles/flow.primary",
+        )
+    )
+
+    view = _view(qapp, service=service)
+    view.refresh()
+    view._list.setCurrentRow(0)  # noqa: SLF001
+
+    view._model_family_select.setCurrentText("Veo 3.1 - Fast")  # noqa: SLF001
+    view._handle_save_clicked()  # noqa: SLF001
+
+    saved = service.get_profile("flow.primary")
+    assert saved.metadata.get("model_family") == "Veo 3.1 - Fast"
+
+
 def test_save_persists_the_flow_url_and_priority(qapp: QApplication) -> None:
     service = _management_service()
     from src.models.provider_profile_management import ProviderProfileUpsertCommand
