@@ -9,6 +9,7 @@ from src.models.base import MissionBaseModel
 from src.models.editing_directives import (
     DirectiveIntensity,
 )
+from src.models.media_strategy import SceneSourceType
 from src.models.story_angle import StoryAngleStyle
 
 
@@ -260,6 +261,24 @@ class GenreContentIntelligenceProfile(MissionBaseModel):
     retention/reveal density, research rigor, in-narration
     call-to-action policy, quality thresholds, character policy, and
     scene/visual density recommendations for the scene planner.
+
+    Found via external audit: Post-Script-Approval Production Plan
+    Phase 6 asks to "apply route defaults by project/genre with
+    per-clip override" - before this field, every scene defaulted
+    uniformly to MANUAL_UPLOAD regardless of genre, in both
+    ScenePlannerAgent entry points, and only the per-clip override
+    half (a person or a later stage changing one scene's own
+    Scene.source_type) actually existed. default_scene_source_type is
+    restricted to MANUAL_UPLOAD/STOCK_FOOTAGE - the two routes this
+    codebase's real acquisition workflow actually exercises end to
+    end; AI_GENERATE is reserved and disabled (Scene's own validator
+    enforces this), IMAGE_TO_VIDEO is disabled in the live asset
+    workflow (AssetDecisionService raises on it), and LOCAL_LIBRARY
+    has no established convention anywhere in this codebase for
+    deriving its required local_library_query automatically the way
+    STOCK_FOOTAGE's stock_query already falls back to a scene's own
+    visual_prompt (see scene_asset_workflow_service.py) - so a genre
+    default for it would have no honest value to fall back to.
     """
 
     preferred_angle_styles: list[str] = Field(
@@ -326,9 +345,31 @@ class GenreContentIntelligenceProfile(MissionBaseModel):
 
     establishing_shot_policy: str = "moderate"
 
+    default_scene_source_type: SceneSourceType = SceneSourceType.MANUAL_UPLOAD
+
     metadata: dict[str, Any] = Field(
         default_factory=dict,
     )
+
+    @field_validator("default_scene_source_type")
+    @classmethod
+    def validate_default_scene_source_type(
+        cls,
+        value: SceneSourceType,
+    ) -> SceneSourceType:
+        supported = {
+            SceneSourceType.MANUAL_UPLOAD,
+            SceneSourceType.STOCK_FOOTAGE,
+        }
+
+        if value not in supported:
+            raise ValueError(
+                "default_scene_source_type must be MANUAL_UPLOAD or "
+                "STOCK_FOOTAGE - the only routes this codebase's real "
+                "acquisition workflow exercises end to end."
+            )
+
+        return value
 
     @field_validator("preferred_angle_styles")
     @classmethod

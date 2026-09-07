@@ -4400,7 +4400,9 @@ class ContentStudioView(QWidget):
             return
 
         try:
-            scenes = self._content_pipeline.scene_planner.plan(job.script)
+            scenes = self._content_pipeline.scene_planner.plan(
+                job.script, genre_id=job.genre_id
+            )
         except (RuntimeError, ValueError) as error:
             self._record_error(
                 job,

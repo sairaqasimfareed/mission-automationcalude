@@ -25,6 +25,7 @@ from src.models.genre_profile import (
     ResearchPolicy,
     UncertainInformationPolicy,
 )
+from src.models.media_strategy import SceneSourceType
 
 
 def _even_pacing_curve() -> list[PacingSegment]:
@@ -481,6 +482,7 @@ class GenreProfileRegistryService:
                 thumbnail=GenreThumbnailProfile(),
                 seo=GenreSEOProfile(),
                 content_intelligence=GenreContentIntelligenceProfile(
+                    default_scene_source_type=SceneSourceType.MANUAL_UPLOAD,
                     narrative_architecture_hint=(
                         "Hook -> context -> development -> "
                         "climax/insight -> resolution."
@@ -563,6 +565,7 @@ class GenreProfileRegistryService:
                     call_to_action_style=("suspense_question"),
                 ),
                 content_intelligence=GenreContentIntelligenceProfile(
+                    default_scene_source_type=SceneSourceType.MANUAL_UPLOAD,
                     preferred_angle_styles=[
                         "horror",
                         "mystery",
@@ -665,6 +668,7 @@ class GenreProfileRegistryService:
                     hashtag_style="informative",
                 ),
                 content_intelligence=GenreContentIntelligenceProfile(
+                    default_scene_source_type=SceneSourceType.STOCK_FOOTAGE,
                     preferred_angle_styles=[
                         "documentary",
                         "chronological",
@@ -761,6 +765,7 @@ class GenreProfileRegistryService:
                     hashtag_style="history_topics",
                 ),
                 content_intelligence=GenreContentIntelligenceProfile(
+                    default_scene_source_type=SceneSourceType.STOCK_FOOTAGE,
                     preferred_angle_styles=[
                         "documentary",
                         "chronological",
@@ -856,6 +861,7 @@ class GenreProfileRegistryService:
                     call_to_action_style=("plan_your_trip"),
                 ),
                 content_intelligence=GenreContentIntelligenceProfile(
+                    default_scene_source_type=SceneSourceType.STOCK_FOOTAGE,
                     preferred_angle_styles=[
                         "character_pov",
                         "chronological",
@@ -947,6 +953,7 @@ class GenreProfileRegistryService:
                     call_to_action_style=("ask_favorite_item"),
                 ),
                 content_intelligence=GenreContentIntelligenceProfile(
+                    default_scene_source_type=SceneSourceType.STOCK_FOOTAGE,
                     preferred_angle_styles=[
                         "question_driven",
                         "chronological",
@@ -1042,6 +1049,7 @@ class GenreProfileRegistryService:
                     call_to_action_style=("emotional_question"),
                 ),
                 content_intelligence=GenreContentIntelligenceProfile(
+                    default_scene_source_type=SceneSourceType.MANUAL_UPLOAD,
                     preferred_angle_styles=[
                         "character_pov",
                         "emotional",
@@ -1140,6 +1148,7 @@ class GenreProfileRegistryService:
                     hashtag_style="informative",
                 ),
                 content_intelligence=GenreContentIntelligenceProfile(
+                    default_scene_source_type=SceneSourceType.STOCK_FOOTAGE,
                     preferred_angle_styles=[
                         "documentary",
                         "question_driven",
@@ -1248,6 +1257,7 @@ class GenreProfileRegistryService:
                     hashtag_style="mystery",
                 ),
                 content_intelligence=GenreContentIntelligenceProfile(
+                    default_scene_source_type=SceneSourceType.MANUAL_UPLOAD,
                     preferred_angle_styles=[
                         "mystery",
                         "investigation",
@@ -1352,6 +1362,7 @@ class GenreProfileRegistryService:
                     hashtag_style="trending",
                 ),
                 content_intelligence=GenreContentIntelligenceProfile(
+                    default_scene_source_type=SceneSourceType.MANUAL_UPLOAD,
                     preferred_angle_styles=[
                         "character_pov",
                         "question_driven",
@@ -1451,6 +1462,7 @@ class GenreProfileRegistryService:
                     hashtag_style="survival",
                 ),
                 content_intelligence=GenreContentIntelligenceProfile(
+                    default_scene_source_type=SceneSourceType.STOCK_FOOTAGE,
                     preferred_angle_styles=[
                         "character_pov",
                         "chronological",

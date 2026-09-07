@@ -4,9 +4,11 @@ import re
 
 from src.models.editorial_profile import EditorialProfile
 from src.models.generated_script import GeneratedScript, ScriptSegment
+from src.models.media_strategy import SceneSourceType
 from src.models.scene import Scene, SceneStatus
 from src.models.script import Script, ScriptStatus
 from src.models.story_blueprint import StoryBeatType
+from src.services.genre_profile_registry_service import GenreProfileRegistryService
 
 _SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[.!?])\s+")
 
@@ -42,14 +44,36 @@ class ScenePlannerAgent:
 
     Two entry points, kept on one class rather than split into two
     services: plan() for the legacy, flat Script model (sentence
-    splitting, hardcoded duration, no genre awareness - unchanged),
-    and plan_from_generated_script() for the content intelligence
-    engine's GeneratedScript (genre-aware density, tension-aware
-    visual seeding). Both remain available so neither the old
-    ContentPipeline nor the new ContentIntelligencePipeline breaks.
+    splitting, hardcoded duration), and plan_from_generated_script()
+    for the content intelligence engine's GeneratedScript (genre-aware
+    density, tension-aware visual seeding). Both remain available so
+    neither the old ContentPipeline nor the new
+    ContentIntelligencePipeline breaks.
+
+    Found via external audit: neither entry point ever set
+    Scene.source_type explicitly, so every scene silently defaulted
+    to the model's own MANUAL_UPLOAD default regardless of genre -
+    Post-Script-Approval Production Plan Phase 6's "apply route
+    defaults by project/genre" was never actually applied; only the
+    per-clip override half (a person or a later stage changing one
+    scene's own source_type) existed. genre_registry defaults to a
+    real, populated instance rather than None - matching
+    AudioCuePolicyService's own "no existing behavior for a
+    default-off posture to protect" reasoning - since resolving a
+    genre now only ever changes source_type/stock_query, fields every
+    caller already left at their own prior defaults.
     """
 
-    def plan(self, script: Script) -> list[Scene]:
+    def __init__(
+        self,
+        *,
+        genre_registry: GenreProfileRegistryService | None = None,
+    ) -> None:
+        self._genre_registry = (
+            genre_registry or GenreProfileRegistryService.with_default_profiles()
+        )
+
+    def plan(self, script: Script, *, genre_id: str | None = None) -> list[Scene]:
         if script.status != ScriptStatus.APPROVED:
             raise ValueError("Scene planning requires an approved script.")
 
@@ -59,23 +83,37 @@ class ScenePlannerAgent:
             if sentence.strip()
         ]
 
+        source_type = self._resolve_default_source_type(genre_id)
+
         scenes: list[Scene] = []
 
         for index, sentence in enumerate(sentences, start=1):
+            visual_prompt = (
+                f"Cinematic visual inspired by: {sentence}. "
+                "Ultra realistic, cinematic lighting, "
+                "volumetric atmosphere, high detail."
+            )
+
             scenes.append(
                 Scene(
                     scene_number=index,
                     title=f"Scene {index}",
                     narration=f"{sentence}.",
-                    visual_prompt=(
-                        f"Cinematic visual inspired by: {sentence}. "
-                        "Ultra realistic, cinematic lighting, "
-                        "volumetric atmosphere, high detail."
-                    ),
+                    visual_prompt=visual_prompt,
                     estimated_duration_seconds=8,
                     camera_direction="Slow cinematic push-in",
                     sound_design="Subtle cinematic ambience",
                     status=SceneStatus.READY,
+                    source_type=source_type,
+                    # Stock-footage scenes always require a
+                    # stock_query - the same visual_prompt fallback
+                    # scene_asset_workflow_service.py already uses
+                    # when nothing more specific has been set yet.
+                    stock_query=(
+                        visual_prompt
+                        if source_type == SceneSourceType.STOCK_FOOTAGE
+                        else None
+                    ),
                     metadata={
                         "source_script_id": str(script.id),
                     },
@@ -83,6 +121,29 @@ class ScenePlannerAgent:
             )
 
         return scenes
+
+    def _resolve_default_source_type(
+        self,
+        genre_id: str | None,
+    ) -> SceneSourceType:
+        """
+        Resolve this genre's default acquisition route.
+
+        genre_id absent means "no genre was ever given" - preserves
+        the exact prior MANUAL_UPLOAD-uniform behavior for every
+        caller that doesn't (yet) pass one, rather than guessing a
+        genre.
+        """
+
+        if genre_id is None:
+            return SceneSourceType.MANUAL_UPLOAD
+
+        resolution = self._genre_registry.resolve(genre_id, allow_fallback=True)
+
+        if resolution.profile is None:
+            return SceneSourceType.MANUAL_UPLOAD
+
+        return resolution.profile.content_intelligence.default_scene_source_type
 
     def plan_from_generated_script(
         self,
@@ -127,6 +188,7 @@ class ScenePlannerAgent:
                         duration_seconds=sub_duration_seconds,
                         segment=segment,
                         topic=script.topic,
+                        source_type=content_intelligence.default_scene_source_type,
                     )
                 )
                 scene_number += 1
@@ -186,6 +248,7 @@ class ScenePlannerAgent:
         duration_seconds: float,
         segment: ScriptSegment,
         topic: str,
+        source_type: SceneSourceType,
     ) -> Scene:
         beat_descriptor = _BEAT_VISUAL_DESCRIPTORS.get(
             segment.narrative_function, "A cinematic visual"
@@ -198,20 +261,29 @@ class ScenePlannerAgent:
         else:
             camera_direction = "Slow, mostly static hold"
 
+        visual_prompt = (
+            f"{beat_descriptor} for: {narration} "
+            "Ultra realistic, cinematic lighting, volumetric "
+            "atmosphere, high detail."
+        )
+
         return Scene(
             scene_number=scene_number,
             title=f"Scene {scene_number} ({segment.narrative_function.value})",
             narration=narration,
-            visual_prompt=(
-                f"{beat_descriptor} for: {narration} "
-                "Ultra realistic, cinematic lighting, volumetric "
-                "atmosphere, high detail."
-            ),
+            visual_prompt=visual_prompt,
             estimated_duration_seconds=max(1, round(duration_seconds)),
             camera_direction=camera_direction,
             sound_design="Subtle cinematic ambience",
             narrative_function=segment.narrative_function.value,
             status=SceneStatus.READY,
+            source_type=source_type,
+            # Stock-footage scenes always require a stock_query - the
+            # same visual_prompt fallback scene_asset_workflow_service.py
+            # already uses when nothing more specific has been set yet.
+            stock_query=(
+                visual_prompt if source_type == SceneSourceType.STOCK_FOOTAGE else None
+            ),
             metadata={
                 "source_segment_number": segment.segment_number,
                 "tension_level": segment.tension_level,

@@ -67,7 +67,7 @@ class ContentPipeline:
 
         job.originality_review = originality
 
-        scenes = self.scene_planner.plan(script)
+        scenes = self.scene_planner.plan(script, genre_id=job.genre_id)
 
         job.scenes = scenes
         job.current_stage = WorkflowStage.QUALITY_CHECK

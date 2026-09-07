@@ -10,6 +10,7 @@ from src.models.genre_profile import (
     ResearchDepth,
     UncertainInformationPolicy,
 )
+from src.models.media_strategy import SceneSourceType
 from src.services.genre_profile_registry_service import (
     GenreProfileRegistryService,
 )
@@ -270,6 +271,66 @@ except ValueError:
     print("Invalid preferred angle style successfully blocked.")
 else:
     raise AssertionError("An unsupported story angle style must be rejected.")
+
+
+# --- External audit fix: genre-based default acquisition route ---
+# Post-Script-Approval Production Plan Phase 6: "Apply route defaults
+# by project/genre with per-clip override." Real-world-footage genres
+# default to STOCK_FOOTAGE; staged/dramatized genres default to
+# MANUAL_UPLOAD - not just different wording, an actually different
+# enum value driving real Scene construction downstream.
+assert documentary_ci.default_scene_source_type == SceneSourceType.STOCK_FOOTAGE
+assert (
+    registry.get("genre.history").content_intelligence.default_scene_source_type
+    == SceneSourceType.STOCK_FOOTAGE
+)
+assert (
+    registry.get("genre.travel").content_intelligence.default_scene_source_type
+    == SceneSourceType.STOCK_FOOTAGE
+)
+assert top10_ci.default_scene_source_type == SceneSourceType.STOCK_FOOTAGE
+assert medical_ci.default_scene_source_type == SceneSourceType.STOCK_FOOTAGE
+assert (
+    registry.get("genre.survival").content_intelligence.default_scene_source_type
+    == SceneSourceType.STOCK_FOOTAGE
+)
+
+assert horror_ci.default_scene_source_type == SceneSourceType.MANUAL_UPLOAD
+assert mystery_ci.default_scene_source_type == SceneSourceType.MANUAL_UPLOAD
+assert (
+    registry.get("genre.storytelling").content_intelligence.default_scene_source_type
+    == SceneSourceType.MANUAL_UPLOAD
+)
+assert (
+    registry.get("genre.reaction").content_intelligence.default_scene_source_type
+    == SceneSourceType.MANUAL_UPLOAD
+)
+assert (
+    registry.get("genre.default").content_intelligence.default_scene_source_type
+    == SceneSourceType.MANUAL_UPLOAD
+)
+
+
+try:
+    GenreContentIntelligenceProfile(
+        default_scene_source_type=SceneSourceType.AI_GENERATE
+    )
+except ValueError:
+    print("AI_GENERATE default route successfully blocked.")
+else:
+    raise AssertionError("AI_GENERATE cannot be a default acquisition route.")
+
+
+try:
+    GenreContentIntelligenceProfile(
+        default_scene_source_type=SceneSourceType.LOCAL_LIBRARY
+    )
+except ValueError:
+    print("LOCAL_LIBRARY default route successfully blocked.")
+else:
+    raise AssertionError(
+        "LOCAL_LIBRARY has no established query-fallback convention to " "default to."
+    )
 
 
 print("Genre Profile Registry Service tests " "completed successfully.")

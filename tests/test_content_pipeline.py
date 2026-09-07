@@ -5,6 +5,7 @@ from src.models.enums import (
     ProductionMode,
     WorkflowStage,
 )
+from src.models.media_strategy import SceneSourceType
 from src.models.research import (
     ResearchResult,
     ResearchSource,
@@ -124,5 +125,42 @@ assert result.script.status == ScriptStatus.APPROVED
 assert result.script.claude_review_status == ScriptReviewStatus.APPROVED
 
 assert result.current_stage == WorkflowStage.QUALITY_CHECK
+
+
+# --- External audit fix: genre-based default acquisition route ---
+# Post-Script-Approval Production Plan Phase 6: "Apply route defaults
+# by project/genre with per-clip override." job above never set
+# genre_id, so it defaults to genre.default (MANUAL_UPLOAD) - proving
+# ContentPipeline.run() actually threads job.genre_id through to scene
+# planning rather than silently ignoring it.
+assert all(
+    scene.source_type == SceneSourceType.MANUAL_UPLOAD for scene in result.scenes
+)
+
+documentary_pipeline = ContentPipeline(
+    llm_service=None,  # type: ignore[arg-type]
+    research_pipeline=FakeResearchPipeline(),  # type: ignore[arg-type]
+    script_pipeline=FakeScriptPipeline(),  # type: ignore[arg-type]
+)
+
+documentary_job = VideoJob(
+    project_name="Hidden Underground Cities Project",
+    channel_name="History Vault",
+    niche="History Documentary",
+    topic="Top 10 Hidden Underground Cities",
+    production_mode=ProductionMode.PREMIUM,
+    platform=Platform.YOUTUBE,
+    genre_id="genre.documentary",
+)
+
+documentary_result = documentary_pipeline.run(documentary_job)
+
+assert all(
+    scene.source_type == SceneSourceType.STOCK_FOOTAGE
+    for scene in documentary_result.scenes
+)
+assert all(
+    scene.stock_query == scene.visual_prompt for scene in documentary_result.scenes
+)
 
 print("Content Pipeline test completed successfully.")

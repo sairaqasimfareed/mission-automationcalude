@@ -3,6 +3,7 @@ from __future__ import annotations
 from src.agents.scene_planner.agent import ScenePlannerAgent
 from src.models.editorial_profile import EditorialProfile
 from src.models.generated_script import GeneratedScript, ScriptSegment
+from src.models.media_strategy import SceneSourceType
 from src.models.story_blueprint import StoryBeatType
 from src.services.editorial_profile_composition_service import (
     EditorialProfileCompositionService,
@@ -228,3 +229,59 @@ def test_low_tension_scene_gets_calm_camera_direction() -> None:
     scenes = agent.plan_from_generated_script(script, _editorial_profile())
 
     assert "static" in scenes[0].camera_direction.lower()
+
+
+def test_plan_applies_the_genre_default_source_type_for_manual_upload_genres() -> None:
+    """
+    External audit finding: Post-Script-Approval Production Plan Phase
+    6 asks to "apply route defaults by project/genre with per-clip
+    override" - before this fix, every scene silently defaulted to
+    MANUAL_UPLOAD regardless of genre. genre.mystery's real default is
+    MANUAL_UPLOAD (staged/dramatized content), so no stock_query should
+    be attached.
+    """
+
+    segment = _segment(
+        number=1,
+        start=0,
+        end=30,
+        narrative_function=StoryBeatType.HOOK,
+        narration="The crew vanished without a trace.",
+    )
+    script = _script(segment)
+
+    agent = ScenePlannerAgent()
+    scenes = agent.plan_from_generated_script(
+        script, _editorial_profile(genre_id="genre.mystery")
+    )
+
+    assert all(scene.source_type == SceneSourceType.MANUAL_UPLOAD for scene in scenes)
+    assert all(scene.stock_query is None for scene in scenes)
+
+
+def test_plan_applies_the_genre_default_source_type_for_stock_footage_genres() -> None:
+    """
+    genre.documentary's real default is STOCK_FOOTAGE (real-world
+    footage genres) - and Scene's own validator requires a
+    non-empty stock_query whenever source_type is STOCK_FOOTAGE, so
+    this also proves the fix supplies one (via the scene's own
+    visual_prompt, the same fallback scene_asset_workflow_service.py
+    already uses) rather than constructing an invalid scene.
+    """
+
+    segment = _segment(
+        number=1,
+        start=0,
+        end=30,
+        narrative_function=StoryBeatType.SETUP,
+        narration="The expedition begins at dawn.",
+    )
+    script = _script(segment)
+
+    agent = ScenePlannerAgent()
+    scenes = agent.plan_from_generated_script(
+        script, _editorial_profile(genre_id="genre.documentary")
+    )
+
+    assert all(scene.source_type == SceneSourceType.STOCK_FOOTAGE for scene in scenes)
+    assert all(scene.stock_query == scene.visual_prompt for scene in scenes)
