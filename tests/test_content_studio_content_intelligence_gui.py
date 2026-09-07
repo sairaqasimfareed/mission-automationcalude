@@ -6,6 +6,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from collections.abc import Iterator  # noqa: E402
 from pathlib import Path  # noqa: E402
+from unittest.mock import patch  # noqa: E402
 from uuid import uuid4  # noqa: E402
 
 import pytest  # noqa: E402
@@ -155,6 +156,85 @@ def test_selecting_a_stage_updates_the_selected_index(qapp: QApplication) -> Non
     view._handle_select_ci_stage(3)
 
     assert view._selected_ci_stage_index == 3
+
+
+def _run_pending_timer(*args: object, **kwargs: object) -> None:
+    """
+    Patches QTimer.singleShot in these tests to call its callback
+    immediately - refresh()'s own real fix defers the scroll restore
+    to the next event-loop tick (deliberately, see its docstring), and
+    a test has no reliable way to wait for that tick without either
+    this patch or a real, potentially-flaky event-loop wait.
+    """
+
+    callback = args[-1] if args else kwargs["callback"]
+    assert callable(callback)
+    callback()
+
+
+def test_refresh_preserves_scroll_position_for_the_same_job(
+    qapp: QApplication,
+) -> None:
+    """
+    Real-world finding: every action on this screen (selecting a
+    topic, running a stage, saving an edit) calls refresh(), which
+    tears down and rebuilds every card from scratch - the view was
+    silently snapping back to the top after every single click.
+    """
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view.resize(400, 200)
+    view.show()
+    qapp.processEvents()
+
+    view._scroll_area.verticalScrollBar().setValue(123)  # noqa: SLF001
+    scrolled_to = view._scroll_area.verticalScrollBar().value()  # noqa: SLF001
+    assert scrolled_to > 0  # sanity: there was real scrollable content
+
+    with patch(
+        "src.desktop.views.content_studio_view.QTimer.singleShot",
+        side_effect=_run_pending_timer,
+    ):
+        view.refresh(job)  # simulates any button-triggered rebuild
+
+    assert view._scroll_area.verticalScrollBar().value() == scrolled_to  # noqa: SLF001
+
+
+def test_refresh_resets_scroll_position_when_switching_projects(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+    other_job = _job()
+    job_store.add(other_job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+    view.resize(400, 200)
+    view.show()
+    qapp.processEvents()
+    view._scroll_area.verticalScrollBar().setValue(123)  # noqa: SLF001
+
+    view.set_job(other_job.id)
+
+    with patch(
+        "src.desktop.views.content_studio_view.QTimer.singleShot",
+        side_effect=_run_pending_timer,
+    ):
+        view.refresh(other_job)
+
+    # A genuinely different job must start at the top, never wherever
+    # the previous project's scroll happened to be.
+    assert view._scroll_area.verticalScrollBar().value() == 0  # noqa: SLF001
 
 
 def test_run_audience_promise_stage_populates_job(qapp: QApplication) -> None:

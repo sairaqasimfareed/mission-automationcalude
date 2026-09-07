@@ -5,6 +5,18 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-07 - Content Studio: fixed the screen snapping back to the top after every action
+
+The user reported it directly: on the Content screen, pressing any button (selecting a topic, running a stage, saving an edit) always jumped back to the top of the page, forcing a re-scroll every single time.
+
+**Root cause**: `ContentStudioView.refresh(job)` runs after essentially every action on this screen, and it fully tears down and rebuilds every card from scratch (clears `self._layout`, rebuilds journey/topic/settings/content-intelligence/research/script/etc. cards in sequence) - with no scroll-position handling at all, so the `QScrollArea` had nothing to preserve its position across a rebuild and silently reset.
+
+**Fixed**: `refresh()` now captures the scrollbar's value before the rebuild and restores it after, via `QTimer.singleShot(0, ...)` - deferred to the next event-loop tick rather than done synchronously, since right after a rebuild the old widgets' `deleteLater()` calls and the new layout's geometry/size-hint recalculation are still pending, and setting the scrollbar value immediately could get silently clamped to the stale, pre-rebuild range. Switching to a genuinely different project still correctly resets to the top (tracked via a new `_last_refreshed_job_id`, separate from `_job_id` which `set_job()` already updates before `refresh()` ever runs, so it couldn't be used for that same comparison) - only a same-project refresh (which is what every button press actually is) preserves position.
+
+**Tests**: 2 new in `test_content_studio_content_intelligence_gui.py` (same-job refresh preserves scroll position; switching projects resets to the top) - both patch `QTimer.singleShot` to run its callback synchronously rather than depend on real event-loop timing. Full suite (127 cases) and the full desktop integration suite (10 cases): all passed. mypy/ruff/black clean (one pre-existing, unrelated mypy finding elsewhere in this large test file left untouched - not introduced by this change, confirmed via `git diff --stat` showing only additions).
+
+---
+
 ## 2026-09-07 - Provider Manager: "Provider name" is now a suggestion dropdown, not free text
 
 The user, looking at the Provider Manager screen, pointed out "Provider name" was a plain text field even though only a small, fixed set of values are ever actually meaningful (`openai`/`anthropic`/`gemini` for LLM, `elevenlabs` for voice/music/sound-effects, `pexels`/`pixabay`/`envato` for stock) - a typo there (e.g. "opena") would silently save a profile this app has no coded adapter for, with no error until something tried to use it.

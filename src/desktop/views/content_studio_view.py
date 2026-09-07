@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from uuid import UUID
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -195,6 +195,11 @@ class ContentStudioView(QWidget):
         self._on_change = on_change
         self._job_id: UUID | None = None
         self._selected_ci_stage_index = 0
+        # Tracked separately from _job_id (which set_job() already
+        # updates before refresh() runs) - see refresh()'s own
+        # docstring for why this distinction is what makes scroll-
+        # position preservation possible.
+        self._last_refreshed_job_id: UUID | None = None
 
         # Transient - a review is a read-only critique, never persisted
         # to VideoJob (the Reviewer never becomes the author). Keyed by
@@ -237,6 +242,14 @@ class ContentStudioView(QWidget):
         scroll_area.setWidget(content_container)
         outer_layout.addWidget(scroll_area)
 
+        # Kept so refresh() can preserve scroll position across a
+        # rebuild - every action on this screen (selecting a topic,
+        # running a stage, saving an edit) calls refresh(), which tears
+        # down and rebuilds every card from scratch; without this the
+        # view silently snapped back to the top after every single
+        # click, a real, reported usability problem.
+        self._scroll_area = scroll_area
+
     def set_job(self, job_id: UUID) -> None:
         self._job_id = job_id
         self._last_review_by_stage = {}
@@ -245,6 +258,29 @@ class ContentStudioView(QWidget):
         self._activity_history_stage_filter = "all"
 
     def refresh(self, job: VideoJob) -> None:
+        """
+        Real-world finding: every action on this screen (selecting a
+        topic, running a stage, saving an edit) calls this method,
+        which tears down and rebuilds every card from scratch - with
+        no scroll-position handling, the view silently snapped back to
+        the top after every single click, a real, reported usability
+        problem. Fixed by capturing the scrollbar's value before the
+        rebuild and restoring it after, UNLESS this refresh is for a
+        genuinely different job (switching projects correctly starts
+        at the top, not wherever the previous project's scroll
+        happened to be) - _last_refreshed_job_id, tracked only here,
+        is what distinguishes "just switched projects" from "same
+        project, something happened" (job.id itself is already updated
+        by set_job() before refresh() ever runs, so it can't be used
+        for that comparison).
+        """
+
+        is_same_job = job.id == self._last_refreshed_job_id
+        scroll_value = (
+            self._scroll_area.verticalScrollBar().value() if is_same_job else 0
+        )
+        self._last_refreshed_job_id = job.id
+
         while self._layout.count():
             item = self._layout.takeAt(0)
 
@@ -268,6 +304,17 @@ class ContentStudioView(QWidget):
         self._build_script_card(job)
         self._build_originality_card(job)
         self._build_scenes_card(job)
+
+        # Deferred to the next event-loop tick: right after a rebuild,
+        # the old widgets' deleteLater() calls and the new layout's
+        # geometry/size-hint recalculation are still pending, so the
+        # scrollbar's range may not yet reflect the new content and
+        # setValue() here could get silently clamped to the stale
+        # (often smaller, pre-rebuild) range.
+        QTimer.singleShot(0, lambda: self._restore_scroll_position(scroll_value))
+
+    def _restore_scroll_position(self, value: int) -> None:
+        self._scroll_area.verticalScrollBar().setValue(value)
 
     def _build_journey_card(self, job: VideoJob) -> None:
         """
