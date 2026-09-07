@@ -1,7 +1,12 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+import subprocess
+from pathlib import Path
+
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QFormLayout,
     QInputDialog,
@@ -17,6 +22,10 @@ from PySide6.QtWidgets import (
 
 from src.browser.flow_browser_worker import FlowBrowserWorker
 from src.browser.flow_profile_paths import UnsafeProfileIdError, profile_directory
+from src.browser.manual_signin_bootstrap import (
+    find_real_chrome_executable,
+    manual_sign_in_command,
+)
 from src.desktop.widgets import badge, button, card, heading, muted, row, status_label
 from src.models.provider_profile import ProviderCategory
 from src.models.provider_profile_management import (
@@ -38,7 +47,7 @@ from src.services.provider_profile_management_service import (
 # GF-13's own "Google Flow must NOT display an API Key field").
 #
 # IMPORTANT, matching every other Google Flow doc-string in this
-# initiative: "Open Login"/"Check Connection" drive a REAL
+# initiative: "Check Connection" drives a REAL
 # FlowBrowserWorker/GoogleFlowUIAdapter against whatever URL the
 # operator enters when adding an account - never a URL guessed or
 # hardcoded here. Nobody building this has verified Google Flow's
@@ -46,6 +55,19 @@ from src.services.provider_profile_management_service import (
 # URL explicitly rather than fabricating one, and GoogleFlowLocators'
 # own selectors remain fixture-verified only (GF-4) until GF-17's
 # real-account certification updates them.
+#
+# REAL-WORLD FINDING, 2026-09-07: "Open Login" originally drove that
+# same Playwright browser through the sign-in step too - a human
+# actually tried it and Google rejected it outright ("Couldn't sign
+# you in - This browser or app may not be secure"), Google's own
+# policy of blocking sign-in from automation-flagged browsers.
+# "Open Login" therefore no longer touches Playwright at all - it
+# launches the operator's own REAL, already-installed Chrome (see
+# src/browser/manual_signin_bootstrap.py) against the exact same
+# profile directory FlowBrowserWorker reuses for Check Connection, so
+# the human signs in normally, in a genuinely non-automated window,
+# with their own password and any 2-step verification never seen by
+# this app.
 
 
 class GoogleFlowProviderPanelView(QWidget):
@@ -324,25 +346,86 @@ class GoogleFlowProviderPanelView(QWidget):
 
         profile_id = self._selected_profile_id
         directory = profile_directory(profile_id)
+        directory.mkdir(parents=True, exist_ok=True)
 
-        try:
-            context = self._browser_worker.open_persistent_context(
-                profile_id, directory, headless=False
-            ).result(timeout=30.0)
+        chrome_executable = find_real_chrome_executable()
 
-            def _navigate() -> None:
-                page = context.pages[0] if context.pages else context.new_page()
-                page.goto(flow_url)
-
-            self._browser_worker.submit(_navigate).result(timeout=30.0)
-        except Exception as error:  # noqa: BLE001
-            self._show_status(f"Could not open the browser: {error}", role="error")
+        if chrome_executable is None:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(directory)))
+            QMessageBox.warning(
+                self,
+                "Google Chrome Not Found",
+                "Google blocks sign-in from this app's own automated "
+                "browser (confirmed: \"Couldn't sign you in - this "
+                'browser or app may not be secure"), so signing in '
+                "needs your own real Chrome, which could not be found "
+                "automatically. Install Google Chrome, or open it "
+                "yourself with --user-data-dir pointed at the profile "
+                f"folder that has just been opened for you:\n\n{directory}",
+            )
             return
 
+        command = manual_sign_in_command(chrome_executable, directory, flow_url)
+        clipboard = QApplication.clipboard()
+
+        if clipboard is not None:
+            clipboard.setText(command)
+
+        try:
+            self._launch_real_chrome(chrome_executable, directory, flow_url)
+        except OSError as error:
+            self._show_status(
+                f"Could not launch Chrome automatically ({error}) - the "
+                "sign-in command has been copied to your clipboard; run "
+                "it yourself, sign in, close that window fully, then "
+                "use Check Connection.",
+                role="error",
+            )
+            return
+
+        QMessageBox.information(
+            self,
+            "Sign In With Your Real Chrome",
+            "Google rejects sign-in attempts from this app's own "
+            "automated browser, even with a visible window - "
+            "confirmed: \"Couldn't sign you in - this browser or app "
+            'may not be secure."\n\n'
+            "A real Chrome window has been opened for you instead. "
+            "Sign in to Google there exactly as you normally would "
+            "(your own password and any 2-step verification - this "
+            "app never sees it), then CLOSE that Chrome window "
+            "completely and come back here and click Check "
+            "Connection.\n\n"
+            "The sign-in command has also been copied to your "
+            "clipboard in case you need to run it again.",
+        )
+
         self._show_status(
-            "Browser opened - complete Google sign-in there, then use "
-            "Check Connection.",
+            "Real Chrome opened for manual sign-in - close it fully "
+            "after signing in, then use Check Connection.",
             role="success",
+        )
+
+    def _launch_real_chrome(
+        self, chrome_executable: str, directory: Path, flow_url: str
+    ) -> None:
+        """
+        Launch the operator's own, already-installed Chrome - never
+        Playwright's Chromium - against the given profile directory.
+
+        Split out from _handle_open_login_clicked so tests can patch
+        subprocess.Popen without also needing a real Chrome binary on
+        the test machine.
+        """
+
+        subprocess.Popen(  # noqa: S603
+            [
+                chrome_executable,
+                f"--user-data-dir={directory}",
+                "--no-first-run",
+                "--no-default-browser-check",
+                flow_url,
+            ]
         )
 
     def _handle_check_connection_clicked(self) -> None:
@@ -372,7 +455,8 @@ class GoogleFlowProviderPanelView(QWidget):
         else:
             self._show_status(
                 "Not authenticated (or the page layout is unrecognized) - "
-                "use Open Login.",
+                "click Open Login to sign in with your real Chrome, "
+                "then try Check Connection again.",
                 role="warning",
             )
 

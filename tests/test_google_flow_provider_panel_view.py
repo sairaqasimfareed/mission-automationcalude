@@ -34,23 +34,6 @@ def qapp() -> Iterator[QApplication]:
     yield app  # type: ignore[misc]
 
 
-class _FakeFuture:
-    """A concurrent.futures.Future stand-in that resolves immediately,
-    synchronously, on whatever thread calls .result() - the panel's
-    own logic is what's under test here, not FlowBrowserWorker's real
-    threading (already covered by test_flow_browser_worker.py)."""
-
-    def __init__(self, value: object = None, *, error: Exception | None = None):
-        self._value = value
-        self._error = error
-
-    def result(self, timeout: float | None = None) -> object:
-        if self._error is not None:
-            raise self._error
-
-        return self._value
-
-
 def _management_service() -> ProviderProfileManagementService:
     return ProviderProfileManagementService(
         registry=ProviderRegistry(),
@@ -229,42 +212,17 @@ def test_open_login_without_a_flow_url_shows_a_warning(qapp: QApplication) -> No
     assert "Flow URL" in view._status.text()  # noqa: SLF001
 
 
-def test_open_login_opens_a_context_and_navigates(qapp: QApplication) -> None:
-    service = _management_service()
-    from src.models.provider_profile_management import ProviderProfileUpsertCommand
+def test_open_login_launches_real_chrome_for_manual_sign_in(
+    qapp: QApplication,
+) -> None:
+    """
+    Google rejects sign-in from Playwright's automated browser
+    (confirmed 2026-09-07 by a real attempt: "Couldn't sign you in -
+    this browser or app may not be secure") - Open Login must launch
+    the operator's own real, non-automated Chrome instead, never touch
+    FlowBrowserWorker/Playwright for the sign-in step itself.
+    """
 
-    service.upsert_profile(
-        ProviderProfileUpsertCommand(
-            profile_id="flow.primary",
-            display_name="Flow Primary",
-            provider_name="Google Flow",
-            category=ProviderCategory.EXTERNAL_UI_VIDEO,
-            enabled=False,
-            browser_profile_reference="flow_profiles/flow.primary",
-            metadata={"flow_url": "https://example.invalid/flow"},
-        )
-    )
-
-    fake_context = MagicMock()
-    fake_context.pages = []
-    fake_page = MagicMock()
-    fake_context.new_page.return_value = fake_page
-
-    worker = MagicMock()
-    worker.open_persistent_context.return_value = _FakeFuture(fake_context)
-    worker.submit.side_effect = lambda fn: _FakeFuture(fn())
-
-    view = _view(qapp, service=service, worker=worker)
-    view.refresh()
-    view._list.setCurrentRow(0)  # noqa: SLF001
-
-    view._handle_open_login_clicked()  # noqa: SLF001
-
-    fake_page.goto.assert_called_once_with("https://example.invalid/flow")
-    assert "Browser opened" in view._status.text()  # noqa: SLF001
-
-
-def test_open_login_reports_a_browser_launch_failure(qapp: QApplication) -> None:
     service = _management_service()
     from src.models.provider_profile_management import ProviderProfileUpsertCommand
 
@@ -281,17 +239,110 @@ def test_open_login_reports_a_browser_launch_failure(qapp: QApplication) -> None
     )
 
     worker = MagicMock()
-    worker.open_persistent_context.return_value = _FakeFuture(
-        error=RuntimeError("no display")
-    )
-
     view = _view(qapp, service=service, worker=worker)
     view.refresh()
     view._list.setCurrentRow(0)  # noqa: SLF001
 
-    view._handle_open_login_clicked()  # noqa: SLF001
+    with (
+        patch(
+            "src.desktop.views.google_flow_provider_panel_view."
+            "find_real_chrome_executable",
+            return_value=r"C:\fake\chrome.exe",
+        ),
+        patch(
+            "src.desktop.views.google_flow_provider_panel_view.subprocess.Popen"
+        ) as popen,
+        patch(
+            "src.desktop.views.google_flow_provider_panel_view.QMessageBox.information"
+        ) as information,
+    ):
+        view._handle_open_login_clicked()  # noqa: SLF001
 
-    assert "Could not open" in view._status.text()  # noqa: SLF001
+    popen.assert_called_once()
+    launched_args = popen.call_args.args[0]
+    assert launched_args[0] == r"C:\fake\chrome.exe"
+    assert any(arg.startswith("--user-data-dir=") for arg in launched_args)
+    assert launched_args[-1] == "https://example.invalid/flow"
+    information.assert_called_once()
+    worker.open_persistent_context.assert_not_called()
+    assert "Real Chrome opened" in view._status.text()  # noqa: SLF001
+
+
+def test_open_login_without_chrome_installed_shows_a_warning(
+    qapp: QApplication,
+) -> None:
+    service = _management_service()
+    from src.models.provider_profile_management import ProviderProfileUpsertCommand
+
+    service.upsert_profile(
+        ProviderProfileUpsertCommand(
+            profile_id="flow.primary",
+            display_name="Flow Primary",
+            provider_name="Google Flow",
+            category=ProviderCategory.EXTERNAL_UI_VIDEO,
+            enabled=False,
+            browser_profile_reference="flow_profiles/flow.primary",
+            metadata={"flow_url": "https://example.invalid/flow"},
+        )
+    )
+
+    view = _view(qapp, service=service, worker=MagicMock())
+    view.refresh()
+    view._list.setCurrentRow(0)  # noqa: SLF001
+
+    with (
+        patch(
+            "src.desktop.views.google_flow_provider_panel_view."
+            "find_real_chrome_executable",
+            return_value=None,
+        ),
+        patch(
+            "src.desktop.views.google_flow_provider_panel_view."
+            "QDesktopServices.openUrl"
+        ),
+        patch(
+            "src.desktop.views.google_flow_provider_panel_view.QMessageBox.warning"
+        ) as warning,
+    ):
+        view._handle_open_login_clicked()  # noqa: SLF001
+
+    warning.assert_called_once()
+
+
+def test_open_login_reports_a_chrome_launch_failure(qapp: QApplication) -> None:
+    service = _management_service()
+    from src.models.provider_profile_management import ProviderProfileUpsertCommand
+
+    service.upsert_profile(
+        ProviderProfileUpsertCommand(
+            profile_id="flow.primary",
+            display_name="Flow Primary",
+            provider_name="Google Flow",
+            category=ProviderCategory.EXTERNAL_UI_VIDEO,
+            enabled=False,
+            browser_profile_reference="flow_profiles/flow.primary",
+            metadata={"flow_url": "https://example.invalid/flow"},
+        )
+    )
+
+    view = _view(qapp, service=service, worker=MagicMock())
+    view.refresh()
+    view._list.setCurrentRow(0)  # noqa: SLF001
+
+    with (
+        patch(
+            "src.desktop.views.google_flow_provider_panel_view."
+            "find_real_chrome_executable",
+            return_value=r"C:\fake\chrome.exe",
+        ),
+        patch(
+            "src.desktop.views.google_flow_provider_panel_view.subprocess.Popen",
+            side_effect=OSError("no such file"),
+        ),
+    ):
+        view._handle_open_login_clicked()  # noqa: SLF001
+
+    assert "Could not launch Chrome" in view._status.text()  # noqa: SLF001
 
 
 def test_check_connection_without_a_flow_url_shows_a_warning(
