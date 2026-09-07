@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from playwright.sync_api import Error as PlaywrightError
@@ -8,6 +9,7 @@ from playwright.sync_api import Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from src.browser.flow_browser_worker import FlowBrowserWorker
+from src.browser.flow_profile_paths import profile_directory
 from src.models.google_flow_generation import (
     GoogleFlowGenerationAttempt,
     GoogleFlowGenerationRequest,
@@ -67,7 +69,9 @@ class GoogleFlowUIAdapter(ExternalUIGenerationProvider):
     Only ever mutates its own `_pages` dict from inside the worker
     thread (every public method here runs its actual work through
     `self._worker.submit(...)`), matching FlowBrowserWorker's own
-    threading contract.
+    threading contract. Reads each account's real, persistent,
+    already-authenticated browser profile (see `_get_or_open_page`'s
+    own docstring for the real-world bug this fixed).
     """
 
     def __init__(
@@ -79,6 +83,7 @@ class GoogleFlowUIAdapter(ExternalUIGenerationProvider):
         headless: bool = True,
         operation_timeout_seconds: float = 30.0,
         download_root: Path = DEFAULT_FLOW_DOWNLOAD_ROOT,
+        profile_directory_resolver: Callable[[str], Path] = profile_directory,
     ) -> None:
         self._worker = worker
         self._base_url = base_url
@@ -86,6 +91,12 @@ class GoogleFlowUIAdapter(ExternalUIGenerationProvider):
         self._headless = headless
         self._operation_timeout_seconds = operation_timeout_seconds
         self._download_root = download_root
+        # Defaults to the SAME resolver every other real caller of a
+        # Flow account's profile directory uses (the operator UI, the
+        # manual sign-in bootstrap) - a test constructing this adapter
+        # with its own resolver (e.g. pointed at pytest's tmp_path)
+        # gets full isolation without needing a different code path.
+        self._profile_directory_resolver = profile_directory_resolver
 
         self._pages: dict[str, Page] = {}
 
@@ -448,6 +459,22 @@ class GoogleFlowUIAdapter(ExternalUIGenerationProvider):
         Must only ever be called from inside the worker thread (every
         caller here is itself a callable already running via
         self._worker.submit(...)).
+
+        Real-world finding, 2026-09-07: this used to open a minimal,
+        ephemeral (non-persistent, no profile directory at all)
+        browser - GF-4/GF-16's own disclosed gap ("wiring this
+        adapter to use a profile's real persistent context... is left
+        for [a] later phase"). A human then actually tested Check
+        Connection against this and confirmed the real, visible
+        symptom that gap predicts: it always opened a brand new,
+        cookie-less browser, so it could never see the session a real
+        sign-in had established - it wasn't even reading the right
+        directory. Fixed here: GF-2's actual persistent-profile
+        context (FlowBrowserWorker.open_persistent_context_from_worker_thread())
+        against the same on-disk directory the operator UI and the
+        manual sign-in bootstrap already use for this exact profile_id,
+        so a real, already-authenticated session is what this method
+        actually reads.
         """
 
         existing = self._pages.get(profile_id)
@@ -455,19 +482,16 @@ class GoogleFlowUIAdapter(ExternalUIGenerationProvider):
         if existing is not None:
             return existing
 
-        # A minimal, ephemeral (non-persistent) browser for now -
-        # GF-2's persistent-profile FlowBrowserWorker.open_persistent_context()
-        # is the real production path; wiring this adapter to use a
-        # profile's real persistent context, not a throwaway one, is
-        # a real, disclosed gap left for the phase that wires this
-        # adapter into the actual account router/ledger orchestrator.
-        # launch_ephemeral_browser() is called directly, not through
-        # self._worker.submit() again - this method is already running
-        # on the worker thread, and a second submit() from inside a
-        # still-running submitted callable would deadlock the single-
-        # worker pool.
-        browser = self._worker.launch_ephemeral_browser(headless=self._headless)
-        page = browser.new_page()
+        # open_persistent_context_from_worker_thread(), not
+        # open_persistent_context() - this method is already running
+        # on the worker thread (see the docstring above), and a second
+        # submit() from inside a still-running submitted callable
+        # would deadlock the single-worker pool.
+        directory = self._profile_directory_resolver(profile_id)
+        context = self._worker.open_persistent_context_from_worker_thread(
+            profile_id, directory, headless=self._headless
+        )
+        page = context.pages[0] if context.pages else context.new_page()
         self._pages[profile_id] = page
 
         return page

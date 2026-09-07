@@ -73,12 +73,21 @@ def _attempt(request: GoogleFlowGenerationRequest) -> GoogleFlowGenerationAttemp
     return GoogleFlowGenerationAttempt(request=request, profile_id=request.profile_id)
 
 
-def _adapter(worker: FlowBrowserWorker, *, query: str = "") -> GoogleFlowUIAdapter:
+def _adapter(
+    worker: FlowBrowserWorker, tmp_path: Path, *, query: str = ""
+) -> GoogleFlowUIAdapter:
+    # A profile_directory_resolver pointed at pytest's own tmp_path
+    # gives each test a fresh, isolated persistent-profile directory -
+    # the adapter now genuinely opens a real persistent Chromium
+    # context (GF-2's FlowBrowserWorker.open_persistent_context_from_worker_thread())
+    # per profile_id, not a throwaway ephemeral browser, so isolation
+    # has to come from the resolver rather than "ephemeral by default".
     return GoogleFlowUIAdapter(
         worker=worker,
         base_url=_fixture_url(query=query),
         headless=True,
         operation_timeout_seconds=20.0,
+        profile_directory_resolver=lambda profile_id: tmp_path / profile_id,
     )
 
 
@@ -109,8 +118,9 @@ def _observe_until(
 @requires_chromium
 def test_submit_reaches_generating_through_confirmation(
     worker: FlowBrowserWorker,
+    tmp_path: Path,
 ) -> None:
-    adapter = _adapter(worker)
+    adapter = _adapter(worker, tmp_path)
     request = _request()
 
     result = adapter.submit(request, _attempt(request))
@@ -126,8 +136,9 @@ def test_submit_reaches_generating_through_confirmation(
 @requires_chromium
 def test_submit_reaches_generating_without_confirmation(
     worker: FlowBrowserWorker,
+    tmp_path: Path,
 ) -> None:
-    adapter = _adapter(worker, query="no_confirm=1")
+    adapter = _adapter(worker, tmp_path, query="no_confirm=1")
     request = _request()
 
     result = adapter.submit(request, _attempt(request))
@@ -139,8 +150,10 @@ def test_submit_reaches_generating_without_confirmation(
 
 
 @requires_chromium
-def test_submit_inserts_the_exact_prompt_text(worker: FlowBrowserWorker) -> None:
-    adapter = _adapter(worker, query="no_confirm=1")
+def test_submit_inserts_the_exact_prompt_text(
+    worker: FlowBrowserWorker, tmp_path: Path
+) -> None:
+    adapter = _adapter(worker, tmp_path, query="no_confirm=1")
     request = _request(prompt="A very specific, exact prompt string.")
 
     result = adapter.submit(request, _attempt(request))
@@ -149,8 +162,10 @@ def test_submit_inserts_the_exact_prompt_text(worker: FlowBrowserWorker) -> None
 
 
 @requires_chromium
-def test_submit_detects_auth_required(worker: FlowBrowserWorker) -> None:
-    adapter = _adapter(worker, query="simulate=auth_required")
+def test_submit_detects_auth_required(
+    worker: FlowBrowserWorker, tmp_path: Path
+) -> None:
+    adapter = _adapter(worker, tmp_path, query="simulate=auth_required")
     request = _request()
 
     result = adapter.submit(request, _attempt(request))
@@ -159,8 +174,10 @@ def test_submit_detects_auth_required(worker: FlowBrowserWorker) -> None:
 
 
 @requires_chromium
-def test_submit_detects_ui_changed_and_never_guesses(worker: FlowBrowserWorker) -> None:
-    adapter = _adapter(worker, query="simulate=ui_changed")
+def test_submit_detects_ui_changed_and_never_guesses(
+    worker: FlowBrowserWorker, tmp_path: Path
+) -> None:
+    adapter = _adapter(worker, tmp_path, query="simulate=ui_changed")
     request = _request()
 
     result = adapter.submit(request, _attempt(request))
@@ -172,8 +189,9 @@ def test_submit_detects_ui_changed_and_never_guesses(worker: FlowBrowserWorker) 
 @requires_chromium
 def test_submit_stops_before_generation_when_a_reference_is_dropped(
     worker: FlowBrowserWorker,
+    tmp_path: Path,
 ) -> None:
-    adapter = _adapter(worker, query="simulate=reference_drop")
+    adapter = _adapter(worker, tmp_path, query="simulate=reference_drop")
     request = _request(
         reference_assets=[
             GoogleFlowReferenceAsset(
@@ -196,8 +214,9 @@ def test_submit_stops_before_generation_when_a_reference_is_dropped(
 @requires_chromium
 def test_submit_attaches_a_reference_when_flow_accepts_it(
     worker: FlowBrowserWorker,
+    tmp_path: Path,
 ) -> None:
-    adapter = _adapter(worker, query="no_confirm=1")
+    adapter = _adapter(worker, tmp_path, query="no_confirm=1")
     request = _request(
         reference_assets=[
             GoogleFlowReferenceAsset(
@@ -216,8 +235,9 @@ def test_submit_attaches_a_reference_when_flow_accepts_it(
 @requires_chromium
 def test_submit_reports_settings_unavailable_for_an_unknown_model_family(
     worker: FlowBrowserWorker,
+    tmp_path: Path,
 ) -> None:
-    adapter = _adapter(worker)
+    adapter = _adapter(worker, tmp_path)
     request = _request(execution_settings={"model_family": "not_a_real_model"})
 
     result = adapter.submit(request, _attempt(request))
@@ -229,8 +249,9 @@ def test_submit_reports_settings_unavailable_for_an_unknown_model_family(
 @requires_chromium
 def test_submit_accepts_a_valid_requested_model_family(
     worker: FlowBrowserWorker,
+    tmp_path: Path,
 ) -> None:
-    adapter = _adapter(worker, query="no_confirm=1")
+    adapter = _adapter(worker, tmp_path, query="no_confirm=1")
     request = _request(execution_settings={"model_family": "premium"})
 
     result = adapter.submit(request, _attempt(request))
@@ -243,8 +264,9 @@ def test_submit_accepts_a_valid_requested_model_family(
 @requires_chromium
 def test_check_profile_health_is_true_on_the_normal_page(
     worker: FlowBrowserWorker,
+    tmp_path: Path,
 ) -> None:
-    adapter = _adapter(worker)
+    adapter = _adapter(worker, tmp_path)
 
     assert adapter.check_profile_health("flow.primary") is True
 
@@ -252,8 +274,9 @@ def test_check_profile_health_is_true_on_the_normal_page(
 @requires_chromium
 def test_check_profile_health_is_false_when_auth_is_required(
     worker: FlowBrowserWorker,
+    tmp_path: Path,
 ) -> None:
-    adapter = _adapter(worker, query="simulate=auth_required")
+    adapter = _adapter(worker, tmp_path, query="simulate=auth_required")
 
     assert adapter.check_profile_health("flow.primary") is False
 
@@ -261,8 +284,9 @@ def test_check_profile_health_is_false_when_auth_is_required(
 @requires_chromium
 def test_observe_detects_ready_to_download_after_generation_completes(
     worker: FlowBrowserWorker,
+    tmp_path: Path,
 ) -> None:
-    adapter = _adapter(worker, query="no_confirm=1")
+    adapter = _adapter(worker, tmp_path, query="no_confirm=1")
     request = _request()
     submitted = adapter.submit(request, _attempt(request))
     assert submitted.state == GoogleFlowGenerationState.GENERATING
@@ -280,8 +304,8 @@ def test_observe_detects_ready_to_download_after_generation_completes(
 
 
 @requires_chromium
-def test_observe_detects_failure(worker: FlowBrowserWorker) -> None:
-    adapter = _adapter(worker, query="no_confirm=1&fail=1")
+def test_observe_detects_failure(worker: FlowBrowserWorker, tmp_path: Path) -> None:
+    adapter = _adapter(worker, tmp_path, query="no_confirm=1&fail=1")
     request = _request()
     submitted = adapter.submit(request, _attempt(request))
     assert submitted.state == GoogleFlowGenerationState.GENERATING
@@ -299,14 +323,16 @@ def test_observe_detects_failure(worker: FlowBrowserWorker) -> None:
 
 
 @requires_chromium
-def test_observe_is_read_only_before_completion(worker: FlowBrowserWorker) -> None:
+def test_observe_is_read_only_before_completion(
+    worker: FlowBrowserWorker, tmp_path: Path
+) -> None:
     """
     observe() must never advance an attempt on its own guesswork - if
     generation genuinely hasn't finished yet, the attempt comes back
     unchanged, not nudged toward some other state.
     """
 
-    adapter = _adapter(worker, query="no_confirm=1")
+    adapter = _adapter(worker, tmp_path, query="no_confirm=1")
     request = _request()
     submitted = adapter.submit(request, _attempt(request))
 
@@ -320,12 +346,19 @@ def test_observe_is_read_only_before_completion(worker: FlowBrowserWorker) -> No
 
 @requires_chromium
 def test_download_saves_a_real_file(worker: FlowBrowserWorker, tmp_path: Path) -> None:
+    # download_root and the browser profile directory must be
+    # genuinely separate subtrees - the assertion below rglobs
+    # download_root for exactly one saved file, which would break if
+    # the browser profile's own many internal files landed in the
+    # same tree.
+    download_root = tmp_path / "downloads"
     adapter = GoogleFlowUIAdapter(
         worker=worker,
         base_url=_fixture_url(query="no_confirm=1"),
         headless=True,
         operation_timeout_seconds=20.0,
-        download_root=tmp_path,
+        download_root=download_root,
+        profile_directory_resolver=lambda profile_id: tmp_path / "profile" / profile_id,
     )
     request = _request()
     submitted = adapter.submit(request, _attempt(request))
@@ -342,16 +375,16 @@ def test_download_saves_a_real_file(worker: FlowBrowserWorker, tmp_path: Path) -
     downloaded = adapter.download(ready)
 
     assert downloaded.state == GoogleFlowGenerationState.DOWNLOADED
-    saved_files = list(tmp_path.rglob("*"))
+    saved_files = list(download_root.rglob("*"))
     saved_files = [path for path in saved_files if path.is_file()]
     assert len(saved_files) == 1
     assert saved_files[0].stat().st_size > 0
 
 
-def test_cancel_or_abandon_is_not_supported() -> None:
+def test_cancel_or_abandon_is_not_supported(tmp_path: Path) -> None:
     worker = FlowBrowserWorker()
     try:
-        adapter = _adapter(worker)
+        adapter = _adapter(worker, tmp_path)
         request = _request()
 
         with pytest.raises(ExternalUIOperationNotSupportedError) as excinfo:

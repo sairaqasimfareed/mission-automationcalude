@@ -68,30 +68,55 @@ class FlowBrowserWorker:
         Open (or return the already-open) persistent Chromium context
         for one account profile.
 
-        headless=False is what "Open Login" actually needs - a real,
-        visible window so the user can complete normal Google
-        authentication themselves. A caller driving an already-
-        authenticated profile for real generation work later may
-        prefer headless=True.
+        headless=False is what a real, visible window needs (e.g. an
+        operator watching Check Connection succeed). A caller driving
+        an already-authenticated profile for real generation work
+        later may prefer headless=True.
+
+        For a caller already running inside the worker thread, use
+        open_persistent_context_from_worker_thread() instead - this
+        method submits to the worker thread itself, matching every
+        other public method on this class.
         """
 
-        def _open() -> BrowserContext:
-            existing = self._contexts.get(profile_id)
-
-            if existing is not None:
-                return existing
-
-            playwright = self._ensure_playwright()
-
-            context = playwright.chromium.launch_persistent_context(
-                user_data_dir=str(profile_directory),
-                headless=headless,
+        return self.submit(
+            lambda: self.open_persistent_context_from_worker_thread(
+                profile_id, profile_directory, headless=headless
             )
-            self._contexts[profile_id] = context
+        )
 
-            return context
+    def open_persistent_context_from_worker_thread(
+        self,
+        profile_id: str,
+        profile_directory: Path,
+        *,
+        headless: bool = False,
+    ) -> BrowserContext:
+        """
+        Same operation as open_persistent_context(), for a caller that
+        is already running inside the worker thread (i.e. from within
+        a function passed to submit()) - matches
+        launch_ephemeral_browser()'s own contract and exists for the
+        identical reason: a second submit() from inside an already-
+        running submitted callable would deadlock this single-worker
+        pool (the one worker thread is busy running the outer
+        callable, so the inner one could never start).
+        """
 
-        return self.submit(_open)
+        existing = self._contexts.get(profile_id)
+
+        if existing is not None:
+            return existing
+
+        playwright = self._ensure_playwright()
+
+        context = playwright.chromium.launch_persistent_context(
+            user_data_dir=str(profile_directory),
+            headless=headless,
+        )
+        self._contexts[profile_id] = context
+
+        return context
 
     def launch_ephemeral_browser(self, *, headless: bool) -> Browser:
         """
