@@ -33,12 +33,12 @@ from src.models.provider_profile_management import (
     ProviderProfileSummary,
     ProviderProfileUpsertCommand,
 )
-from src.providers.google_flow.adapter import GoogleFlowUIAdapter
 from src.providers.google_flow.locators import (
     RECOMMENDED_UNLIMITED_MODEL_FAMILY,
     VERIFIED_FLOW_BASE_URL,
     VERIFIED_MODEL_FAMILIES,
 )
+from src.providers.google_flow.real_adapter import GoogleFlowRealUIAdapter
 from src.services.provider_profile_management_service import (
     ProviderProfileManagementService,
 )
@@ -53,13 +53,15 @@ from src.services.provider_profile_management_service import (
 #
 # IMPORTANT, matching every other Google Flow doc-string in this
 # initiative: "Check Connection" drives a REAL
-# FlowBrowserWorker/GoogleFlowUIAdapter against whatever URL the
+# FlowBrowserWorker/GoogleFlowRealUIAdapter against whatever URL the
 # operator enters when adding an account - never a URL guessed or
-# hardcoded here. Nobody building this has verified Google Flow's
-# real product URL or DOM, so this panel asks the operator for the
-# URL explicitly rather than fabricating one, and GoogleFlowLocators'
-# own selectors remain fixture-verified only (GF-4) until GF-17's
-# real-account certification updates them.
+# hardcoded here. This panel asks the operator for the URL explicitly
+# rather than fabricating one. Check Connection uses
+# GoogleFlowRealUIAdapter (src/providers/google_flow/real_adapter.py),
+# built from real, verified selectors
+# (docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md) - not GoogleFlowUIAdapter,
+# whose GoogleFlowLocators selectors remain fixture-only and are for
+# tests/fixtures/fake_flow_ui.html, never the real product.
 #
 # REAL-WORLD FINDING, 2026-09-07: "Open Login" originally drove that
 # same Playwright browser through the sign-in step too - a human
@@ -483,7 +485,14 @@ class GoogleFlowProviderPanelView(QWidget):
             self._show_status("Set the Flow URL above first.", role="warning")
             return
 
-        adapter = GoogleFlowUIAdapter(
+        # GoogleFlowRealUIAdapter, not the fixture-shaped
+        # GoogleFlowUIAdapter - Check Connection is exactly the real-
+        # account health check this real adapter was built for (see
+        # docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md). The fixture adapter's
+        # own auth_required_banner selector never exists on the real
+        # product, so it always reported "healthy" regardless of
+        # actual authentication - this is the fix for that.
+        adapter = GoogleFlowRealUIAdapter(
             worker=self._browser_worker,
             base_url=flow_url,
             headless=False,

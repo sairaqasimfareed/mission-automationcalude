@@ -5,6 +5,14 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-07 - Google Flow External UI Automation: real adapter wired into Check Connection
+
+The gap called out at the end of the previous entry - closed the same day. `GoogleFlowProviderPanelView._handle_check_connection_clicked` now constructs `GoogleFlowRealUIAdapter`, not the fixture-shaped `GoogleFlowUIAdapter`. This is a genuinely meaningful fix, not just a wiring formality: the fixture adapter's `check_profile_health()` checks for `GoogleFlowLocators.auth_required_banner`, a selector that never exists anywhere on the real product - meaning Check Connection has been trivially reporting "healthy" regardless of actual authentication state this entire time, no matter how many earlier fixes landed. `GoogleFlowRealUIAdapter.check_profile_health()` checks the real, verified "New project"/"Account details" buttons instead, so a genuinely unauthenticated session now correctly reports as such.
+
+**Tests**: the one test patching the adapter class (`test_check_connection_reports_healthy`) updated to patch `GoogleFlowRealUIAdapter`; all 15 panel-view tests still pass. mypy/ruff/black clean.
+
+---
+
 ## 2026-09-07 - Google Flow External UI Automation: real adapter built - GoogleFlowRealUIAdapter
 
 **A genuinely new adapter, not a locators-string swap on the existing one.** `GoogleFlowUIAdapter`'s whole interaction shape (a `<select>` dropdown read via `select_option()`, distinct named analysis/generation/result panels) was built against the local fake-Flow fixture and does not match the real product's structure at all - the real settings mechanism is a popover of radio-button groups opened via a "Settings trigger" button, and "generating" has no distinct panel, just a prompt box that clears itself and new tiles appearing in the media grid. Forcing both shapes into one class via conditionals would tangle two genuinely different interaction models together, so this is a separate class - `GoogleFlowRealUIAdapter` (`src/providers/google_flow/real_adapter.py`) - implementing the exact same `ExternalUIGenerationProvider` contract, leaving `GoogleFlowUIAdapter` and its 16 fixture-driven tests completely untouched.

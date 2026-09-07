@@ -493,7 +493,7 @@ def test_check_connection_reports_healthy(qapp: QApplication) -> None:
     view._list.setCurrentRow(0)  # noqa: SLF001
 
     with patch(
-        "src.desktop.views.google_flow_provider_panel_view.GoogleFlowUIAdapter"
+        "src.desktop.views.google_flow_provider_panel_view.GoogleFlowRealUIAdapter"
     ) as adapter_class:
         adapter_class.return_value.check_profile_health.return_value = True
         view._handle_check_connection_clicked()  # noqa: SLF001
