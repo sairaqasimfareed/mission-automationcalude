@@ -403,6 +403,35 @@ that file's audio-regeneration row.
       from per-`ProviderProfile` spend to per-job spend, which is new
       backend work, not a GUI change.
 
+## GUI-8 validation finding: monolithic full-suite pytest run hangs
+
+- [ ] Running the entire test suite as one `pytest tests/` process
+      reproducibly hangs. Reproduced twice independently (a full
+      unscoped run stalling at ~24% for 9+ minutes with zero log
+      output, confirmed via file-modify-time; a minimal 2-file
+      reproduction with `test_desktop_app_integration.py` +
+      `test_desktop_theme_and_icons.py`, 48 tests, hanging
+      deterministically at the same point both times). The hang
+      consistently follows immediately after
+      `test_render_progress_updates_live_and_survives_cross_workspace_refresh`
+      (a real-`QThread`-driven render-progress test, already
+      documented elsewhere as flaky under system load) fails on its
+      timing-sensitive assertion - the very next `theme.py` test then
+      blocks on `apply_theme()`, a plain synchronous main-thread call
+      that never blocks when either file runs alone. Root cause is
+      correlated, not fully diagnosed - `RenderWorkspaceView` does
+      track its background `QThread`s explicitly and clean up on
+      `thread.finished`, so this isn't a naive leak-by-design; something
+      about that specific test's failure path leaves state a later,
+      unrelated Qt call then blocks on. Needs a debugger attached to a
+      hung repro, not just log-timing correlation, to actually resolve.
+      See `docs/GUI8_VALIDATION_REPORT.md` for the full writeup.
+      **Until this is fixed, any full-suite validation (CI or local)
+      must run pytest per-file or in small scoped batches, never as one
+      monolithic process** - every quality gate across this entire
+      project's history has in fact already been run this way in
+      practice and never hit this issue.
+
 ## Explicitly out of scope
 
 - Google Flow, or any browser automation targeting Google Flow's web UI.
