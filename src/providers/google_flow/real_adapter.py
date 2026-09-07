@@ -81,7 +81,7 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
     error-state screens. A submission that unexpectedly hits any of
     these lands on UI_CHANGED rather than a fabricated click sequence.
 
-    base_url must be a SPECIFIC project URL
+    base_url/base_url_resolver must resolve to a SPECIFIC project URL
     (https://flow.google.com/project/<uuid>), not the bare domain -
     the real compose UI lives inside a project, and this class never
     creates one itself ("New project" has a real, visible side effect
@@ -101,15 +101,42 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
         self,
         *,
         worker: FlowBrowserWorker,
-        base_url: str,
+        base_url: str | None = None,
+        base_url_resolver: Callable[[str], str] | None = None,
         names: GoogleFlowRealAccessibleNames | None = None,
         headless: bool = True,
         operation_timeout_seconds: float = 30.0,
         download_root: Path = DEFAULT_FLOW_DOWNLOAD_ROOT,
         profile_directory_resolver: Callable[[str], Path] = profile_directory,
     ) -> None:
+        """
+        Exactly one of base_url/base_url_resolver must be given.
+
+        base_url is what the desktop panel uses - one operator, one
+        account selected at a time, so one fixed project URL per
+        adapter instance is correct there. base_url_resolver is what a
+        single, long-lived adapter instance serving MULTIPLE accounts
+        needs (e.g. the orchestrator, routing across several accounts
+        via GoogleFlowAccountRouterService) - each account's own saved
+        project URL (ProviderProfile.metadata["flow_url"], the exact
+        same value the desktop panel's Flow URL field manages) rather
+        than one URL forced onto every account.
+        """
+
+        if (base_url is None) == (base_url_resolver is None):
+            raise ValueError(
+                "Exactly one of base_url or base_url_resolver must be given."
+            )
+
         self._worker = worker
-        self._base_url = base_url
+
+        if base_url_resolver is not None:
+            self._base_url_resolver: Callable[[str], str] = base_url_resolver
+        else:
+            fixed_url = base_url
+            assert fixed_url is not None  # guaranteed by the check above  # noqa: S101
+            self._base_url_resolver = lambda _profile_id: fixed_url
+
         self._names = names or GoogleFlowRealAccessibleNames()
         self._headless = headless
         self._operation_timeout_seconds = operation_timeout_seconds
@@ -147,7 +174,9 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
     def check_profile_health(self, profile_id: str) -> bool:
         def _run() -> bool:
             page = self._get_or_open_page(profile_id)
-            page.goto(self._base_url, timeout=self._action_timeout_ms)
+            page.goto(
+                self._base_url_resolver(profile_id), timeout=self._action_timeout_ms
+            )
 
             return self._looks_authenticated(page)
 
@@ -164,7 +193,10 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
 
         def _run() -> GoogleFlowGenerationAttempt:
             page = self._get_or_open_page(attempt.profile_id)
-            page.goto(self._base_url, timeout=self._action_timeout_ms)
+            page.goto(
+                self._base_url_resolver(attempt.profile_id),
+                timeout=self._action_timeout_ms,
+            )
 
             if not self._looks_authenticated(page):
                 return attempt.with_transition(

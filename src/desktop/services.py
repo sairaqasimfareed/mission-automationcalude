@@ -9,6 +9,7 @@ from src.entrypoint import build_production_runtime
 from src.providers.dry_run_thumbnail_image_provider import (
     DryRunThumbnailImageProvider,
 )
+from src.providers.google_flow.real_adapter import GoogleFlowRealUIAdapter
 from src.services.application_infrastructure_factory import (
     ApplicationInfrastructure,
 )
@@ -19,6 +20,9 @@ from src.services.factory.provider_adapter_factory import ProviderAdapterFactory
 from src.services.final_export.final_export_service import FinalExportService
 from src.services.google_flow_account_router_service import (
     GoogleFlowAccountRouterService,
+)
+from src.services.google_flow_generation_orchestrator_service import (
+    GoogleFlowGenerationOrchestratorService,
 )
 from src.services.media_generation_pipeline import MediaGenerationPipeline
 from src.services.pipeline_checkpoint_storage_service import (
@@ -365,6 +369,68 @@ def get_google_flow_browser_worker() -> FlowBrowserWorker:
     """
 
     return FlowBrowserWorker()
+
+
+@lru_cache
+def get_google_flow_real_ui_adapter() -> GoogleFlowRealUIAdapter:
+    """
+    The one shared, real-product Google Flow adapter for the whole
+    desktop process - built from real, verified selectors
+    (docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md), never the fixture-shaped
+    GoogleFlowUIAdapter.
+
+    Uses a base_url_resolver, not a fixed base_url - this single
+    instance can be shared across every configured Flow account (the
+    account router picks which one to use per request), so it needs
+    each account's OWN saved project URL
+    (ProviderProfile.metadata["flow_url"] - the exact same value the
+    desktop panel's Flow URL field manages), not one URL forced onto
+    every account. Raises a clear error rather than guessing when an
+    account has no flow_url saved yet.
+    """
+
+    provider_registry = get_infrastructure().provider_registry
+
+    def _resolve_base_url(profile_id: str) -> str:
+        profile = provider_registry.get(profile_id)
+        flow_url = profile.metadata.get("flow_url")
+
+        if not flow_url:
+            raise ValueError(
+                f"Google Flow account '{profile_id}' has no Flow URL saved "
+                "yet - set one (a specific project URL) in the Google Flow "
+                "panel and Save before generating."
+            )
+
+        return flow_url
+
+    return GoogleFlowRealUIAdapter(
+        worker=get_google_flow_browser_worker(),
+        base_url_resolver=_resolve_base_url,
+        headless=True,
+    )
+
+
+@lru_cache
+def get_google_flow_generation_orchestrator_service() -> (
+    GoogleFlowGenerationOrchestratorService
+):
+    """
+    The one real caller tying routing, the durable ledger, and the
+    real adapter together for the desktop process - GF-11/GF-12's own
+    "canonical generation orchestrator". No budget_service wired yet:
+    ProviderBudgetService has no existing desktop-process factory to
+    reuse, and inventing one speculatively (rather than when a real
+    caller needs it) would be scope creep beyond this wiring step -
+    submit_new_attempt() already handles budget_service=None correctly
+    (skips reservation entirely), so this is a disclosed, safe gap,
+    not a silent one.
+    """
+
+    return GoogleFlowGenerationOrchestratorService(
+        provider=get_google_flow_real_ui_adapter(),
+        account_router=get_google_flow_account_router_service(),
+    )
 
 
 @lru_cache

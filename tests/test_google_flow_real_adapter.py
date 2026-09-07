@@ -220,6 +220,51 @@ def test_check_profile_health_false_when_not_authenticated() -> None:
     assert adapter.check_profile_health("flow.primary") is False
 
 
+def test_base_url_resolver_looks_up_the_right_account() -> None:
+    """
+    A single, long-lived adapter instance (e.g. the orchestrator's)
+    can serve multiple accounts - each account's own saved project URL
+    is what actually gets navigated to, never one URL forced onto
+    every account.
+    """
+
+    page = _authenticated_page()
+    urls_by_profile = {
+        "flow.primary": "https://flow.google.com/project/primary-project",
+        "flow.secondary": "https://flow.google.com/project/secondary-project",
+    }
+    adapter = GoogleFlowRealUIAdapter(
+        worker=_FakeWorker(page),  # type: ignore[arg-type]
+        base_url_resolver=lambda profile_id: urls_by_profile[profile_id],
+        operation_timeout_seconds=5.0,
+        profile_directory_resolver=lambda profile_id: Path("unused") / profile_id,
+    )
+
+    adapter.check_profile_health("flow.secondary")
+
+    assert page.url_history == ["https://flow.google.com/project/secondary-project"]
+
+
+def test_constructor_requires_exactly_one_of_base_url_or_resolver() -> None:
+    page = _authenticated_page()
+
+    try:
+        GoogleFlowRealUIAdapter(worker=_FakeWorker(page))  # type: ignore[arg-type]
+        raise AssertionError("expected ValueError")
+    except ValueError:
+        pass
+
+    try:
+        GoogleFlowRealUIAdapter(
+            worker=_FakeWorker(page),  # type: ignore[arg-type]
+            base_url="https://flow.google.com/project/x",
+            base_url_resolver=lambda profile_id: "https://flow.google.com/project/x",
+        )
+        raise AssertionError("expected ValueError")
+    except ValueError:
+        pass
+
+
 # --- submit(): happy path ---
 
 
@@ -450,3 +495,163 @@ def test_cancel_or_abandon_is_not_supported() -> None:
         raise AssertionError("expected ExternalUIOperationNotSupportedError")
     except ExternalUIOperationNotSupportedError as error:
         assert error.operation == ExternalUIOperation.CANCEL_OR_ABANDON
+
+
+# --- integration with the real GoogleFlowGenerationOrchestratorService ---
+#
+# Every test above verifies this adapter's own logic in isolation.
+# These verify the actual wiring point desktop/services.py's
+# get_google_flow_generation_orchestrator_service() sets up for real:
+# a genuine GoogleFlowAccountRouterService/GoogleFlowGenerationOrchestratorService
+# driving a genuine GoogleFlowRealUIAdapter (only the browser itself is
+# faked) - catching integration bugs (wrong attribute names, wrong
+# exception types, mismatched profile_id plumbing) neither class's own
+# isolated test suite would.
+
+
+def test_orchestrator_drives_a_real_adapter_end_to_end(tmp_path: Path) -> None:
+    from src.models.provider_profile import (
+        ProviderCategory,
+        ProviderHealthStatus,
+        ProviderProfile,
+    )
+    from src.models.video_job import VideoJob
+    from src.services.google_flow_account_router_service import (
+        GoogleFlowAccountRouterService,
+    )
+    from src.services.google_flow_generation_orchestrator_service import (
+        GoogleFlowGenerationOrchestratorService,
+    )
+    from src.services.registry.provider_registry import ProviderRegistry
+
+    registry = ProviderRegistry()
+    registry.register(
+        ProviderProfile(
+            profile_id="flow.primary",
+            display_name="Flow Primary",
+            provider_name="Google Flow",
+            category=ProviderCategory.EXTERNAL_UI_VIDEO,
+            enabled=True,
+            health_status=ProviderHealthStatus.HEALTHY,
+            browser_profile_reference="flow_profiles/flow.primary",
+            metadata={"flow_url": "https://flow.google.com/project/test-project"},
+        )
+    )
+
+    page = _authenticated_page()
+    # Mirrors get_google_flow_real_ui_adapter()'s own _resolve_base_url
+    # exactly - each account's saved flow_url, never a fixed URL.
+    adapter = GoogleFlowRealUIAdapter(
+        worker=_FakeWorker(page),  # type: ignore[arg-type]
+        base_url_resolver=lambda profile_id: registry.get(profile_id).metadata[
+            "flow_url"
+        ],
+        operation_timeout_seconds=5.0,
+        download_root=tmp_path,
+        profile_directory_resolver=lambda profile_id: Path("unused") / profile_id,
+    )
+    orchestrator = GoogleFlowGenerationOrchestratorService(
+        provider=adapter,
+        account_router=GoogleFlowAccountRouterService(registry),
+    )
+    job = VideoJob(
+        project_name="Test Project",
+        channel_name="Test Channel",
+        niche="testing",
+        topic="A test topic",
+    )
+
+    submitted = orchestrator.submit_new_attempt(
+        job,
+        scene_number=1,
+        prompt="A calm lighthouse at sunset, gentle waves below.",
+        prompt_version="v1",
+        idempotency_key="req-1",
+    )
+
+    assert submitted.state == GoogleFlowGenerationState.GENERATING
+    assert page.url_history == ["https://flow.google.com/project/test-project"]
+    # The ledger actually persisted this attempt onto the job, not
+    # just returned it - the whole point of routing through the
+    # orchestrator rather than calling the adapter directly.
+    assert len(job.flow_generation_attempts) == 1
+    assert job.flow_generation_attempts[0].id == submitted.id
+
+    page.register_role("img", "Generated video thumbnail", _FakeLocator())
+    page.register_role("button", "Download scene", _FakeLocator())
+    page.register_role("button", "Done editing scene", _FakeLocator())
+
+    observed = orchestrator.observe_attempt(job, submitted)
+    assert observed.state == GoogleFlowGenerationState.READY_TO_DOWNLOAD
+    assert job.flow_generation_attempts[0].state == (
+        GoogleFlowGenerationState.READY_TO_DOWNLOAD
+    )
+
+    downloaded = orchestrator.download_attempt(job, observed)
+    assert downloaded.state == GoogleFlowGenerationState.DOWNLOADED
+    assert job.flow_generation_attempts[0].state == GoogleFlowGenerationState.DOWNLOADED
+    saved_files = [path for path in tmp_path.rglob("*") if path.is_file()]
+    assert len(saved_files) == 1
+
+
+def test_orchestrator_reports_auth_required_via_a_real_adapter() -> None:
+    from src.models.provider_profile import (
+        ProviderCategory,
+        ProviderHealthStatus,
+        ProviderProfile,
+    )
+    from src.models.video_job import VideoJob
+    from src.services.google_flow_account_router_service import (
+        GoogleFlowAccountRouterService,
+    )
+    from src.services.google_flow_generation_orchestrator_service import (
+        GoogleFlowGenerationOrchestratorService,
+    )
+    from src.services.registry.provider_registry import ProviderRegistry
+
+    registry = ProviderRegistry()
+    registry.register(
+        ProviderProfile(
+            profile_id="flow.primary",
+            display_name="Flow Primary",
+            provider_name="Google Flow",
+            category=ProviderCategory.EXTERNAL_UI_VIDEO,
+            enabled=True,
+            health_status=ProviderHealthStatus.HEALTHY,
+            browser_profile_reference="flow_profiles/flow.primary",
+            metadata={"flow_url": "https://flow.google.com/project/test-project"},
+        )
+    )
+
+    page = _FakePage()  # not authenticated - no New project/Account details
+    adapter = GoogleFlowRealUIAdapter(
+        worker=_FakeWorker(page),  # type: ignore[arg-type]
+        base_url_resolver=lambda profile_id: registry.get(profile_id).metadata[
+            "flow_url"
+        ],
+        operation_timeout_seconds=5.0,
+        profile_directory_resolver=lambda profile_id: Path("unused") / profile_id,
+    )
+    orchestrator = GoogleFlowGenerationOrchestratorService(
+        provider=adapter,
+        account_router=GoogleFlowAccountRouterService(registry),
+    )
+    job = VideoJob(
+        project_name="Test Project",
+        channel_name="Test Channel",
+        niche="testing",
+        topic="A test topic",
+    )
+
+    result = orchestrator.submit_new_attempt(
+        job,
+        scene_number=1,
+        prompt="A calm lighthouse at sunset, gentle waves below.",
+        prompt_version="v1",
+        idempotency_key="req-1",
+    )
+
+    assert result.state == GoogleFlowGenerationState.AUTH_REQUIRED
+    assert (
+        job.flow_generation_attempts[0].state == GoogleFlowGenerationState.AUTH_REQUIRED
+    )
