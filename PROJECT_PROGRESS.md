@@ -17,6 +17,18 @@ Traced from the user reporting the Provider Manager dropdown fix "wasn't visible
 
 ---
 
+## 2026-09-07 - Content Studio: scroll-position fix, second pass - a single event-loop tick wasn't enough
+
+The first attempt (`QTimer.singleShot(0, ...)`) worked in a small test job but not in the real app - confirmed by the user: clicking "Run audience promise" on a real project still snapped back to the top.
+
+**Real root cause**: this view rebuilds far more cards than a minimal test job produces, and Qt's layout system can take more than a single event-loop tick to fully recalculate a large, deeply nested widget tree's scrollable range - the single-tick restore fired too early and got silently clamped to the still-stale (smaller) range, landing back near 0 regardless of what was captured beforehand.
+
+**Fixed properly**: `_schedule_scroll_restore()` now connects to the scrollbar's own `rangeChanged` signal - Qt's authoritative, timing-independent signal for exactly "the scrollable range has just been recalculated for the new content" - applying the restore the moment that actually happens, then disconnecting. A `QTimer.singleShot(50, ...)` fallback still runs alongside it for the case `rangeChanged` never fires at all (rebuilt content coincidentally ending up the same height as before) - whichever fires first wins, the other becomes a guarded no-op.
+
+**Tests**: 1 new (`test_scroll_restore_applies_via_range_changed_before_the_timer_fallback`) exercises the `rangeChanged` path directly against a real (offscreen) `QScrollBar`, and confirms the timer fallback's callback is a safe no-op once the signal has already applied the value. The existing 2 scroll tests still pass unchanged. Full suite (128 cases) and the full desktop integration suite (10 cases): all passed. mypy/ruff/black clean.
+
+---
+
 ## 2026-09-07 - Content Studio: fixed the screen snapping back to the top after every action
 
 The user reported it directly: on the Content screen, pressing any button (selecting a topic, running a stage, saving an edit) always jumped back to the top of the page, forcing a re-scroll every single time.

@@ -207,6 +207,44 @@ def test_refresh_preserves_scroll_position_for_the_same_job(
     assert view._scroll_area.verticalScrollBar().value() == scrolled_to  # noqa: SLF001
 
 
+def test_scroll_restore_applies_via_range_changed_before_the_timer_fallback(
+    qapp: QApplication,
+) -> None:
+    """
+    The primary mechanism, exercised directly - rangeChanged firing
+    (Qt's own authoritative "the scrollable range was just
+    recalculated" signal) must apply the restore immediately, and the
+    QTimer.singleShot fallback must then correctly become a no-op
+    rather than double-applying or erroring on an already-disconnected
+    signal.
+    """
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    with patch(
+        "src.desktop.views.content_studio_view.QTimer.singleShot"
+    ) as fake_single_shot:
+        view._schedule_scroll_restore(77)  # noqa: SLF001
+
+        # rangeChanged fires for real here - no patching needed, this
+        # is Qt's own real signal on a real (if offscreen) QScrollBar.
+        view._scroll_area.verticalScrollBar().setRange(0, 500)  # noqa: SLF001
+        assert view._scroll_area.verticalScrollBar().value() == 77  # noqa: SLF001
+
+        # The fallback timer was scheduled but never actually fired in
+        # this test (QTimer.singleShot itself was mocked out) - calling
+        # the exact callback it would have called must be a safe no-op.
+        fallback_callback = fake_single_shot.call_args.args[-1]
+        fallback_callback()
+        assert view._scroll_area.verticalScrollBar().value() == 77  # noqa: SLF001
+
+
 def test_refresh_resets_scroll_position_when_switching_projects(
     qapp: QApplication,
 ) -> None:

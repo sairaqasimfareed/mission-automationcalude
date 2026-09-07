@@ -305,16 +305,56 @@ class ContentStudioView(QWidget):
         self._build_originality_card(job)
         self._build_scenes_card(job)
 
-        # Deferred to the next event-loop tick: right after a rebuild,
-        # the old widgets' deleteLater() calls and the new layout's
-        # geometry/size-hint recalculation are still pending, so the
-        # scrollbar's range may not yet reflect the new content and
-        # setValue() here could get silently clamped to the stale
-        # (often smaller, pre-rebuild) range.
-        QTimer.singleShot(0, lambda: self._restore_scroll_position(scroll_value))
+        self._schedule_scroll_restore(scroll_value)
 
-    def _restore_scroll_position(self, value: int) -> None:
-        self._scroll_area.verticalScrollBar().setValue(value)
+    def _schedule_scroll_restore(self, value: int) -> None:
+        """
+        Real-world finding: a plain `QTimer.singleShot(0, ...)` (fire
+        on the very next event-loop tick) worked in a small test job
+        but NOT in a real project - this view rebuilds many more cards
+        than a minimal test does, and Qt's layout system can take more
+        than one event-loop tick to fully recalculate a large, deeply
+        nested widget tree's scrollable range, so the single-tick
+        restore fired too early and got silently clamped to the still-
+        stale (smaller) range.
+
+        Fixed with the scrollbar's own `rangeChanged` signal instead -
+        the authoritative, timing-independent signal for exactly "the
+        scrollable range has now been recalculated for the new
+        content", fired once and disconnected. A `QTimer.singleShot`
+        fallback still exists alongside it, since `rangeChanged` never
+        fires at all if the rebuilt content happens to end up exactly
+        the same height as before (a real, if less common, case this
+        view needs to keep working correctly too) - whichever fires
+        first wins, the other becomes a no-op.
+        """
+
+        scroll_bar = self._scroll_area.verticalScrollBar()
+        applied = False
+
+        def _apply() -> None:
+            nonlocal applied
+
+            if applied:
+                return
+
+            applied = True
+
+            try:
+                scroll_bar.rangeChanged.disconnect(_on_range_changed)
+            except (TypeError, RuntimeError):
+                # Already disconnected, or never connected - a race
+                # between the signal and the fallback timer, not an
+                # error.
+                pass
+
+            scroll_bar.setValue(value)
+
+        def _on_range_changed(_minimum: int, _maximum: int) -> None:
+            _apply()
+
+        scroll_bar.rangeChanged.connect(_on_range_changed)
+        QTimer.singleShot(50, _apply)
 
     def _build_journey_card(self, job: VideoJob) -> None:
         """
