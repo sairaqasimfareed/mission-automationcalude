@@ -194,4 +194,76 @@ reloaded_profiles = reloaded_service.load()
 assert [profile.profile_id for profile in reloaded_profiles] == ["voice-main"]
 
 
+# --- Google Flow External UI Automation, GF-13: EXTERNAL_UI_VIDEO
+# authenticates via browser_profile_reference, never secret_value. ---
+
+flow_repository = InMemoryProviderProfileRepository()
+flow_service = build_service(flow_repository)
+
+try:
+    flow_service.upsert_profile(
+        ProviderProfileUpsertCommand(
+            profile_id="flow-primary",
+            display_name="Flow Primary",
+            provider_name="Google Flow",
+            category=ProviderCategory.EXTERNAL_UI_VIDEO,
+            enabled=True,
+            secret_value="this-is-not-how-flow-authenticates",
+        )
+    )
+except ValueError:
+    print(
+        "Enabling a Flow profile with only secret_value (no "
+        "browser_profile_reference) successfully blocked."
+    )
+else:
+    raise AssertionError(
+        "An enabled Flow profile requires browser_profile_reference, "
+        "not secret_value."
+    )
+
+
+created_flow_profile = flow_service.upsert_profile(
+    ProviderProfileUpsertCommand(
+        profile_id="flow-primary",
+        display_name="Flow Primary",
+        provider_name="Google Flow",
+        category=ProviderCategory.EXTERNAL_UI_VIDEO,
+        enabled=True,
+        browser_profile_reference="flow_profiles/flow-primary",
+    )
+)
+
+assert created_flow_profile.browser_profile_reference == "flow_profiles/flow-primary"
+assert created_flow_profile.has_secret is False
+assert created_flow_profile.enabled is True
+
+
+# set_enabled() must not hard-require a secret for a Flow profile -
+# the GF-13-found gap this pass fixed.
+disabled_flow_profile = flow_service.set_enabled("flow-primary", False)
+assert disabled_flow_profile.enabled is False
+
+reenabled_flow_profile = flow_service.set_enabled("flow-primary", True)
+assert reenabled_flow_profile.enabled is True
+
+
+try:
+    flow_service.upsert_profile(
+        ProviderProfileUpsertCommand(
+            profile_id="flow-secondary",
+            display_name="Flow Secondary",
+            provider_name="Google Flow",
+            category=ProviderCategory.EXTERNAL_UI_VIDEO,
+            enabled=True,
+        )
+    )
+except ValueError:
+    print("Enabling a Flow profile with no credential at all " "successfully blocked.")
+else:
+    raise AssertionError(
+        "An enabled Flow profile requires a browser_profile_reference."
+    )
+
+
 print("Provider Profile Management Service tests completed successfully.")

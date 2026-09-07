@@ -20,6 +20,11 @@ class ProviderProfileSummary(BaseModel):
     has_secret: bool
     masked_secret: str | None = None
 
+    # Google Flow External UI Automation, GF-13: an EXTERNAL_UI_VIDEO
+    # profile's credential is this instead of a secret - surfaced here
+    # so the desktop panel can show it without a second summary shape.
+    browser_profile_reference: str | None = None
+
     base_url: str | None = None
     organization_id: str | None = None
     project_id: str | None = None
@@ -75,6 +80,12 @@ class ProviderProfileUpsertCommand(BaseModel):
 
     secret_value: str | None = None
 
+    # Google Flow External UI Automation, GF-13: set only for
+    # EXTERNAL_UI_VIDEO profiles, in place of secret_value - never a
+    # secret itself, just the local persistent-browser-profile
+    # identifier (GF-2's own profile_directory()).
+    browser_profile_reference: str | None = None
+
     @field_validator(
         "base_url",
         "organization_id",
@@ -82,6 +93,7 @@ class ProviderProfileUpsertCommand(BaseModel):
         "region",
         "default_model",
         "secret_value",
+        "browser_profile_reference",
         mode="before",
     )
     @classmethod

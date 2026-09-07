@@ -160,6 +160,15 @@ class ProviderManagerView(QWidget):
 
         self._category = QComboBox()
         for category in ProviderCategory:
+            # EXTERNAL_UI_VIDEO (Google Flow) is deliberately excluded
+            # here - this form always shows an "API key" field, and
+            # Google Flow authenticates through a persistent browser
+            # profile, never a secret (Google Flow External UI
+            # Automation, GF-13: "Google Flow must NOT display an API
+            # Key field"). It gets its own dedicated panel instead -
+            # see GoogleFlowProviderPanelView.
+            if category == ProviderCategory.EXTERNAL_UI_VIDEO:
+                continue
             self._category.addItem(category.value, category)
         self._category.currentIndexChanged.connect(self._update_placeholder_hint)
         form.addRow("Category", self._category)
@@ -352,7 +361,18 @@ class ProviderManagerView(QWidget):
     def refresh(self) -> None:
         """Reload provider profiles from the management service."""
 
-        self._profiles = self._service.list_profiles()
+        # Google Flow accounts are managed exclusively through
+        # GoogleFlowProviderPanelView (its own Add/Connect Account,
+        # Open Login, health/cooldown display) - excluded here so a
+        # Flow profile never appears editable through this generic,
+        # secret-based form, which has no category branch for it and
+        # would otherwise show the wrong controls for a profile that
+        # authenticates through a browser, not a key.
+        self._profiles = [
+            profile
+            for profile in self._service.list_profiles()
+            if profile.category != ProviderCategory.EXTERNAL_UI_VIDEO
+        ]
 
         self._list.blockSignals(True)
         self._list.clear()

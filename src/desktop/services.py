@@ -3,6 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
+from src.browser.flow_browser_worker import FlowBrowserWorker
 from src.desktop.job_store import JsonJobStore
 from src.entrypoint import build_production_runtime
 from src.providers.dry_run_thumbnail_image_provider import (
@@ -16,6 +17,9 @@ from src.services.content_pipeline import ContentPipeline
 from src.services.fact_check_service import FactCheckService
 from src.services.factory.provider_adapter_factory import ProviderAdapterFactory
 from src.services.final_export.final_export_service import FinalExportService
+from src.services.google_flow_account_router_service import (
+    GoogleFlowAccountRouterService,
+)
 from src.services.media_generation_pipeline import MediaGenerationPipeline
 from src.services.pipeline_checkpoint_storage_service import (
     PipelineCheckpointStorageService,
@@ -335,6 +339,32 @@ def get_provider_profile_management_service() -> ProviderProfileManagementServic
         repository=_get_provider_profile_repository(),
         secret_manager=infrastructure.provider_secret_manager,
     )
+
+
+@lru_cache
+def get_google_flow_account_router_service() -> GoogleFlowAccountRouterService:
+    """
+    Google Flow External UI Automation, GF-13: routes against the
+    SAME shared provider_registry every other provider category
+    already uses (get_provider_profile_management_service()'s own
+    registry) - a Flow account configured through the desktop panel
+    is immediately visible to routing, not a second, disconnected
+    registry.
+    """
+
+    return GoogleFlowAccountRouterService(get_infrastructure().provider_registry)
+
+
+@lru_cache
+def get_google_flow_browser_worker() -> FlowBrowserWorker:
+    """
+    The one shared FlowBrowserWorker for the whole desktop process -
+    a second instance would mean a second, separately-owned Playwright
+    session (and worker thread) with no way to coordinate which one
+    actually holds a given profile's persistent Chromium context.
+    """
+
+    return FlowBrowserWorker()
 
 
 @lru_cache

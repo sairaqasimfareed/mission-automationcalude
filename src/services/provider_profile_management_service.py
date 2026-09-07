@@ -3,7 +3,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from src.models.provider_profile import ProviderHealthStatus, ProviderProfile
+from src.models.provider_profile import (
+    ProviderCategory,
+    ProviderHealthStatus,
+    ProviderProfile,
+)
 from src.models.provider_profile_management import (
     ProviderProfileSummary,
     ProviderProfileUpsertCommand,
@@ -154,6 +158,10 @@ class ProviderProfileManagementService:
             capabilities=command.capabilities,
             metadata=command.metadata,
             http_adapter_config=command.http_adapter_config,
+            browser_profile_reference=(
+                command.browser_profile_reference
+                or (existing.browser_profile_reference if existing else None)
+            ),
         )
 
         self._registry.register(profile, replace=True)
@@ -181,7 +189,19 @@ class ProviderProfileManagementService:
     ) -> ProviderProfileSummary:
         profile = self._registry.get(profile_id)
 
-        if enabled and not profile.secret_reference:
+        # Google Flow External UI Automation, GF-13-found gap: this
+        # check duplicated (and predated) ProviderProfile's own
+        # validate_provider_profile()/usable, which already learned
+        # the EXTERNAL_UI_VIDEO branch in GF-2 - this service-level
+        # copy hadn't, and would have blocked enabling any Flow
+        # profile even after that model-level fix.
+        if profile.category == ProviderCategory.EXTERNAL_UI_VIDEO:
+            if enabled and not profile.browser_profile_reference:
+                raise ValueError(
+                    "Cannot enable a Google Flow profile without a "
+                    "browser_profile_reference configured."
+                )
+        elif enabled and not profile.secret_reference:
             raise ValueError(
                 "Cannot enable a provider profile without a secret configured."
             )
@@ -225,6 +245,7 @@ class ProviderProfileManagementService:
             health_status=profile.health_status,
             has_secret=profile.secret_reference is not None,
             masked_secret=masked_secret,
+            browser_profile_reference=profile.browser_profile_reference,
             base_url=profile.base_url,
             organization_id=profile.organization_id,
             project_id=profile.project_id,
