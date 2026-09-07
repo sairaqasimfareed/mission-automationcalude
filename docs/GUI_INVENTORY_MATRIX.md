@@ -138,12 +138,13 @@ These are the genuine, evidenced gaps this audit actually found -
 GUI-1 through GUI-8 should target these specifically rather than
 re-building what already exists:
 
-- **GUI-1 (design system)**: theme is dark-only. No Light/System
-  option, no persisted theme preference anywhere in the codebase
-  (confirmed: `grep`ing for "Light"/"Dark"/"System"/`QSettings` across
-  `theme.py` and `settings_view.py` found nothing). `SettingsView` is
-  currently read-only display of runtime config, not a place to
-  change app preferences.
+- **GUI-1 (design system)**: ~~theme is dark-only. No Light/System
+  option, no persisted theme preference anywhere in the codebase~~ -
+  **addressed, same day**: `ThemeMode` (SYSTEM/LIGHT/DARK), a real
+  separately-designed Light palette, `ThemePreferenceStore`
+  (`data/desktop_preferences.json`), and an "Appearance" section in
+  `SettingsView`. See `PROJECT_PROGRESS.md`'s GUI-1 entry and
+  `docs/IMPLEMENTATION_STATE.md`'s GUI-1 row for the full account.
 - **GUI-6 (Windows hardening)**: real, evidenced, ongoing need - this
   same session found and fixed three genuine Windows-rendering bugs
   independent of any GUI-0 audit (a missing `QPalette` making
@@ -176,14 +177,14 @@ windows/components where sound, retire misleading duplicates only
 after runtime/compatibility audit"). The real remaining work this
 plan should concentrate on:
 
-1. **GUI-1**: build actual Light/System theme support + a persisted
-   preference (a real, scoped gap).
+1. ~~**GUI-1**: build actual Light/System theme support + a persisted
+   preference~~ - **done, same day** (see PROJECT_PROGRESS.md).
 2. **GUI-6**: a deliberate accessibility/Windows-hardening pass
    (keyboard focus order, accessible labels, high-DPI scaling,
    long-text handling) rather than continuing to find these bugs
    reactively.
 3. **GUI-8**: a coherent, documented full-desktop validation pass once
-   1 and 2 land.
+   2 lands.
 
 GUI-0's own exit gate - "Complete GUI matrix with exact keep/refactor/
 retire decisions" - is met by this document.

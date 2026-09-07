@@ -6,7 +6,14 @@ from PySide6.QtCore import QByteArray, QSize, Qt
 from PySide6.QtGui import QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
-from src.desktop.theme import ACCENT, TEXT_PRIMARY, TEXT_SECONDARY
+from src.desktop import theme
+
+# Colors are read as `theme.ACCENT` etc. (a module-attribute lookup at
+# call time), never `from src.desktop.theme import ACCENT` (a name
+# copied once at import time) - GUI-1 (Light/System theme) can only
+# repoint already-imported modules like this one by reassigning
+# theme.py's own module attributes, which a call-time lookup picks up
+# immediately and a one-time name binding would silently miss.
 
 # Small hand-authored line-icon set (stroke-based, 24x24 viewbox) so the
 # app never depends on downloading/bundling a third-party icon pack.
@@ -153,22 +160,29 @@ def _pixmap(name: str, color: str, size: int) -> QPixmap:
     return pixmap
 
 
-def icon(name: str, *, color: str = TEXT_SECONDARY, size: int = 18) -> QIcon:
-    """Return a themed line icon, rendered from this app's own SVG set."""
+def icon(name: str, *, color: str | None = None, size: int = 18) -> QIcon:
+    """Return a themed line icon, rendered from this app's own SVG set.
 
-    return QIcon(_pixmap(name, color, size))
+    `color` defaults to the current theme's secondary text color,
+    resolved at call time (not a frozen default argument) so the
+    default itself stays correct across a live theme switch.
+    """
+
+    resolved_color = color if color is not None else theme.TEXT_SECONDARY
+
+    return QIcon(_pixmap(name, resolved_color, size))
 
 
 def accent_icon(name: str, *, size: int = 18) -> QIcon:
     """Return a line icon rendered in the accent color."""
 
-    return icon(name, color=ACCENT, size=size)
+    return icon(name, color=theme.ACCENT, size=size)
 
 
 def primary_icon(name: str, *, size: int = 18) -> QIcon:
     """Return a line icon rendered in the primary text color."""
 
-    return icon(name, color=TEXT_PRIMARY, size=size)
+    return icon(name, color=theme.TEXT_PRIMARY, size=size)
 
 
 @lru_cache(maxsize=1)

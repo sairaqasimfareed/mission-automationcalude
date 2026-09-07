@@ -11,8 +11,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.desktop import theme
 from src.desktop.icons import icon
-from src.desktop.theme import SPACE_LG, SPACE_MD, SPACE_SM, TEXT_PRIMARY
+from src.desktop.theme import SPACE_LG, SPACE_MD, SPACE_SM
+
+# Spacing tokens are theme-invariant (fine to import by name once);
+# TEXT_PRIMARY is not - read as `theme.TEXT_PRIMARY` below so a live
+# theme switch (GUI-1) is picked up, matching icons.py's own approach.
 
 # Shared widget builders so every desktop view assembles the same
 # visual language (card shape, heading scale, button variants)
@@ -96,7 +101,7 @@ def card(title: str, *, icon_name: str | None = None) -> tuple[QFrame, QVBoxLayo
     if icon_name is not None:
         icon_label = QLabel()
         icon_label.setPixmap(
-            icon(icon_name, color=TEXT_PRIMARY, size=17).pixmap(QSize(17, 17))
+            icon(icon_name, color=theme.TEXT_PRIMARY, size=17).pixmap(QSize(17, 17))
         )
         header.addWidget(icon_label)
 
@@ -122,8 +127,7 @@ def button(
         widget.setProperty("variant", variant)
 
     if icon_name is not None:
-        icon_color = TEXT_PRIMARY
-        widget.setIcon(icon(icon_name, color=icon_color, size=16))
+        widget.setIcon(icon(icon_name, color=theme.TEXT_PRIMARY, size=16))
         widget.setIconSize(QSize(16, 16))
 
     return widget

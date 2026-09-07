@@ -5,6 +5,7 @@ from pathlib import Path
 
 from src.browser.flow_browser_worker import FlowBrowserWorker
 from src.desktop.job_store import JsonJobStore
+from src.desktop.theme_preference_store import ThemePreferenceStore
 from src.entrypoint import build_production_runtime
 from src.providers.dry_run_thumbnail_image_provider import (
     DryRunThumbnailImageProvider,
@@ -79,6 +80,7 @@ THUMBNAIL_STORAGE_ROOT = Path("data/thumbnails")
 FINAL_EXPORT_STORAGE_ROOT = Path("data/final_exports")
 PROVIDER_PROFILE_STORAGE_PATH = Path("data/provider_profiles.json")
 PROJECTS_STORAGE_ROOT = Path("data/projects")
+THEME_PREFERENCE_STORAGE_PATH = Path("data/desktop_preferences.json")
 
 
 @lru_cache
@@ -467,3 +469,16 @@ def get_checkpoint_storage_service() -> PipelineCheckpointStorageService:
     return PipelineCheckpointStorageService(
         storage_root=CHECKPOINT_STORAGE_ROOT,
     )
+
+
+@lru_cache
+def get_theme_preference_store() -> ThemePreferenceStore:
+    """
+    Return the shared theme-preference store (GUI-1: Light/System
+    theme).
+
+    Backed by THEME_PREFERENCE_STORAGE_PATH, following the same
+    data/*.json local-storage convention as PROVIDER_PROFILE_STORAGE_PATH.
+    """
+
+    return ThemePreferenceStore(path=THEME_PREFERENCE_STORAGE_PATH)

@@ -4,6 +4,7 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
+from src.desktop import services
 from src.desktop.icons import app_icon
 from src.desktop.main_window import MainWindow
 from src.desktop.theme import apply_theme
@@ -16,7 +17,8 @@ def main() -> int:
     app.setApplicationName("Mission Automation")
     app.setWindowIcon(app_icon())
 
-    apply_theme(app)
+    theme_mode = services.get_theme_preference_store().load()
+    apply_theme(app, theme_mode)
 
     window = MainWindow()
     window.show()

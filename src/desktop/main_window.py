@@ -4,11 +4,12 @@ from uuid import UUID
 
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QMainWindow, QStackedWidget, QToolBar
+from PySide6.QtWidgets import QApplication, QMainWindow, QStackedWidget, QToolBar
 
 from src.desktop import services
 from src.desktop.icons import app_icon, primary_icon
 from src.desktop.job_store import JobStore
+from src.desktop.theme import ThemeMode, apply_theme
 from src.desktop.views.dashboard_view import DashboardView
 from src.desktop.views.google_flow_provider_panel_view import (
     GoogleFlowProviderPanelView,
@@ -83,6 +84,8 @@ class MainWindow(QMainWindow):
 
         self._settings_view = SettingsView(
             get_configuration=services.get_runtime_configuration,
+            get_theme_mode=services.get_theme_preference_store().load,
+            on_theme_mode_changed=self._handle_theme_mode_changed,
         )
 
         self._provider_manager_view = ProviderManagerView(
@@ -157,3 +160,22 @@ class MainWindow(QMainWindow):
     def _open_project(self, job_id: UUID) -> None:
         self._detail_view.set_job(job_id)
         self._stack.setCurrentWidget(self._detail_view)
+
+    def _handle_theme_mode_changed(self, mode: ThemeMode) -> None:
+        """
+        Persist and immediately apply a new theme preference (GUI-1).
+
+        `QApplication.instance()` is always non-None here - this
+        method only runs in response to a user interacting with an
+        already-constructed SettingsView, which requires a running
+        QApplication. apply_theme() re-colors the palette/stylesheet
+        live; icons only fully catch up after a restart, per its own
+        docstring - SettingsView's note text says so directly rather
+        than silently under-delivering.
+        """
+
+        services.get_theme_preference_store().save(mode)
+
+        app = QApplication.instance()
+        if isinstance(app, QApplication):
+            apply_theme(app, mode)
