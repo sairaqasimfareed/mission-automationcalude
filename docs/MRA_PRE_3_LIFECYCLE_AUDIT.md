@@ -118,12 +118,44 @@ via 2 new direct unit tests on `ScenePlannerAgent`
 in `tests/test_scene_planner_generated_script.py`) and by re-running
 the exact end-to-end regression tripwire above: the original "Estimated
 narration duration exceeds the scene duration" error is confirmed
-gone. **A separate, different, not-yet-diagnosed issue surfaced once
-this blocker was removed**: the same run now fails later, at asset
-acquisition, with "The selected stock footage could not be acquired."
-- out of scope for this fix, re-recorded as its own item in
-`docs/REMAINING_GAPS.md` with the `xfail` marker's reason updated to
-match (not silently left claiming the original, now-resolved reason).
+gone. **A separate, different issue surfaced once this blocker was
+removed**: the same run then failed later, at asset acquisition, with
+"The selected stock footage could not be acquired." Root cause: a
+content-intelligence-pipeline scene's stock-candidate title is built
+from the scene's full `visual_prompt` text (150-200+ characters), and
+`StockAssetStorageService._sanitize_filename()` never bounded length -
+combined with the project/scene path prefix this could exceed
+Windows' `MAX_PATH` (260 characters), making `shutil.move()` raise a
+real `OSError` (confirmed reproduction: a 194-character title produced
+a 278-character destination path). **Fixed, same day**: added
+`_MAX_SANITIZED_LENGTH = 80` to `_sanitize_filename()` in both
+`stock_asset_storage_service.py` and the identical latent pattern in
+`asset_storage_service.py` (manual uploads). Proven via a new,
+teeth-verified test,
+`test_a_long_title_still_produces_a_path_within_windows_max_path`.
+
+**A third, separate issue then surfaced once THAT blocker was
+removed**: the same run progressed through render successfully but
+then `PackagingView._handle_generate_seo()` produced no SEO package.
+Root cause: `SEOContextBuilder.build()` (shared by SEO and thumbnail
+generation) only ever checked the legacy `job.script` field -
+`ContentIntelligencePipeline` never populates it, only
+`job.generated_script`/`job.script_lock` - so it always raised
+`ValueError`, silently caught and recorded to `job.errors` rather than
+crashing. Worse: `PackagingView`'s own "Generate SEO package"/
+"Generate thumbnail" buttons were gated on the same legacy field, so
+the entire Packaging workspace was a dead end - not reachable through
+the real GUI at all - for every project the current, canonical
+pipeline produces. **Fixed, same day**: `SEOContextBuilder.build()`
+now accepts either provenance (legacy approved `job.script`, or
+`job.generated_script` + `job.script_lock` as that pipeline's own
+"approved and frozen" equivalent), and `PackagingView`'s gate was
+factored into a shared `_script_is_approved()` helper applying the
+same reconciliation. Proven via 2 new tests in
+`tests/test_seo_context_builder.py` and by the full end-to-end
+regression tripwire now reaching SEO, thumbnail, and final export with
+zero errors - see MRA-PRE-3-005 below.
+
 Incidentally found and worth recording separately: `VoiceDirectiveValidationService`
 uses its own `DEFAULT_WORDS_PER_MINUTE = 150.0` (2.5 words/sec) while
 `NarrationTimingService.WORDS_PER_SECOND = 2.3` (138 wpm) - two
@@ -166,52 +198,117 @@ disclosure pass (telling the user which policy actually governed a
 given scene's source), but not itself a defect - not actioned in this
 phase.
 
+### MRA-PRE-3-005: SEO/thumbnail generation unreachable for a ContentIntelligencePipeline project
+
+**Claim under test**: once render succeeds, the same project can reach
+SEO package generation, thumbnail generation, and final export through
+the real GUI.
+**Method**: continued the same real run from MRA-PRE-3-003 (post-fix)
+into `PackagingView._handle_generate_seo()`, with full diagnostic
+capture of the actual result (not assumed).
+**Evidence**: `window._job_store.get_seo_package(job.id)` returned
+`None` after the call - no exception surfaced to the test, because
+`PackagingView._handle_generate_seo()` catches `ValueError`/
+`RuntimeError` and records it to `job.errors` rather than raising.
+Traced to the real source: `SEOContextBuilder.build()` (shared by both
+SEO and thumbnail generation) unconditionally required `job.script is
+not None`, a field `ContentIntelligencePipeline` never populates (it
+only ever writes `job.generated_script` + `job.script_lock`) - so the
+build always raised `ValueError("SEO context requires a VideoJob with
+a script.")`. A second, more severe instance of the same defect:
+`PackagingView`'s own `script_approved` gate for both the SEO card and
+the thumbnail card checked the identical legacy field directly, so
+both "Generate" buttons stayed permanently hidden behind "Requires an
+approved script." for this pipeline - not merely an SEO data gap but a
+whole-workspace dead end, unreachable through the real GUI at all, for
+every project the pipeline real projects actually use produces.
+**Verdict**: GAP FOUND (severity: **major** - same authority-drift
+shape MRA-PRE-1 already found in the genre/editorial-profile-snapshot
+finding, here blocking an entire workspace rather than one field) -
+**fixed same day**. `SEOContextBuilder.build()` now accepts either
+provenance: legacy approved `job.script`, or `job.generated_script` +
+`job.script_lock` (Script Lock is that pipeline's own hard "approved
+and frozen" boundary - the direct structural equivalent of
+`ScriptStatus.APPROVED` on the legacy field), deriving
+`script_title`/`script_content`/`estimated_duration_seconds` from
+`job.topic`/`GeneratedScript.full_narration`/
+`target_duration_seconds` respectively. `PackagingView`'s duplicated
+gate was factored into one shared `_script_is_approved()` helper
+applying the same reconciliation. Proven via 2 new tests in
+`tests/test_seo_context_builder.py`
+(`test_build_returns_seo_context_for_a_content_intelligence_pipeline_job`,
+`test_build_raises_for_an_unlocked_content_intelligence_pipeline_script`),
+each verified to genuinely fail without the fix (teeth-checked via a
+temporary revert-and-restore), and by re-running the full end-to-end
+regression tripwire: it now passes completely, with no `xfail` marker
+remaining.
+
 ## Summary
 
 | # | Area | Verdict |
 |---|---|---|
-| 001 | Plan's own objective, never previously proven | GAP FOUND - addressed by 002/003 |
+| 001 | Plan's own objective, never previously proven | GAP FOUND - addressed by 002/003/005 |
 | 002 | Script approval through scene planning | CONFIRMED - new green test |
-| 003 | Scene duration vs. narration length at render | GAP FOUND (major) - **fixed same day**, proven by 2 new unit tests + the original xfail tripwire now passing that specific check; a separate, different, not-yet-diagnosed asset-acquisition issue surfaced once this was removed (re-recorded in `docs/REMAINING_GAPS.md`, not this finding) |
+| 003 | Scene duration vs. narration length at render | GAP FOUND (major) - **fixed same day**, proven by 2 new unit tests |
 | 004 | Genre-driven scene source type | CONFIRMED intentional (not a bug), disclosed |
+| 005 | SEO/thumbnail generation unreachable for the current pipeline | GAP FOUND (major) - **fixed same day**, proven by 2 new unit tests |
+
+Three real, distinct blockers were found and fixed while proving the
+plan's own "script approval through Phase 15" objective for the
+current, canonical pipeline: (1) scene duration never reconciled
+against narration length (003); (2) a long stock-candidate title could
+exceed Windows' `MAX_PATH` and fail asset acquisition (recorded in
+`docs/REMAINING_GAPS.md`, discovered here, not itself a lifecycle-
+authority finding so not numbered in this doc); (3) SEO/thumbnail
+generation - and the entire Packaging workspace GUI - unreachable for
+this pipeline (005). Each was found only because fixing the previous
+one let the same real end-to-end run advance far enough to hit the
+next one - exactly the layered-discovery process this audit's own
+"independently verify runtime truth" rule is meant to produce.
 
 ## Validation
 
-- `black`, `ruff check`, `mypy` on `tests/test_desktop_app_integration.py`:
-  clean (the file's 3 pre-existing, unrelated mypy findings confirmed
+- `black`, `ruff check`, `mypy` on every touched file (`seo_context_builder.py`,
+  `packaging_view.py`, `scene_planner/agent.py`,
+  `stock_asset_storage_service.py`, `asset_storage_service.py`,
+  `tests/test_desktop_app_integration.py`,
+  `tests/test_seo_context_builder.py`,
+  `tests/test_scene_planner_generated_script.py`,
+  `tests/test_stock_asset_storage_service.py`): clean (the integration
+  test file's 3 pre-existing, unrelated mypy findings confirmed
   unchanged, at shifted line numbers).
 - `test_content_intelligence_pipeline_reaches_script_lock_and_scene_planning`:
   PASSED.
 - `test_content_intelligence_pipeline_scenes_pass_voice_validation_at_render`:
-  XFAILED - **originally** for the scene-duration/narration-length
-  mismatch (now fixed and confirmed gone from this run's own error
-  output); **still** XFAILED, `strict=True`, now for the separate,
-  different asset-acquisition issue described in the update above -
-  the marker's reason was updated to match, not left describing a
-  resolved problem.
-- Full `test_desktop_app_integration.py` (14 cases): 12 passed + 1
-  xfailed (expected, for the new reason) + 1 confirmed-unrelated
-  pre-existing flake
-  (`test_render_progress_updates_live_and_survives_cross_workspace_refresh`,
-  already documented in `docs/GUI8_VALIDATION_REPORT.md`, reconfirmed
-  many times this session in isolation).
-- `tests/test_scene_planner_generated_script.py` (the fix's own direct
-  unit tests): 13 passed, including the 2 new ones proving the fix.
+  **PASSED, in full** - render, asset-decision resolution, SEO
+  generation, thumbnail generation, final export, quality-center
+  policy check, final-preview approval, and a genuinely fresh
+  restart-safety reload all confirmed. No `xfail` marker remains -
+  this is a real, permanent, green regression test, not a documented
+  gap.
+- `tests/test_seo_context_builder.py` (12 cases, including the 2 new
+  ones proving finding 005's fix): all passed.
+- `tests/test_scene_planner_generated_script.py` (14 cases, including
+  the 2 proving finding 003's fix): all passed.
+- `tests/test_stock_asset_storage_service.py` (the one pytest-
+  discoverable test, proving the MAX_PATH fix): passed.
+- Full `test_desktop_app_integration.py`: re-run after all three fixes
+  landed together to confirm no regressions (see this file's own
+  commit for the final count).
 
 ## Acceptance gate
 
 *"Canonical production chain is internally consistent and
-restart-safe."* **Partially met, honestly disclosed, not claimed
-falsely green.** Script approval through Script Lock through genre-
-aware scene planning is proven real, tested, and green for the
-current, canonical pipeline. The originally-found scene-duration/
-narration-length mismatch blocking the chain from reaching render is
-now **fixed and proven fixed**, same day. The chain from scene
-planning through Phase 15 is still **not** fully internally consistent
-for that same pipeline, for a different, separate, not-yet-diagnosed
-reason (asset acquisition) found only once the first blocker was
-removed - recorded as its own item in `docs/REMAINING_GAPS.md` with
-its own tripwire test, per this audit's own "independently verify
-runtime truth" rule - not declared complete because a test merely
-exists, and not hidden to make this phase's own
-gate look cleaner than it is.
+restart-safe."* **Met, for the current, canonical pipeline - proven,
+not merely asserted.** Script approval through Script Lock through
+genre-aware scene planning through render through asset resolution
+through SEO/thumbnail generation through final export through quality-
+center policy check through final-preview approval through a genuinely
+fresh restart-safety reload is now a single, real, green, permanent
+regression test with zero `xfail` markers. Three real, distinct
+blockers were found and fixed in the course of reaching this state
+(003, the stock-acquisition MAX_PATH issue, 005) - each is documented
+above and in `docs/REMAINING_GAPS.md` with its own evidence, proof, and
+teeth-verified test, per this audit's own "independently verify
+runtime truth" rule. Not hidden, not rushed past, and not declared done
+before the runtime proof existed.

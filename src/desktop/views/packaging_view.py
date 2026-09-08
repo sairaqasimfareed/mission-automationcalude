@@ -40,6 +40,28 @@ from src.services.thumbnail.thumbnail_package_service import ThumbnailPackageSer
 _LEFT = Qt.AlignmentFlag.AlignLeft
 
 
+def _script_is_approved(job: VideoJob) -> bool:
+    """
+    Whether this project has a finalized script ready to feed SEO/
+    thumbnail generation.
+
+    MRA-PRE-3 (Pre-Installer Master Audit) finding: this used to check
+    only the legacy `job.script.status`, so both the SEO and thumbnail
+    cards permanently showed "Requires an approved script." for every
+    ContentIntelligencePipeline-produced project - that pipeline never
+    populates `job.script`, only `job.generated_script` + `job.script_lock`
+    once Script Lock happens. Script Lock is that pipeline's own hard
+    "approved and frozen" boundary (see src/models/script_lock.py), the
+    direct equivalent of `ScriptStatus.APPROVED` on the legacy field -
+    mirrors the same reconciliation SEOContextBuilder.build() now does.
+    """
+
+    if job.generated_script is not None:
+        return job.script_lock is not None
+
+    return job.script is not None and job.script.status.value == "approved"
+
+
 class _PackageProvenance(Protocol):
     """
     The dependency-tracking fields SEOPackage and ThumbnailArtifact
@@ -126,9 +148,7 @@ class PackagingView(QWidget):
 
         seo_package = self._job_store.get_seo_package(self._job_id)
 
-        script_approved = job.script is not None and job.script.status.value == (
-            "approved"
-        )
+        script_approved = _script_is_approved(job)
 
         if seo_package is not None:
             layout.addWidget(subheading(seo_package.selected_title or ""))
@@ -187,9 +207,7 @@ class PackagingView(QWidget):
 
         thumbnail = self._job_store.get_thumbnail(self._job_id)
 
-        script_approved = job.script is not None and job.script.status.value == (
-            "approved"
-        )
+        script_approved = _script_is_approved(job)
 
         if thumbnail is not None:
             layout.addWidget(subheading(thumbnail.concept.hook_text))

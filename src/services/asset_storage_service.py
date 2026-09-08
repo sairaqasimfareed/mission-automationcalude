@@ -15,6 +15,15 @@ from src.models.asset_index import (
 )
 from src.models.base import MissionBaseModel
 
+# Caps the sanitized-stem portion of a generated filename - matches
+# StockAssetStorageService's own identical fix (see that module's
+# _sanitize_filename() docstring for the confirmed reproduction of
+# what an unbounded filename component can do to Windows' MAX_PATH).
+# Lower real-world risk here (an uploaded file's own stem is usually
+# already reasonably short), but the same latent failure mode, fixed
+# the same way for consistency.
+_MAX_SANITIZED_LENGTH = 80
+
 
 class AssetStorageResult(MissionBaseModel):
     """Result returned after storing or reusing an asset."""
@@ -264,14 +273,17 @@ class AssetStorageService:
     def _sanitize_filename(
         value: str,
     ) -> str:
-        """Create a safe filename stem."""
+        """Create a safe filename stem, length-capped - see this
+        module's own `_MAX_SANITIZED_LENGTH` docstring."""
 
         safe_value = "".join(
             character if character.isalnum() or character in {"-", "_"} else "_"
             for character in value.strip()
         )
 
-        return safe_value.strip("_") or "asset"
+        truncated = safe_value[:_MAX_SANITIZED_LENGTH]
+
+        return truncated.strip("_") or "asset"
 
     @staticmethod
     def _build_title(

@@ -17,6 +17,14 @@ from src.services.stock_download_service import (
     StockDownloadResult,
 )
 
+# Caps the sanitized-title portion of a generated filename - a title
+# built from a scene's full visual_prompt text can run 150-200+
+# characters, which combined with the project/scene path prefix can
+# exceed Windows' MAX_PATH (260 characters) and make shutil.move()
+# fail with a real OSError. See _sanitize_filename()'s own docstring
+# for the confirmed reproduction.
+_MAX_SANITIZED_LENGTH = 80
+
 
 class StockAssetStorageResult(MissionBaseModel):
     """Result returned after storing or reusing a stock asset."""
@@ -303,14 +311,34 @@ class StockAssetStorageService:
     def _sanitize_filename(
         value: str,
     ) -> str:
-        """Create a safe filename stem."""
+        """
+        Create a safe filename stem.
+
+        Real-world finding: a stock candidate's title is built from
+        the scene's own full visual_prompt text (beat descriptor +
+        narration + style suffix) for a content-intelligence-pipeline
+        project - routinely 150-200+ characters, unlike a short
+        per-sentence legacy title. Character-safety alone (replacing
+        unsafe characters) doesn't bound length, so an unbounded title
+        combined with the project/scene path prefix could exceed
+        Windows' MAX_PATH (260 characters), making `shutil.move()`
+        fail with a real OSError - confirmed via an actual reproduction
+        (a 194-character title produced a 278-character destination
+        path). `_MAX_SANITIZED_LENGTH` caps this the same way any
+        filename generated from arbitrary title text should be capped
+        regardless of platform limits - a 200-character filename is
+        impractical to read even where the OS would technically accept
+        it.
+        """
 
         safe_value = "".join(
             character if (character.isalnum() or character in {"-", "_"}) else "_"
             for character in value.strip()
         )
 
-        return safe_value.strip("_") or "stock_asset"
+        truncated = safe_value[:_MAX_SANITIZED_LENGTH]
+
+        return truncated.strip("_") or "stock_asset"
 
     @staticmethod
     def _clean_tags(

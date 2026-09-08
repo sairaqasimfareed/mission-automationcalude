@@ -123,16 +123,43 @@ class SEOContextBuilder:
         control.
         """
 
-        if job.script is None:
+        # MRA-PRE-3 (Pre-Installer Master Audit) finding: this builder
+        # only ever checked the legacy `job.script` field, so it always
+        # raised for a ContentIntelligencePipeline-produced project -
+        # that pipeline never populates `job.script`, only
+        # `job.generated_script` (+ `job.script_lock` once locked).
+        # Same authority-drift shape MRA-PRE-1 already found elsewhere
+        # and the same reconciliation VideoJob.validate_workflow_state
+        # already applies to its own `scenes` check (see that
+        # validator's own comment) - accept either provenance rather
+        # than only the older one.
+        if job.generated_script is not None:
+            if job.script_lock is None:
+                raise ValueError(
+                    "SEO context requires a locked script for a "
+                    "content-intelligence-pipeline project."
+                )
+
+            if job.research is None:
+                raise ValueError("SEO context requires a VideoJob with research.")
+
+            script_title = job.topic
+            script_content = job.generated_script.full_narration
+            estimated_duration_seconds = job.generated_script.target_duration_seconds
+        elif job.script is not None:
+            if job.script.status != ScriptStatus.APPROVED:
+                raise ValueError("SEO context requires an approved script.")
+
+            # VideoJob's own validator guarantees research is present
+            # and approved whenever the legacy script field is
+            # present, so no separate check is needed on this branch.
+            assert job.research is not None
+
+            script_title = job.script.title
+            script_content = job.script.content
+            estimated_duration_seconds = job.script.estimated_duration_seconds
+        else:
             raise ValueError("SEO context requires a VideoJob with a script.")
-
-        if job.script.status != ScriptStatus.APPROVED:
-            raise ValueError("SEO context requires an approved script.")
-
-        # VideoJob's own validator guarantees research is present and
-        # approved whenever script is present, so no separate check
-        # is needed here.
-        assert job.research is not None
 
         resolved_target_audience = (target_audience or "").strip() or (
             job.audience_promise.target_audience
@@ -170,12 +197,12 @@ class SEOContextBuilder:
             language=job.language,
             language_code=language_code,
             platform=job.platform,
-            script_title=job.script.title,
-            script_content=job.script.content,
+            script_title=script_title,
+            script_content=script_content,
             research_summary=job.research.research_summary,
             key_facts=list(job.research.key_facts),
             scene_count=len(job.scenes),
-            estimated_duration_seconds=(job.script.estimated_duration_seconds),
+            estimated_duration_seconds=estimated_duration_seconds,
             script_lock_hash=(
                 job.script_lock.script_content_hash
                 if job.script_lock is not None

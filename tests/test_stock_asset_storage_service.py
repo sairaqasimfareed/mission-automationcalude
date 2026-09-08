@@ -181,4 +181,75 @@ with TemporaryDirectory() as temporary_directory:
     assert failed_storage_result.asset is None
 
 
+def test_a_long_title_still_produces_a_path_within_windows_max_path() -> None:
+    """
+    Real-world finding (surfaced while investigating a stock-
+    acquisition failure blocking MRA-PRE-3's own end-to-end lifecycle
+    test, Pre-Installer Master Audit): a content-intelligence-pipeline
+    scene's candidate title is built from the scene's full
+    visual_prompt text (beat descriptor + narration + style suffix) -
+    confirmed to run 150-200+ characters in real dry-run output, unlike
+    a legacy pipeline's short per-sentence title.
+    _sanitize_filename() replaced unsafe characters but never bounded
+    length, so a long title combined with the project/scene path
+    prefix could exceed Windows' MAX_PATH (260 characters) - a real
+    reproduction hit 278 characters and shutil.move() failed with a
+    genuine OSError, surfacing to the operator as "The selected stock
+    footage could not be acquired." with no indication length was the
+    real cause. Fixed by capping the sanitized title at
+    `_MAX_SANITIZED_LENGTH` (80) characters - this proves storage
+    genuinely succeeds now for a title this long, not just that the
+    resulting string is shorter.
+    """
+
+    with TemporaryDirectory() as temporary_directory:
+        root = Path(temporary_directory)
+        temporary_download_directory = root / "downloads"
+        temporary_download_directory.mkdir(parents=True)
+
+        downloaded_file = temporary_download_directory / "downloaded_stock.mp4"
+        file_content = b"stock-video-content"
+        downloaded_file.write_bytes(file_content)
+
+        download_result = StockDownloadResult(
+            success=True,
+            source_url="https://example.com/downloaded_stock.mp4",
+            temporary_file_path=str(downloaded_file),
+            content_hash=hashlib.sha256(file_content).hexdigest(),
+            file_size_bytes=len(file_content),
+            content_type="video/mp4",
+            message="Stock asset downloaded successfully.",
+        )
+
+        storage_service = StockAssetStorageService(
+            storage_root=root / "projects",
+            asset_index=AssetIndex(),
+        )
+
+        # A real, observed content-intelligence-pipeline title shape -
+        # 194 characters, the exact length that reproduced the bug.
+        long_title = (
+            "A striking, attention-grabbing opening image for: "
+            "Dry-run narration for segment 1, development and testing "
+            "purposes only. Ultra realistic, cinematic lighting, "
+            "volumetric atmosphere, high detail."
+        )
+        assert len(long_title) > 150
+
+        result = storage_service.store_downloaded_video(
+            download_result=download_result,
+            project_id="documentary-project",
+            scene_number=1,
+            title=long_title,
+            provider_name="Dry Run Stock",
+        )
+
+        assert result.success is True
+        assert result.asset is not None
+
+        stored_path = Path(result.asset.file_path).resolve()
+        assert stored_path.exists()
+        assert len(str(stored_path)) < 260
+
+
 print("Stock Asset Storage Service tests " "completed successfully.")

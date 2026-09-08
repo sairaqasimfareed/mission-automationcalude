@@ -4,10 +4,12 @@ import pytest
 
 from src.models.audience_promise import AudiencePromise, PromiseStrength
 from src.models.enums import Platform
+from src.models.generated_script import GeneratedScript, ScriptSegment
 from src.models.research import ResearchResult, ResearchStatus
 from src.models.scene import Scene
 from src.models.script import Script, ScriptStatus
 from src.models.script_lock import ScriptLock, ScriptProvenance
+from src.models.story_blueprint import StoryBeatType
 from src.models.video_job import VideoJob
 from src.models.visual_continuity import (
     CanonicalEntityIdentity,
@@ -90,6 +92,116 @@ def _job_with_approved_script(
         script=script,
         scenes=scenes,
     )
+
+
+def _generated_script() -> GeneratedScript:
+    return GeneratedScript(
+        topic="Deep sea creatures",
+        genre_id="genre.documentary",
+        target_duration_seconds=600,
+        prompt_version="script_generation_prompt_v1.0.0",
+        segments=[
+            ScriptSegment(
+                segment_number=1,
+                start_seconds=0.0,
+                end_seconds=10.0,
+                narrative_function=StoryBeatType.HOOK,
+                narration="What lives in the deepest trenches?",
+                tension_level=40,
+            ),
+            ScriptSegment(
+                segment_number=2,
+                start_seconds=10.0,
+                end_seconds=30.0,
+                narrative_function=StoryBeatType.REVEAL,
+                narration="Creatures no sunlight has ever touched.",
+                tension_level=70,
+            ),
+        ],
+    )
+
+
+def _job_with_locked_generated_script(*, scene_count: int = 0) -> VideoJob:
+    """
+    A ContentIntelligencePipeline-shaped job - `job.script` deliberately
+    stays None (that pipeline never populates it), matching real runs.
+    """
+
+    research = _approved_research()
+    generated_script = _generated_script()
+
+    scenes = [
+        Scene(
+            scene_number=index + 1,
+            title=f"Scene {index + 1}",
+            narration=f"Narration {index + 1}",
+            visual_prompt=f"Visual prompt {index + 1}",
+            estimated_duration_seconds=30,
+        )
+        for index in range(scene_count)
+    ]
+
+    return VideoJob(
+        project_name="Deep Sea Documentary",
+        channel_name="Ocean Channel",
+        niche="ocean-life",
+        topic="Deep sea creatures",
+        platform=Platform.YOUTUBE,
+        language="English",
+        target_country="United States",
+        research=research,
+        generated_script=generated_script,
+        script_lock=ScriptLock(
+            script_version_number=1,
+            script_content_hash=generated_script.content_hash,
+            provenance=ScriptProvenance.INTERNAL,
+            topic="Deep sea creatures",
+            target_duration_seconds=600,
+            genre_id="genre.documentary",
+        ),
+        scenes=scenes,
+    )
+
+
+def test_build_returns_seo_context_for_a_content_intelligence_pipeline_job() -> None:
+    """
+    MRA-PRE-3 (Pre-Installer Master Audit) finding: build() used to
+    check only the legacy `job.script` field and always raised for a
+    ContentIntelligencePipeline-produced project, which never
+    populates it - blocking SEO/thumbnail generation for every real
+    project (MRA-PRE-1 already confirmed this is the pipeline real
+    projects use). This proves the fix: build() now succeeds from
+    `job.generated_script` + `job.script_lock` alone.
+    """
+
+    job = _job_with_locked_generated_script(scene_count=2)
+
+    context = SEOContextBuilder().build(
+        job,
+        genre_id="genre.documentary",
+        target_audience="Ocean enthusiasts",
+    )
+
+    assert context.script_title == "Deep sea creatures"
+    assert context.script_content == (
+        "What lives in the deepest trenches? " "Creatures no sunlight has ever touched."
+    )
+    assert context.estimated_duration_seconds == 600
+    assert context.scene_count == 2
+    assert context.script_lock_hash == job.script_lock.script_content_hash
+    assert context.script_lock_version_number == 1
+
+
+def test_build_raises_for_an_unlocked_content_intelligence_pipeline_script() -> None:
+    job = _job_with_locked_generated_script()
+    job.script_lock = None
+
+    with pytest.raises(ValueError, match="requires a locked script"):
+        SEOContextBuilder().build(
+            job,
+            genre_id="genre.documentary",
+            target_audience="Ocean enthusiasts",
+        )
 
 
 def test_build_returns_seo_context_with_expected_fields() -> None:

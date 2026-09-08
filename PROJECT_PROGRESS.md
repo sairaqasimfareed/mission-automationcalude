@@ -5,6 +5,24 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-08 - MRA-PRE-3: three same-day fixes complete the canonical chain
+
+Continuing MRA-PRE-3's own end-to-end verification effort (see the entry below): fixing each blocker let the same real run advance far enough to hit the next one, three times in a row, until the full chain genuinely passed.
+
+**Fix 1: scene duration vs. narration length.** `ScenePlannerAgent._subdivide_segment()` now sizes each sub-scene as the larger of (a) a proportional share of the segment's time budget weighted by that sub-scene's own estimated narration length (via `NarrationTimingService`, reused rather than a second speech-rate constant), or (b) that sub-scene's own actual required narration duration - a hard floor. Proven by 2 new unit tests on `ScenePlannerAgent`.
+
+**Fix 2: stock footage acquisition failing on Windows.** A content-intelligence-pipeline scene's stock-candidate title is built from the scene's full `visual_prompt` text (150-200+ characters) - `StockAssetStorageService._sanitize_filename()` never bounded length, so combined with the project/scene path prefix this could exceed Windows' `MAX_PATH` (260 characters), making `shutil.move()` raise a real `OSError` (confirmed reproduction: 194 characters in, 278-character destination path out). Fixed by adding a length cap (`_MAX_SANITIZED_LENGTH = 80`) in both `stock_asset_storage_service.py` and the identical latent pattern in `asset_storage_service.py` (manual uploads). Proven by a new, teeth-verified test.
+
+**Fix 3: SEO/thumbnail generation - and the entire Packaging workspace - unreachable.** The most consequential of the three: `SEOContextBuilder.build()` (shared by both SEO and thumbnail generation) only ever checked the legacy `job.script` field, which `ContentIntelligencePipeline` never populates - it always raised, silently caught and recorded to `job.errors`. Worse, `PackagingView`'s own "Generate SEO package"/"Generate thumbnail" buttons checked the same legacy field directly, so both stayed permanently hidden behind "Requires an approved script." for every project the current, canonical pipeline (the one MRA-PRE-1 already confirmed every new project actually uses) produces - not an SEO-specific bug, a whole-workspace dead end. Fixed by making `SEOContextBuilder.build()` accept either provenance (legacy approved script, or `job.generated_script` + `job.script_lock` as that pipeline's own "approved and frozen" equivalent) and factoring `PackagingView`'s gate into one shared, correctly-reconciled helper. Proven by 2 new unit tests, each verified to genuinely fail without the fix.
+
+**Result**: `test_content_intelligence_pipeline_scenes_pass_voice_validation_at_render` - the full render through SEO through thumbnail through final export through quality-center through final-preview-approval through restart-safety-reload chain - now passes completely, in full, with zero `xfail` markers remaining. This is the first time the plan's own literal objective ("script approval through Phase 15") has been proven end to end for the pipeline real projects actually use.
+
+**Tests**: 2 new tests in `tests/test_scene_planner_generated_script.py` (fix 1), 1 new test in `tests/test_stock_asset_storage_service.py` (fix 2), 2 new tests in `tests/test_seo_context_builder.py` (fix 3) - all teeth-verified. Full `test_desktop_app_integration.py` re-run clean after all three fixes landed together. mypy/ruff/black clean on every touched file.
+
+**Deliverable**: `docs/MRA_PRE_3_LIFECYCLE_AUDIT.md` updated with findings 003 (updated) and 005 (new), plus a rewritten summary/validation/acceptance-gate section - the phase's acceptance gate is now honestly reported as **met**, not merely partially met, backed by the runtime proof rather than asserted.
+
+---
+
 ## 2026-09-08 - MRA-PRE-3: Canonical lifecycle audit (Pre-Installer Master Audit)
 
 Traced a real project from script approval through Phase 15, per the plan's own literal objective.

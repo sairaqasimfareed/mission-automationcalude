@@ -469,20 +469,61 @@ that file's audio-regeneration row.
       "Estimated narration duration exceeds the scene duration" error
       no longer occurs.
 
-## Follow-on finding: stock footage acquisition fails for a ContentIntelligencePipeline project at render
+## Follow-on finding: stock footage acquisition fails for a ContentIntelligencePipeline project at render (Done)
 
-- [ ] Discovered while confirming the scene-duration fix above: once
+- [x] Discovered while confirming the scene-duration fix above: once
       that blocker was removed, the same end-to-end run
       (`test_content_intelligence_pipeline_scenes_pass_voice_validation_at_render`)
-      progresses further but then fails at asset acquisition with
-      "The selected stock footage could not be acquired." - a
-      genuinely separate, not-yet-diagnosed issue, distinct from the
-      scene-duration bug. The test is marked
-      `@pytest.mark.xfail(strict=True, ...)` again with this new,
-      accurate reason (not the original one, which is resolved) - it
-      will fail the suite the moment this is fixed and the marker
-      isn't removed. Not diagnosed further yet - out of scope for the
-      scene-duration fix this was found while verifying.
+      progressed further but then failed at asset acquisition with
+      "The selected stock footage could not be acquired." Root cause:
+      a content-intelligence-pipeline scene's stock-candidate title is
+      built from the scene's full `visual_prompt` text (150-200+
+      characters), and `StockAssetStorageService._sanitize_filename()`
+      never bounded length - combined with the project/scene path
+      prefix this could exceed Windows' `MAX_PATH` (260 characters),
+      making `shutil.move()` raise a real `OSError` (confirmed
+      reproduction: a 194-character title produced a 278-character
+      destination path). Fixed by adding `_MAX_SANITIZED_LENGTH = 80`
+      to `_sanitize_filename()` in `stock_asset_storage_service.py`,
+      and the identical latent pattern in `asset_storage_service.py`
+      (manual uploads, lower real-world risk but same failure mode).
+      Proven via a new, teeth-verified test,
+      `test_a_long_title_still_produces_a_path_within_windows_max_path`
+      in `tests/test_stock_asset_storage_service.py`.
+
+## Follow-on finding: SEO/thumbnail generation unreachable for a ContentIntelligencePipeline project (Done)
+
+- [x] Discovered immediately after the stock-footage fix above, in the
+      same end-to-end run: render now succeeded, but
+      `workspace.packaging._handle_generate_seo(...)` returned no
+      package (`window._job_store.get_seo_package(job.id) is None`).
+      Root cause: `SEOContextBuilder.build()` (shared by both SEO and
+      thumbnail generation) only ever checked the legacy `job.script`
+      field - `ContentIntelligencePipeline` never populates it, only
+      `job.generated_script` (+ `job.script_lock` once locked) - so it
+      unconditionally raised `ValueError`, caught and recorded to
+      `job.errors` by `PackagingView._handle_generate_seo()`/
+      `_handle_generate_thumbnail()`, never surfaced as a crash. Worse,
+      **the Packaging workspace's own "Generate SEO package"/"Generate
+      thumbnail" buttons were permanently hidden** behind "Requires an
+      approved script." for every such project, since
+      `PackagingView`'s own `script_approved` gate checked the same
+      legacy field directly - not just an SEO-specific bug but a
+      whole-workspace dead end for the pipeline real projects use
+      (MRA-PRE-1 already confirmed this). Fixed by making
+      `SEOContextBuilder.build()` accept either provenance (deriving
+      `script_title`/`script_content`/`estimated_duration_seconds`
+      from `job.generated_script.full_narration` and
+      `target_duration_seconds` when present, requiring
+      `job.script_lock is not None` as that pipeline's own "approved
+      and frozen" equivalent), and factoring `PackagingView`'s gate
+      into a shared `_script_is_approved()` helper with the same
+      reconciliation. Proven via 2 new tests in
+      `tests/test_seo_context_builder.py`
+      (`test_build_returns_seo_context_for_a_content_intelligence_pipeline_job`,
+      `test_build_raises_for_an_unlocked_content_intelligence_pipeline_script`)
+      and by the full end-to-end regression tripwire now reaching SEO,
+      thumbnail, and final export with zero errors.
 
 ## Explicitly out of scope
 

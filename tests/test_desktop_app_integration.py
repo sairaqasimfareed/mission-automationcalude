@@ -618,32 +618,14 @@ def test_content_intelligence_pipeline_reaches_script_lock_and_scene_planning(
     assert job.scenes
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "The ORIGINAL MRA-PRE-3 finding this test's docstring names "
-        "(ScenePlannerAgent scene duration not reconciled against "
-        "narration length) is CONFIRMED FIXED - the exact 'Estimated "
-        "narration duration exceeds the scene duration' error is gone "
-        "from this run, and 2 new direct unit tests on ScenePlannerAgent "
-        "(test_scene_planner_generated_script.py) independently prove "
-        "the fix. Left xfail because removing that blocker surfaced a "
-        "SEPARATE, different, not-yet-diagnosed one: render now fails "
-        "later, at asset acquisition, with 'The selected stock footage "
-        "could not be acquired.' - a real but distinct issue, out of "
-        "scope for the duration fix this test was originally written "
-        "to prove. Diagnosing/fixing that is tracked as its own future "
-        "item, not folded into this marker's original reason."
-    ),
-)
 def test_content_intelligence_pipeline_scenes_pass_voice_validation_at_render(
     qapp: QApplication,
     no_blocking_dialogs: None,
 ) -> None:
     """
-    The second half of MRA-PRE-3's own objective: proves the SAME
-    render -> asset-decision resolution -> SEO -> thumbnail -> final
-    export -> final preview sequence
+    The second half of MRA-PRE-3's own objective, now real: proves the
+    SAME render -> asset-decision resolution -> SEO -> thumbnail ->
+    final export -> final preview sequence
     test_full_pipeline_reaches_final_export already proves for the
     legacy pipeline also works for scenes the CURRENT, canonical
     pipeline produced - and that every accepted artifact reloads
@@ -651,12 +633,26 @@ def test_content_intelligence_pipeline_scenes_pass_voice_validation_at_render(
     restart-safety requirement), not just the in-memory object this
     test mutates throughout.
 
-    The ORIGINAL blocker this test was written to prove
-    (docs/MRA_PRE_3_LIFECYCLE_AUDIT.md: ScenePlannerAgent sizing scenes
-    from genre density alone, with no reconciliation against actual
-    narration length) is fixed - see ScenePlannerAgent._subdivide_segment()'s
-    own docstring. This test still xfails, now for a different,
-    separate reason - see the marker above.
+    Three real blockers were found and fixed while getting this test to
+    pass (docs/MRA_PRE_3_LIFECYCLE_AUDIT.md): (1) ScenePlannerAgent
+    sized scenes from genre density alone, with no reconciliation
+    against actual narration length - fixed in
+    ScenePlannerAgent._subdivide_segment(); (2) a stock candidate's
+    long, content-intelligence-pipeline-style title could produce a
+    destination path exceeding Windows' MAX_PATH, making the acquired
+    asset's move into project storage fail - fixed in
+    StockAssetStorageService._sanitize_filename() (length-capped, see
+    that module's own docstring); (3) SEOContextBuilder.build() (shared
+    by both SEO and thumbnail generation) only ever checked the legacy
+    `job.script` field, so it unconditionally raised - and the
+    Packaging workspace's own "Generate SEO package"/"Generate
+    thumbnail" buttons stayed permanently hidden behind "Requires an
+    approved script." - for every ContentIntelligencePipeline-produced
+    project, which never populates that field. Fixed in
+    SEOContextBuilder.build() and packaging_view._script_is_approved()
+    to accept either the legacy approved script or the new pipeline's
+    own Script Lock. No xfail marker remains - this test is the proof
+    all three are genuinely resolved.
     """
 
     window = MainWindow(job_store=InMemoryJobStore())
