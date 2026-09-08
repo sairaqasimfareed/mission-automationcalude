@@ -5,6 +5,22 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-08 - MRA-PRE-8: Performance and stability baseline (Pre-Installer Master Audit)
+
+Established the first real, directly-measured performance/stability baseline for this codebase - no deliberate stress/stability pass existed before this phase.
+
+**A real stress test, run twice, real numbers recorded**: the same `ContentIntelligencePipeline` chain MRA-PRE-3 already proved at the standard 600-second (10-minute) project fixture was run again at 3600 seconds (1 hour) - 6x longer - in the same process. Real, directly-observed timing: baseline **6.0s**, stress **2.4s** - no pathological slowdown at all (the stress run was, if anything, faster - ordinary variance, both comfortably fast). `job.target_duration_seconds` correctly carried 600 and 3600 respectively, confirming the input propagates correctly at scale.
+
+**A genuine, disclosed finding along the way, not a defect**: scene *count* did not scale with duration in either run - both produced exactly 4 identical scenes with identical timings. Traced precisely to `StoryBlueprintGenerationService._DRY_RUN_RESPONSE`, a fixed, hardcoded 4-beat, 0-30-second stub completely independent of the requested duration. That class's own docstring confirms this is intentional ("beat sequence, count, and timing are entirely decided by the LLM call" - the real, non-dry-run call would scale; the fixed stub used for all local/CI testing deliberately doesn't). This is a genuine boundary of what dry-run-mode testing can verify about production-scale duration behavior, consistent with this project's own standing "no real API keys" limitation - recorded honestly rather than glossed over with an assertion that would have silently passed for the wrong reason.
+
+**The known full-suite pytest hang re-confirmed, not re-diagnosed**: a fresh full `pytest tests/ --collect-only` collected 2449 tests (up from GUI-8's own 2,389 at an earlier HEAD - consistent with this session's own new tests) with zero collection errors - the suite's static shape stays healthy; only the already-documented full-*run* hang (GUI-8's own domain, carried into MRA-PRE-9's certification gate) remains open, re-confirmed still present rather than silently assumed resolved by this session's other work.
+
+**Tests**: 1 new test in `test_desktop_app_integration.py`, plus a purely-additive optional `duration_seconds` keyword added to two shared test helpers (confirmed not to change any existing caller's behavior via a passing re-run of the pre-existing baseline test). black/ruff clean.
+
+**Deliverable**: `docs/MRA_PRE_8_PERFORMANCE_STABILITY_BASELINE.md` - 2 findings in the defined evidence format. Live-provider load/latency/rate-limit behavior remains untested (no real API keys), honestly disclosed as out of reach for this phase.
+
+---
+
 ## 2026-09-08 - MRA-PRE-7: GUI and operator workflow audit (Pre-Installer Master Audit)
 
 Targeted the two concrete, already-diagnosed carry-forwards from MRA-PRE-2 rather than re-auditing GUI-0/1/6/8 from scratch, which this phase overlaps heavily with.
