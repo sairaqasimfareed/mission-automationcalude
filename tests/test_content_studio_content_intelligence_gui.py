@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from src.desktop.job_store import InMemoryJobStore  # noqa: E402
 from src.desktop.views.content_studio_view import (  # noqa: E402
     _CI_STAGES,
+    _GENRE_IDS,
     ContentStudioView,
 )
 from src.models.approval import ApprovalPolicyConfig  # noqa: E402
@@ -429,6 +430,117 @@ def test_run_audience_promise_stage_populates_job(qapp: QApplication) -> None:
 
     assert job.audience_promise is not None
     assert job.editorial_profile_snapshot is not None
+
+
+def _settings_widgets(
+    *, genre_id: str, platform: str = "youtube", approval_mode: str = "Custom"
+) -> dict[str, object]:
+    """
+    Real widgets matching _handle_save_settings()'s own signature -
+    genre_select/platform_select/production_mode_select/
+    approval_mode_select/language_input/target_country_input - built
+    directly rather than through _build_settings_card(), since the
+    handler itself is what's under test here.
+    """
+
+    from PySide6.QtWidgets import QComboBox, QLineEdit
+
+    from src.desktop.approval_mode_labels import APPROVAL_MODE_PRESETS
+
+    genre_select = QComboBox()
+    genre_select.addItems(_GENRE_IDS)
+    genre_select.setCurrentText(genre_id)
+
+    platform_select = QComboBox()
+    platform_select.addItems(["youtube", "facebook", "tiktok"])
+    platform_select.setCurrentText(platform)
+
+    production_mode_select = QComboBox()
+    production_mode_select.addItems(["quick", "premium"])
+    production_mode_select.setCurrentText("quick")
+
+    approval_mode_select = QComboBox()
+    approval_mode_select.addItems(list(APPROVAL_MODE_PRESETS))
+    if approval_mode in APPROVAL_MODE_PRESETS:
+        approval_mode_select.setCurrentText(approval_mode)
+
+    return {
+        "genre_select": genre_select,
+        "platform_select": platform_select,
+        "production_mode_select": production_mode_select,
+        "approval_mode_select": approval_mode_select,
+        "language_input": QLineEdit("English"),
+        "target_country_input": QLineEdit("United States"),
+    }
+
+
+def test_changing_genre_in_settings_invalidates_the_stale_editorial_profile(
+    qapp: QApplication,
+) -> None:
+    """
+    MRA-PRE-1 (Pre-Installer Master Audit, authority audit) real
+    finding: job.editorial_profile_snapshot used to keep pointing at
+    the OLD genre's resolved profile after a genre change in Settings,
+    because every content-intelligence stage's own
+    "editorial_profile_snapshot or (resolve fresh)" pattern prefers an
+    existing snapshot when one exists - job.genre_id and the actual
+    profile every downstream stage used could silently disagree.
+    """
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    assert job.genre_id == "genre.mystery"
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    # A stage has already run and locked in a profile for the ORIGINAL
+    # genre - this is the state a real, in-progress project would be
+    # in when someone later changes genre via Settings.
+    view._handle_run_ci_stage("audience_promise")
+    assert job.editorial_profile_snapshot is not None
+
+    view._handle_save_settings(
+        **_settings_widgets(genre_id="genre.horror")  # type: ignore[arg-type]
+    )
+
+    assert job.genre_id == "genre.horror"
+    assert job.editorial_profile_snapshot is None, (
+        "genre_id changed but the stale, wrong-genre profile snapshot "
+        "was not invalidated - a downstream stage would silently keep "
+        "using genre.mystery's profile despite genre_id now saying "
+        "genre.horror."
+    )
+
+
+def test_saving_settings_with_the_same_genre_does_not_invalidate_the_profile(
+    qapp: QApplication,
+) -> None:
+    """The other half of the same adversarial case: re-saving Settings
+    without actually changing genre must NOT needlessly discard an
+    already-resolved, still-correct profile snapshot."""
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    assert job.genre_id == "genre.mystery"
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view._handle_run_ci_stage("audience_promise")
+    snapshot_before = job.editorial_profile_snapshot
+    assert snapshot_before is not None
+
+    view._handle_save_settings(
+        **_settings_widgets(genre_id="genre.mystery")  # type: ignore[arg-type]
+    )
+
+    assert job.genre_id == "genre.mystery"
+    assert job.editorial_profile_snapshot is snapshot_before
 
 
 def test_review_is_a_noop_without_a_configured_reviewer(qapp: QApplication) -> None:

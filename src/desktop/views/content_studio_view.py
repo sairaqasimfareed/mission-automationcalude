@@ -4521,8 +4521,25 @@ class ContentStudioView(QWidget):
         if job is None:
             return
 
+        new_genre_id = genre_select.currentText()
+
         try:
-            job.genre_id = genre_select.currentText()
+            # MRA-PRE-1 (authority audit) finding: changing genre here
+            # used to leave job.editorial_profile_snapshot silently
+            # pointing at the OLD genre's resolved profile - every
+            # content-intelligence stage's own
+            # "editorial_profile_snapshot or (resolve fresh)" pattern
+            # prefers an existing snapshot when one exists, so a genre
+            # change made after any stage had already run would keep
+            # using the stale, wrong-genre profile while job.genre_id
+            # itself reported the new one. Clearing the snapshot here
+            # makes the next stage re-resolve fresh against the
+            # genre that is now actually current, restoring the single
+            # authority genre_id is supposed to be.
+            if new_genre_id != job.genre_id:
+                job.editorial_profile_snapshot = None
+
+            job.genre_id = new_genre_id
             job.platform = Platform(platform_select.currentText())
             job.production_mode = ProductionMode(production_mode_select.currentText())
             job.approval_policy = _APPROVAL_MODE_PRESETS[

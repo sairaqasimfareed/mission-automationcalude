@@ -5,6 +5,22 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-08 - MRA-PRE-1: Authority and architecture audit (Pre-Installer Master Audit)
+
+Audited every critical concept named by the plan for single-authority guarantees: Project, genre, audience, approval, Reviewer, Script Lock, Phase 0-15 artifacts, Brand, publishing/final package - each recorded in the evidence format defined in MRA-PRE-0 (claim/method/evidence/verdict).
+
+**A real bug found and fixed, not just recorded**: `content_studio_view.py`'s "Project settings" card lets a user change a project's genre at any point after creation, but doing so never invalidated `job.editorial_profile_snapshot` - every content-intelligence stage's own "use the existing snapshot if one exists, else resolve fresh" pattern (itself correct for a normal, unbroken run) meant a genre change made after any stage had already run would leave `job.genre_id` reporting the new genre while every downstream stage silently kept using the old genre's resolved profile. Fixed: `_handle_save_settings()` now clears the snapshot when the saved genre actually differs from the job's current one, so the next stage re-resolves against what's actually current. Two new adversarial tests prove both halves: changing genre invalidates the stale snapshot, and re-saving without an actual genre change does not needlessly discard a still-correct one.
+
+**One real, deliberate design tradeoff found and classified, not fixed**: `job.scenes` has two independent, GUI-reachable writers - the legacy `ContentPipeline`'s scene planner and the new `ContentIntelligencePipeline`'s - both reachable from the same live Content Studio screen for the same project. Confirmed this is a documented, deliberate "no destructive rewrite" tradeoff (a visible redirect notice already steers new projects to the current path), not an oversight, and the old path requires a specific multi-step sequence to even reach. Classified as a minor, non-blocking risk for a future GUI/UX pass rather than fixed here.
+
+**Everything else audited came back CONFIRMED, single-authority, no fix needed**: Project (`VideoJob` is the sole reloadable representation; `ProjectSpecification` is a documented one-shot creation-time DTO), audience (`target_audience` immutable post-creation, `audience_promise` has exactly one writer), approval (`ApprovalGateService` composes `ApprovalService` rather than duplicating it; zero ad-hoc confidence-threshold logic found anywhere else; Google Flow's Agent-mode gate reuses the same service directly), Reviewer (structurally cannot write `job.generated_script` - all five real write sites trace to legitimate producer/revision services inside one canonical orchestrator), Script Lock (a real hard blocker on unresolved quality findings/continuity ambiguities, correctly snapshots provenance rather than drifting), publishing/final package (exactly one repository method per artifact type, exactly one GUI call site for each, no service bypasses the store). Brand does not exist in this codebase at all - the plan's own "if enabled" hedge resolves to not-applicable.
+
+**Tests**: 2 new adversarial tests in `test_content_studio_content_intelligence_gui.py`. Full file re-run: 133 passed (including the 2 new ones), 0 failed. mypy/ruff/black clean on the touched source file (the file's one pre-existing, unrelated mypy finding confirmed unchanged).
+
+**Deliverable**: `docs/MRA_PRE_1_AUTHORITY_AUDIT.md` - all 9 findings in the defined evidence format, plus a summary table.
+
+---
+
 ## 2026-09-07 - MRA-PRE-0: Freeze and evidence capture (Pre-Installer Master Audit)
 
 Started the Pre-Installer Master Audit per `Step 5_Pre_Installer_Master_Audit_Plan.pdf` - a 10-phase (MRA-PRE-0 through MRA-PRE-9) whole-application audit that runs after feature work is complete and before installer packaging, explicitly freezing feature scope from this point forward (only audit-discovered defects may be fixed). Reviewed the document first (read-only), gave a phase-by-phase honest assessment of what's already substantially covered by this session's own prior work versus genuinely new, and the user confirmed starting with MRA-PRE-0.
