@@ -9,6 +9,7 @@ from src.models.scene import Scene, SceneStatus
 from src.models.script import Script, ScriptStatus
 from src.models.story_blueprint import StoryBeatType
 from src.services.genre_profile_registry_service import GenreProfileRegistryService
+from src.services.narration_timing_service import NarrationTimingService
 
 _SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[.!?])\s+")
 
@@ -68,9 +69,13 @@ class ScenePlannerAgent:
         self,
         *,
         genre_registry: GenreProfileRegistryService | None = None,
+        narration_timing_service: NarrationTimingService | None = None,
     ) -> None:
         self._genre_registry = (
             genre_registry or GenreProfileRegistryService.with_default_profiles()
+        )
+        self._narration_timing_service = (
+            narration_timing_service or NarrationTimingService()
         )
 
     def plan(self, script: Script, *, genre_id: str | None = None) -> list[Scene]:
@@ -195,9 +200,8 @@ class ScenePlannerAgent:
 
         return scenes
 
-    @classmethod
     def _subdivide_segment(
-        cls,
+        self,
         segment: ScriptSegment,
         *,
         scene_density_per_minute: float,
@@ -206,6 +210,32 @@ class ScenePlannerAgent:
         """
         Return [(sentences, duration_seconds), ...] sub-scenes for one
         segment, in order, covering all of its narration exactly once.
+
+        MRA-PRE-3 (Pre-Installer Master Audit) real finding: this used
+        to split the segment's own time span EQUALLY across
+        sub-scenes, with no regard for how much narration text ended
+        up in each one - a chunk with more/longer sentences got the
+        same duration as a chunk with fewer/shorter ones, and render's
+        own voice-directive validation (a separate, correctly-working
+        safety guard) would then refuse the whole run the moment any
+        one chunk's actual narration took longer to speak than its
+        allotted slice. Fixed: each chunk's duration is now the LARGER
+        of (a) a proportional share of the segment's own time budget,
+        weighted by that chunk's own estimated narration length - so a
+        longer chunk still gets more time than a shorter one, exactly
+        as genre density intends when the budget is sufficient - or
+        (b) that chunk's own actual required narration duration (via
+        NarrationTimingService, the same word-count-based estimate
+        this codebase already uses elsewhere) - a hard floor, so a
+        segment whose blueprint-assigned time span turns out to be
+        genuinely too short for its own narration gets its total
+        duration extended rather than having real speech silently
+        squeezed into too little time. Only ever extends, never
+        shrinks below what the genre's own density target already
+        proposed - scene_density_per_minute/average_visual_duration_seconds
+        still govern how many sub-scenes a segment splits into and,
+        when the original time budget is sufficient, how that budget
+        is shared between them.
         """
 
         sentences = [
@@ -227,16 +257,39 @@ class ScenePlannerAgent:
         sub_scene_count = max(1, min(target_count, len(sentences)))
 
         base, extra = divmod(len(sentences), sub_scene_count)
-        sub_scene_duration = duration_seconds / sub_scene_count
 
-        chunks: list[tuple[list[str], float]] = []
+        chunk_sentence_groups: list[list[str]] = []
         cursor = 0
 
         for index in range(sub_scene_count):
             chunk_size = base + (1 if index < extra else 0)
-            chunk = sentences[cursor : cursor + chunk_size]
+            chunk_sentence_groups.append(sentences[cursor : cursor + chunk_size])
             cursor += chunk_size
-            chunks.append((chunk, sub_scene_duration))
+
+        # Matches ScriptSegment.word_count's own convention exactly
+        # (len(text.split())) rather than inventing a second one.
+        # NarrationTimingService.estimate_seconds() floors at 1, and
+        # every chunk here always has at least one non-empty sentence
+        # (sub_scene_count is capped at len(sentences) above), so
+        # total_required_seconds is always >= sub_scene_count >= 1 -
+        # no zero-division guard needed.
+        required_seconds_by_chunk = [
+            self._narration_timing_service.estimate_seconds(
+                len(" ".join(chunk).split())
+            )
+            for chunk in chunk_sentence_groups
+        ]
+        total_required_seconds = sum(required_seconds_by_chunk)
+
+        chunks: list[tuple[list[str], float]] = []
+
+        for chunk, required_seconds in zip(
+            chunk_sentence_groups, required_seconds_by_chunk, strict=True
+        ):
+            proportional_share = (
+                required_seconds / total_required_seconds
+            ) * duration_seconds
+            chunks.append((chunk, max(proportional_share, required_seconds)))
 
         return chunks
 

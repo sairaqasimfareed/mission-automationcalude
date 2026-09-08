@@ -9,6 +9,7 @@ from src.services.editorial_profile_composition_service import (
     EditorialProfileCompositionService,
 )
 from src.services.genre_profile_registry_service import GenreProfileRegistryService
+from src.services.narration_timing_service import NarrationTimingService
 
 _GENRE_REGISTRY = GenreProfileRegistryService.with_default_profiles()
 
@@ -285,3 +286,84 @@ def test_plan_applies_the_genre_default_source_type_for_stock_footage_genres() -
 
     assert all(scene.source_type == SceneSourceType.STOCK_FOOTAGE for scene in scenes)
     assert all(scene.stock_query == scene.visual_prompt for scene in scenes)
+
+
+def test_plan_extends_duration_when_segment_budget_is_too_short_for_narration() -> None:
+    """
+    MRA-PRE-3 (Pre-Installer Master Audit) real finding, now fixed: a
+    segment whose blueprint-assigned time span turns out to be
+    genuinely too short for its own narration must get its duration
+    extended rather than have real speech silently squeezed into too
+    little time - this is the exact real-world mismatch that made
+    render's own voice-directive validation correctly refuse
+    ("Estimated narration duration exceeds the scene duration").
+    """
+
+    long_narration = (
+        "The ship was discovered adrift in open water with every sail "
+        "still perfectly set and not a single soul remaining aboard to "
+        "explain what had actually happened during the crossing."
+    )
+    segment = _segment(
+        number=1,
+        start=0,
+        end=2,  # an absurdly short budget for this much narration
+        narrative_function=StoryBeatType.SETUP,
+        narration=long_narration,
+    )
+    script = _script(segment)
+
+    agent = ScenePlannerAgent()
+    scenes = agent.plan_from_generated_script(script, _editorial_profile())
+
+    narration_timing = NarrationTimingService()
+    required_seconds = narration_timing.estimate_seconds(len(long_narration.split()))
+
+    assert len(scenes) == 1
+    assert scenes[0].estimated_duration_seconds >= required_seconds
+    # The real point of the fix: the original 2-second budget was not
+    # enough, so the scene's duration must have actually been extended
+    # beyond it, not merely clamped to whatever the budget allowed.
+    assert scenes[0].estimated_duration_seconds > 2
+
+
+def test_plan_weights_scene_duration_by_narration_length_not_equal_split() -> None:
+    """
+    MRA-PRE-3 real finding, now fixed: two sub-scenes from the same
+    segment used to always split that segment's time budget equally,
+    regardless of how much narration text each one actually carried.
+    A short sentence and a much longer one sharing a generous budget
+    must now receive proportionally different durations, not an equal
+    50/50 split.
+    """
+
+    segment = _segment(
+        number=1,
+        start=0,
+        end=60,
+        narrative_function=StoryBeatType.SETUP,
+        narration=(
+            "It vanished. "
+            "The captain, the crew, and every last passenger disappeared "
+            "without any struggle, any distress signal, or any explanation "
+            "that investigators were ever able to piece together."
+        ),
+    )
+    script = _script(segment)
+
+    agent = ScenePlannerAgent()
+    scenes = agent.plan_from_generated_script(script, _editorial_profile())
+
+    assert len(scenes) == 2
+    short_scene, long_scene = scenes
+    assert len(short_scene.narration.split()) < len(long_scene.narration.split())
+    # The old behavior (equal split) would have given both scenes the
+    # same 30-second duration - the fix must give the longer-narration
+    # scene meaningfully more time than the shorter one.
+    assert (
+        long_scene.estimated_duration_seconds > short_scene.estimated_duration_seconds
+    )
+    # Still bounded by the segment's own generous total budget - the
+    # fix redistributes proportionally, it doesn't inflate everything.
+    total = sum(scene.estimated_duration_seconds for scene in scenes)
+    assert total == 60

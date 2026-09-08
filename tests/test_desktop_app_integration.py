@@ -621,20 +621,19 @@ def test_content_intelligence_pipeline_reaches_script_lock_and_scene_planning(
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "MRA-PRE-3 real finding (docs/MRA_PRE_3_LIFECYCLE_AUDIT.md): "
-        "ScenePlannerAgent.plan_from_generated_script() allocates each "
-        "scene's duration from the genre's own scene_density_per_minute/"
-        "average_visual_duration_seconds policy, with no reconciliation "
-        "against how long the narration text actually assigned to that "
-        "scene takes to speak - the two numbers are computed "
-        "independently. Render's own voice-directive validation "
-        "correctly catches the mismatch and refuses ('Estimated "
-        "narration duration exceeds the scene duration') rather than "
-        "silently truncating narration - a real, working safety guard, "
-        "but it means the canonical chain does not yet reach Phase 15 "
-        "for a real content-intelligence-pipeline project. Remove this "
-        "marker once the scene planner is fixed to size each scene "
-        "against its own assigned narration, not just genre density."
+        "The ORIGINAL MRA-PRE-3 finding this test's docstring names "
+        "(ScenePlannerAgent scene duration not reconciled against "
+        "narration length) is CONFIRMED FIXED - the exact 'Estimated "
+        "narration duration exceeds the scene duration' error is gone "
+        "from this run, and 2 new direct unit tests on ScenePlannerAgent "
+        "(test_scene_planner_generated_script.py) independently prove "
+        "the fix. Left xfail because removing that blocker surfaced a "
+        "SEPARATE, different, not-yet-diagnosed one: render now fails "
+        "later, at asset acquisition, with 'The selected stock footage "
+        "could not be acquired.' - a real but distinct issue, out of "
+        "scope for the duration fix this test was originally written "
+        "to prove. Diagnosing/fixing that is tracked as its own future "
+        "item, not folded into this marker's original reason."
     ),
 )
 def test_content_intelligence_pipeline_scenes_pass_voice_validation_at_render(
@@ -642,16 +641,22 @@ def test_content_intelligence_pipeline_scenes_pass_voice_validation_at_render(
     no_blocking_dialogs: None,
 ) -> None:
     """
-    The second half of MRA-PRE-3's own objective: once fixed, this
-    proves the SAME render -> asset-decision resolution -> SEO ->
-    thumbnail -> final export -> final preview sequence
+    The second half of MRA-PRE-3's own objective: proves the SAME
+    render -> asset-decision resolution -> SEO -> thumbnail -> final
+    export -> final preview sequence
     test_full_pipeline_reaches_final_export already proves for the
     legacy pipeline also works for scenes the CURRENT, canonical
     pipeline produced - and that every accepted artifact reloads
     correctly from a genuinely fresh store read (MRA-PRE-3's own
     restart-safety requirement), not just the in-memory object this
-    test mutates throughout. Currently xfails at the render step - see
-    the marker above for the real, confirmed reason.
+    test mutates throughout.
+
+    The ORIGINAL blocker this test was written to prove
+    (docs/MRA_PRE_3_LIFECYCLE_AUDIT.md: ScenePlannerAgent sizing scenes
+    from genre density alone, with no reconciliation against actual
+    narration length) is fixed - see ScenePlannerAgent._subdivide_segment()'s
+    own docstring. This test still xfails, now for a different,
+    separate reason - see the marker above.
     """
 
     window = MainWindow(job_store=InMemoryJobStore())

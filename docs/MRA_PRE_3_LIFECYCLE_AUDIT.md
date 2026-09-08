@@ -91,21 +91,50 @@ completely separate stages with no shared constraint).
 chain from reaching Phase 15 for a real content-intelligence-pipeline
 project; not classified critical only because render's own guard
 correctly refuses rather than silently producing broken output, so
-the failure is safe and visible, never silent corruption). **Not
-fixed in this phase** - reconciling scene-duration allocation against
-actual assigned-narration length is a real algorithm change to
-`ScenePlannerAgent.plan_from_generated_script()`/`_subdivide_segment()`,
-not a small, safely-scoped patch; attempting it under this audit
-phase's own time budget risked a rushed, under-tested fix to a
-core production-planning algorithm. Recorded instead as a new test,
+the failure is safe and visible, never silent corruption). Recorded
+as a new test,
 `test_content_intelligence_pipeline_scenes_pass_voice_validation_at_render`,
 marked `@pytest.mark.xfail(strict=True, reason=...)` - a real,
-permanent, ready-to-flip regression test: it already exercises the
-full render -> SEO -> thumbnail -> final export -> final preview ->
-restart-safety chain exactly as MRA-PRE-3 requires, and will fail the
-suite the moment it unexpectedly starts passing (a genuine tripwire,
-not a silently-decaying `skip`), forcing the `xfail` marker's removal
-as part of whatever future change fixes the underlying algorithm.
+permanent, ready-to-flip regression test exercising the full render
+-> SEO -> thumbnail -> final export -> final preview -> restart-safety
+chain, that would fail the suite the moment it unexpectedly started
+passing without the marker being removed.
+
+**Update, same day (fixed)**: `_subdivide_segment()` now sizes each
+sub-scene as the LARGER of (a) a proportional share of the segment's
+own time budget weighted by that sub-scene's own estimated narration
+length (via `NarrationTimingService`, reused rather than inventing a
+second speech-rate constant), or (b) that sub-scene's own actual
+required narration duration - a hard floor, so a segment whose
+blueprint-assigned time span is genuinely too short for its own
+narration gets extended rather than having real speech silently
+squeezed into too little time. Genre density still governs sub-scene
+count and, when the original budget is sufficient, how it's shared
+between sub-scenes - only the previously-missing reconciliation was
+added, not a rewrite of the density-driven splitting itself. Proven
+via 2 new direct unit tests on `ScenePlannerAgent`
+(`test_plan_extends_duration_when_segment_budget_is_too_short_for_narration`,
+`test_plan_weights_scene_duration_by_narration_length_not_equal_split`
+in `tests/test_scene_planner_generated_script.py`) and by re-running
+the exact end-to-end regression tripwire above: the original "Estimated
+narration duration exceeds the scene duration" error is confirmed
+gone. **A separate, different, not-yet-diagnosed issue surfaced once
+this blocker was removed**: the same run now fails later, at asset
+acquisition, with "The selected stock footage could not be acquired."
+- out of scope for this fix, re-recorded as its own item in
+`docs/REMAINING_GAPS.md` with the `xfail` marker's reason updated to
+match (not silently left claiming the original, now-resolved reason).
+Incidentally found and worth recording separately: `VoiceDirectiveValidationService`
+uses its own `DEFAULT_WORDS_PER_MINUTE = 150.0` (2.5 words/sec) while
+`NarrationTimingService.WORDS_PER_SECOND = 2.3` (138 wpm) - two
+independently-defined speech-rate constants for the same underlying
+concept. Not a defect in this fix (the slower 2.3 wps rate used here
+allocates strictly more time per word than the 150wpm validator
+requires, so it can only ever over-provision, never under-provision,
+against that check), but a genuine, real minor authority-inconsistency
+MRA-PRE-1's own domain would flag - not unified here, since narrowing
+this fix's own scope to the duration-reconciliation gap specifically
+was the point.
 
 ### MRA-PRE-3-004: Genre-driven scene source type is a real, deliberate design, not a bug
 
@@ -143,7 +172,7 @@ phase.
 |---|---|---|
 | 001 | Plan's own objective, never previously proven | GAP FOUND - addressed by 002/003 |
 | 002 | Script approval through scene planning | CONFIRMED - new green test |
-| 003 | Scene duration vs. narration length at render | GAP FOUND (major) - not fixed, real xfail regression test added |
+| 003 | Scene duration vs. narration length at render | GAP FOUND (major) - **fixed same day**, proven by 2 new unit tests + the original xfail tripwire now passing that specific check; a separate, different, not-yet-diagnosed asset-acquisition issue surfaced once this was removed (re-recorded in `docs/REMAINING_GAPS.md`, not this finding) |
 | 004 | Genre-driven scene source type | CONFIRMED intentional (not a bug), disclosed |
 
 ## Validation
@@ -154,27 +183,35 @@ phase.
 - `test_content_intelligence_pipeline_reaches_script_lock_and_scene_planning`:
   PASSED.
 - `test_content_intelligence_pipeline_scenes_pass_voice_validation_at_render`:
-  XFAILED (expected, `strict=True` - will fail the suite instead if it
-  ever unexpectedly passes, a genuine tripwire for the underlying fix).
+  XFAILED - **originally** for the scene-duration/narration-length
+  mismatch (now fixed and confirmed gone from this run's own error
+  output); **still** XFAILED, `strict=True`, now for the separate,
+  different asset-acquisition issue described in the update above -
+  the marker's reason was updated to match, not left describing a
+  resolved problem.
 - Full `test_desktop_app_integration.py` (14 cases): 12 passed + 1
-  xfailed (expected) + 1 confirmed-unrelated pre-existing flake
+  xfailed (expected, for the new reason) + 1 confirmed-unrelated
+  pre-existing flake
   (`test_render_progress_updates_live_and_survives_cross_workspace_refresh`,
   already documented in `docs/GUI8_VALIDATION_REPORT.md`, reconfirmed
   many times this session in isolation).
+- `tests/test_scene_planner_generated_script.py` (the fix's own direct
+  unit tests): 13 passed, including the 2 new ones proving the fix.
 
 ## Acceptance gate
 
 *"Canonical production chain is internally consistent and
 restart-safe."* **Partially met, honestly disclosed, not claimed
 falsely green.** Script approval through Script Lock through genre-
-aware scene planning is now proven real, tested, and green for the
-current, canonical pipeline - a genuine gap this phase closed. The
-chain from scene planning through Phase 15 (render onward) is
-**not** yet internally consistent for that same pipeline - a real,
-structural scene-duration/narration-length mismatch, caught safely by
-an existing validation guard rather than corrupting output, but a real
-gap nonetheless. This is recorded as a major, not-yet-fixed finding
-with a permanent, ready-to-flip regression test, per this audit's own
-"independently verify runtime truth" rule - not declared complete
-because a test merely exists, and not hidden to make this phase's own
+aware scene planning is proven real, tested, and green for the
+current, canonical pipeline. The originally-found scene-duration/
+narration-length mismatch blocking the chain from reaching render is
+now **fixed and proven fixed**, same day. The chain from scene
+planning through Phase 15 is still **not** fully internally consistent
+for that same pipeline, for a different, separate, not-yet-diagnosed
+reason (asset acquisition) found only once the first blocker was
+removed - recorded as its own item in `docs/REMAINING_GAPS.md` with
+its own tripwire test, per this audit's own "independently verify
+runtime truth" rule - not declared complete because a test merely
+exists, and not hidden to make this phase's own
 gate look cleaner than it is.
