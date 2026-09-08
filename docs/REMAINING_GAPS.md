@@ -432,6 +432,42 @@ that file's audio-regeneration row.
       project's history has in fact already been run this way in
       practice and never hit this issue.
 
+## MRA-PRE-3 validation finding: scene duration doesn't reconcile against narration length
+
+- [ ] `ScenePlannerAgent.plan_from_generated_script()`
+      (`src/agents/scene_planner/agent.py`) - the current, canonical
+      content-intelligence pipeline's own scene planner - sizes each
+      scene purely from `content_intelligence.scene_density_per_minute`/
+      `average_visual_duration_seconds` (genre-policy numbers), with
+      zero reconciliation against how long the narration text actually
+      assigned to that scene takes to speak. The two numbers are
+      computed by entirely separate stages with no shared constraint.
+      Confirmed real via a real end-to-end run (not a dry-run-content
+      artifact - short dry-run template text would only make an
+      already-existing structural gap visible sooner, not create it):
+      a genre.documentary project produced 4 scenes totaling ~30
+      seconds of allotted scene time for a 600-second target project,
+      and render's own `VoiceDirectiveValidationService` correctly
+      refused with "Estimated narration duration exceeds the scene
+      duration" rather than silently truncating narration - a working
+      safety guard, but the canonical chain does not yet reach render
+      (Phase 15 onward) for a real `ContentIntelligencePipeline`
+      project as a result. See `docs/MRA_PRE_3_LIFECYCLE_AUDIT.md` for
+      the full writeup and reproduction. **Fix scope**: reconcile
+      scene-duration allocation in `plan_from_generated_script()`/
+      `_subdivide_segment()` against the actual narration word count
+      assigned to each sub-scene, not just the genre's density target -
+      a real algorithm change, not a small patch, which is why it was
+      not attempted under MRA-PRE-3's own audit-phase time budget.
+      **Regression tripwire already in place**: new test
+      `test_content_intelligence_pipeline_scenes_pass_voice_validation_at_render`
+      in `tests/test_desktop_app_integration.py` is marked
+      `@pytest.mark.xfail(strict=True, ...)` and exercises the full
+      render -> SEO -> thumbnail -> final export -> final preview ->
+      restart-safety chain - it will fail the suite (not silently stay
+      green) the moment this gets fixed, forcing the `xfail` marker's
+      removal as part of that fix.
+
 ## Explicitly out of scope
 
 - Google Flow, or any browser automation targeting Google Flow's web UI.

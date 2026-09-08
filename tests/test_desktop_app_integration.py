@@ -17,6 +17,7 @@ from src.desktop.main_window import MainWindow  # noqa: E402
 from src.desktop.views.project_workspace_view import (  # noqa: E402
     ProjectWorkspaceView,
 )
+from src.models.approval import HumanApprovalAction  # noqa: E402
 from src.models.enums import JobStatus, WorkflowStage  # noqa: E402
 from src.models.final_preview import FinalPreviewAction  # noqa: E402
 from src.models.google_flow_generation import (  # noqa: E402
@@ -30,6 +31,8 @@ from src.models.render_progress import (  # noqa: E402
     RenderProgress,
     RenderProgressStatus,
 )
+from src.models.video_job import VideoJob  # noqa: E402
+from src.services.approval_gate_service import ApprovalGateService  # noqa: E402
 from src.services.google_flow_generation_ledger_service import (  # noqa: E402
     GoogleFlowGenerationLedgerService,
 )
@@ -532,6 +535,199 @@ def test_full_pipeline_reaches_final_export(
         workspace._show_workspace(target)
 
     assert window._stack.currentWidget() is window._detail_view
+
+
+def _run_content_intelligence_pipeline_to_scene_planning(
+    window: MainWindow, qapp: QApplication
+) -> tuple[ProjectWorkspaceView, VideoJob]:
+    """
+    Shared setup for both tests below: drives ContentIntelligencePipeline
+    all the way through Script Lock and scene planning via the real GUI
+    "Run automation" / "Approve" loop - Content Studio's own real
+    mechanism for ContentIntelligencePipeline.run_all() plus
+    ApprovalGateService's pending-decision resolution, matching how a
+    human operator would actually clear each review gate in turn, not
+    a direct service-level bypass of the approval mechanism.
+    """
+
+    _create_project(window)
+
+    job = window._job_store.list_all()[0]
+    # genre.documentary's own real, genre-specific
+    # default_scene_source_type is STOCK_FOOTAGE (confirmed by
+    # inspection: genre.mystery/horror/reaction/storytelling default
+    # to MANUAL_UPLOAD instead - a deliberate per-genre policy, not a
+    # bug), so this exercises the same stock-footage asset-resolution
+    # flow test_full_pipeline_reaches_final_export already proves.
+    job.genre_id = "genre.documentary"
+    window._open_project(job.id)
+    workspace = window._detail_view
+    content_studio = workspace.content_studio
+
+    for _ in range(15):
+        content_studio._handle_run_automation()
+
+        if job.errors:
+            break
+
+        pending = ApprovalGateService.latest_pending(job)
+
+        if pending is None or pending.approval is None:
+            break
+
+        content_studio._content_intelligence_pipeline.resolve_approval(
+            job, pending.approval.decision_point, HumanApprovalAction.APPROVE
+        )
+    else:
+        pytest.fail(
+            "Automation did not reach a stable, gate-free state within "
+            "15 run/approve cycles - either a real regression or a new "
+            "decision point this test needs to know about."
+        )
+
+    return workspace, job
+
+
+def test_content_intelligence_pipeline_reaches_script_lock_and_scene_planning(
+    qapp: QApplication,
+    no_blocking_dialogs: None,
+) -> None:
+    """
+    MRA-PRE-3 (Pre-Installer Master Audit, canonical lifecycle audit)
+    real finding: test_full_pipeline_reaches_final_export (above)
+    deliberately drives the LEGACY ContentPipeline, not the current,
+    canonical ContentIntelligencePipeline stack MRA-PRE-1's own
+    authority audit confirmed is the one every new project actually
+    uses. That left the first half of the plan's own literal objective
+    ("trace a real project from script approval through Phase 15")
+    never actually proven for the pipeline real projects use today.
+    This proves that first half: audience promise through Script Lock
+    through real, genre-aware scene planning, with zero errors.
+
+    The second half (render through final export) is a SEPARATE test,
+    marked xfail - see
+    test_content_intelligence_pipeline_scenes_pass_voice_validation_at_render
+    below for why.
+    """
+
+    window = MainWindow(job_store=InMemoryJobStore())
+    _, job = _run_content_intelligence_pipeline_to_scene_planning(window, qapp)
+
+    assert not job.errors
+    assert job.script_lock is not None
+    assert job.scenes
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "MRA-PRE-3 real finding (docs/MRA_PRE_3_LIFECYCLE_AUDIT.md): "
+        "ScenePlannerAgent.plan_from_generated_script() allocates each "
+        "scene's duration from the genre's own scene_density_per_minute/"
+        "average_visual_duration_seconds policy, with no reconciliation "
+        "against how long the narration text actually assigned to that "
+        "scene takes to speak - the two numbers are computed "
+        "independently. Render's own voice-directive validation "
+        "correctly catches the mismatch and refuses ('Estimated "
+        "narration duration exceeds the scene duration') rather than "
+        "silently truncating narration - a real, working safety guard, "
+        "but it means the canonical chain does not yet reach Phase 15 "
+        "for a real content-intelligence-pipeline project. Remove this "
+        "marker once the scene planner is fixed to size each scene "
+        "against its own assigned narration, not just genre density."
+    ),
+)
+def test_content_intelligence_pipeline_scenes_pass_voice_validation_at_render(
+    qapp: QApplication,
+    no_blocking_dialogs: None,
+) -> None:
+    """
+    The second half of MRA-PRE-3's own objective: once fixed, this
+    proves the SAME render -> asset-decision resolution -> SEO ->
+    thumbnail -> final export -> final preview sequence
+    test_full_pipeline_reaches_final_export already proves for the
+    legacy pipeline also works for scenes the CURRENT, canonical
+    pipeline produced - and that every accepted artifact reloads
+    correctly from a genuinely fresh store read (MRA-PRE-3's own
+    restart-safety requirement), not just the in-memory object this
+    test mutates throughout. Currently xfails at the render step - see
+    the marker above for the real, confirmed reason.
+    """
+
+    window = MainWindow(job_store=InMemoryJobStore())
+    workspace, job = _run_content_intelligence_pipeline_to_scene_planning(window, qapp)
+
+    assert not job.errors
+    assert job.script_lock is not None
+    assert job.scenes
+
+    workspace.render_workspace._handle_run_render()
+    _wait_for_render(workspace, job.id, qapp)
+
+    waiting_scene_numbers = [
+        state.scene_number
+        for state in job.scene_asset_states
+        if state.requires_user_decision
+    ]
+
+    assert waiting_scene_numbers
+
+    for scene_number in waiting_scene_numbers:
+        workspace.render_workspace._handle_search_stock(scene_number, "")
+        workspace.render_workspace._handle_select_stock_candidate(scene_number, 0)
+
+    workspace.render_workspace._handle_submit_asset_decisions()
+    _wait_for_render(workspace, job.id, qapp)
+
+    render_result = window._job_store.get_render_result(job.id)
+    assert render_result is not None
+    assert render_result.success is True
+
+    workspace.packaging._handle_generate_seo("Mystery enthusiasts")
+    seo_package = window._job_store.get_seo_package(job.id)
+    assert seo_package is not None
+    # Provenance (MRA-PRE-3's own persistence/provenance requirement):
+    # the SEO package must trace back to the exact script lock that
+    # authorized this production run, not merely exist.
+    assert job.script_lock is not None
+    assert seo_package.source_script_lock_hash == job.script_lock.script_content_hash
+
+    workspace.packaging._handle_generate_thumbnail("Mystery enthusiasts")
+    thumbnail = window._job_store.get_thumbnail(job.id)
+    assert thumbnail is not None
+
+    workspace.packaging._handle_build_final_export()
+    final_export = window._job_store.get_final_export(job.id)
+
+    assert final_export is not None
+    assert final_export.final_video_path
+    assert not job.errors
+
+    workspace.quality_center._handle_run_check()
+    assert job.policy_report is not None
+
+    workspace.quality_center._handle_create_final_preview()
+    assert job.final_previews
+    latest_preview = job.final_previews[-1]
+    assert latest_preview.render_identity
+
+    workspace.quality_center._handle_resolve_final_preview(
+        FinalPreviewAction.APPROVE_FINAL
+    )
+    assert job.final_previews[-1].status.value == "approved"
+
+    # Restart-safety (MRA-PRE-3's own acceptance gate: "restart-safe"):
+    # every accepted artifact this run produced must reload correctly
+    # from a genuinely fresh store read, not just the in-memory object
+    # this test has been mutating throughout.
+    reloaded_job = window._job_store.get(job.id)
+    assert reloaded_job is not None
+    assert reloaded_job.script_lock is not None
+    assert reloaded_job.script_lock.script_content_hash == (
+        job.script_lock.script_content_hash
+    )
+    assert len(reloaded_job.scenes) == len(job.scenes)
+    assert reloaded_job.final_previews[-1].status.value == "approved"
 
 
 def test_workspace_views_refresh_without_crashing_on_a_fresh_project(

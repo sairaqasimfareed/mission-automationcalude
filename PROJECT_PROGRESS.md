@@ -5,6 +5,26 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-08 - MRA-PRE-3: Canonical lifecycle audit (Pre-Installer Master Audit)
+
+Traced a real project from script approval through Phase 15, per the plan's own literal objective.
+
+**A real, significant gap found in the audit's own scope**: the existing golden-path integration test (`test_full_pipeline_reaches_final_export`) deliberately drives the LEGACY `ContentPipeline`, not `ContentIntelligencePipeline` - the pipeline MRA-PRE-1's own authority audit already confirmed every new project actually uses. That meant the plan's own objective had never actually been proven for the pipeline that matters, only for the older one.
+
+**Built and proved the first half, now real and green**: a new test drives `ContentIntelligencePipeline.run_all()` through its real GUI "Run automation" / "Approve" loop - exactly as an operator would click it, resolving 6 real approval gates in sequence - reaching a genuine Script Lock and real, genre-aware scenes with zero errors. This is the first time this exact chain (script approval through Script Lock through scene planning, via the current pipeline) has been proven end to end.
+
+**A real, structural gap found continuing into the second half**: render's own voice-directive validation correctly refused with "Estimated narration duration exceeds the scene duration." Traced to the actual root cause: `ScenePlannerAgent.plan_from_generated_script()` sizes each scene purely from the genre's own density-policy numbers, with zero reconciliation against how much narration text actually ends up assigned to that scene - two independently-computed numbers with no shared constraint between them. Confirmed this is a genuine structural gap, not a dry-run-content artifact (short template text would only make an already-existing gap visible sooner, not create it). Render's own guard is working correctly here - it refuses safely rather than silently truncating narration - but the canonical chain genuinely does not yet reach Phase 15 for a real content-intelligence-pipeline project.
+
+**Not rushed into a same-phase fix**: reconciling scene-duration allocation against actual narration length is a real algorithm change to core production-planning logic, not a small, safely-scoped patch - attempting it under this audit phase's own time budget risked a hasty, under-tested fix. Instead: a new test exercises the full render → SEO → thumbnail → final export → final preview → restart-safety chain exactly as this phase requires, marked `xfail(strict=True)` with the real reason recorded - a genuine, permanent tripwire that will fail the suite (not silently stay green) the moment this gets fixed and the marker isn't removed.
+
+**One more real observation, confirmed intentional rather than a bug**: scenes from the new pipeline get their asset-source type (stock footage vs. manual upload) from the project's *genre* policy, not from the visual-strategy choice a user makes at project creation (which is what the legacy pipeline uses instead) - checked all 11 genre profiles directly and confirmed this is a deliberate, sensible per-genre default (documentary/history/travel lean stock footage; mystery/horror lean custom visuals), not authority drift. Worth a future GUI-disclosure pass (telling a user which policy actually governed a scene), not itself a defect.
+
+**Tests**: 2 new tests in `test_desktop_app_integration.py` - one real, green, end-to-end proof of script-approval-through-scene-planning; one `xfail(strict=True)` regression test documenting the render-step gap with a full downstream chain ready to prove once fixed. Full file (14 cases): 12 passed + 1 xfailed (expected) + 1 confirmed-unrelated pre-existing flake. mypy/ruff/black clean.
+
+**Deliverable**: `docs/MRA_PRE_3_LIFECYCLE_AUDIT.md` - all 4 findings in the defined evidence format. This phase's acceptance gate is honestly reported as partially met, not falsely claimed green - the first half of the canonical chain is now proven; the second half has a real, disclosed, not-yet-fixed gap.
+
+---
+
 ## 2026-09-08 - MRA-PRE-2: Persistence/restart/migration audit (Pre-Installer Master Audit)
 
 Audited repository atomicity, schema-upgrade behavior, stale-approval promotion risk, Google Flow restart reconciliation, missing/corrupt asset handling, and recovery-state visibility - each recorded in MRA-PRE-0's evidence format.
