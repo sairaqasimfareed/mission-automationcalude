@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
+from pathlib import Path
 
 from src.models.ffmpeg_config import (
     FFmpegCapabilities,
@@ -162,14 +164,65 @@ class FFmpegCapabilityService:
     def _resolve_binary(
         executable: str,
     ) -> str | None:
-        """Resolve executable name or explicit path."""
+        """
+        Resolve executable name or explicit path.
+
+        Installer packaging: a bundled ffmpeg/ffprobe binary shipped
+        alongside the packaged app (under `tools/ffmpeg/` next to the
+        installed .exe) is preferred over PATH whenever the caller is
+        still asking for the plain default name ("ffmpeg"/"ffprobe",
+        FFmpegConfig's own declared defaults) - this is deliberate,
+        not merely a fallback-when-PATH-fails: every installed machine
+        should use the exact FFmpeg version this app was tested
+        against, not whatever version (or absence of one) happens to
+        be on that machine's PATH. An explicit, non-default path/name
+        the user or a config file actually set is always respected
+        as-is and never second-guessed here. In an ordinary
+        (non-frozen) development environment, `_bundled_tool_path()`
+        always returns None, so this is a no-op there - unchanged
+        PATH-based behavior.
+        """
 
         cleaned = executable.strip()
 
         if not cleaned:
             return None
 
+        if cleaned in ("ffmpeg", "ffprobe"):
+            bundled = FFmpegCapabilityService._bundled_tool_path(cleaned)
+
+            if bundled is not None:
+                return str(bundled)
+
         return shutil.which(cleaned)
+
+    @staticmethod
+    def _bundled_tool_path(
+        name: str,
+    ) -> Path | None:
+        """
+        Locate a bundled tool binary next to the packaged executable.
+
+        Only ever resolves to something when actually running as a
+        frozen (PyInstaller-built) application (`sys.frozen`, the
+        standard, documented signal PyInstaller sets at runtime) -
+        `sys.executable` is the real installed .exe's path in that
+        case, unlike a plain `python.exe` in development. Returns None
+        whenever the expected file genuinely isn't there (a frozen
+        build that, for whatever reason, wasn't given a bundled
+        ffmpeg), falling back to PATH resolution rather than pointing
+        at a file that doesn't exist.
+        """
+
+        if not getattr(sys, "frozen", False):
+            return None
+
+        filename = f"{name}.exe" if sys.platform == "win32" else name
+        candidate = (
+            Path(sys.executable).resolve().parent / "tools" / "ffmpeg" / filename
+        )
+
+        return candidate if candidate.is_file() else None
 
     def _detect_version(
         self,

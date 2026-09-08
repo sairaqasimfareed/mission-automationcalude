@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+from pathlib import Path
 
 import pytest
 
@@ -116,3 +117,101 @@ def test_has_hardware_accelerator_is_case_insensitive() -> None:
 
     assert capabilities.has_hardware_accelerator("CUDA") is True
     assert capabilities.has_hardware_accelerator("vaapi") is False
+
+
+# --- Installer packaging: bundled ffmpeg/ffprobe resolution ---
+
+
+def test_resolve_binary_prefers_a_bundled_ffmpeg_when_frozen(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """
+    Real-world requirement (installer packaging): every installed
+    machine should use the exact FFmpeg build this app was tested
+    against, not whatever version (or absence of one) happens to be
+    on that machine's own PATH. Simulated directly: a bundled
+    ffmpeg.exe placed exactly where the packaged app's own
+    tools/ffmpeg/ layout puts it, with sys.frozen set the same way
+    PyInstaller sets it at runtime - _resolve_binary("ffmpeg") must
+    return that bundled path, not fall through to PATH.
+    """
+
+    install_dir = tmp_path / "Mission Automation"
+    tools_dir = install_dir / "tools" / "ffmpeg"
+    tools_dir.mkdir(parents=True)
+    bundled_ffmpeg = tools_dir / "ffmpeg.exe"
+    bundled_ffmpeg.write_bytes(b"fake ffmpeg binary")
+
+    monkeypatch.setattr("sys.frozen", True, raising=False)
+    monkeypatch.setattr("sys.executable", str(install_dir / "MissionAutomation.exe"))
+    monkeypatch.setattr("sys.platform", "win32")
+
+    resolved = FFmpegCapabilityService._resolve_binary("ffmpeg")
+
+    assert resolved == str(bundled_ffmpeg.resolve())
+
+
+def test_resolve_binary_falls_back_to_path_when_not_frozen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A normal (non-packaged) development run must behave exactly as
+    before this fix - PATH-based resolution, never even looking for a
+    bundled binary."""
+
+    monkeypatch.delattr("sys.frozen", raising=False)
+
+    called_with: list[str] = []
+
+    def _fake_which(name: str) -> str | None:
+        called_with.append(name)
+        return "/usr/bin/ffmpeg" if name == "ffmpeg" else None
+
+    monkeypatch.setattr("shutil.which", _fake_which)
+
+    resolved = FFmpegCapabilityService._resolve_binary("ffmpeg")
+
+    assert resolved == "/usr/bin/ffmpeg"
+    assert called_with == ["ffmpeg"]
+
+
+def test_resolve_binary_falls_back_to_path_when_frozen_but_bundled_file_is_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A frozen build that, for whatever reason, was not given its
+    bundled ffmpeg must degrade to PATH resolution rather than
+    pointing at a file that does not exist."""
+
+    install_dir = tmp_path / "Mission Automation"
+    install_dir.mkdir(parents=True)
+
+    monkeypatch.setattr("sys.frozen", True, raising=False)
+    monkeypatch.setattr("sys.executable", str(install_dir / "MissionAutomation.exe"))
+    monkeypatch.setattr("sys.platform", "win32")
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/ffmpeg")
+
+    resolved = FFmpegCapabilityService._resolve_binary("ffmpeg")
+
+    assert resolved == "/usr/bin/ffmpeg"
+
+
+def test_resolve_binary_never_overrides_an_explicit_non_default_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A user- or config-supplied explicit ffmpeg path/name (anything
+    other than the plain "ffmpeg"/"ffprobe" default) must always be
+    respected as-is, even when running frozen with a bundled binary
+    present - this preference is only for the unmodified default."""
+
+    install_dir = tmp_path / "Mission Automation"
+    tools_dir = install_dir / "tools" / "ffmpeg"
+    tools_dir.mkdir(parents=True)
+    (tools_dir / "ffmpeg.exe").write_bytes(b"fake ffmpeg binary")
+
+    monkeypatch.setattr("sys.frozen", True, raising=False)
+    monkeypatch.setattr("sys.executable", str(install_dir / "MissionAutomation.exe"))
+    monkeypatch.setattr("sys.platform", "win32")
+    monkeypatch.setattr("shutil.which", lambda name: f"/custom/{name}")
+
+    resolved = FFmpegCapabilityService._resolve_binary("C:/custom/ffmpeg.exe")
+
+    assert resolved == "/custom/C:/custom/ffmpeg.exe"
