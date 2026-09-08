@@ -5,6 +5,22 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-08 - MRA-PRE-5: Provider/runtime/failure audit (Pre-Installer Master Audit)
+
+Verified provider startup validation, runtime configuration validation, and mid-run provider-failure handling - re-verification of work substantially already built during GF-0 through GF-17, not a from-scratch pass.
+
+**Startup validation scope confirmed deliberate**: `ProviderStartupValidator` only ever live-checks LLM provider profiles at app startup - the underlying `ProviderHealthService` mechanism is fully category-agnostic, but nothing wires it to a live check for voice, stock, music, sound-effect, or upload providers. Confirmed this is a reasonable tradeoff, not an oversight: those categories instead get a secret-existence check covering every profile (`RuntimeConfigurationValidator`) plus an on-demand, explicitly-documented generic secret-resolution check from Provider Manager's own GUI. Proactively live-checking every category on every launch would mean a network call for providers a given project might never touch.
+
+**Mid-run failure handling spot-checked, sound**: `VoiceGenerationService`'s failure path wraps every provider call, normalizes exceptions through one `_fail()` helper into a structured failure record, and health-checks before attempting generation - the same safe, visible-failure discipline MRA-PRE-3 already confirmed for render and stock acquisition.
+
+**A real, significant, previously-only-partially-known gap found and quantified**: while checking provider-related test coverage, confirmed the module-level-`assert`-instead-of-`def test_*` pattern MRA-PRE-3 first found in isolation (2 files) is actually pervasive - **142 of 367** test files (~39%) have zero pytest-discoverable test functions. A live teeth-check (deliberately broke a real assertion in `test_voice_generation_service.py`, ran pytest against just that file) proved this is **not silently dangerous**: it correctly produces a collection error and a nonzero pytest exit code, caught by this project's own already-established per-file validation practice. The real cost is narrower but genuine: no individual test selection is possible within these files, one early failing assertion masks every later one in the same file (Python's `assert` unwinds immediately, unlike independent test functions), and any tooling counting "collected test items" undercounts real coverage. A full `pytest tests/ --collect-only` confirmed 2449 real items and zero collection errors at this HEAD - a clean, directly-verified baseline, not an assumption.
+
+**Not fixed, deliberately**: converting 142 files is a large, cross-cutting, mechanical migration with real regression risk if rushed - recorded in `docs/REMAINING_GAPS.md` as a future dedicated pass, matching this audit's own established discipline for large structural findings.
+
+**Deliverable**: `docs/MRA_PRE_5_PROVIDER_RUNTIME_FAILURE_AUDIT.md` - 3 findings in the defined evidence format. No source code was changed in this phase.
+
+---
+
 ## 2026-09-08 - MRA-PRE-4: Genre/audience/brand anti-drift audit (Pre-Installer Master Audit)
 
 Confirmed genre, audience, and brand identity stay consistent across a project's lifecycle - a different question from MRA-PRE-1's "who has write authority": a single writer can still let a value drift if a downstream consumer reads a live, mutable field instead of the value actually in effect when the artifact it's describing was produced.

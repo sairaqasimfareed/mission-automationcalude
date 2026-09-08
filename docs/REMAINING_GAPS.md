@@ -530,6 +530,35 @@ that file's audio-regeneration row.
       and by the full end-to-end regression tripwire now reaching SEO,
       thumbnail, and final export with zero errors.
 
+## Follow-on finding: most test files use module-level `assert` instead of `def test_*` functions (MRA-PRE-5)
+
+- [ ] Found while auditing provider/runtime failure-handling test
+      coverage: **142 of 367** files matching `tests/test_*.py`
+      (~39%) have zero pytest-discoverable `def test_` functions -
+      real logic and real `assert` statements execute as a side
+      effect of module import instead (the same pattern MRA-PRE-3
+      first found in isolation for `test_stock_asset_storage_
+      service.py`/`test_asset_storage_service.py`, now confirmed far
+      more widespread via a full scan). A live teeth-check (deliberately
+      broke a real assertion in `test_voice_generation_service.py`,
+      ran pytest against just that file) confirmed this is **not
+      silently invisible** - it correctly produces a collection error
+      and nonzero pytest exit code, caught by this project's own
+      already-established per-file/small-batch validation practice
+      (see the GUI-8 full-suite-hang workaround). The real, disclosed
+      cost: no individual test selection/filtering within these
+      files, one early failing assertion masks every later assertion
+      in the same file (Python's `assert` unwinds immediately, unlike
+      independent `def test_*` functions), and any tooling that
+      counts "collected test items" undercounts real coverage. A full
+      `pytest tests/ --collect-only` confirmed 2449 real items and
+      zero collection errors at the HEAD this was found on - a clean,
+      directly-verified current baseline. Not fixed - a large,
+      cross-cutting, mechanical migration across 142 files with real
+      regression risk if rushed, correctly out of scope for a
+      same-day patch. See `docs/MRA_PRE_5_PROVIDER_RUNTIME_FAILURE_
+      AUDIT.md` finding 003 for the full evidence.
+
 ## Explicitly out of scope
 
 - Google Flow, or any browser automation targeting Google Flow's web UI.
