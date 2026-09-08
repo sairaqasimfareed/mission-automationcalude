@@ -731,6 +731,62 @@ def test_generate_seo_stays_under_review_by_default_policy(
     assert package.status == SEOStatus.UNDER_REVIEW
 
 
+def test_generate_seo_uses_the_locked_genre_not_a_later_changed_one(
+    qapp: QApplication,
+    tmp_path: Path,
+) -> None:
+    """
+    MRA-PRE-4 (Pre-Installer Master Audit, genre/audience/brand
+    anti-drift audit) finding: `job.genre_id` has no guard preventing
+    a change after Script Lock (Content Studio's "Project settings"
+    card allows it freely), so SEO generation calling `build(...,
+    genre_id=job.genre_id)` would silently describe a LOCKED script
+    using a genre the script itself was never written in. Proves the
+    fix: SEO generation now prefers the genre snapshotted on
+    `job.script_lock` at lock time over a later, live change.
+    """
+
+    view = PackagingView(
+        job_store=InMemoryJobStore(),
+        seo_package_service=_real_seo_package_service(),
+        thumbnail_package_service=None,  # type: ignore[arg-type]
+        final_export_service=FinalExportService(export_root=tmp_path / "exports"),
+        on_change=lambda: None,
+    )
+
+    job = _job_with_approved_script()
+    job.research = ResearchResult(
+        topic="Giant squid",
+        research_summary="An overview of giant squid encounters.",
+        key_facts=["Fact one."],
+        prompt_version="research_prompt_v1.0.0",
+        status=ResearchStatus.APPROVED,
+    )
+    job.script_lock = ScriptLock(
+        script_version_number=1,
+        script_content_hash="locked-hash",
+        provenance=ScriptProvenance.INTERNAL,
+        topic=job.topic,
+        target_duration_seconds=job.target_duration_seconds,
+        genre_id="genre.documentary",
+    )
+
+    # A person changes the project's genre in "Project settings" AFTER
+    # the script was already locked in genre.documentary - the script
+    # text itself does not change, only the live field.
+    job.genre_id = "genre.horror"
+
+    view._job_store.add(job)
+    view.set_job(job.id)
+
+    view._handle_generate_seo("Ocean enthusiasts")
+
+    package = view._job_store.get_seo_package(job.id)
+
+    assert package is not None
+    assert package.source_genre_id == "genre.documentary"
+
+
 def test_thumbnail_card_does_not_crash_when_file_is_missing(
     qapp: QApplication,
     tmp_path: Path,

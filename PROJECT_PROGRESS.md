@@ -5,6 +5,24 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-08 - MRA-PRE-4: Genre/audience/brand anti-drift audit (Pre-Installer Master Audit)
+
+Confirmed genre, audience, and brand identity stay consistent across a project's lifecycle - a different question from MRA-PRE-1's "who has write authority": a single writer can still let a value drift if a downstream consumer reads a live, mutable field instead of the value actually in effect when the artifact it's describing was produced.
+
+**A real, evidenced gap found and fixed, same day**: `ScriptLock.genre_id` - correctly populated at lock time by `ScriptLockService.build_lock()` to snapshot "genre/profile references," per that model's own docstring - had zero readers anywhere in the codebase. Content Studio's "Project settings" card lets a person change `job.genre_id` freely at any time, with no guard against the script already being locked. `PackagingView`'s SEO and thumbnail generation both called `SEOContextBuilder().build(job, genre_id=job.genre_id, ...)` - the live field - so a script locked in `genre.documentary` whose genre was later changed to `genre.horror` would get SEO/thumbnail content generated using `genre.horror`'s tone and style, describing a script it was never actually written in. Fixed with a new `_resolved_genre_id()` helper that prefers the locked snapshot once one exists. Proven via a new test, verified to genuinely fail without the fix (reverted the call sites, confirmed the test caught the wrong genre) and pass with it.
+
+**Audience identity checked in parallel, confirmed clean**: no equivalent drift path exists - Content Studio has no Settings-card equivalent for editing `audience_promise` directly, and `ContentIntelligencePipeline.run_all()`'s own re-entry guard makes a second call on an already-promised job a structural no-op for that field.
+
+**Brand reconfirmed still not present** in this codebase (zero matches, unchanged from MRA-PRE-1's own check earlier the same day).
+
+**One incidental finding, corrected**: `docs/REMAINING_GAPS.md`'s Phase 1 section claimed `run_all()` "always restarts from stage one rather than resuming where it left off" - found to be stale while reading the method for the audience-identity check above. The current code guards every stage and is explicitly idempotent on re-entry (a Phase-19-era comment states this directly for the Script Lock step) - evidently fixed at some later point in this project's history without the note being updated. Corrected with the real evidence cited, no code change needed.
+
+**Tests**: 1 new test in `tests/test_packaging_view_gui.py`, teeth-verified. Full file (23 cases): all passed. mypy/ruff/black clean.
+
+**Deliverable**: `docs/MRA_PRE_4_ANTI_DRIFT_AUDIT.md` - 4 findings in the defined evidence format. This phase's exact source-PDF wording was not available to re-quote in this segment; executed against the phase's already-recorded working title and this audit's own established evidence-based methodology, disclosed as such rather than presented as a verbatim plan quote.
+
+---
+
 ## 2026-09-08 - MRA-PRE-3: three same-day fixes complete the canonical chain
 
 Continuing MRA-PRE-3's own end-to-end verification effort (see the entry below): fixing each blocker let the same real run advance far enough to hit the next one, three times in a row, until the full chain genuinely passed.

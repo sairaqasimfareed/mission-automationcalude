@@ -40,6 +40,35 @@ from src.services.thumbnail.thumbnail_package_service import ThumbnailPackageSer
 _LEFT = Qt.AlignmentFlag.AlignLeft
 
 
+def _resolved_genre_id(job: VideoJob) -> str:
+    """
+    The genre identity SEO/thumbnail generation should describe.
+
+    MRA-PRE-4 (Pre-Installer Master Audit, genre/audience/brand
+    anti-drift audit) finding: `ScriptLock.genre_id` exists
+    specifically to snapshot "topic, angle, target duration,
+    genre/profile references" at the moment a script is frozen (see
+    that model's own docstring), but had zero readers anywhere in the
+    codebase - `job.genre_id` has no guard preventing a change after
+    Script Lock (Content Studio's own "Project settings" card allows
+    it freely), so SEO/thumbnail generation calling `build(...,
+    genre_id=job.genre_id)` would silently describe a LOCKED script
+    using a genre the script itself was never actually written in, if
+    a person changed the project's genre after locking. Preferring the
+    locked snapshot once one exists closes that gap; a lock with no
+    genre_id (one built before this field existed) or no lock at all
+    (SEO/thumbnail can be generated for a Script-Intake project with
+    no lock) honestly falls back to the live field, matching every
+    other optional-snapshot field's own established convention in this
+    codebase.
+    """
+
+    if job.script_lock is not None and job.script_lock.genre_id is not None:
+        return job.script_lock.genre_id
+
+    return job.genre_id
+
+
 def _script_is_approved(job: VideoJob) -> bool:
     """
     Whether this project has a finalized script ready to feed SEO/
@@ -547,7 +576,7 @@ class PackagingView(QWidget):
         try:
             result = self._seo_package_service.build(
                 job,
-                genre_id=job.genre_id,
+                genre_id=_resolved_genre_id(job),
                 target_audience=target_audience,
                 previous_package=previous_package,
             )
@@ -627,7 +656,7 @@ class PackagingView(QWidget):
         try:
             context = SEOContextBuilder().build(
                 job,
-                genre_id=job.genre_id,
+                genre_id=_resolved_genre_id(job),
                 target_audience=target_audience,
             )
 

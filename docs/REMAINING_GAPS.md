@@ -24,13 +24,18 @@ Done and it has tests.
       added to `ContentStudioView` (newest first, Approve/Reject wired
       to `ContentIntelligencePipeline.resolve_approval()`).
 
-**Deferred out of this phase, deliberately:** skip-already-completed-stage
-idempotency for `run_all()` re-entry after a restart. Today, calling
-`run_all()` again always restarts from stage one rather than resuming
-where it left off - correct artifacts already on `VideoJob` are simply
-regenerated. This is a real gap (see Phase 2/10's restart-test items)
-but is a separate, larger concern from "does an approval gate actually
-stop the pipeline," which is what this phase delivers.
+**Stale note, corrected 2026-09-08 (MRA-PRE-4):** this originally said
+`run_all()` always restarts from stage one on re-entry, deferring
+idempotency as a separate concern. Direct inspection of the current
+`ContentIntelligencePipeline.run_all()` shows this was fixed at some
+later point in this project's history without this note being
+updated: every stage is now guarded (`if job.<artifact> is None:
+job = self.run_<stage>(job)`), including the terminal Script Lock
+step, whose own comment states the intent directly - *"Guarded on
+job.script_lock is None so a second run_all() call on an
+already-locked job stays a true no-op, matching this method's own
+idempotency guarantee."* No code change made here; this note was
+simply describing behavior the code no longer has.
 
 ## Phase 2 - Readiness & typed blockers
 
