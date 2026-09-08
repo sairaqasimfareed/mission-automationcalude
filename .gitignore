@@ -37,3 +37,9 @@ output.txt
 # as data/ itself (not project docs, not meant for version control).
 # The audit's own findings/reports still live under docs/ and ARE committed.
 audit/
+
+# Installer packaging build output - large, machine-specific,
+# regenerated from packaging/mission_automation.spec. The spec itself
+# (and everything else under packaging/) IS committed.
+/dist/
+/build/
