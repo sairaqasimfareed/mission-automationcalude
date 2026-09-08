@@ -285,6 +285,7 @@ def test_scroll_restore_survives_an_intermediate_zero_range_firing(
 
 def test_a_rapid_second_refresh_cancels_the_first_cycle_and_wins(
     qapp: QApplication,
+    recwarn: pytest.WarningsRecorder,
 ) -> None:
     """
     Fourth-pass real-world finding (via a runtime log showing ~6
@@ -296,6 +297,17 @@ def test_a_rapid_second_refresh_cancels_the_first_cycle_and_wins(
     cycles alive at once, whichever cycle's signal or timer fired LAST
     decided the final value, with no guarantee that was the most
     recent, most relevant call's own cycle.
+
+    Note (scroll-bug closeout pass): a real, direct measurement against
+    the current codebase - instrumenting refresh() and driving a single
+    real "Run audience promise" click through the full MainWindow ->
+    ProjectWorkspaceView -> on_change wiring, not the isolated view this
+    test itself uses - found exactly ONE refresh() call for that one
+    action today, not six. The original ~6-call log this fix was built
+    from is not reproducible at this exact scenario now (likely a
+    different/heavier action, or since-changed code) - not investigated
+    further, since the mechanism below is correct for ANY call count by
+    design, not only the specific number that happened to be logged.
 
     Simulated: two refresh() calls in immediate succession (matching
     the real burst pattern from the log) must each start a genuinely
@@ -309,6 +321,19 @@ def test_a_rapid_second_refresh_cancels_the_first_cycle_and_wins(
     `test_an_earlier_scroll_restore_cycle_cannot_clobber_a_newer_one`,
     which drives `_schedule_scroll_restore()` without the added
     variability of two full, real card-rebuilding refresh() calls.
+
+    Also a real regression tripwire (scroll-bug closeout pass): this
+    exact scenario - a cycle's own cleanup invoked twice - used to leak
+    a genuine, previously-uncaught `RuntimeWarning` (`libpyside: Failed
+    to disconnect ... from signal "rangeChanged"`), confirmed via a
+    real pytest run with `-W error::RuntimeWarning` promoting it to a
+    failure. `_disconnect()`'s own `except (TypeError, RuntimeError)`
+    never caught it - PySide emits this specific failure as a warning,
+    not a raised exception. Fixed by making `_cancel()` itself
+    idempotent (an `if cancelled: return` guard, matching the one
+    `_stop_listening()` already had) rather than relying on callers to
+    never invoke it twice. `recwarn` (pytest's own built-in warning
+    recorder) asserts this stays fixed.
     """
 
     job_store = InMemoryJobStore()
@@ -339,6 +364,108 @@ def test_a_rapid_second_refresh_cancels_the_first_cycle_and_wins(
         assert (
             view._active_scroll_restore_cleanup is second_cycle_cleanup
         )  # noqa: SLF001
+
+        # A cancelled cycle's own belated 50ms timer could still fire a
+        # THIRD time in real usage (its `_stop_listening` callback,
+        # which this test doesn't invoke directly) - calling the same
+        # cleanup callable yet again must stay just as safe.
+        first_cycle_cleanup()
+
+    assert not any(
+        issubclass(warning.category, RuntimeWarning) for warning in recwarn.list
+    ), [str(warning.message) for warning in recwarn.list]
+
+
+def test_refresh_falls_back_to_the_last_known_value_when_the_range_has_collapsed(
+    qapp: QApplication,
+) -> None:
+    """
+    Scroll-bug closeout, fifth pass - the real reason the fourth pass's
+    own user-confirmed report ("still does not resolve the real
+    symptom") was accurate. Confirmed via a direct, instrumented
+    reproduction of a real multi-stage "Run automation" burst (not
+    hypothesized): tearing down the old cards can transiently collapse
+    the scroll area's own range to zero before the new cards are
+    measured - independent of anything refresh()'s own restore code
+    does - and Qt clamps the scrollbar's value along with it
+    ((value=519, max=1038) -> (value=0, max=0)), exactly the same way
+    `QAbstractScrollArea` always clamps a value that no longer fits a
+    shrunk range. The fourth pass's own cancel-overlapping-cycles fix
+    correctly picks one winning cycle among several racing restores,
+    but did nothing to stop the NEXT refresh() call in the same burst
+    from reading that transient 0 via `scroll_bar.value()` and
+    recapturing it as "the current position" - permanently losing the
+    real value for the rest of the burst, even though the winning
+    cycle's own apply-on-rangeChanged logic was otherwise correct.
+
+    Simulated directly: a value already known to be correct (519,
+    exactly as an earlier call in the same burst would have captured
+    it, before ITS OWN teardown caused the collapse) is set as the
+    fallback, the range is forced to collapse (Qt's own behavior, not
+    anything this view calls), and refresh() is asked to run again -
+    it must restore 519, not the transiently-collapsed 0 a naive fresh
+    read would see.
+
+    Note: unlike most other tests in this file, `QTimer.singleShot` is
+    patched here as a plain no-op (matching
+    `test_scroll_restore_survives_an_intermediate_zero_range_firing`),
+    NOT with the `_run_pending_timer` side effect used elsewhere. An
+    earlier version of this test used `_run_pending_timer` and FAILED
+    (0 != 519) - not because the source fix was wrong, but because
+    firing the 50ms fallback synchronously disconnects the
+    `rangeChanged` listener before Qt's layout has had any chance to
+    recompute the range, which in this test never happens on its own
+    (no real widgets are added - the range is set by hand). The real
+    app's 50ms is real wall-clock time, during which the real event
+    loop gets many chances to recompute the real layout and fire a
+    real, later `rangeChanged` first - this test simulates exactly
+    that later, correctly-sized firing by hand instead of relying on
+    an immediately-fired fallback that would race ahead of it.
+    """
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view.resize(400, 200)
+    view.show()
+    qapp.processEvents()
+
+    # Simulate: an earlier call in the same rapid burst already
+    # captured the user's real position while the range was still
+    # trustworthy (refresh()'s own first-call behavior, already
+    # covered by test_refresh_preserves_scroll_position_for_the_same_
+    # job), then its own teardown collapsed the range - the state this
+    # NEXT call in the burst would actually see.
+    view._last_refreshed_job_id = job.id  # noqa: SLF001
+    view._last_known_scroll_value = 519  # noqa: SLF001
+
+    scroll_bar = view._scroll_area.verticalScrollBar()  # noqa: SLF001
+    scroll_bar.setRange(0, 0)
+    assert scroll_bar.value() == 0  # sanity: Qt itself clamped this
+
+    with patch("src.desktop.views.content_studio_view.QTimer.singleShot"):
+        view.refresh(job)
+
+        # refresh()'s own capture logic must have fallen back to 519
+        # (not the collapsed live read of 0) as the value to restore -
+        # but the range is still 0 at this exact point (nothing has
+        # recalculated Qt's layout yet), so _apply()'s own guard
+        # correctly still skips writing it for now.
+        assert scroll_bar.value() == 0
+
+        # The scroll area's own range now catches up to the rebuilt
+        # content's real size, exactly like the real, later
+        # `rangeChanged` firing a genuine layout recalculation
+        # produces - the still-alive listener must apply the
+        # correctly-recovered 519 at that point, not the transient 0.
+        scroll_bar.setRange(0, 1400)
+
+    assert scroll_bar.value() == 519
 
 
 def test_an_earlier_scroll_restore_cycle_cannot_clobber_a_newer_one(

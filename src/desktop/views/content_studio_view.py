@@ -211,6 +211,18 @@ class ContentStudioView(QWidget):
         # applying a value, instead of several racing independently.
         self._active_scroll_restore_cleanup: Callable[[], None] | None = None
 
+        # Fifth-pass fix state (see refresh()'s own docstring): during
+        # a rapid burst, the scroll area's own range/value can be
+        # transiently zeroed by Qt itself while old cards are torn down
+        # and new ones haven't been measured yet - independent of
+        # anything this view's own restore code does. The NEXT
+        # refresh() call in the same burst would otherwise read that
+        # transient 0 as "the current position" and propagate it
+        # forward, permanently losing the real value. This holds the
+        # last value known to be trustworthy (captured only when the
+        # scroll area's range was genuinely settled) as a fallback.
+        self._last_known_scroll_value = 0
+
         # Transient - a review is a read-only critique, never persisted
         # to VideoJob (the Reviewer never becomes the author). Keyed by
         # stage_key so switching stages doesn't lose a prior result,
@@ -286,18 +298,39 @@ class ContentStudioView(QWidget):
 
         A single user action can trigger this method several times in
         quick succession (confirmed via a real runtime log showing
-        around 6 calls for one click) - each call still captures
-        whatever the scrollbar shows at ITS OWN start, which is always
-        accurate for that call. What previously went wrong was not the
-        capture itself but what happened AFTER: see
-        `_schedule_scroll_restore()`'s own docstring for the real,
-        confirmed fix for the resulting multi-cycle race.
+        around 6 calls for one click). The fourth pass fixed which
+        cycle's restore ends up "winning" that race (see
+        `_schedule_scroll_restore()`'s own docstring) but assumed each
+        call's OWN fresh capture (`scroll_bar.value()` at ITS OWN
+        start) was always accurate. Fifth pass, confirmed via a direct,
+        instrumented reproduction of a real multi-stage "Run
+        automation" burst: it is not. Tearing down the old cards can
+        transiently collapse the scroll area's own range to zero
+        before the new cards are measured - independent of anything
+        this view's own restore code does - and Qt clamps the
+        scrollbar's value along with it. The NEXT call in the same
+        burst then captures that transient 0 as "the current
+        position," permanently losing the real value for the rest of
+        the burst even though the winning cycle's own restore logic is
+        otherwise correct. Trusting a live read only when the range is
+        genuinely settled (`maximum() > 0`) - falling back to the last
+        value known to be trustworthy otherwise - propagates the real
+        value through the whole burst instead.
         """
 
         is_same_job = job.id == self._last_refreshed_job_id
-        scroll_value = (
-            self._scroll_area.verticalScrollBar().value() if is_same_job else 0
-        )
+
+        if is_same_job:
+            scroll_bar = self._scroll_area.verticalScrollBar()
+            scroll_value = (
+                scroll_bar.value()
+                if scroll_bar.maximum() > 0
+                else self._last_known_scroll_value
+            )
+        else:
+            scroll_value = 0
+
+        self._last_known_scroll_value = scroll_value
         self._last_refreshed_job_id = job.id
 
         while self._layout.count():
@@ -383,6 +416,32 @@ class ContentStudioView(QWidget):
         def _apply() -> None:
             if cancelled:
                 return
+
+            if scroll_bar.maximum() == 0:
+                # The scroll area's own range hasn't caught up to the
+                # just-rebuilt content yet (still mid-layout) - real,
+                # direct reproduction (instrumenting a full multi-stage
+                # "Run automation" burst, the exact scenario the
+                # original bug report was about) found this is NOT
+                # merely "restores to 0 this one time": Qt clamps
+                # setValue() to [0, maximum], so writing here can only
+                # ever produce 0 - and that 0 then gets read back by
+                # scroll_bar.value() as if it were the real, current
+                # position. refresh()'s OWN scroll-value capture at the
+                # TOP of the very next call in the burst reads exactly
+                # that corrupted 0, permanently losing the user's real
+                # position for the rest of the burst - not a one-cycle
+                # accident, the actual mechanism behind "the fix still
+                # doesn't resolve the real symptom." The fourth pass's
+                # own cancel-overlapping-cycles fix correctly picks one
+                # winning cycle, but did nothing to stop that winning
+                # cycle from having captured an already-corrupted value
+                # in the first place. Skipping the write here until the
+                # range is genuinely settled (via rangeChanged or the
+                # 50ms fallback below) leaves scroll_bar.value() exactly
+                # as it was - uncorrupted - for every reader in between.
+                return
+
             scroll_bar.setValue(value)
 
         def _on_range_changed(_minimum: int, _maximum: int) -> None:
@@ -397,8 +456,20 @@ class ContentStudioView(QWidget):
 
         def _cancel() -> None:
             # Called only by a NEWER cycle superseding this one -
-            # never by this cycle's own natural completion.
+            # never by this cycle's own natural completion. Guarded
+            # against being invoked twice for the same cycle (found via
+            # a real, previously-uncaught pytest warning: PySide's own
+            # libpyside emits a RuntimeWarning, not the TypeError/
+            # RuntimeError _disconnect() already handles, when asked to
+            # disconnect a signal a second time - so a stale external
+            # reference to this exact closure calling it again would
+            # silently leak that warning into every real run this
+            # mechanism handles, not just this one test).
             nonlocal cancelled
+
+            if cancelled:
+                return
+
             cancelled = True
             _disconnect()
 

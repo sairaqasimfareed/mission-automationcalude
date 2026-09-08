@@ -102,6 +102,14 @@ every phase:
    possible edge case is now covered"). No MRA-PRE phase re-verified
    or closed this item during the audit itself - it remains open,
    exactly as MRA-PRE-0 recorded it.
+
+   **Update, same day (fixed, fifth pass)**: root-caused via a direct,
+   instrumented reproduction against a real `MainWindow` and fixed in
+   `src/desktop/views/content_studio_view.py` - see
+   `docs/MRA_PRE_0_BASELINE.md` section 7 item 2 for the full writeup
+   and `PROJECT_PROGRESS.md` for the narrative entry. Teeth-verified
+   (a new permanent regression test fails without the fix, passes with
+   it) and the full 134-test file re-run green.
 5. **Test-run data contamination** of `data/checkpoints/`/
    `data/final_exports/` from local test runs writing to production
    paths instead of an isolated `tmp_path` (MRA-PRE-0, re-confirmed

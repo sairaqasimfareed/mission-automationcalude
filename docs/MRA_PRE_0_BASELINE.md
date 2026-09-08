@@ -115,6 +115,35 @@ surprise:
    user-facing GUI defect that MRA-PRE-7 should re-surface, not a new
    finding invented here.
 
+   **Update, same day (fixed, fifth pass)**: root-caused via a direct,
+   instrumented reproduction of a real multi-stage "Run automation"
+   burst against a real `MainWindow` (not guessed, not a unit test in
+   isolation) - the fourth pass's cancel-overlapping-cycles fix
+   correctly picked one winning restore cycle, but did nothing to stop
+   `refresh()`'s own tear-down-and-rebuild from transiently collapsing
+   the scroll area's range to 0 mid-rebuild (Qt's own behavior,
+   independent of anything this view's restore code writes) - the
+   VERY NEXT `refresh()` call in the same rapid burst then read that
+   transient 0 via a fresh `scroll_bar.value()` at ITS OWN start and
+   recaptured it as "the current position," permanently propagating
+   the loss through the rest of the burst. Confirmed exactly this
+   pattern via instrumentation: `(value=519, max=1038) -> (value=0,
+   max=0)`, repeating across 11 refresh() calls for one real user
+   action. Fixed in `src/desktop/views/content_studio_view.py`:
+   `refresh()` now trusts a live scrollbar read only when
+   `scroll_bar.maximum() > 0` (range genuinely settled), falling back
+   to a new `self._last_known_scroll_value` otherwise - propagating
+   the real value through the whole burst instead of losing it on the
+   first collapse. Verified via the same real diagnostic script
+   showing the final scrollbar value exactly matches the original
+   position after a full simulated 11-call burst (`Difference: 0`,
+   was `Difference: -519` before the fix), plus a new permanent
+   regression test
+   (`test_refresh_falls_back_to_the_last_known_value_when_the_range_has_collapsed`),
+   teeth-verified (fails without the fix, passes with it), and the
+   full 134-test file re-run green. See `PROJECT_PROGRESS.md`'s
+   matching entry for the full writeup.
+
 ## 8. Project/provider data snapshot
 
 Snapshotted to `audit/baseline_2026-09-07/` (gitignored, matching
