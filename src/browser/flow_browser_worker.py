@@ -14,6 +14,8 @@ from playwright.sync_api import (
     sync_playwright,
 )
 
+from src.browser.chromium_bootstrap import ensure_chromium_and_retry
+
 T = TypeVar("T")
 
 
@@ -186,11 +188,19 @@ class FlowBrowserWorker:
                 # actual window fits on screen, not just its content.
                 viewport = {"width": width, "height": max(height - 120, 480)}
 
-        context = playwright.chromium.launch_persistent_context(
-            user_data_dir=str(profile_directory),
-            headless=headless,
-            viewport=viewport,
-            args=["--start-maximized"] if not headless else [],
+        # Installer packaging: Chromium is not bundled, so a first-ever
+        # launch on a freshly-installed machine can genuinely hit "not
+        # installed yet" here - ensure_chromium_and_retry() runs the
+        # real "playwright install chromium" once and retries
+        # transparently, rather than surfacing a raw Playwright error
+        # the operator can't act on.
+        context = ensure_chromium_and_retry(
+            lambda: playwright.chromium.launch_persistent_context(
+                user_data_dir=str(profile_directory),
+                headless=headless,
+                viewport=viewport,
+                args=["--start-maximized"] if not headless else [],
+            )
         )
         self._contexts[profile_id] = context
 
@@ -218,7 +228,9 @@ class FlowBrowserWorker:
 
         playwright = self._ensure_playwright()
 
-        return playwright.chromium.launch(headless=headless)
+        return ensure_chromium_and_retry(
+            lambda: playwright.chromium.launch(headless=headless)
+        )
 
     def is_context_open(self, profile_id: str) -> Future[bool]:
         return self.submit(
