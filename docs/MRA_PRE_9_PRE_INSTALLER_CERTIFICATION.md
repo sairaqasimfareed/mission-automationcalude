@@ -116,6 +116,24 @@ every phase:
    relevant in MRA-PRE-2). A test-isolation hygiene issue, not a
    production defect (`data/` is gitignored, nothing ships) - recorded
    for a future, narrowly-scoped test-fixture pass.
+
+   **Update, same day (escalated from theoretical to concretely
+   triggering)**: this is a *read*-contamination risk too, not only
+   write. `src/desktop/services.py` hardcodes its provider-profile
+   storage path to the real `data/provider_profiles.json` behind
+   module-level `@lru_cache` singletons with no test injection point.
+   Adding real, enabled ElevenLabs/Gemini provider profiles through
+   the app's own real Provider Manager (a legitimate, requested task)
+   made 5 tests in `tests/test_desktop_app_integration.py` start
+   failing - confirmed via direct experiment that the real, live
+   provider data is what these tests were unintentionally reading,
+   not a code regression from any packaging work done the same day
+   (reproduces identically with every other same-day change reverted).
+   Root-caused and deliberately deferred to a separate, properly-
+   scoped session (a real composition-root refactor, not a quick
+   patch) rather than folded into installer-packaging work - see
+   `PROJECT_PROGRESS.md`'s matching entry. The real, running app
+   itself is unaffected.
 6. **`job.scenes` dual-writer risk** (MRA-PRE-1) - the legacy and
    current content pipelines each have their own independent,
    GUI-reachable writer for this field. Classified minor, a deliberate
