@@ -5,6 +5,20 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-08 - Google Flow real account connected: found and fixed a stale browser-context caching bug
+
+The user connected a real Google Flow account through the app's own real flow (Add Account -> Flow URL/model family -> Save -> Open Login, real Chrome, real Google sign-in -> Check Connection). First attempt worked; a later Check Connection attempt hit a real, previously-unseen error: `Check failed: BrowserContext.new_page: Target page, context or browser has been closed`.
+
+**Real defect found and fixed**: two separate caching layers, both trusting their cache with no liveness check. `FlowBrowserWorker.open_persistent_context_from_worker_thread()` caches one `BrowserContext` per `profile_id` and reused it unconditionally. `GoogleFlowRealUIAdapter._get_or_open_page()` caches one `Page` per `profile_id` the same way - more consequential than it first looks, since this adapter is a single, long-lived instance per `src/desktop/services.py`, reused across an entire real generation attempt's submit/observe/download sequence, not just one button click. If the underlying browser context ever died out from under either cache - closed by the operator, by Chromium itself, or plausibly by the real, non-Playwright "Open Login" Chrome session sharing the exact same profile directory this worker also drives - every later operation reused the dead reference and crashed instead of recovering.
+
+**A wrong first fix attempt, caught before it was trusted**: the first fix used a `.pages` property read as a liveness probe (reasoning: Playwright raises on most calls against a dead context). Testing it directly against a real, deliberately-closed Chromium persistent context proved this false - `.pages` kept returning its last-known value without raising, so the "fix" silently did nothing. Switched to `BrowserContext.is_closed()`/`Page.is_closed()` - Playwright's own real, direct answers - once this was discovered, and confirmed the corrected version genuinely worked against the same real-Chromium repro.
+
+**Tests**: `tests/test_flow_browser_worker.py` (real Chromium, matching its existing skipif-guarded convention) gained `test_open_persistent_context_recovers_from_a_context_closed_out_from_under_the_cache` and `test_is_context_open_reports_false_for_a_context_closed_out_from_under_the_cache`. `tests/test_google_flow_real_adapter.py` (fake-Playwright-shaped harness, matching its existing convention) gained `test_get_or_open_page_recovers_when_the_cached_page_is_closed`, with a new `_SequentialFakeWorker` test double that hands out a genuinely fresh page per call so the test can tell a real recovery apart from an accidental reuse. Both fixes teeth-verified (reverted, confirmed the exact real failure, restored, confirmed passing again). Broader sweep (`-k "google_flow or flow_browser"`, 186 tests): all green. mypy/ruff/black clean.
+
+This is the first real defect found in the Google Flow real-account path since it was built - directly enabled by the user having a real account to test against for the first time.
+
+---
+
 ## 2026-09-08 - Real Gemini API key configured and verified live
 
 The user added a real Gemini API key as a new LLM provider profile (`gemini`, provider name `gemini`) through Provider Manager, following the same "New provider -> fill Profile ID/Display name -> Save" flow as the ElevenLabs profiles above - an initial premature Save with those two fields still blank produced the expected `ProviderProfileUpsertCommand` validation error (`profile_id`/`display_name` cannot be empty), not a bug, and was corrected by filling them in.
