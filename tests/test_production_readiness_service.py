@@ -10,6 +10,12 @@ from src.models.asset_state import (
 from src.models.audio_timeline import AudioTimeline
 from src.models.blocker import BlockerCode, BlockerSeverity
 from src.models.final_preview import FinalPreviewAction
+from src.models.google_flow_generation import (
+    GoogleFlowGenerationAttempt,
+    GoogleFlowGenerationRequest,
+    GoogleFlowGenerationState,
+    GoogleFlowStateTransition,
+)
 from src.models.manual_audio_requirement import (
     ManualAudioRequirement,
     ManualAudioRequirementType,
@@ -57,6 +63,28 @@ def _script(status: ScriptStatus = ScriptStatus.DRAFT) -> Script:
         content="Hello world.",
         prompt_version="v1",
         status=status,
+    )
+
+
+def _flow_attempt(
+    *,
+    state: GoogleFlowGenerationState,
+    scene_number: int = 1,
+) -> GoogleFlowGenerationAttempt:
+    return GoogleFlowGenerationAttempt(
+        request=GoogleFlowGenerationRequest(
+            scene_number=scene_number,
+            prompt="A dark hallway.",
+            prompt_version="v1",
+            profile_id="flow.default",
+            idempotency_key="idempotency-key-1",
+        ),
+        state=state,
+        state_history=[
+            GoogleFlowStateTransition(state=GoogleFlowGenerationState.PLANNED),
+            GoogleFlowStateTransition(state=state),
+        ],
+        profile_id="flow.default",
     )
 
 
@@ -410,3 +438,47 @@ def test_fulfilled_manual_audio_requirement_is_not_blocking() -> None:
 
     codes = {b.code for b in report.blockers}
     assert BlockerCode.MANUAL_AUDIO_REQUIRED not in codes
+
+
+def test_a_stuck_google_flow_attempt_produces_a_blocker() -> None:
+    """
+    MRA-PRE-7 (Pre-Installer Master Audit, GUI/operator-workflow audit)
+    finding: job.flow_generation_attempts had zero GUI readers anywhere
+    - an attempt reconciled to SUBMISSION_UNCERTAIN (GF-1's own crash-
+    recovery outcome) was invisible to an operator. Proves the fix.
+    """
+
+    service = ProductionReadinessService()
+    job = _job(
+        flow_generation_attempts=[
+            _flow_attempt(state=GoogleFlowGenerationState.SUBMISSION_UNCERTAIN),
+        ],
+    )
+
+    report = service.evaluate(job)
+
+    matching = [
+        blocker
+        for blocker in report.blockers
+        if blocker.code == BlockerCode.GOOGLE_FLOW_ATTEMPT_NEEDS_ATTENTION
+    ]
+
+    assert len(matching) == 1
+    assert "scene 1" in matching[0].message
+    assert "submission uncertain" in matching[0].message
+    assert matching[0].recovery_action is not None
+    assert "duplicate paid generation" in matching[0].recovery_action
+
+
+def test_a_healthy_google_flow_attempt_is_not_blocking() -> None:
+    service = ProductionReadinessService()
+    job = _job(
+        flow_generation_attempts=[
+            _flow_attempt(state=GoogleFlowGenerationState.GENERATING),
+        ],
+    )
+
+    report = service.evaluate(job)
+
+    codes = {b.code for b in report.blockers}
+    assert BlockerCode.GOOGLE_FLOW_ATTEMPT_NEEDS_ATTENTION not in codes

@@ -154,6 +154,22 @@ here (where the plan's own checklist places the requirement) and
 flagged for MRA-PRE-7 to address as GUI work, not re-audited from
 scratch there.
 
+**Update, same day (MRA-PRE-7)**: the `stale_artifacts` half of this
+finding was **wrong** - a methodological miss, not a real gap. This
+phase's own repository-wide grep searched for the literal string
+`stale_artifacts` inside `src/desktop/`, but the real GUI path goes
+through `ProductionReadinessService._staleness_blockers()` (which
+converts each `StaleArtifact` into a `Blocker`) and
+`QualityCenterView`'s "Production readiness" card (which renders
+`blocker.message` via a real widget) - neither file contains the
+literal field name, so the grep missed a surface that was already
+correctly built and already working at this exact HEAD. Corrected in
+`docs/MRA_PRE_7_GUI_OPERATOR_WORKFLOW_AUDIT.md` finding 001, which
+traced the field forward through its actual consumers instead of
+grepping for its name. The `flow_generation_attempts` half of this
+finding was confirmed still accurate and was fixed the same day - see
+that document's finding 002.
+
 ### MRA-PRE-2-007: Test-run data contamination (carried forward from MRA-PRE-0)
 
 **Claim under test**: local `data/` paths are not accidentally

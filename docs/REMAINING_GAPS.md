@@ -559,6 +559,23 @@ that file's audio-regeneration row.
       same-day patch. See `docs/MRA_PRE_5_PROVIDER_RUNTIME_FAILURE_
       AUDIT.md` finding 003 for the full evidence.
 
+## Follow-on: broader GUI sweep for "long content" and "disabled/loading/error states" (MRA-PRE-7)
+
+- [ ] MRA-PRE-7's own working scope named "long content" and
+      "disabled/loading/error states" as real remaining gaps - neither
+      was in GUI-6's own scoped slices (contrast, keyboard focus, tab
+      order, high-DPI, minimum-size). MRA-PRE-7's actual pass this
+      session targeted only the two concrete, already-diagnosed
+      carry-forwards from MRA-PRE-2 (Google Flow attempt visibility,
+      fixed; stale-artifact visibility, found to already work). This
+      broader sweep - checking every workspace view handles very long
+      text/lists gracefully and every async action has a real
+      disabled/loading/error state, not just a happy-path render - was
+      not attempted; it needs its own exploratory pass across each
+      view, not a same-segment extension. See
+      `docs/MRA_PRE_7_GUI_OPERATOR_WORKFLOW_AUDIT.md`'s own
+      "Explicitly not covered in this pass" section.
+
 ## Explicitly out of scope
 
 - Google Flow, or any browser automation targeting Google Flow's web UI.

@@ -3,12 +3,59 @@ from __future__ import annotations
 from src.models.asset_state import AssetWorkflowStatus
 from src.models.blocker import Blocker, BlockerCode, BlockerSeverity
 from src.models.final_preview import FinalPreviewStatus
+from src.models.google_flow_generation import GoogleFlowGenerationState
 from src.models.production_readiness import ProductionReadinessReport, ReadinessState
 from src.models.render_result import RenderStatus
 from src.models.script_quality_report import ScriptQualityStatus
 from src.models.video_job import VideoJob
 from src.services.approval_gate_service import ApprovalGateService
 from src.services.final_preview_service import FinalPreviewService
+
+# MRA-PRE-7 (Pre-Installer Master Audit, GUI/operator-workflow audit)
+# finding: a Google Flow generation attempt reaching one of these
+# states genuinely needs a human to look at it (an expired session,
+# an unrecognized page layout, a required confirmation, an uncertain
+# submission, or a failed post-download QC check) - GoogleFlowGeneration
+# State's own module docstring names these "interrupt states" plus
+# QC_FAILED, but nothing anywhere previously surfaced them to an
+# operator (job.flow_generation_attempts had zero GUI readers at all -
+# confirmed via a full repository grep). Deliberately excludes
+# FAILED - GF-1's ledger reconciliation already resolves SUBMISSION_
+# UNCERTAIN forward into either a real terminal state or FAILED, and a
+# plain FAILED attempt is expected to be regenerated (a new attempt
+# object, per GoogleFlowGenerationAttempt's own docstring) rather than
+# something to sit and stare at.
+_FLOW_ATTEMPT_NEEDS_ATTENTION_STATES = frozenset(
+    {
+        GoogleFlowGenerationState.SUBMISSION_UNCERTAIN,
+        GoogleFlowGenerationState.AUTH_REQUIRED,
+        GoogleFlowGenerationState.HUMAN_ACTION_REQUIRED,
+        GoogleFlowGenerationState.UI_CHANGED,
+        GoogleFlowGenerationState.QC_FAILED,
+    }
+)
+
+_FLOW_ATTEMPT_RECOVERY_ACTIONS: dict[GoogleFlowGenerationState, str] = {
+    GoogleFlowGenerationState.SUBMISSION_UNCERTAIN: (
+        "Check Google Flow directly for whether this clip was actually "
+        "submitted before retrying, to avoid a duplicate paid generation."
+    ),
+    GoogleFlowGenerationState.AUTH_REQUIRED: (
+        "Sign back into Google Flow, then resume this attempt."
+    ),
+    GoogleFlowGenerationState.HUMAN_ACTION_REQUIRED: (
+        "Open Google Flow and complete the required confirmation, then "
+        "resume this attempt."
+    ),
+    GoogleFlowGenerationState.UI_CHANGED: (
+        "Google Flow's page layout no longer matches what this app "
+        "expects - check for an app update before retrying."
+    ),
+    GoogleFlowGenerationState.QC_FAILED: (
+        "Review the downloaded clip's quality-check findings and "
+        "regenerate this scene if needed."
+    ),
+}
 
 _FAILED_ASSET_STATUSES = frozenset(
     {
@@ -57,6 +104,7 @@ class ProductionReadinessService:
             *self._staleness_blockers(job),
             *self._manual_audio_blockers(job),
             *self._final_preview_blockers(job),
+            *self._google_flow_attempt_blockers(job),
         ]
 
         return ProductionReadinessReport(
@@ -291,6 +339,35 @@ class ProductionReadinessService:
                 recovery_action=f"Re-run the stage that produces '{record.artifact}'.",
             )
             for record in job.stale_artifacts
+        ]
+
+    def _google_flow_attempt_blockers(self, job: VideoJob) -> list[Blocker]:
+        """
+        MRA-PRE-7 finding: surface a Google Flow generation attempt
+        that needs a human to look at it - see this module's own
+        `_FLOW_ATTEMPT_NEEDS_ATTENTION_STATES` docstring for exactly
+        which states qualify and why. Reuses this same
+        Blocker/ProductionReadinessReport vocabulary Quality Center's
+        "Production readiness" card already renders, rather than
+        inventing a second, parallel GUI surface for one more kind of
+        stuck state.
+        """
+
+        return [
+            Blocker(
+                code=(BlockerCode.GOOGLE_FLOW_ATTEMPT_NEEDS_ATTENTION),
+                stage="google_flow",
+                severity=BlockerSeverity.BLOCKING,
+                message=(
+                    f"Google Flow generation for scene "
+                    f"{attempt.request.scene_number} needs attention: "
+                    f"{attempt.state.value.replace('_', ' ')}."
+                ),
+                affected_artifact=f"scene_{attempt.request.scene_number}",
+                recovery_action=(_FLOW_ATTEMPT_RECOVERY_ACTIONS.get(attempt.state)),
+            )
+            for attempt in job.flow_generation_attempts
+            if attempt.state in _FLOW_ATTEMPT_NEEDS_ATTENTION_STATES
         ]
 
     def _manual_audio_blockers(self, job: VideoJob) -> list[Blocker]:

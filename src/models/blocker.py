@@ -32,6 +32,7 @@ class BlockerCode(str, Enum):
     ARTIFACT_STALE = "artifact_stale"
     MANUAL_AUDIO_REQUIRED = "manual_audio_required"
     FINAL_PREVIEW_STALE = "final_preview_stale"
+    GOOGLE_FLOW_ATTEMPT_NEEDS_ATTENTION = "google_flow_attempt_needs_attention"
 
 
 class Blocker(MissionBaseModel):

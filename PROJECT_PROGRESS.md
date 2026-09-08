@@ -5,6 +5,22 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-08 - MRA-PRE-7: GUI and operator workflow audit (Pre-Installer Master Audit)
+
+Targeted the two concrete, already-diagnosed carry-forwards from MRA-PRE-2 rather than re-auditing GUI-0/1/6/8 from scratch, which this phase overlaps heavily with.
+
+**A correction, not a fix**: MRA-PRE-2 had claimed `job.stale_artifacts` has zero GUI surfacing anywhere. Re-traced the field forward through its actual consumers instead of trusting that earlier claim, and found it already works: `ProductionReadinessService._staleness_blockers()` converts each stale-artifact record into a real `Blocker`, and Quality Center's "Production readiness" card genuinely renders its message via a real widget - already true at MRA-PRE-2's own HEAD. The earlier claim came from a grep that searched for the literal field name inside the desktop layer, which missed this indirect path. Corrected in `docs/MRA_PRE_2_PERSISTENCE_AUDIT.md` with an "Update, same day" note, matching this audit's own established discipline for correcting stale claims on discovery (see MRA-PRE-4's `run_all()` correction for the same pattern).
+
+**A real gap, confirmed and fixed**: the other half of MRA-PRE-2's claim - Google Flow generation attempt state - genuinely had zero GUI surfacing anywhere, confirmed via a real repository-wide search (only a code comment referenced the concept). An attempt reconciled to `SUBMISSION_UNCERTAIN` by MRA-PRE-2's own restart-reconciliation fix would sit invisible to an operator indefinitely. Fixed by adding `_google_flow_attempt_blockers()` to `ProductionReadinessService`, reusing the exact same `Blocker` vocabulary the stale-artifacts path already proved reaches the GUI - zero new GUI code needed, just one new blocker-producing method plus one new `BlockerCode` value. Flags an attempt in a state that genuinely needs a human (an expired session, an unrecognized page layout, a required confirmation, an uncertain submission, or a failed quality check), each with a concrete, state-specific recovery action. Proven via 3 new tests, one verified to genuinely fail without the fix, one proving the fix reaches the real `QualityCenterView` widget tree end to end.
+
+**Not covered in this pass, disclosed**: this phase's broader named scope ("long content" and "disabled/loading/error states," not in GUI-6's own scoped slices) was not attempted - it needs its own exploratory sweep across every workspace view, recorded in `docs/REMAINING_GAPS.md` as open rather than claimed done.
+
+**Tests**: 2 new tests in `test_production_readiness_service.py`, 1 new test in `test_quality_center_readiness_gui.py`, teeth-verified. mypy/ruff/black clean.
+
+**Deliverable**: `docs/MRA_PRE_7_GUI_OPERATOR_WORKFLOW_AUDIT.md` - 2 findings in the defined evidence format.
+
+---
+
 ## 2026-09-08 - MRA-PRE-6: Publishing/package audit (Pre-Installer Master Audit)
 
 Verified the final, publish-ready package (video + SEO metadata + thumbnail + manifest) is assembled, validated, and tracked correctly - re-verification of work substantially already built during SEO-1 through SEO-9, not a from-scratch pass. Confirmed first: there is no real, automated "publish to a platform" integration anywhere in this codebase - publishing means producing a complete, validated, ready-to-hand-off package for a person to publish manually.
