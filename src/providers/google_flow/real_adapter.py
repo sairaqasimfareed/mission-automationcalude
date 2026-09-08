@@ -671,7 +671,25 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
         existing = self._pages.get(profile_id)
 
         if existing is not None:
-            return existing
+            if not existing.is_closed():
+                return existing
+
+            # Real-world finding, mirroring
+            # FlowBrowserWorker._is_context_alive()'s own reasoning:
+            # this adapter instance is long-lived (one shared instance
+            # per the composition root, reused across an entire real
+            # generation attempt'''s submit/observe/download sequence -
+            # see src/desktop/services.py), so a page cached here can
+            # easily outlive the browser context it belongs to. Even
+            # after the worker itself recovers from a dead context
+            # (evicting and reopening a fresh one), this cache would
+            # still hand back the OLD, now-orphaned Page object
+            # instead of ever asking the worker again - the exact
+            # "Target page, context or browser has been closed" a real
+            # operator hit via Check Connection. Evict and fall
+            # through to resolve a fresh page from the (possibly
+            # freshly-reopened) context instead.
+            self._pages.pop(profile_id, None)
 
         directory = self._profile_directory_resolver(profile_id)
         context = self._worker.open_persistent_context_from_worker_thread(

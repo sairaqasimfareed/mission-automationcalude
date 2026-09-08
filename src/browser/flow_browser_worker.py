@@ -135,7 +135,23 @@ class FlowBrowserWorker:
         existing = self._contexts.get(profile_id)
 
         if existing is not None:
-            return existing
+            if self._is_context_alive(existing):
+                return existing
+
+            # Real-world finding: a previously-cached context can die
+            # out from under this cache without this worker ever being
+            # told - closed by the operator, by Chromium itself, or by
+            # a real, non-Playwright "Open Login" Chrome session
+            # sharing this exact same profile directory (see this
+            # module's own docstring on why that separate real-Chrome
+            # path exists). Reusing a dead reference here made every
+            # subsequent call raise Playwright's own "Target page,
+            # context or browser has been closed" instead of
+            # transparently recovering - confirmed via a real operator
+            # repro through Check Connection. Evict the stale entry
+            # and fall through to open a fresh context instead of
+            # trusting the cache blindly.
+            self._contexts.pop(profile_id, None)
 
         playwright = self._ensure_playwright()
 
@@ -205,7 +221,27 @@ class FlowBrowserWorker:
         return playwright.chromium.launch(headless=headless)
 
     def is_context_open(self, profile_id: str) -> Future[bool]:
-        return self.submit(lambda: profile_id in self._contexts)
+        return self.submit(
+            lambda: profile_id in self._contexts
+            and self._is_context_alive(self._contexts[profile_id])
+        )
+
+    @staticmethod
+    def _is_context_alive(context: BrowserContext) -> bool:
+        """
+        Liveness check for a cached persistent context.
+
+        Real-world finding: a plain property read like `.pages` does
+        NOT reliably raise on a context whose underlying browser
+        process is already gone - confirmed directly against a real,
+        closed Chromium persistent context, where `.pages` kept
+        returning its last-known (stale) value instead of erroring.
+        `BrowserContext.is_closed()` is Playwright's own real, direct
+        answer to this exact question and is what must be used here,
+        not an indirect probe.
+        """
+
+        return not context.is_closed()
 
     def close_context(self, profile_id: str) -> Future[None]:
         def _close() -> None:

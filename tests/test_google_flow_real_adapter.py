@@ -59,6 +59,31 @@ class _FakeWorker:
         return _FakeContext(self._page)
 
 
+class _SequentialFakeWorker:
+    """
+    Like _FakeWorker, but hands out a genuinely NEW page (from a
+    genuinely new context) on every call - used to verify
+    _get_or_open_page() actually asks the worker again for a fresh
+    page once its cached one is stale, rather than checking a real
+    FlowBrowserWorker recovers from that same situation (that's
+    test_flow_browser_worker.py's own, real-Chromium job).
+    """
+
+    def __init__(self, pages: list[_FakePage]) -> None:
+        self._pages = list(pages)
+        self.open_call_count = 0
+
+    def submit(self, fn: Callable[[], Any]) -> _ImmediateFuture:
+        return _ImmediateFuture(fn())
+
+    def open_persistent_context_from_worker_thread(
+        self, profile_id: str, profile_directory: Path, *, headless: bool
+    ) -> _FakeContext:
+        self.open_call_count += 1
+        page = self._pages[min(self.open_call_count - 1, len(self._pages) - 1)]
+        return _FakeContext(page)
+
+
 class _FakeLocator:
     def __init__(self, *, count: int = 1, disabled: bool = False) -> None:
         self._count = count
@@ -138,9 +163,13 @@ class _FakePage:
         self._by_role: dict[tuple[str, str], _FakeLocator] = {}
         self._by_css: dict[str, _FakeLocator] = {}
         self._download = _FakeDownload()
+        self.closed = False
 
     def goto(self, url: str, timeout: float | None = None) -> None:
         self.url_history.append(url)
+
+    def is_closed(self) -> bool:
+        return self.closed
 
     def get_by_role(
         self, role: str, name: str | None = None, exact: bool = False
@@ -218,6 +247,46 @@ def test_check_profile_health_false_when_not_authenticated() -> None:
     adapter = _adapter(page)
 
     assert adapter.check_profile_health("flow.primary") is False
+
+
+def test_get_or_open_page_recovers_when_the_cached_page_is_closed() -> None:
+    """
+    Real-world finding: a real operator hit Playwright's own "Target
+    page, context or browser has been closed" through Check
+    Connection. This adapter caches one Page per profile_id
+    (_get_or_open_page's own self._pages) across its whole lifetime -
+    a single, long-lived instance per src/desktop/services.py, reused
+    across an entire real generation attempt's submit/observe/
+    download sequence. If the underlying page/context ever dies
+    (closed externally, or evicted and reopened fresh at the
+    FlowBrowserWorker layer below - see test_flow_browser_worker.py's
+    matching recovery test), this cache would keep handing back the
+    OLD, now-dead Page object forever, since nothing here ever asked
+    the worker again once a page was cached. Simulated directly: mark
+    the first page closed (bypassing any real close path) and confirm
+    the adapter notices and asks its worker for a fresh one instead of
+    reusing the dead reference or raising.
+    """
+
+    first_page = _authenticated_page()
+    second_page = _authenticated_page()
+    worker = _SequentialFakeWorker([first_page, second_page])
+    adapter = GoogleFlowRealUIAdapter(
+        worker=worker,  # type: ignore[arg-type]
+        base_url="https://flow.google.com/project/test-project",
+        profile_directory_resolver=lambda profile_id: Path("unused") / profile_id,
+    )
+
+    assert adapter.check_profile_health("flow.primary") is True
+    assert worker.open_call_count == 1
+
+    first_page.closed = True
+
+    assert adapter.check_profile_health("flow.primary") is True
+    assert worker.open_call_count == 2
+    # The second call must have gone through second_page, not the
+    # stale, closed first_page.
+    assert second_page.url_history == ["https://flow.google.com/project/test-project"]
 
 
 def test_base_url_resolver_looks_up_the_right_account() -> None:

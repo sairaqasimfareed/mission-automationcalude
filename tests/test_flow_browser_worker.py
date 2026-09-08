@@ -88,6 +88,73 @@ def test_open_persistent_context_reuses_an_already_open_context(
 
 
 @requires_chromium
+def test_open_persistent_context_recovers_from_a_context_closed_out_from_under_the_cache(
+    worker: FlowBrowserWorker, tmp_path: Path
+) -> None:
+    """
+    Real-world finding: a real operator hit Playwright's own "Target
+    page, context or browser has been closed" through this app's
+    Check Connection button - the cached context had died (closed
+    externally, e.g. by the operator, by Chromium itself, or by a
+    real, non-Playwright "Open Login" Chrome session sharing the same
+    profile directory) without close_context() ever being called, so
+    the stale entry stayed in the cache and every later call reused a
+    dead reference. Simulated directly: close the underlying context
+    without going through close_context() (which would correctly
+    evict it) - open_persistent_context() must notice the reused
+    reference is dead and transparently open a fresh, genuinely
+    working context instead of handing back the dead one or raising.
+    """
+
+    profile_dir = tmp_path / "flow.primary"
+
+    first = worker.open_persistent_context(
+        "flow.primary", profile_dir, headless=True
+    ).result(timeout=60)
+
+    # Close the context directly, bypassing close_context() - this is
+    # the "died out from under the cache" scenario, not a deliberate
+    # close through this worker's own API.
+    worker.submit(first.close).result(timeout=30)
+
+    second = worker.open_persistent_context(
+        "flow.primary", profile_dir, headless=True
+    ).result(timeout=60)
+
+    assert second is not first
+
+    is_open = worker.is_context_open("flow.primary").result(timeout=10)
+    assert is_open is True
+
+    # The recovered context must be genuinely usable, not just a
+    # non-raising return value.
+    page = worker.submit(lambda: second.new_page()).result(timeout=30)
+    assert page is not None
+
+
+@requires_chromium
+def test_is_context_open_reports_false_for_a_context_closed_out_from_under_the_cache(
+    worker: FlowBrowserWorker, tmp_path: Path
+) -> None:
+    """Companion to the recovery test above: is_context_open() must
+    also reflect real liveness, not just cache presence - the earlier
+    version of this method (`profile_id in self._contexts`) would
+    have reported True here even though the context is genuinely
+    dead."""
+
+    profile_dir = tmp_path / "flow.primary"
+
+    context = worker.open_persistent_context(
+        "flow.primary", profile_dir, headless=True
+    ).result(timeout=60)
+
+    worker.submit(context.close).result(timeout=30)
+
+    is_open = worker.is_context_open("flow.primary").result(timeout=10)
+    assert is_open is False
+
+
+@requires_chromium
 def test_close_context_actually_closes_it(
     worker: FlowBrowserWorker, tmp_path: Path
 ) -> None:
