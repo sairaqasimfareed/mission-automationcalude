@@ -27,9 +27,13 @@ class _ElevenLabsSoundGenerationCore:
     /v1/sound-generation, xi-api-key header, JSON body, raw audio/mpeg
     response) used for both background music and short sound effects
     - the only difference is whether a target duration is supplied.
-    Not yet verified against a live account; confirm the endpoint path
-    and payload shape against current ElevenLabs docs once a real key
-    is available.
+
+    Verified against a real, live ElevenLabs account (2026-09-08):
+    both generate_music() and generate_sound_effect() produced real,
+    non-empty MP3 files end to end through this exact class - the
+    endpoint path, xi-api-key header, JSON body shape, and
+    audio/mpeg response handling are all confirmed correct, not just
+    documented-and-hoped.
     """
 
     def __init__(

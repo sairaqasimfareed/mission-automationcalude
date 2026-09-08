@@ -28,11 +28,17 @@ class ElevenLabsVoiceProvider(VoiceProvider):
 
     Calls POST /v1/text-to-speech/{voice_id} with an xi-api-key header
     and a JSON body, expecting a raw audio/mpeg response - the shape
-    documented in ElevenLabs' TTS API. This has not been verified
-    against a live ElevenLabs account (no real API key exists in this
-    environment yet); confirm the endpoint path, model_id value, and
-    response format against current ElevenLabs docs once a real key
-    is available.
+    documented in ElevenLabs' TTS API.
+
+    Partially verified against a real, live ElevenLabs account
+    (2026-09-08): a real call with a valid key reached ElevenLabs and
+    got back a real HTTP 402 (Payment Required, insufficient
+    text-to-speech credit on that account) rather than a 401/404 or a
+    malformed-request error - the endpoint path, auth header, and
+    request shape are confirmed accepted by ElevenLabs. The actual
+    success response (audio/mpeg body) is still unconfirmed pending
+    an account with real TTS credit; re-verify generate_voice()/
+    generate_from_blueprint() end to end once one is available.
     """
 
     def __init__(

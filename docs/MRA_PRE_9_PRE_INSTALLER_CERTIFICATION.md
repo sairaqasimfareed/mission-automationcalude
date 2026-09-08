@@ -125,6 +125,29 @@ every phase:
    untested, since this project has no real API keys configured. Every
    stress/performance number in this audit is from dry-run mode.
 
+   **Update, same day (partially closed)**: the user obtained real
+   ElevenLabs credentials (voice/music/sound_effects) and a real
+   Google Flow account. A real, live-account connectivity check found
+   and fixed a genuine Provider Manager defect first (see
+   `PROJECT_PROGRESS.md`'s matching entry - a re-enabled profile could
+   permanently deadlock on a stale `DISABLED` health status). Once
+   real, valid keys were saved, a real (credit-consuming, user-
+   approved) generation call was run against each ElevenLabs adapter's
+   own code path: `ElevenLabsMusicProvider.generate_music()` and
+   `ElevenLabsSoundEffectProvider.generate_sound_effect()` both
+   produced real, non-empty MP3 output end to end - the first-ever
+   live confirmation that `src/providers/elevenlabs_sound_generation_provider.py`'s
+   endpoint path, auth header, and request/response shape are
+   correct, closing that class's own long-standing "not yet verified"
+   disclaimer. `ElevenLabsVoiceProvider.generate_voice()` reached a
+   real HTTP 402 (Payment Required - insufficient TTS credit on that
+   account, not a code defect); endpoint/auth/request shape are
+   confirmed accepted by ElevenLabs, but the actual success response
+   remains unconfirmed pending an account with real TTS credit. Not
+   yet done: stress/load/rate-limit behavior specifically (this was a
+   correctness/connectivity check, not a load test), and Google Flow's
+   own real generation path.
+
 ## Final verdict
 
 **NOT YET CERTIFIED for installer packaging - one clear, specific
