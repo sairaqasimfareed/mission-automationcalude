@@ -5,6 +5,20 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-08 - MRA-PRE-9: Pre-installer certification (Pre-Installer Master Audit) - FINAL PHASE
+
+The tenth and final phase of the Pre-Installer Master Audit: a synthesis phase compiling MRA-PRE-0 through 8's own already-verified results into one honest, evidence-based go/no-go determination for installer packaging - not a re-investigation of anything, an aggregation.
+
+**Nine real, teeth-verified defects were found and fixed across the whole audit**: genre change after any content-intelligence stage silently kept using the old genre's resolved profile (MRA-PRE-1); Google Flow restart reconciliation had zero real callers anywhere in the app (MRA-PRE-2); scene duration never reconciled against actual narration length, blocking render for the canonical pipeline (MRA-PRE-3); a long stock-candidate title could exceed Windows' MAX_PATH, failing asset acquisition (MRA-PRE-3); SEO/thumbnail generation - and the entire Packaging workspace GUI - was completely unreachable for the canonical pipeline's projects (MRA-PRE-3); a project's genre could be changed after Script Lock, silently mismatching already-generated SEO/thumbnail content (MRA-PRE-4); `WorkflowStage.UPLOADED` was a defined terminal stage with zero code path anywhere that ever reached it (MRA-PRE-6); Google Flow generation attempt state had zero GUI surfacing anywhere (MRA-PRE-7). Every one was proven fixed via a real, deliberately-reverted-then-restored test, not merely asserted.
+
+**Seven real, disclosed items remain unresolved**, none hidden: the full-suite pytest hang (GUI-8's own finding, re-confirmed unchanged in MRA-PRE-8); 142 of 367 test files using module-level `assert` instead of `def test_*` functions (MRA-PRE-5, confirmed non-dangerous but real); the "long content"/"disabled/loading/error states" GUI sweep MRA-PRE-7's own scope named but didn't attempt; the Content Studio scroll-position bug, carried forward from MRA-PRE-0's own baseline and never re-verified within the audit; test-run data contamination of local `data/` paths; the `job.scenes` dual-writer risk between the legacy and current pipelines (classified minor, a deliberate design tradeoff); and untested live-provider load/latency/rate-limit behavior, since this project has no real API keys configured.
+
+**Final verdict: NOT YET CERTIFIED for installer packaging** - one clear, specific, already-diagnosed blocker (the full-suite pytest hang means "full local validation green" cannot currently be proven as one unattended process, the exact gate GUI-8 itself defined), everything else either fixed or a disclosed, lower-severity, explicitly-scoped-out risk that does not itself block packaging. Recommended path to certification: root-cause and fix the pytest hang (needs a debugger attached to a live repro, per GUI-8's own finding) - once `pytest tests/` completes cleanly as one process, this document's verdict should be updated to CERTIFIED.
+
+**Deliverable**: `docs/MRA_PRE_9_PRE_INSTALLER_CERTIFICATION.md` - the final synthesis document, closing out the 10-phase Pre-Installer Master Audit (MRA-PRE-0 through MRA-PRE-9).
+
+---
+
 ## 2026-09-08 - MRA-PRE-8: Performance and stability baseline (Pre-Installer Master Audit)
 
 Established the first real, directly-measured performance/stability baseline for this codebase - no deliberate stress/stability pass existed before this phase.
