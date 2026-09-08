@@ -458,6 +458,89 @@ def test_json_store_corrupt_job_file_raises(tmp_path: Path) -> None:
         fresh_store.get(job.id)
 
 
+def test_json_store_loads_a_legacy_video_job_json_missing_new_fields(
+    tmp_path: Path,
+) -> None:
+    """
+    MRA-PRE-2 (Pre-Installer Master Audit, persistence/restart/
+    migration audit): the "new optional fields absorb via Pydantic
+    defaults, no migration script needed" claim has been asserted
+    repeatedly across this project's history for individual artifacts
+    (see test_json_store_loads_a_legacy_seo_package_json_missing_new_fields)
+    but never proven directly for VideoJob itself - the one model
+    every other artifact is keyed against. Hand-writes the on-disk
+    shape a project saved before content-intelligence/Google-Flow
+    sprints existed would have (17 fields genuinely absent, not just
+    null: editorial_profile_snapshot, flow_generation_attempts,
+    content_decisions, script_version_history,
+    production_ambiguities, stale_artifacts, audience_promise,
+    research_plan, generated_script, story_angles,
+    selected_story_angle, narrative_architecture, hook_candidates,
+    selected_hook, editorial_critique, script_quality_report,
+    packaging_hypothesis, approval_policy, content_strategy) and
+    proves it still loads with correct, honest defaults - never a
+    guessed or fabricated value for what a legacy project never had.
+    """
+
+    store = JsonJobStore(storage_root=tmp_path)
+    job = _job()
+    full_payload = json.loads(job.model_dump_json())
+
+    fields_added_by_later_sprints = [
+        "editorial_profile_snapshot",
+        "flow_generation_attempts",
+        "content_decisions",
+        "script_version_history",
+        "production_ambiguities",
+        "stale_artifacts",
+        "audience_promise",
+        "research_plan",
+        "generated_script",
+        "story_angles",
+        "selected_story_angle",
+        "narrative_architecture",
+        "hook_candidates",
+        "selected_hook",
+        "editorial_critique",
+        "script_quality_report",
+        "packaging_hypothesis",
+        "approval_policy",
+        "content_strategy",
+    ]
+    legacy_payload = {
+        key: value
+        for key, value in full_payload.items()
+        if key not in fields_added_by_later_sprints
+    }
+    assert len(legacy_payload) < len(full_payload), (
+        "sanity check: the stripped fields must actually exist on a "
+        "real dump, or this test proves nothing"
+    )
+
+    (tmp_path / f"{job.id}.json").write_text(
+        json.dumps(legacy_payload), encoding="utf-8"
+    )
+
+    restored = store.get(job.id)
+
+    assert restored is not None
+    assert restored.id == job.id
+    assert restored.project_name == job.project_name
+    # Every field a legacy project never had defaults to its own
+    # honest "nothing happened yet" value - never fabricated.
+    assert restored.editorial_profile_snapshot is None
+    assert restored.flow_generation_attempts == []
+    assert restored.content_decisions == []
+    assert restored.audience_promise is None
+    assert restored.generated_script is None
+    # approval_policy is the one exception among the stripped fields:
+    # it has always had a real, sensible default_factory
+    # (ApprovalPolicyConfig.review_critical_stages), not None - a
+    # legacy project restores to that same default, not a fabricated
+    # or missing policy.
+    assert restored.approval_policy is not None
+
+
 def test_json_store_seo_package_round_trips_all_step_2_provenance_fields(
     tmp_path: Path,
 ) -> None:

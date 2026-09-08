@@ -19,12 +19,19 @@ from src.desktop.views.project_workspace_view import (  # noqa: E402
 )
 from src.models.enums import JobStatus, WorkflowStage  # noqa: E402
 from src.models.final_preview import FinalPreviewAction  # noqa: E402
+from src.models.google_flow_generation import (  # noqa: E402
+    GoogleFlowGenerationRequest,
+    GoogleFlowGenerationState,
+)
 from src.models.render_orchestration_result import (  # noqa: E402
     RenderOrchestrationResult,
 )
 from src.models.render_progress import (  # noqa: E402
     RenderProgress,
     RenderProgressStatus,
+)
+from src.services.google_flow_generation_ledger_service import (  # noqa: E402
+    GoogleFlowGenerationLedgerService,
 )
 from src.services.render_orchestrator_service import (  # noqa: E402
     RenderOrchestratorService,
@@ -599,6 +606,63 @@ def test_main_window_remains_functional_at_its_documented_minimum_size(
     for _label, _icon, _tab_name, target in workspace._workspaces:
         workspace._show_workspace(target)
         assert workspace._stack.currentWidget().size().height() > 0
+
+
+def test_reopening_a_project_reconciles_a_flow_attempt_stuck_at_submitting(
+    qapp: QApplication,
+    no_blocking_dialogs: None,
+) -> None:
+    """
+    MRA-PRE-2 (Pre-Installer Master Audit, persistence/restart audit)
+    real finding: GoogleFlowGenerationLedgerService.reconcile_on_restart()
+    has existed and been tested in isolation since GF-1, but nothing in
+    the real application ever called it - a project reopened after the
+    app closed or crashed while a Google Flow attempt was mid-
+    submission would show that attempt stuck at SUBMITTING forever,
+    never self-correcting to the honest SUBMISSION_UNCERTAIN state the
+    service was built to produce. Fixed by wiring the call into
+    ProjectWorkspaceView.set_job() (the real "a project is being
+    (re)opened" moment) - this drives that fix through the actual
+    MainWindow -> _open_project -> ProjectWorkspaceView.set_job() path,
+    not just the ledger service in isolation.
+    """
+
+    window = MainWindow(job_store=InMemoryJobStore())
+
+    _create_project(window)
+    job = window._job_store.list_all()[0]
+
+    request = GoogleFlowGenerationRequest(
+        scene_number=1,
+        prompt="A lighthouse at dusk, waves crashing below.",
+        prompt_version="v1",
+        profile_id="flow.primary",
+        idempotency_key="req-1",
+    )
+    attempt = GoogleFlowGenerationLedgerService.create_attempt(job, request)
+
+    for state in (
+        GoogleFlowGenerationState.SETTINGS_VERIFIED,
+        GoogleFlowGenerationState.PROMPT_PREPARED,
+        GoogleFlowGenerationState.SUBMITTING,
+    ):
+        GoogleFlowGenerationLedgerService.record_transition(job, attempt.id, state)
+
+    window._job_store.add(job)
+    assert (
+        window._job_store.get(job.id).flow_generation_attempts[0].state  # type: ignore[union-attr]
+        == GoogleFlowGenerationState.SUBMITTING
+    )
+
+    # Simulates the app having been closed and reopened to this same
+    # project - the real path a restart takes, not a direct service call.
+    window._open_project(job.id)
+
+    reopened = window._job_store.get(job.id)
+    assert reopened is not None
+    assert reopened.flow_generation_attempts[0].state == (
+        GoogleFlowGenerationState.SUBMISSION_UNCERTAIN
+    )
 
 
 def test_project_header_row_reflects_summary_and_rebuilds_on_refresh(

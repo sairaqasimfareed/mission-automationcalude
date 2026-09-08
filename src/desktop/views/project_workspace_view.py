@@ -21,6 +21,9 @@ from src.services.content_intelligence_pipeline import ContentIntelligencePipeli
 from src.services.content_pipeline import ContentPipeline
 from src.services.fact_check_service import FactCheckService
 from src.services.final_export.final_export_service import FinalExportService
+from src.services.google_flow_generation_ledger_service import (
+    GoogleFlowGenerationLedgerService,
+)
 from src.services.media_generation_pipeline import MediaGenerationPipeline
 from src.services.production_readiness_service import ProductionReadinessService
 from src.services.project_header_service import ProjectHeaderService
@@ -257,11 +260,44 @@ class ProjectWorkspaceView(QWidget):
         """Display one job, replacing any previously displayed job."""
 
         self._job_id = job_id
+        self._reconcile_flow_attempts_on_open(job_id)
 
         for _, _, _, workspace in self._workspaces:
             workspace.set_job(job_id)  # type: ignore[attr-defined]
 
         self.refresh()
+
+    def _reconcile_flow_attempts_on_open(self, job_id: UUID) -> None:
+        """
+        MRA-PRE-2 (Pre-Installer Master Audit, persistence/restart
+        audit) real finding: `GoogleFlowGenerationLedgerService.
+        reconcile_on_restart()` has existed and been tested since GF-1
+        - any Google Flow generation attempt still recorded as
+        SUBMITTING when the application closed or crashed mid-
+        submission is meant to be reconciled to SUBMISSION_UNCERTAIN,
+        the credit-sensitive-state rule's own honest "we don't know"
+        state - but nothing in the real application ever called it.
+        A project reopened after an interruption would show that
+        attempt stuck at SUBMITTING forever, an inaccurate state that
+        would never self-correct on its own.
+
+        Runs once per project open, not on every refresh() (this view
+        refreshes far more often than once per action) - reconciling
+        is only ever meaningful right after a restart, and
+        reconcile_on_restart() is a no-op once nothing is left at
+        SUBMITTING, so repeating it here would just be wasted work,
+        not a correctness requirement.
+        """
+
+        job = self._job_store.get(job_id)
+
+        if job is None:
+            return
+
+        reconciled = GoogleFlowGenerationLedgerService.reconcile_on_restart(job)
+
+        if reconciled:
+            self._job_store.add(job)
 
     def refresh(self) -> None:
         """Reload the current job once and push it to every workspace."""

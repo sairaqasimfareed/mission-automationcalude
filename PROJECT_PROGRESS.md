@@ -5,6 +5,26 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-08 - MRA-PRE-2: Persistence/restart/migration audit (Pre-Installer Master Audit)
+
+Audited repository atomicity, schema-upgrade behavior, stale-approval promotion risk, Google Flow restart reconciliation, missing/corrupt asset handling, and recovery-state visibility - each recorded in MRA-PRE-0's evidence format.
+
+**A real bug found and fixed, not just recorded**: `GoogleFlowGenerationLedgerService.reconcile_on_restart()` has existed and been unit-tested in isolation since GF-1 (this session's much earlier Google Flow work), designed to reconcile an attempt stuck at SUBMITTING - the application having closed or crashed mid-submission - into the honest SUBMISSION_UNCERTAIN state. A repository-wide search found it had **zero real callers anywhere in the application** - a project reopened after an interruption would show that attempt stuck at SUBMITTING forever, matching a gap GF-1's own documentation had already disclosed but never closed. Fixed: wired the call into `ProjectWorkspaceView.set_job()` - the real "a project is being (re)opened" moment - running once per open rather than on every refresh (this view refreshes far more often than once per action, and the reconciliation is already a no-op once nothing needs it). New end-to-end test drives this through the real `MainWindow -> _open_project -> ProjectWorkspaceView.set_job()` path, not just the service in isolation.
+
+**A long-repeated claim finally proven directly, not just for a different model**: "new optional fields absorb via Pydantic defaults, no migration script needed" has been asserted throughout this project's history, backed by a test for `SEOPackage` specifically - but never proven for `VideoJob` itself, the one model everything else is keyed against. New test hand-writes the on-disk shape a project saved before 18 later-added fields existed would have, and proves it still loads correctly with honest defaults.
+
+**Repository atomicity confirmed sound**: both `JsonJobStore._write()` and the pipeline checkpoint storage service use the same correct pattern (temp file in the same directory, flush + fsync, then atomic replace, with cleanup on failure) - a crash mid-write cannot corrupt a project file.
+
+**Two real, previously-unexamined recovery-visibility gaps found and recorded (not fixed here)**: neither Google Flow generation-attempt state (including the now-correctly-reconciled SUBMISSION_UNCERTAIN) nor `job.stale_artifacts` (the invalidation mechanism's own record of what a script/scene/audio change has made stale) has any GUI surfacing anywhere - an operator has no way to see either through the app, even though both are correct at the data level. Flagged for MRA-PRE-7 (GUI and operator workflow audit) rather than attempted here as unscoped feature work.
+
+**One risk carried forward from MRA-PRE-0, re-confirmed still relevant to this phase**: local `data/checkpoints/`/`data/final_exports/` contamination from test runs writing to production paths instead of an isolated `tmp_path` - recorded as a future test-hygiene pass, not fixed here.
+
+**Tests**: 1 new test in `test_desktop_job_store.py` (schema-upgrade proof, full file re-run: 23 passed), 1 new end-to-end test in `test_desktop_app_integration.py` (Flow-restart-reconciliation proof, full file: 11 passed + 1 confirmed-unrelated pre-existing flake, isolation-reconfirmed). mypy/ruff/black clean on both touched source files.
+
+**Deliverable**: `docs/MRA_PRE_2_PERSISTENCE_AUDIT.md` - all 7 findings in the defined evidence format plus a summary table.
+
+---
+
 ## 2026-09-08 - MRA-PRE-1: Authority and architecture audit (Pre-Installer Master Audit)
 
 Audited every critical concept named by the plan for single-authority guarantees: Project, genre, audience, approval, Reviewer, Script Lock, Phase 0-15 artifacts, Brand, publishing/final package - each recorded in the evidence format defined in MRA-PRE-0 (claim/method/evidence/verdict).
