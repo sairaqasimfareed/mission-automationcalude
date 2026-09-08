@@ -218,6 +218,116 @@ def test_final_export_card_shows_all_checks_passed_when_clean(
     assert any("QC: all checks passed." in text for text in labels)
 
 
+def test_final_export_card_shows_mark_as_published_when_approved(
+    qapp: QApplication,
+    tmp_path: Path,
+) -> None:
+    """
+    MRA-PRE-6 (Pre-Installer Master Audit, publishing/package audit)
+    finding: `WorkflowStage.UPLOADED` was a real, defined terminal
+    stage with no code path anywhere that ever wrote it - a project
+    stayed at `READY_FOR_UPLOAD` forever, even after a person actually
+    published it, with no way to close the loop. Proves the fix: an
+    approved final export now offers a "Mark as published" action.
+    """
+
+    manifest_file = tmp_path / "export_manifest.json"
+    manifest_file.write_text("{}", encoding="utf-8")
+
+    view = _view(export_root=tmp_path / "exports")
+
+    job = VideoJob(
+        project_name="Deep Sea Doc",
+        channel_name="Ocean Channel",
+        niche="documentary",
+        topic="Giant squid",
+        status=JobStatus.COMPLETED,
+        current_stage=WorkflowStage.READY_FOR_UPLOAD,
+    )
+
+    view._job_store.add(job)
+    view.set_job(job.id)
+
+    approved_export = _final_export_package(
+        manifest_path=str(manifest_file),
+    ).model_copy(update={"status": FinalExportStatus.APPROVED})
+
+    view._job_store.set_final_export(job.id, approved_export)
+
+    view.refresh(job)
+
+    buttons = [button_widget.text() for button_widget in view.findChildren(QPushButton)]
+
+    assert "Mark as published" in buttons
+
+
+def test_mark_as_uploaded_sets_the_terminal_workflow_stage(
+    qapp: QApplication,
+    tmp_path: Path,
+) -> None:
+    manifest_file = tmp_path / "export_manifest.json"
+    manifest_file.write_text("{}", encoding="utf-8")
+
+    view = _view(export_root=tmp_path / "exports")
+
+    job = VideoJob(
+        project_name="Deep Sea Doc",
+        channel_name="Ocean Channel",
+        niche="documentary",
+        topic="Giant squid",
+        status=JobStatus.COMPLETED,
+        current_stage=WorkflowStage.READY_FOR_UPLOAD,
+    )
+
+    view._job_store.add(job)
+    view.set_job(job.id)
+
+    approved_export = _final_export_package(
+        manifest_path=str(manifest_file),
+    ).model_copy(update={"status": FinalExportStatus.APPROVED})
+
+    view._job_store.set_final_export(job.id, approved_export)
+
+    view._handle_mark_as_uploaded()
+
+    assert job.current_stage == WorkflowStage.UPLOADED
+    assert any(
+        record.stage == "final_export" and record.category == DecisionCategory.APPROVAL
+        for record in job.content_decisions
+    )
+
+
+def test_mark_as_uploaded_is_a_no_op_when_export_is_not_approved(
+    qapp: QApplication,
+    tmp_path: Path,
+) -> None:
+    manifest_file = tmp_path / "export_manifest.json"
+    manifest_file.write_text("{}", encoding="utf-8")
+
+    view = _view(export_root=tmp_path / "exports")
+
+    job = VideoJob(
+        project_name="Deep Sea Doc",
+        channel_name="Ocean Channel",
+        niche="documentary",
+        topic="Giant squid",
+        status=JobStatus.COMPLETED,
+        current_stage=WorkflowStage.READY_FOR_UPLOAD,
+    )
+
+    view._job_store.add(job)
+    view.set_job(job.id)
+
+    under_review_export = _final_export_package(manifest_path=str(manifest_file))
+    assert under_review_export.status == FinalExportStatus.UNDER_REVIEW
+
+    view._job_store.set_final_export(job.id, under_review_export)
+
+    view._handle_mark_as_uploaded()
+
+    assert job.current_stage == WorkflowStage.READY_FOR_UPLOAD
+
+
 def test_seo_card_shows_version_and_regenerate_button(
     qapp: QApplication,
     tmp_path: Path,

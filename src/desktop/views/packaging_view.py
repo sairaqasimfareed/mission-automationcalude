@@ -27,6 +27,7 @@ from src.desktop.widgets import (
 )
 from src.models.approval import ApprovalPolicy
 from src.models.content_decision_record import DecisionCategory
+from src.models.enums import WorkflowStage
 from src.models.final_export import FinalExportPackage
 from src.models.seo import SEOPackage, SEOStatus
 from src.models.thumbnail import ThumbnailArtifact, ThumbnailArtifactStatus
@@ -490,6 +491,33 @@ class PackagingView(QWidget):
 
             for action_widget in actions_row_widgets:
                 layout.addWidget(action_widget, alignment=_LEFT)
+
+            # MRA-PRE-6 (Pre-Installer Master Audit, publishing/package
+            # audit) finding: WorkflowStage.UPLOADED is a real, defined
+            # terminal stage - VideoJob's own dashboard/list views
+            # already display job.current_stage.value directly - but
+            # nothing anywhere in the codebase ever wrote it. There is
+            # no real, automated "publish to platform" integration
+            # (confirmed: no YouTube/platform upload code exists in
+            # this repository), so publishing is always a manual,
+            # external step - this is the corresponding manual
+            # closing-the-loop action, exactly like a real "Mark as
+            # uploaded" checkbox once a person has actually done that
+            # themselves. Only offered once the package has passed
+            # hard QC (approved) - marking an under-review package
+            # published would misrepresent readiness.
+            if (
+                final_export.status.value == "approved"
+                and job.current_stage != WorkflowStage.UPLOADED
+            ):
+                mark_uploaded_button = button(
+                    "Mark as published",
+                    icon_name="check",
+                )
+                mark_uploaded_button.clicked.connect(self._handle_mark_as_uploaded)
+                layout.addWidget(mark_uploaded_button, alignment=_LEFT)
+            elif job.current_stage == WorkflowStage.UPLOADED:
+                layout.addWidget(status_label("Published.", role="success"))
         elif render_result is not None and render_result.success:
             if seo_package is not None and thumbnail is not None:
                 layout.addWidget(small_muted("Not built yet."))
@@ -561,6 +589,36 @@ class PackagingView(QWidget):
 
         if clipboard is not None:
             clipboard.setText(final_export.manifest_path)
+
+    def _handle_mark_as_uploaded(self) -> None:
+        """
+        Close the loop on WorkflowStage.UPLOADED (MRA-PRE-6 finding) -
+        record that a person has actually published this project's
+        final export externally. There is no real, automated publish
+        integration in this codebase, so this is a manual
+        acknowledgement, not a trigger for any upload itself.
+        """
+
+        job = self._current_job()
+
+        if job is None or self._job_id is None:
+            return
+
+        final_export = self._job_store.get_final_export(self._job_id)
+
+        if final_export is None or final_export.status.value != "approved":
+            return
+
+        job.current_stage = WorkflowStage.UPLOADED
+
+        self._approval_gate_service.record_event(
+            job=job,
+            stage="final_export",
+            summary="Project marked as published.",
+            category=DecisionCategory.APPROVAL,
+        )
+
+        self._on_change()
 
     def _handle_generate_seo(
         self,

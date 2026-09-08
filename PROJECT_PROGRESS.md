@@ -5,6 +5,20 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-08 - MRA-PRE-6: Publishing/package audit (Pre-Installer Master Audit)
+
+Verified the final, publish-ready package (video + SEO metadata + thumbnail + manifest) is assembled, validated, and tracked correctly - re-verification of work substantially already built during SEO-1 through SEO-9, not a from-scratch pass. Confirmed first: there is no real, automated "publish to a platform" integration anywhere in this codebase - publishing means producing a complete, validated, ready-to-hand-off package for a person to publish manually.
+
+**Final export validation confirmed thorough and correctly gating**: `FinalExportValidationService` runs seven independent checks - video file existence, positive duration, real ffprobe-based technical readability/audio-stream/resolution checks, manifest existence, thumbnail/SEO review-readiness, and a hard "upstream freshness" gate comparing script-lock hashes across the package's own provenance and the SEO/thumbnail artifacts, explicitly designed to fail closed rather than publish against a no-longer-canonical script. `FinalExportService.build()` only marks a package `APPROVED` when validation finds zero hard errors, and the Packaging view's QC summary re-runs this exact validation live rather than showing a cached snapshot. Provenance-building confirmed to correctly read `job.script_lock` (works for both pipelines), not the legacy field MRA-PRE-3 already found broken elsewhere in this same area.
+
+**A real, minor gap found and fixed, same day**: `WorkflowStage.UPLOADED` - a defined terminal stage beyond `READY_FOR_UPLOAD` - had zero writers anywhere in the codebase and no GUI control referencing it. A project's own dashboard would show `ready_for_upload` forever, even for a project a person had actually gone and published externally, with no way to record that fact in the app at all. Fixed by adding a "Mark as published" action to the Packaging view's final export card, shown once the export is approved, setting `job.current_stage = WorkflowStage.UPLOADED` and recording an activity-history event. Proven via 3 new tests, one verified to genuinely fail without the fix.
+
+**Tests**: 3 new tests in `tests/test_packaging_view_gui.py`, teeth-verified. Full file (25 cases): all passed. mypy/ruff/black clean.
+
+**Deliverable**: `docs/MRA_PRE_6_PUBLISHING_PACKAGE_AUDIT.md` - 3 findings in the defined evidence format.
+
+---
+
 ## 2026-09-08 - MRA-PRE-5: Provider/runtime/failure audit (Pre-Installer Master Audit)
 
 Verified provider startup validation, runtime configuration validation, and mid-run provider-failure handling - re-verification of work substantially already built during GF-0 through GF-17, not a from-scratch pass.
