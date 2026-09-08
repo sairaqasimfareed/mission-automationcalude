@@ -140,10 +140,14 @@ every phase:
    endpoint path, auth header, and request/response shape are
    correct, closing that class's own long-standing "not yet verified"
    disclaimer. `ElevenLabsVoiceProvider.generate_voice()` reached a
-   real HTTP 402 (Payment Required - insufficient TTS credit on that
-   account, not a code defect); endpoint/auth/request shape are
-   confirmed accepted by ElevenLabs, but the actual success response
-   remains unconfirmed pending an account with real TTS credit. Not
+   real HTTP 402 (Payment Required) across every model_id tried, not
+   a code defect - endpoint/auth/request shape confirmed accepted by
+   ElevenLabs. The precise cause, from ElevenLabs' own error body:
+   "Free users cannot use library voices via the API" - an
+   account-plan restriction on shared/library voice ids, unrelated to
+   the account's remaining credit balance (9,900+ credits available).
+   The actual success response remains unconfirmed pending a voice
+   the account actually owns (cloned/added) or a paid plan. Not
    yet done: stress/load/rate-limit behavior specifically (this was a
    correctness/connectivity check, not a load test), and Google Flow's
    own real generation path.

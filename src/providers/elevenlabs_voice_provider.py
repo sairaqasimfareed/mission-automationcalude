@@ -32,13 +32,18 @@ class ElevenLabsVoiceProvider(VoiceProvider):
 
     Partially verified against a real, live ElevenLabs account
     (2026-09-08): a real call with a valid key reached ElevenLabs and
-    got back a real HTTP 402 (Payment Required, insufficient
-    text-to-speech credit on that account) rather than a 401/404 or a
-    malformed-request error - the endpoint path, auth header, and
-    request shape are confirmed accepted by ElevenLabs. The actual
-    success response (audio/mpeg body) is still unconfirmed pending
-    an account with real TTS credit; re-verify generate_voice()/
-    generate_from_blueprint() end to end once one is available.
+    got back a real HTTP 402 (Payment Required) across every model_id
+    tried (eleven_multilingual_v2, eleven_turbo_v2_5,
+    eleven_flash_v2_5), not a 401/404 or a malformed-request error -
+    the endpoint path, auth header, and request shape are confirmed
+    accepted by ElevenLabs. The precise cause (from ElevenLabs' own
+    error body, not assumed): "Free users cannot use library voices
+    via the API" - an account-plan restriction on that account's Free
+    tier specific to shared/library voice ids, unrelated to remaining
+    credit balance (the account had 9,900+ credits free at the time).
+    Re-verify generate_voice()/generate_from_blueprint() end to end
+    once tested against a voice actually owned by the account (a
+    cloned/added "My Voices" entry) or a paid plan.
     """
 
     def __init__(
