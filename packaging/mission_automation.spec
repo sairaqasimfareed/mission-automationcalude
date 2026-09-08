@@ -1,4 +1,3 @@
-# -*- mode: python ; coding: utf-8 -*-
 """
 PyInstaller spec for Mission Automation's Windows desktop build.
 
@@ -66,9 +65,7 @@ for package in ("google.genai", "anthropic", "openai", "playwright"):
 hiddenimports = [
     name for name in hiddenimports if not name.startswith("google.genai.tests")
 ]
-datas = [
-    entry for entry in datas if "genai/tests" not in entry[0].replace("\\", "/")
-]
+datas = [entry for entry in datas if "genai/tests" not in entry[0].replace("\\", "/")]
 excludes = ["google.genai.tests"]
 
 analysis = Analysis(
@@ -103,10 +100,11 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    # No .ico set yet - the app currently only has runtime-rendered
-    # SVG icons (src/desktop/icons.py), not a static Windows .ico file
-    # for the executable/installer itself. Set this once one exists:
-    # icon=str(REPO_ROOT / "packaging" / "assets" / "mission_automation.ico"),
+    # Rendered from the exact same SVG src/desktop/icons.py's own
+    # app_icon() renders for the in-app window/taskbar icon (see
+    # packaging/README.md and the generation script referenced there)
+    # - the packaged .exe's icon matches the running app's own icon.
+    icon=str(REPO_ROOT / "packaging" / "assets" / "mission_automation.ico"),
 )
 
 collect = COLLECT(
