@@ -5,6 +5,22 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-08 - Installer packaging: a real, working MissionAutomationSetup.exe, fully verified end to end
+
+Final stretch of the same day's installer-packaging effort. With the user's explicit go-ahead for both real downloads involved:
+
+**Inno Setup installed and the script compiled for real**: downloaded the real Inno Setup 7.1.0 installer from jrsoftware.org's own GitHub release, installed it, and compiled `packaging/mission_automation.iss` into a genuine `MissionAutomationSetup.exe` - the first time this project has ever produced a real installer file, not just build tooling.
+
+**FFmpeg/FFprobe actually bundled**: downloaded a real, trusted static Windows FFmpeg build (gyan.dev, FFmpeg 9.0.1 - a well-known static-build provider, real GPL FFmpeg source compiled statically) and placed `ffmpeg.exe`/`ffprobe.exe` under `dist/MissionAutomation/tools/ffmpeg/`. Verified the app's own bundled-path resolution logic (from earlier today) genuinely finds them - a direct call with `sys.frozen` simulated against the real `dist` folder, not assumed. New `packaging/fetch_ffmpeg.py` scripts this step for every future rebuild rather than leaving it as a one-off manual action.
+
+**Real, full install/uninstall cycle run and checked, not just "it compiled"**: a silent test install (`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART` to a throwaway test directory, never the real Program Files) produced the correct Start Menu shortcut, desktop shortcut, `data\` directory, and bundled ffmpeg/ffprobe - all confirmed present. Launched the installed exe: `tasklist /v` showed a real, responsive window titled "Mission Automation", clean startup diagnostics, and `ffmpeg.exe -version` from the bundled copy reported a real, working build. Ran the uninstaller: app files, shortcuts, and the registry uninstall entry were all cleanly removed, while `data\` was correctly left in place (not empty) rather than silently deleted - exactly the safe-uninstall behavior the `.iss` script was written for. Every test artifact (install directories, registry entries, downloaded installer files) was cleaned up after verification.
+
+**One real, disclosed, not-yet-investigated finding**: under `/VERYSILENT` specifically (an automated/scripted install, not the normal interactive wizard a real end user sees), the app launched itself despite the `[Run]` entry's `unchecked` + `skipifsilent` flags, which were expected to suppress that. Low real-world impact - the interactive wizard's finish-page checkbox (unchecked by default, exactly as designed) is what a real double-click install actually shows - but recorded honestly rather than glossed over.
+
+**This closes the core installer-packaging effort started earlier today.** A real `MissionAutomationSetup.exe` exists at `packaging/output/MissionAutomationSetup.exe`, contains everything needed to run Mission Automation on a fresh Windows machine without a separate Python/FFmpeg install (Playwright's Chromium remains the one piece that installs itself on first Google Flow use, per the user's own chosen approach). Not yet done: testing the interactive (non-silent) wizard by hand on a real screen, code-signing (no certificate available - Windows SmartScreen will warn on first run, expected for an unsigned installer), and the `/VERYSILENT` auto-launch finding above.
+
+---
+
 ## 2026-09-08 - Installer packaging: first working PyInstaller build, real app icon, Inno Setup script authored
 
 Continuation of the same day's installer-packaging effort (see the entry below for the foundational FFmpeg/Chromium code changes and the deferred test-contamination finding).
