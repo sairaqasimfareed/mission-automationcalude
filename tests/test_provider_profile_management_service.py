@@ -166,6 +166,49 @@ disabled_health_result = service.check_health("llm-main")
 assert disabled_health_result.status == ProviderHealthStatus.DISABLED
 
 
+# Real-world finding (found via a live Provider Manager repro, not
+# theorized): llm-main is now stuck exactly as it would be after a
+# user disables a profile then clicks "Test configuration" before
+# ever re-enabling it - check_health() just set health_status to
+# DISABLED as a side effect. ProviderProfile's own model validator
+# forbids enabled=True while health_status is DISABLED, and nothing
+# else in this service ever moves health_status off DISABLED again -
+# without the fix below, re-enabling here would raise ValueError and
+# permanently trap this profile. upsert_profile() must give a stale
+# DISABLED status a fresh UNKNOWN when the command is genuinely
+# re-enabling the profile, so a real "check Enabled, Save" action in
+# the GUI succeeds instead of deadlocking.
+reenabled_llm_profile = service.upsert_profile(
+    ProviderProfileUpsertCommand(
+        profile_id="llm-main",
+        display_name="LLM Main (renamed)",
+        provider_name="OpenAI",
+        category=ProviderCategory.LLM,
+        enabled=True,
+        daily_budget_usd=5.0,
+        monthly_budget_usd=50.0,
+    )
+)
+
+assert reenabled_llm_profile.enabled is True
+assert reenabled_llm_profile.health_status == ProviderHealthStatus.UNKNOWN
+
+persisted_reenabled_profile = next(
+    profile
+    for profile in shared_repository.load_all()
+    if profile.profile_id == "llm-main"
+)
+
+assert persisted_reenabled_profile.enabled is True
+assert persisted_reenabled_profile.health_status == ProviderHealthStatus.UNKNOWN
+
+# A genuinely healthy real check must still work normally afterward -
+# the reset is a one-time unstick, not a permanent short-circuit.
+reenabled_health_result = service.check_health("llm-main")
+
+assert reenabled_health_result.status == ProviderHealthStatus.HEALTHY
+
+
 all_profiles = service.list_profiles()
 
 assert {profile.profile_id for profile in all_profiles} == {"llm-main", "voice-main"}

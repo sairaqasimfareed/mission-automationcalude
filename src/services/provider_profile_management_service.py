@@ -153,7 +153,31 @@ class ProviderProfileManagementService:
             timeout_seconds=command.timeout_seconds,
             maximum_retries=command.maximum_retries,
             health_status=(
-                existing.health_status if existing else ProviderHealthStatus.UNKNOWN
+                # Real-world finding: ProviderHealthService.check_profile()
+                # sets health_status=DISABLED as a SIDE EFFECT of checking
+                # a not-yet-enabled profile (its own first branch, not an
+                # error) - a perfectly natural thing to do before ever
+                # checking "Enabled" for the first time. ProviderProfile's
+                # own model validator then refuses to save enabled=True
+                # while health_status is DISABLED, and nothing anywhere in
+                # this service (or the GUI) ever moves health_status off
+                # DISABLED again - a permanent dead end for that profile,
+                # confirmed via a real repro through the actual Provider
+                # Manager screen. Re-enabling is exactly the situation
+                # that should give a stale DISABLED status a fresh chance,
+                # so treat it the same as a brand-new profile (UNKNOWN)
+                # instead of carrying the stale value forward - the very
+                # next "Test configuration" click (now genuinely enabled)
+                # runs the real health checker and sets an accurate
+                # status. Every other combination keeps the prior
+                # behavior unchanged.
+                ProviderHealthStatus.UNKNOWN
+                if existing is None
+                or (
+                    existing.health_status == ProviderHealthStatus.DISABLED
+                    and command.enabled
+                )
+                else existing.health_status
             ),
             capabilities=command.capabilities,
             metadata=command.metadata,
