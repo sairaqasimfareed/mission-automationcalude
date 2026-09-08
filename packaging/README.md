@@ -41,10 +41,35 @@ Not bundled - installed automatically the first time Google Flow
 browser automation is actually used (see
 `src/browser/chromium_bootstrap.py`). Nothing to do here.
 
-## Not yet built
+## App icon
 
-- `MissionAutomation.ico` (the spec has a commented-out `icon=`
-  argument ready for it once one exists - today's icons are all
-  runtime-rendered SVGs, see `src/desktop/icons.py`)
-- The Inno Setup script that wraps `dist\MissionAutomation\` into
-  `MissionAutomationSetup.exe`
+Already generated at `packaging\assets\mission_automation.ico` and
+wired into the spec's `icon=` argument. Regenerate it (e.g. after
+`app_icon()` itself changes) with:
+
+```
+QT_QPA_PLATFORM=offscreen .venv\Scripts\python.exe packaging\generate_app_icon.py
+```
+
+## Build the installer (Inno Setup)
+
+Requires [Inno Setup 6](https://jrsoftware.org/isinfo.php) (not
+installed as part of this repo's own tooling - a separate,
+one-time download on the machine doing the packaging build).
+
+```
+"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging\mission_automation.iss
+```
+
+Output: `packaging\output\MissionAutomationSetup.exe`. Build the
+PyInstaller step first (`dist\MissionAutomation\` must already exist)
+and place the bundled FFmpeg/FFprobe binaries under
+`dist\MissionAutomation\tools\ffmpeg\` before compiling, if you want
+them included.
+
+**Not yet done**: an actual compiled `MissionAutomationSetup.exe` has
+not been produced or run - `mission_automation.iss` has been authored
+and reviewed but not compiled (this environment doesn't have Inno
+Setup installed). Compiling it and running the resulting installer on
+a real (or at least clean-ish) machine is the next real verification
+step.
