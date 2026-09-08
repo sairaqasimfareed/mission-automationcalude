@@ -252,6 +252,33 @@ class FlowBrowserWorker:
 
         return self.submit(_close)
 
+    def evict_context_from_worker_thread(self, profile_id: str) -> None:
+        """
+        Force a cached context out unconditionally, without relying on
+        is_closed() - for a caller that already knows (from a real,
+        just-failed operation, not a liveness guess) that the cached
+        context can no longer be trusted. Same worker-thread-only
+        contract as open_persistent_context_from_worker_thread() (see
+        that method's own docstring for why - a second submit() from
+        inside an already-running submitted callable would deadlock
+        this single-worker pool).
+
+        close() is best-effort here: a context that's ALREADY dead
+        (the exact situation this exists for) can itself raise on
+        close() - that's expected and safe to ignore, since the goal
+        is only to make sure the next open_persistent_context_from_
+        worker_thread() call is forced to launch a genuinely fresh
+        one, not to guarantee a clean close of something already gone.
+        """
+
+        context = self._contexts.pop(profile_id, None)
+
+        if context is not None:
+            try:
+                context.close()
+            except Exception:  # noqa: BLE001 - already gone, discard and move on
+                pass
+
     def shutdown(self, *, wait: bool = True) -> None:
         """
         Close every open context and stop Playwright itself, then shut

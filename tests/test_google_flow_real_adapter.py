@@ -4,6 +4,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from playwright.sync_api import Error as PlaywrightError
+
 from src.models.google_flow_generation import (
     GoogleFlowGenerationAttempt,
     GoogleFlowGenerationRequest,
@@ -72,6 +74,7 @@ class _SequentialFakeWorker:
     def __init__(self, pages: list[_FakePage]) -> None:
         self._pages = list(pages)
         self.open_call_count = 0
+        self.evict_call_count = 0
 
     def submit(self, fn: Callable[[], Any]) -> _ImmediateFuture:
         return _ImmediateFuture(fn())
@@ -82,6 +85,9 @@ class _SequentialFakeWorker:
         self.open_call_count += 1
         page = self._pages[min(self.open_call_count - 1, len(self._pages) - 1)]
         return _FakeContext(page)
+
+    def evict_context_from_worker_thread(self, profile_id: str) -> None:
+        self.evict_call_count += 1
 
 
 class _FakeLocator:
@@ -157,15 +163,19 @@ class _FakeDownloadContext:
 
 
 class _FakePage:
-    def __init__(self) -> None:
+    def __init__(self, *, raise_on_goto: bool = False) -> None:
         self.url_history: list[str] = []
         self.keyboard = _FakeKeyboard()
         self._by_role: dict[tuple[str, str], _FakeLocator] = {}
         self._by_css: dict[str, _FakeLocator] = {}
         self._download = _FakeDownload()
         self.closed = False
+        self._raise_on_goto = raise_on_goto
 
     def goto(self, url: str, timeout: float | None = None) -> None:
+        if self._raise_on_goto:
+            raise PlaywrightError("Target page, context or browser has been closed")
+
         self.url_history.append(url)
 
     def is_closed(self) -> bool:
@@ -194,8 +204,10 @@ class _FakePage:
         self._by_css[selector] = locator
 
 
-def _authenticated_page(*, prompt_disabled: bool = False) -> _FakePage:
-    page = _FakePage()
+def _authenticated_page(
+    *, prompt_disabled: bool = False, raise_on_goto: bool = False
+) -> _FakePage:
+    page = _FakePage(raise_on_goto=raise_on_goto)
     page.register_role("button", "New project", _FakeLocator())
     page.register_css(".prompt-input .ProseMirror", _FakeLocator())
     start_button = _FakeLocator(disabled=prompt_disabled)
@@ -287,6 +299,64 @@ def test_get_or_open_page_recovers_when_the_cached_page_is_closed() -> None:
     # The second call must have gone through second_page, not the
     # stale, closed first_page.
     assert second_page.url_history == ["https://flow.google.com/project/test-project"]
+
+
+def test_check_profile_health_recovers_when_goto_raises_a_closed_target_error() -> None:
+    """
+    Second real-world finding on the same live repro: is_closed() is a
+    CLIENT-SIDE flag that only flips once Playwright's own connection
+    notices the browser process is gone - a real operator closing the
+    window via the OS (not through this app) can leave a brief window
+    where is_closed() still reports False but the underlying browser
+    is already dead, so _get_or_open_page()'s own liveness check alone
+    (test_get_or_open_page_recovers_when_the_cached_page_is_closed,
+    above) is not sufficient - the very next page.goto() can still
+    raise. Simulated directly: the first page's goto() raises exactly
+    the real error message seen live; check_profile_health() must
+    catch it, force BOTH its own page cache and the worker's
+    underlying context cache out (not just retry against the same
+    stale references), and succeed against a genuinely fresh page.
+    """
+
+    first_page = _authenticated_page(raise_on_goto=True)
+    second_page = _authenticated_page()
+    worker = _SequentialFakeWorker([first_page, second_page])
+    adapter = GoogleFlowRealUIAdapter(
+        worker=worker,  # type: ignore[arg-type]
+        base_url="https://flow.google.com/project/test-project",
+        profile_directory_resolver=lambda profile_id: Path("unused") / profile_id,
+    )
+
+    assert adapter.check_profile_health("flow.primary") is True
+    assert worker.open_call_count == 2
+    assert worker.evict_call_count == 1
+    assert second_page.url_history == ["https://flow.google.com/project/test-project"]
+
+
+def test_check_profile_health_propagates_a_second_consecutive_failure() -> None:
+    """The one retry is a real recovery attempt, not an infinite
+    loop - if the freshly-reopened page ALSO fails, that's a genuine,
+    different problem (e.g. a real network outage) that must still
+    surface to the caller, not be silently swallowed."""
+
+    first_page = _authenticated_page(raise_on_goto=True)
+    second_page = _authenticated_page(raise_on_goto=True)
+    worker = _SequentialFakeWorker([first_page, second_page])
+    adapter = GoogleFlowRealUIAdapter(
+        worker=worker,  # type: ignore[arg-type]
+        base_url="https://flow.google.com/project/test-project",
+        profile_directory_resolver=lambda profile_id: Path("unused") / profile_id,
+    )
+
+    try:
+        adapter.check_profile_health("flow.primary")
+    except PlaywrightError:
+        pass
+    else:
+        raise AssertionError(
+            "A second consecutive goto() failure must still raise, not be "
+            "silently swallowed."
+        )
 
 
 def test_base_url_resolver_looks_up_the_right_account() -> None:

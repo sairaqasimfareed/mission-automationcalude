@@ -4,6 +4,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
 from src.browser.flow_browser_worker import FlowBrowserWorker
@@ -179,10 +180,35 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
 
     def check_profile_health(self, profile_id: str) -> bool:
         def _run() -> bool:
-            page = self._get_or_open_page(profile_id)
-            page.goto(
-                self._base_url_resolver(profile_id), timeout=self._action_timeout_ms
-            )
+            # Real-world finding: is_closed() is a CLIENT-SIDE flag
+            # that only flips once Playwright's own connection
+            # notices the browser process is gone - a real operator
+            # closing the window via the OS (not through this app)
+            # can leave a brief window where is_closed() still says
+            # False but the process is already dead, so
+            # _get_or_open_page()'s own liveness check (necessary, but
+            # not sufficient on its own) can still hand back a page
+            # that then fails on the very next real operation. One
+            # retry here, forcing BOTH this adapter's own page cache
+            # and the worker's underlying context cache out (not
+            # relying on is_closed() to have caught up by now),
+            # recovers transparently with a genuinely fresh browser
+            # process instead of surfacing a raw Playwright error the
+            # operator can't act on.
+            try:
+                page = self._get_or_open_page(profile_id)
+                page.goto(
+                    self._base_url_resolver(profile_id),
+                    timeout=self._action_timeout_ms,
+                )
+            except PlaywrightError:
+                self._pages.pop(profile_id, None)
+                self._worker.evict_context_from_worker_thread(profile_id)
+                page = self._get_or_open_page(profile_id)
+                page.goto(
+                    self._base_url_resolver(profile_id),
+                    timeout=self._action_timeout_ms,
+                )
 
             return self._looks_authenticated(page)
 
