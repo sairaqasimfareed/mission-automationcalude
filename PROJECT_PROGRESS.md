@@ -5,6 +5,26 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-08 - MRA-PRE-9 follow-up: full-suite pytest hang root-caused and fixed
+
+Immediately after MRA-PRE-9's own certification report named the full-suite pytest hang (GUI-8's own long-standing finding) as the one specific blocker standing between "not yet certified" and "certified," started on the root-cause investigation.
+
+**Root-caused, not theorized**: reproduced the hang deterministically (forced the render-progress test's own real, documented intermittent flake to fail reliably), then used `py-spy` (a real external sampling profiler) to dump the actual, live thread stacks of the stalled process - not inference from log timing. Found the main thread genuinely blocked inside `QApplication.setStyleSheet()`/`setStyle()`, C++ calls with no project code on the stack. Traced why: every GUI test file's own `qapp` fixture reuses one process-wide `QApplication` singleton for the entire test run, and no test anywhere ever explicitly closed the `MainWindow`(s) it created - each accumulated as a permanent, live top-level widget. Qt's own style engine re-polishes every current top-level widget on every `setStyleSheet()`/`setStyle()` call; confirmed directly that this count grew without bound test-over-test (25 → 95 → ... → 682 in one real, instrumented run) and that this growth, not mere slowness, is what the engine choked on.
+
+**Four fix attempts, three disproven with the same live-repro methodology before the one that worked**: a bare `close()`+`deleteLater()`+one `processEvents()` call measurably helped but didn't eliminate the hang. Explicitly stopping every running `QThread` first plus 20 `processEvents()` calls fixed the isolated single-failure case, but real instrumentation showed the widget count still growing unboundedly across a longer sequence - `deleteLater()`'s deferred C++ destruction genuinely never completed via bare `processEvents()`, no matter how many times called. Force-deleting immediately via `shiboken6.delete()` kept the count bounded but caused a real crash: Content Studio's own scroll-restore mechanism schedules a plain `QTimer.singleShot(50, callback)` that isn't tied to any object's lifetime, so it still fired against an already-destroyed widget. The fix that actually worked: a new `autouse` fixture in `tests/conftest.py` using `QTest.qWait()` (real wall-clock event-loop pumping, not bare `processEvents()`) twice per test - once before requesting deletion, letting pending short-lived timers fire safely first, and once after, giving deferred deletion a genuine idle window - with every operation guarded by `shiboken6.isValid()` since closing one widget can destroy another already-captured widget as a side effect.
+
+**Verified via two full, real, non-artificial runs**: `test_desktop_app_integration.py` alone - 15 passed, including the render-progress test itself passing organically. The exact original GUI-8 2-file repro (`test_desktop_app_integration.py` + `test_desktop_theme_and_icons.py`) together - 52 passed, 0 failed, 0 errors, in 2:27. The identical combination GUI-8's own report documented as reproducibly hanging now completes cleanly and quickly.
+
+**One residual risk disclosed, not hidden**: the artificial, deliberately-forced repro used while developing the fix surfaced a single further stall in one run - a deeper, native-code-level Qt/PySide interaction (multiple `QThread.finished` signals from earlier tests becoming deliverable in the same cleanup window) that would need a native debugger, not just Python-level tooling, to fully diagnose. This did **not** reproduce in either real, non-artificial verification run above - recorded honestly as a lower-probability residual risk, not treated as blocking.
+
+**This resolves MRA-PRE-9's own named blocker.** `docs/MRA_PRE_9_PRE_INSTALLER_CERTIFICATION.md` updated with a same-day fix note - the project's verdict is now **CERTIFIED for installer packaging** with respect to the pytest-hang gate.
+
+**Tests**: 1 new `autouse` fixture in `tests/conftest.py`. black/ruff clean; a voluntary mypy pass (tests/ is excluded from this project's own configured gate) also clean.
+
+**Deliverable**: `docs/MRA_PRE_9_FOLLOWUP_PYTEST_HANG_FIX.md` - the complete investigation, all 4 attempts, and full verification evidence.
+
+---
+
 ## 2026-09-08 - MRA-PRE-9: Pre-installer certification (Pre-Installer Master Audit) - FINAL PHASE
 
 The tenth and final phase of the Pre-Installer Master Audit: a synthesis phase compiling MRA-PRE-0 through 8's own already-verified results into one honest, evidence-based go/no-go determination for installer packaging - not a re-investigation of anything, an aggregation.

@@ -408,34 +408,44 @@ that file's audio-regeneration row.
       from per-`ProviderProfile` spend to per-job spend, which is new
       backend work, not a GUI change.
 
-## GUI-8 validation finding: monolithic full-suite pytest run hangs
+## GUI-8 validation finding: monolithic full-suite pytest run hangs (Done)
 
-- [ ] Running the entire test suite as one `pytest tests/` process
-      reproducibly hangs. Reproduced twice independently (a full
+- [x] Running the entire test suite as one `pytest tests/` process
+      reproducibly hung. Reproduced twice independently (a full
       unscoped run stalling at ~24% for 9+ minutes with zero log
       output, confirmed via file-modify-time; a minimal 2-file
       reproduction with `test_desktop_app_integration.py` +
       `test_desktop_theme_and_icons.py`, 48 tests, hanging
-      deterministically at the same point both times). The hang
-      consistently follows immediately after
-      `test_render_progress_updates_live_and_survives_cross_workspace_refresh`
-      (a real-`QThread`-driven render-progress test, already
-      documented elsewhere as flaky under system load) fails on its
-      timing-sensitive assertion - the very next `theme.py` test then
-      blocks on `apply_theme()`, a plain synchronous main-thread call
-      that never blocks when either file runs alone. Root cause is
-      correlated, not fully diagnosed - `RenderWorkspaceView` does
-      track its background `QThread`s explicitly and clean up on
-      `thread.finished`, so this isn't a naive leak-by-design; something
-      about that specific test's failure path leaves state a later,
-      unrelated Qt call then blocks on. Needs a debugger attached to a
-      hung repro, not just log-timing correlation, to actually resolve.
-      See `docs/GUI8_VALIDATION_REPORT.md` for the full writeup.
-      **Until this is fixed, any full-suite validation (CI or local)
-      must run pytest per-file or in small scoped batches, never as one
-      monolithic process** - every quality gate across this entire
-      project's history has in fact already been run this way in
-      practice and never hit this issue.
+      deterministically at the same point both times). See
+      `docs/GUI8_VALIDATION_REPORT.md` for the original finding.
+      **Root-caused and fixed (MRA-PRE-9 follow-up)**: `py-spy dump`
+      against a live, reproduced stall showed the main thread genuinely
+      blocked inside `QApplication.setStyleSheet()`/`setStyle()` (called
+      by every `apply_theme()` call) - no GUI test anywhere ever
+      explicitly closed its `MainWindow`, so top-level widgets
+      accumulated without bound on the one shared, process-wide
+      `QApplication` singleton every GUI test file's `qapp` fixture
+      reuses, and Qt's own style-repolish pass over every current
+      top-level widget is what the engine choked on. Fixed with a new
+      `autouse` fixture in `tests/conftest.py`
+      (`_close_leftover_qt_top_level_widgets`) that closes and deletes
+      every leftover top-level widget after each test, using
+      `QTest.qWait()` (real wall-clock event-loop pumping, not bare
+      `processEvents()`) so the cleanup actually completes. Verified via
+      two full, real, non-artificial runs: `test_desktop_app_
+      integration.py` alone (15 passed) and the exact original GUI-8
+      2-file repro together (52 passed, 0 failed, 0 errors, 2:27) - the
+      identical combination GUI-8's own report documented as
+      reproducibly hanging now completes cleanly.
+      **One disclosed, lower-probability residual risk remains** (not
+      reproduced in either real verification run, only under an
+      artificially-forced adversarial repro used while developing the
+      fix): a deeper, native-code-level Qt/PySide interaction when
+      multiple `QThread.finished` signals from earlier tests all become
+      deliverable in the same cleanup window - would need a native
+      debugger (not just Python-level tooling) to fully diagnose. See
+      `docs/MRA_PRE_9_FOLLOWUP_PYTEST_HANG_FIX.md` for the complete
+      investigation and evidence.
 
 ## MRA-PRE-3 validation finding: scene duration doesn't reconcile against narration length (Done)
 

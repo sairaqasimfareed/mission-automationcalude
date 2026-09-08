@@ -143,3 +143,34 @@ should be updated to CERTIFIED. Items 2-6 do not block that outcome
 and can be scheduled as follow-on work at the team's own discretion;
 item 7 remains an inherent limitation until real API keys are
 available for live-provider validation.
+
+**Update, same day (fixed)**: the pytest hang was root-caused and
+fixed immediately after this report - see
+`docs/MRA_PRE_9_FOLLOWUP_PYTEST_HANG_FIX.md` for the full
+investigation. Root cause: no GUI test anywhere ever explicitly closed
+its `MainWindow`, so top-level widgets accumulated without bound on
+the one shared, process-wide `QApplication` singleton every GUI test
+file's `qapp` fixture reuses; `QApplication.setStyleSheet()`/
+`setStyle()` (called by every `apply_theme()` call) re-polish every
+current top-level widget, and this was directly confirmed via `py-spy
+dump` against a live, reproduced stall to be where the main thread
+was genuinely blocked. Fixed with a new `autouse` fixture in
+`tests/conftest.py` that closes and deletes every leftover top-level
+widget after each test, using `QTest.qWait()` (real wall-clock event-
+loop pumping) rather than `processEvents()` to make the cleanup
+actually complete. Verified via two full, real, non-artificial runs:
+`test_desktop_app_integration.py` alone (15 passed) and the exact
+original GUI-8 2-file repro together (52 passed, 0 failed, 0 errors,
+2:27) - the identical combination GUI-8's own report documented as
+reproducibly hanging now completes cleanly. One disclosed, lower-
+probability residual risk remains (a deeper, native-level Qt/PySide
+interaction found only under an artificially-forced adversarial
+repro, not in either real verification run) - recorded in the
+follow-up document and `docs/REMAINING_GAPS.md`, not treated as
+blocking.
+
+**This updates the verdict above**: with the pytest-hang blocker
+resolved and verified, this project is **CERTIFIED for installer
+packaging** with respect to that gate. Items 2-6 remain real,
+disclosed, non-blocking follow-on work; item 7 remains an inherent
+limitation until real API keys are available.
