@@ -147,10 +147,27 @@ every phase:
    account-plan restriction on shared/library voice ids, unrelated to
    the account's remaining credit balance (9,900+ credits available).
    The actual success response remains unconfirmed pending a voice
-   the account actually owns (cloned/added) or a paid plan. Not
-   yet done: stress/load/rate-limit behavior specifically (this was a
-   correctness/connectivity check, not a load test), and Google Flow's
-   own real generation path.
+   the account actually owns (cloned/added) or a paid plan.
+
+   **Second update, same day**: the user also added a real Gemini API
+   key as a new LLM provider profile. A real, live call through
+   `GeminiProviderAdapter` (`src/shared/llm/gemini_provider.py`)
+   succeeded end to end - a real reply, request id, and token-usage
+   report - closing the "untested" gap for the LLM category as well.
+   Along the way, `gemini-2.0-flash` (an initial guess) returned a
+   real `404 NOT_FOUND` from Gemini's own API, confirming that model
+   is retired; `gemini-3.6-flash` (as recommended by that same error)
+   worked. No hardcoded stale model name exists anywhere in this
+   codebase (confirmed via a repo-wide search) - the profile's own
+   `default_model` field was simply left unset, now guided to be set
+   explicitly.
+
+   All real providers configured so far are now confirmed working:
+   `music`, `sound_effects` (ElevenLabs), and `gemini` (LLM). Not yet
+   done: `voice`/text-to-speech (ElevenLabs, pending a
+   non-library voice), stress/load/rate-limit behavior specifically
+   (this was a correctness/connectivity check, not a load test), and
+   Google Flow's own real generation path.
 
 ## Final verdict
 

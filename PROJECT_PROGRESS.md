@@ -5,6 +5,18 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-08 - Real Gemini API key configured and verified live
+
+The user added a real Gemini API key as a new LLM provider profile (`gemini`, provider name `gemini`) through Provider Manager, following the same "New provider -> fill Profile ID/Display name -> Save" flow as the ElevenLabs profiles above - an initial premature Save with those two fields still blank produced the expected `ProviderProfileUpsertCommand` validation error (`profile_id`/`display_name` cannot be empty), not a bug, and was corrected by filling them in.
+
+**Real, live verification** (no cost concern here - Gemini's free tier has no monetary charge, unlike ElevenLabs, so this ran without a separate approval step): used this project's own `GeminiProviderAdapter` (`src/shared/llm/gemini_provider.py`) exactly as the running app would, resolving the already-saved secret straight from the OS credential vault. First attempt used `gemini-2.0-flash` and got a real `404 NOT_FOUND` - Gemini's own API reporting that model retired, recommending `gemini-3.6-flash` instead (this codebase has no hardcoded model name anywhere, confirmed via a repo-wide search - the profile's own `default_model` field was simply never set, which is exactly what caused an unset default here, not a code defect). Retried against `gemini-3.6-flash`: a real reply came back, but empty on the first pass with `max_output_tokens=10` - this newer model appears to spend some of a small token budget on internal reasoning before any visible output, so raising the budget to 200 produced a real, correct visible reply (`"hello"`, exactly as asked) with a genuine request id and token-usage report.
+
+**Guidance given to the user**: set the `gemini` profile's **Default model** field to `gemini-3.6-flash` in Provider Manager, since it was left blank and Gemini's own lineup has moved past the older model name.
+
+**Status of all real providers configured so far**: `music` (ElevenLabs) confirmed working, `sound_effects` (ElevenLabs) confirmed working, `gemini` (LLM) confirmed working. `voice` (ElevenLabs TTS) remains unconfirmed - not a credential/code problem, needs a voice the account actually owns rather than a public library voice (see the entry above). Google Flow's real account is connected but not yet exercised for a real generation.
+
+---
+
 ## 2026-09-08 - Real ElevenLabs credentials configured: found and fixed a Provider Manager deadlock, then verified live generation end to end
 
 The user obtained real credentials for the first time in this project's life: a Google Flow account and ElevenLabs API keys for voice, music, and sound effects - closing the "no real API keys" blocker recorded since 2026-08-13.
