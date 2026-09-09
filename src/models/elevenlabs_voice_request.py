@@ -47,4 +47,10 @@ class ElevenLabsVoiceRequest(MissionBaseModel):
     pronunciation_dictionary_locators: list[
         ElevenLabsPronunciationDictionaryLocator
     ] = Field(default_factory=list)
+    # Voice gap #9 (2026-09-09 audit) - real ElevenLabs request-
+    # stitching fields, only ever populated together with
+    # model_id="eleven_multilingual_v2" (or another non-v3 model) -
+    # ElevenLabs does not support stitching on eleven_v3.
+    previous_text: str | None = None
+    next_text: str | None = None
     unsupported_controls: list[str] = Field(default_factory=list)

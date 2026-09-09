@@ -355,4 +355,65 @@ assert "voice_id" not in unmapped_blueprint.selected_provider_mapping
 print("Real, persisted voice_id mapping overlays the resolved blueprint.")
 
 
+# --- Voice gap #9 (2026-09-09 audit): real scene-to-scene stitching
+# context, derived automatically by resolve_many() from genuinely
+# adjacent scenes - regardless of input list order. ---
+
+from src.models.voice_directives import VoiceDeliveryMode  # noqa: E402
+
+stitched_blueprints = resolution_service.resolve_many(
+    [
+        # Deliberately out of order - resolve_many() must still derive
+        # adjacency from scene_number, not input position.
+        (
+            SceneVoiceDirectives(
+                scene_number=22,
+                voice_delivery_mode=VoiceDeliveryMode.CONTINUITY_STITCHING,
+            ),
+            "Middle scene narration.",
+            8.0,
+        ),
+        (
+            SceneVoiceDirectives(
+                scene_number=21,
+                voice_delivery_mode=VoiceDeliveryMode.CONTINUITY_STITCHING,
+            ),
+            "First scene narration.",
+            8.0,
+        ),
+        (
+            SceneVoiceDirectives(
+                scene_number=23,
+                voice_delivery_mode=VoiceDeliveryMode.CONTINUITY_STITCHING,
+            ),
+            "Last scene narration.",
+            8.0,
+        ),
+    ]
+)
+
+by_scene = {blueprint.scene_number: blueprint for blueprint in stitched_blueprints}
+
+assert by_scene[21].previous_scene_narration_text is None
+assert by_scene[21].next_scene_narration_text == "Middle scene narration."
+
+assert by_scene[22].previous_scene_narration_text == "First scene narration."
+assert by_scene[22].next_scene_narration_text == "Last scene narration."
+
+assert by_scene[23].previous_scene_narration_text == "Middle scene narration."
+assert by_scene[23].next_scene_narration_text is None
+
+# A standalone resolve() call (no batch context) leaves both None.
+standalone_blueprint = resolution_service.resolve(
+    SceneVoiceDirectives(scene_number=24),
+    narration_text="A standalone scene.",
+    scene_duration_seconds=8.0,
+)
+
+assert standalone_blueprint.previous_scene_narration_text is None
+assert standalone_blueprint.next_scene_narration_text is None
+
+print("resolve_many() derives real stitching context from adjacent scenes.")
+
+
 print("Voice Directive Resolution Service " "tests completed successfully.")

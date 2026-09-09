@@ -8,6 +8,7 @@ from pydantic import Field, field_validator, model_validator
 from src.models.base import MissionBaseModel
 from src.models.voice_directives import (
     PronunciationDirective,
+    VoiceDeliveryMode,
     VoiceDirectiveSource,
     VoiceEmotion,
     VoiceEmphasisDirective,
@@ -112,6 +113,23 @@ class ResolvedVoiceBlueprint(MissionBaseModel):
 
     language: str = "English"
     language_code: str = "en"
+
+    # Voice gap #10 (2026-09-09 audit) - carried through from
+    # SceneVoiceDirectives.voice_delivery_mode unchanged.
+    voice_delivery_mode: VoiceDeliveryMode = VoiceDeliveryMode.CONTINUITY_STITCHING
+
+    # Voice gap #9 - real scene-to-scene continuity context, populated
+    # by VoiceDirectiveResolutionService.resolve_many() from the
+    # immediately adjacent scene requests in the same batch (None for
+    # a scene resolved standalone, or at either end of a batch).
+    # Deliberately text-based (previous_text/next_text), not
+    # previous_request_ids/next_request_ids - the latter needs a real
+    # captured request-id from a prior LIVE API call, which is
+    # provider-level state this pure, no-network resolution service
+    # has no way to hold; text-based stitching needs only the
+    # narration text already available at resolution time.
+    previous_scene_narration_text: str | None = None
+    next_scene_narration_text: str | None = None
 
     emotion: VoiceEmotion = VoiceEmotion.NEUTRAL
     pace: VoicePace = VoicePace.MODERATE

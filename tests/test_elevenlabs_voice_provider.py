@@ -9,7 +9,12 @@ from src.models.resolved_voice_blueprint import (
     ResolvedVoiceProfileReference,
     VoiceBlueprintResolutionStatus,
 )
-from src.models.voice_directives import PronunciationDirective, VoiceProviderPreferences
+from src.models.voice_directives import (
+    PronunciationDirective,
+    VoiceDeliveryMode,
+    VoiceEmotion,
+    VoiceProviderPreferences,
+)
 from src.providers.elevenlabs_voice_provider import ElevenLabsVoiceProvider
 from src.services.http.http_provider_executor import (
     HttpProviderExecutionError,
@@ -319,5 +324,92 @@ with TemporaryDirectory() as temp_dir:
     assert unreachable_transport.received_requests == []
 
 print("ElevenLabsVoiceProvider no-real-voice-id case passed.")
+
+# --- Voice gaps #4/#9/#10 (2026-09-09 audit): real emotion-tags vs.
+# real request-stitching delivery, end to end through the real
+# provider call. ---
+
+emotion_tags_blueprint = ResolvedVoiceBlueprint(
+    scene_number=12,
+    status=VoiceBlueprintResolutionStatus.RESOLVED,
+    profile=ResolvedVoiceProfileReference(
+        requested_profile_id="voice.horror_whisper",
+        resolved_profile_id="voice.horror_whisper",
+        display_name="Horror Whisper",
+    ),
+    narration_text="Something moved in the dark.",
+    voice_delivery_mode=VoiceDeliveryMode.EMOTION_TAGS,
+    emotion=VoiceEmotion.SUSPENSEFUL,
+    provider_preferences=VoiceProviderPreferences(preferred_voice_id="voice-real-123"),
+)
+
+emotion_tags_transport = _RecordingTransport(
+    HttpTransportResponse(status_code=200, headers={}, content=b"emotion-tags-audio")
+)
+
+with TemporaryDirectory() as temp_dir:
+    provider = ElevenLabsVoiceProvider(
+        profile=profile,
+        api_key="real-key-123",
+        transport=emotion_tags_transport,
+        output_directory=temp_dir,
+    )
+
+    result_path = Path(provider.generate_from_blueprint(emotion_tags_blueprint))
+
+    assert result_path.exists()
+    assert result_path.read_bytes() == b"emotion-tags-audio"
+
+    sent = emotion_tags_transport.received_requests[0]
+    assert sent.json_body is not None
+    assert sent.json_body["model_id"] == "eleven_v3"
+    assert sent.json_body["text"] == "[worried] Something moved in the dark."
+    assert "previous_text" not in sent.json_body
+    assert "next_text" not in sent.json_body
+
+print("ElevenLabsVoiceProvider emotion-tags delivery case passed.")
+
+stitching_blueprint = ResolvedVoiceBlueprint(
+    scene_number=13,
+    status=VoiceBlueprintResolutionStatus.RESOLVED,
+    profile=ResolvedVoiceProfileReference(
+        requested_profile_id="voice.neutral_narrator",
+        resolved_profile_id="voice.neutral_narrator",
+        display_name="Neutral Narrator",
+    ),
+    narration_text="No trace of the crew was ever found.",
+    voice_delivery_mode=VoiceDeliveryMode.CONTINUITY_STITCHING,
+    previous_scene_narration_text="The ship was discovered adrift.",
+    next_scene_narration_text="Theories about their fate still circulate today.",
+    provider_preferences=VoiceProviderPreferences(preferred_voice_id="voice-real-123"),
+)
+
+stitching_transport = _RecordingTransport(
+    HttpTransportResponse(status_code=200, headers={}, content=b"stitching-audio")
+)
+
+with TemporaryDirectory() as temp_dir:
+    provider = ElevenLabsVoiceProvider(
+        profile=profile,
+        api_key="real-key-123",
+        transport=stitching_transport,
+        output_directory=temp_dir,
+    )
+
+    result_path = Path(provider.generate_from_blueprint(stitching_blueprint))
+
+    assert result_path.exists()
+    assert result_path.read_bytes() == b"stitching-audio"
+
+    sent = stitching_transport.received_requests[0]
+    assert sent.json_body is not None
+    assert sent.json_body["model_id"] == "eleven_multilingual_v2"
+    assert sent.json_body["previous_text"] == "The ship was discovered adrift."
+    assert (
+        sent.json_body["next_text"]
+        == "Theories about their fate still circulate today."
+    )
+
+print("ElevenLabsVoiceProvider continuity-stitching delivery case passed.")
 
 print("ElevenLabsVoiceProvider tests completed successfully.")

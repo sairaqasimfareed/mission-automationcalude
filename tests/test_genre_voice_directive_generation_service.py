@@ -4,6 +4,7 @@ import pytest
 
 from src.models.scene import Scene, SceneStatus
 from src.models.voice_directives import (
+    VoiceDeliveryMode,
     VoiceDirectiveSource,
 )
 from src.models.voice_profile import VoiceEmotion
@@ -62,6 +63,25 @@ def test_generate_uses_genre_voice_profile() -> None:
     assert directives.scene_number == 1
     assert directives.voice_profile_id == "voice.horror_whisper"
     assert directives.source == VoiceDirectiveSource.GENRE_PROFILE
+
+
+def test_generate_propagates_genre_voice_delivery_mode() -> None:
+    horror_directives = _service().generate(
+        scene=_scene(),
+        genre_id="genre.horror",
+    )
+
+    assert horror_directives.voice_delivery_mode == VoiceDeliveryMode.EMOTION_TAGS
+
+    documentary_directives = _service().generate(
+        scene=_scene(),
+        genre_id="genre.documentary",
+    )
+
+    assert (
+        documentary_directives.voice_delivery_mode
+        == VoiceDeliveryMode.CONTINUITY_STITCHING
+    )
 
 
 def test_generate_uses_canonical_voice_profile_values() -> None:

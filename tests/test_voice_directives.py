@@ -3,6 +3,7 @@ from __future__ import annotations
 from src.models.voice_directives import (
     PronunciationDirective,
     SceneVoiceDirectives,
+    VoiceDeliveryMode,
     VoiceDirectiveSource,
     VoiceDirectiveStatus,
     VoiceEmotion,
@@ -194,6 +195,31 @@ restored = SceneVoiceDirectives.model_validate_json(serialized)
 assert restored == directives
 
 assert restored.schema_version == "1.0"
+
+
+# --- Voice gap #10 (2026-09-09 audit): voice_delivery_mode. ---
+
+default_delivery_mode_directives = SceneVoiceDirectives(scene_number=99)
+
+assert (
+    default_delivery_mode_directives.voice_delivery_mode
+    == VoiceDeliveryMode.CONTINUITY_STITCHING
+)
+
+emotion_tags_directives = SceneVoiceDirectives(
+    scene_number=100,
+    voice_delivery_mode=VoiceDeliveryMode.EMOTION_TAGS,
+)
+
+assert emotion_tags_directives.voice_delivery_mode == VoiceDeliveryMode.EMOTION_TAGS
+
+restored_delivery_mode = SceneVoiceDirectives.model_validate_json(
+    emotion_tags_directives.model_dump_json()
+)
+
+assert restored_delivery_mode.voice_delivery_mode == VoiceDeliveryMode.EMOTION_TAGS
+
+print("voice_delivery_mode defaults and round-trips correctly.")
 
 
 print("Voice Directive model tests " "completed successfully.")

@@ -111,6 +111,10 @@ class GenreVoiceDirectiveGenerationService:
             fallback_voice_profile_id=(voice_profile.fallback_profile_id),
             language=language,
             language_code=language_code,
+            # Voice gap #10 (2026-09-09 audit) - which real ElevenLabs
+            # delivery mechanism this genre uses (see
+            # GenreVoiceProfile.voice_delivery_mode).
+            voice_delivery_mode=(genre_profile.voice.voice_delivery_mode),
             emotion=voice_profile.emotion,
             pace=voice_profile.pace,
             energy=voice_profile.energy,

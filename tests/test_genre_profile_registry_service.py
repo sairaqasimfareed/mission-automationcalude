@@ -11,6 +11,7 @@ from src.models.genre_profile import (
     UncertainInformationPolicy,
 )
 from src.models.media_strategy import SceneSourceType
+from src.models.voice_directives import VoiceDeliveryMode
 from src.services.genre_profile_registry_service import (
     GenreProfileRegistryService,
 )
@@ -331,6 +332,43 @@ else:
     raise AssertionError(
         "LOCAL_LIBRARY has no established query-fallback convention to " "default to."
     )
+
+
+# --- Voice gap #10 (2026-09-09 audit): real, differentiated
+# per-genre voice_delivery_mode - emotionally-driven genres get
+# eleven_v3 audio tags, narration-heavy genres get continuity
+# stitching. ---
+
+emotion_tag_genres = [
+    "genre.horror",
+    "genre.mystery",
+    "genre.storytelling",
+    "genre.reaction",
+    "genre.survival",
+]
+
+for genre_id in emotion_tag_genres:
+    assert (
+        registry.get(genre_id).voice.voice_delivery_mode
+        == VoiceDeliveryMode.EMOTION_TAGS
+    ), genre_id
+
+continuity_stitching_genres = [
+    "genre.default",
+    "genre.documentary",
+    "genre.history",
+    "genre.travel",
+    "genre.top10",
+    "genre.medical",
+]
+
+for genre_id in continuity_stitching_genres:
+    assert (
+        registry.get(genre_id).voice.voice_delivery_mode
+        == VoiceDeliveryMode.CONTINUITY_STITCHING
+    ), genre_id
+
+print("Real, differentiated voice_delivery_mode confirmed across all 11 genres.")
 
 
 print("Genre Profile Registry Service tests " "completed successfully.")

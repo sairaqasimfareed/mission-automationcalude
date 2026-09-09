@@ -7,6 +7,7 @@ from src.models.resolved_voice_blueprint import (
 )
 from src.models.voice_directives import (
     PronunciationDirective,
+    VoiceDeliveryMode,
     VoiceEmotion,
     VoiceEmphasisDirective,
     VoicePace,
@@ -181,3 +182,114 @@ def test_translate_accepts_custom_model_id() -> None:
     )
 
     assert request.model_id == "eleven_turbo_v2"
+
+
+# --- Voice gaps #4/#9/#10 (2026-09-09 audit): emotion tags vs.
+# request stitching, mutually exclusive per ElevenLabs' real API. ---
+
+
+def test_translate_emotion_tags_mode_forces_the_real_v3_model() -> None:
+    service = ElevenLabsVoiceTranslationService()
+
+    request = service.translate(
+        _blueprint(
+            voice_delivery_mode=VoiceDeliveryMode.EMOTION_TAGS,
+            emotion=VoiceEmotion.SUSPENSEFUL,
+        ),
+        voice_id="voice-abc",
+        model_id="eleven_turbo_v2",
+    )
+
+    assert request.model_id == "eleven_v3"
+
+
+def test_translate_emotion_tags_mode_prefixes_a_real_tag() -> None:
+    service = ElevenLabsVoiceTranslationService()
+
+    request = service.translate(
+        _blueprint(
+            voice_delivery_mode=VoiceDeliveryMode.EMOTION_TAGS,
+            emotion=VoiceEmotion.SUSPENSEFUL,
+        ),
+        voice_id="voice-abc",
+    )
+
+    assert request.text.startswith("[worried] ")
+    assert not any("emotion" in control for control in request.unsupported_controls)
+
+
+def test_translate_emotion_tags_mode_with_neutral_emotion_applies_no_tag() -> None:
+    service = ElevenLabsVoiceTranslationService()
+
+    request = service.translate(
+        _blueprint(
+            voice_delivery_mode=VoiceDeliveryMode.EMOTION_TAGS,
+            emotion=VoiceEmotion.NEUTRAL,
+        ),
+        voice_id="voice-abc",
+    )
+
+    assert request.model_id == "eleven_v3"
+    assert not request.text.startswith("[")
+    assert request.text == _blueprint().narration_text
+
+
+def test_translate_continuity_stitching_mode_still_flags_emotion() -> None:
+    service = ElevenLabsVoiceTranslationService()
+
+    request = service.translate(
+        _blueprint(
+            voice_delivery_mode=VoiceDeliveryMode.CONTINUITY_STITCHING,
+            emotion=VoiceEmotion.SUSPENSEFUL,
+        ),
+        voice_id="voice-abc",
+    )
+
+    assert request.model_id != "eleven_v3"
+    assert any("emotion" in control for control in request.unsupported_controls)
+
+
+def test_translate_continuity_stitching_mode_populates_previous_and_next_text() -> None:
+    service = ElevenLabsVoiceTranslationService()
+
+    request = service.translate(
+        _blueprint(
+            voice_delivery_mode=VoiceDeliveryMode.CONTINUITY_STITCHING,
+            previous_scene_narration_text="The crew boarded at dawn.",
+            next_scene_narration_text="No trace of them was ever found.",
+        ),
+        voice_id="voice-abc",
+    )
+
+    assert request.previous_text == "The crew boarded at dawn."
+    assert request.next_text == "No trace of them was ever found."
+
+
+def test_translate_continuity_stitching_mode_without_neighbors_leaves_text_none() -> (
+    None
+):
+    service = ElevenLabsVoiceTranslationService()
+
+    request = service.translate(
+        _blueprint(voice_delivery_mode=VoiceDeliveryMode.CONTINUITY_STITCHING),
+        voice_id="voice-abc",
+    )
+
+    assert request.previous_text is None
+    assert request.next_text is None
+
+
+def test_translate_emotion_tags_mode_ignores_stitching_context() -> None:
+    service = ElevenLabsVoiceTranslationService()
+
+    request = service.translate(
+        _blueprint(
+            voice_delivery_mode=VoiceDeliveryMode.EMOTION_TAGS,
+            previous_scene_narration_text="The crew boarded at dawn.",
+            next_scene_narration_text="No trace of them was ever found.",
+        ),
+        voice_id="voice-abc",
+    )
+
+    assert request.previous_text is None
+    assert request.next_text is None

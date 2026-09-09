@@ -26,6 +26,7 @@ from src.models.genre_profile import (
     UncertainInformationPolicy,
 )
 from src.models.media_strategy import SceneSourceType
+from src.models.voice_directives import VoiceDeliveryMode
 
 
 def _even_pacing_curve() -> list[PacingSegment]:
@@ -517,6 +518,7 @@ class GenreProfileRegistryService:
                 ),
                 voice=GenreVoiceProfile(
                     voice_profile_id=("voice.horror_whisper"),
+                    voice_delivery_mode=VoiceDeliveryMode.EMOTION_TAGS,
                     emotion="tense",
                     pace=GenrePacingStyle.SLOW,
                     energy=DirectiveIntensity.LOW,
@@ -1010,6 +1012,7 @@ class GenreProfileRegistryService:
                 ),
                 voice=GenreVoiceProfile(
                     voice_profile_id=("voice.warm_storyteller"),
+                    voice_delivery_mode=VoiceDeliveryMode.EMOTION_TAGS,
                     emotion="expressive",
                     pace=GenrePacingStyle.DYNAMIC,
                     energy=DirectiveIntensity.MEDIUM,
@@ -1215,6 +1218,7 @@ class GenreProfileRegistryService:
                 ),
                 voice=GenreVoiceProfile(
                     voice_profile_id="voice.neutral_narrator",
+                    voice_delivery_mode=VoiceDeliveryMode.EMOTION_TAGS,
                     emotion="mysterious",
                     pace=GenrePacingStyle.MODERATE,
                     energy=DirectiveIntensity.MEDIUM,
@@ -1324,6 +1328,7 @@ class GenreProfileRegistryService:
                 ),
                 voice=GenreVoiceProfile(
                     voice_profile_id="voice.neutral_narrator",
+                    voice_delivery_mode=VoiceDeliveryMode.EMOTION_TAGS,
                     emotion="excited",
                     pace=GenrePacingStyle.FAST,
                     energy=DirectiveIntensity.HIGH,
@@ -1420,6 +1425,7 @@ class GenreProfileRegistryService:
                 ),
                 voice=GenreVoiceProfile(
                     voice_profile_id="voice.neutral_narrator",
+                    voice_delivery_mode=VoiceDeliveryMode.EMOTION_TAGS,
                     emotion="serious",
                     pace=GenrePacingStyle.MODERATE,
                     energy=DirectiveIntensity.HIGH,

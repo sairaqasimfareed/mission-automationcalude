@@ -178,6 +178,16 @@ class ElevenLabsVoiceProvider(VoiceProvider):
                 for locator in request.pronunciation_dictionary_locators
             ]
 
+        # Voice gap #9 (2026-09-09 audit) - real request stitching.
+        # Only ever set together with a non-v3 model_id (see
+        # ElevenLabsVoiceTranslationService), so no need to guard
+        # against sending these alongside eleven_v3.
+        if request.previous_text:
+            json_body["previous_text"] = request.previous_text
+
+        if request.next_text:
+            json_body["next_text"] = request.next_text
+
         return self._call_text_to_speech(
             voice_id=request.voice_id,
             json_body=json_body,

@@ -11,6 +11,7 @@ from src.models.editing_directives import (
 )
 from src.models.media_strategy import SceneSourceType
 from src.models.story_angle import StoryAngleStyle
+from src.models.voice_directives import VoiceDeliveryMode
 
 
 class GenreProfileStatus(str, Enum):
@@ -458,6 +459,11 @@ class GenreVoiceProfile(MissionBaseModel):
     """Provider-independent voice defaults for one genre."""
 
     voice_profile_id: str = "voice.neutral_narrator"
+
+    # Voice gap #10 (2026-09-09 audit) - which real, mutually-exclusive
+    # ElevenLabs delivery mechanism this genre uses by default (see
+    # VoiceDeliveryMode's own docstring for the real tradeoff).
+    voice_delivery_mode: VoiceDeliveryMode = VoiceDeliveryMode.CONTINUITY_STITCHING
 
     emotion: str = "neutral"
 

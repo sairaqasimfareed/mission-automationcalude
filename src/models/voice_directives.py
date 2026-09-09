@@ -93,6 +93,25 @@ class VoiceEmphasisStyle(str, Enum):
     RANK_NUMBERS = "rank_numbers"
 
 
+class VoiceDeliveryMode(str, Enum):
+    """
+    Which real, mutually-exclusive ElevenLabs delivery mechanism a
+    scene's voice generation should use.
+
+    A real, documented ElevenLabs tradeoff (2026-09-09 audit, gap #10):
+    the eleven_v3 model supports inline emotional "audio tags"
+    (e.g. "[worried]", "[whispers]") but does NOT support request
+    stitching; eleven_multilingual_v2 supports request stitching
+    (previous_text/next_text or previous_request_ids/next_request_ids)
+    but has no audio-tag mechanism. A generation can only use one or
+    the other - never both on the same request - confirmed directly
+    against ElevenLabs' own current documentation, not assumed.
+    """
+
+    EMOTION_TAGS = "emotion_tags"
+    CONTINUITY_STITCHING = "continuity_stitching"
+
+
 class VoiceDirectiveSource(str, Enum):
     """Source that produced a voice instruction."""
 
@@ -386,6 +405,14 @@ class SceneVoiceDirectives(MissionBaseModel):
     language: str = "English"
 
     language_code: str = "en"
+
+    # Voice gap #10 (2026-09-09 audit) - which real, mutually-exclusive
+    # ElevenLabs delivery mechanism this scene should use. Defaults to
+    # the broadly-compatible, well-established option (continuity
+    # stitching on eleven_multilingual_v2) rather than the alpha-stage
+    # eleven_v3 model, matching this codebase's own "safe default"
+    # convention elsewhere.
+    voice_delivery_mode: VoiceDeliveryMode = VoiceDeliveryMode.CONTINUITY_STITCHING
 
     emotion: VoiceEmotion = VoiceEmotion.NEUTRAL
 

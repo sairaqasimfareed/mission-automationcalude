@@ -53,6 +53,8 @@ class VoiceDirectiveResolutionService:
         narration_text: str,
         scene_duration_seconds: float | None = None,
         target_provider: str | None = None,
+        previous_scene_narration_text: str | None = None,
+        next_scene_narration_text: str | None = None,
     ) -> ResolvedVoiceBlueprint:
         """
         Validate and resolve one scene voice request.
@@ -70,6 +72,15 @@ class VoiceDirectiveResolutionService:
         without requiring every directive to carry a provider
         preference of its own; directives' own explicit preference
         still wins when both are set.
+
+        previous_scene_narration_text/next_scene_narration_text are
+        voice gap #9's real stitching context - carried straight onto
+        the resolved blueprint's own fields, consumed only when
+        directives.voice_delivery_mode is CONTINUITY_STITCHING
+        (ElevenLabsVoiceTranslationService ignores them otherwise).
+        resolve_many() derives these automatically from adjacent
+        requests in the same batch; a standalone resolve() call simply
+        omits them, matching this method's exact prior behavior.
         """
 
         validation = self.validation_service.validate(
@@ -152,6 +163,9 @@ class VoiceDirectiveResolutionService:
             narration_text=(narration_text.strip()),
             language=directives.language,
             language_code=(directives.language_code),
+            voice_delivery_mode=(directives.voice_delivery_mode),
+            previous_scene_narration_text=previous_scene_narration_text,
+            next_scene_narration_text=next_scene_narration_text,
             emotion=directives.emotion,
             pace=directives.pace,
             energy=directives.energy,
@@ -221,6 +235,13 @@ class VoiceDirectiveResolutionService:
 
         Each tuple contains:
         directives, narration text, scene duration.
+
+        Voice gap #9 (2026-09-09 audit): requests are resolved in
+        scene_number order (not input order, which callers don't
+        guarantee) so each scene's real previous/next narration
+        context comes from its genuinely adjacent scene - the first
+        and last scenes in the batch simply get None for the
+        respective side, matching a standalone resolve() call.
         """
 
         scene_numbers = [directives.scene_number for directives, _, _ in requests]
@@ -231,18 +252,31 @@ class VoiceDirectiveResolutionService:
                 "cannot be resolved together."
             )
 
+        ordered_requests = sorted(
+            requests,
+            key=lambda request: request[0].scene_number,
+        )
+
         blueprints = [
             self.resolve(
                 directives,
                 narration_text=narration_text,
                 scene_duration_seconds=(scene_duration_seconds),
                 target_provider=target_provider,
+                previous_scene_narration_text=(
+                    ordered_requests[index - 1][1] if index > 0 else None
+                ),
+                next_scene_narration_text=(
+                    ordered_requests[index + 1][1]
+                    if index < len(ordered_requests) - 1
+                    else None
+                ),
             )
-            for (
+            for index, (
                 directives,
                 narration_text,
                 scene_duration_seconds,
-            ) in requests
+            ) in enumerate(ordered_requests)
         ]
 
         return sorted(

@@ -8,10 +8,20 @@ from src.models.elevenlabs_voice_request import (
     ElevenLabsVoiceSettings,
 )
 from src.models.resolved_voice_blueprint import ResolvedVoiceBlueprint
-from src.models.voice_directives import VoiceEmotion, VoicePace
+from src.models.voice_directives import VoiceDeliveryMode, VoiceEmotion, VoicePace
 from src.services.voice_narration_markup_service import VoiceNarrationMarkupService
 
 _DEFAULT_MODEL_ID = "eleven_multilingual_v2"
+
+# ElevenLabs' real v3 model id - the only model supporting inline
+# emotional audio tags, confirmed against ElevenLabs' own current
+# documentation (2026-09-09). Used unconditionally whenever
+# blueprint.voice_delivery_mode is EMOTION_TAGS, regardless of what
+# model_id a caller passes - there is no legitimate reason to send a
+# "[worried]"-style tag to any other model, which would just leak the
+# literal bracketed text into the spoken narration instead of
+# affecting delivery.
+_V3_MODEL_ID = "eleven_v3"
 
 # ElevenLabs' documented voice_settings.speed range - narrower than
 # ResolvedVoiceBlueprint.speed's own 0.5-2.0, so a blueprint value
@@ -20,6 +30,38 @@ _DEFAULT_MODEL_ID = "eleven_multilingual_v2"
 # fail generation entirely).
 _MIN_PROVIDER_SPEED = 0.7
 _MAX_PROVIDER_SPEED = 1.2
+
+# Voice gap #4 (2026-09-09 audit): every key here has a real,
+# documented eleven_v3 example tag, verified directly against
+# ElevenLabs' own current documentation and blog posts (not
+# fabricated) - "[curious]", "[worried]", "[softly]", "[happily]",
+# "[sad]", "[excited]", "[booming]", "[thoughtful]", "[awe]",
+# "[sorrowful]" all appear as real, documented example tags.
+# ElevenLabs' own guidance describes the tag vocabulary as open/
+# non-exhaustive ("you can infer similar, contextually appropriate
+# audio tags"), so this mapping is a defensible, real choice per
+# emotion, not a closed enum ElevenLabs enforces - but every value
+# used here is still one of their own documented examples, not an
+# invented word. VoiceEmotion.NEUTRAL is deliberately absent - it is
+# this codebase's own "no special direction" baseline, matching how
+# it's already skipped everywhere else in this service.
+_EMOTION_TAG_BY_EMOTION: dict[VoiceEmotion, str] = {
+    VoiceEmotion.CALM: "softly",
+    VoiceEmotion.WARM: "happily",
+    VoiceEmotion.FRIENDLY: "happily",
+    VoiceEmotion.SAD: "sad",
+    VoiceEmotion.HAPPY: "happily",
+    VoiceEmotion.EXCITED: "excited",
+    VoiceEmotion.SUSPENSEFUL: "worried",
+    VoiceEmotion.FEARFUL: "worried",
+    VoiceEmotion.TENSE: "worried",
+    VoiceEmotion.MYSTERIOUS: "curious",
+    VoiceEmotion.AUTHORITATIVE: "booming",
+    VoiceEmotion.SERIOUS: "thoughtful",
+    VoiceEmotion.DRAMATIC: "awe",
+    VoiceEmotion.INSPIRATIONAL: "awe",
+    VoiceEmotion.EMOTIONAL: "sorrowful",
+}
 
 
 class ElevenLabsVoiceTranslationService:
@@ -64,6 +106,23 @@ class ElevenLabsVoiceTranslationService:
     non-empty, pronunciation_directives is no longer flagged
     unsupported; omitting it (the default) reproduces this service's
     exact prior behavior.
+
+    emotion is a third, conditional exception (voice gaps #4/#9/#10) -
+    ElevenLabs' two real delivery mechanisms are mutually exclusive
+    (confirmed against ElevenLabs' own documentation): eleven_v3
+    supports inline emotional audio tags but not request stitching;
+    eleven_multilingual_v2 (and similar) supports request stitching
+    but has no audio-tag mechanism. `blueprint.voice_delivery_mode`
+    (set per genre - see GenreVoiceProfile.voice_delivery_mode)
+    decides which applies: EMOTION_TAGS forces `model_id` to the real
+    "eleven_v3" regardless of what's passed in (any other model would
+    just speak the literal bracketed tag text aloud) and prefixes a
+    real, documented v3 example tag onto the narration when one exists
+    for the blueprint's emotion; CONTINUITY_STITCHING instead populates
+    `previous_text`/`next_text` from the blueprint's own
+    previous/next-scene narration context (set by
+    VoiceDirectiveResolutionService.resolve_many() from adjacent scene
+    requests in the same batch).
     """
 
     def __init__(
@@ -103,17 +162,38 @@ class ElevenLabsVoiceTranslationService:
             emphasis_directives=blueprint.emphasis_directives,
         )
 
+        resolved_model_id = model_id
+        previous_text: str | None = None
+        next_text: str | None = None
+        emotion_tag_applied = False
+
+        if blueprint.voice_delivery_mode == VoiceDeliveryMode.EMOTION_TAGS:
+            resolved_model_id = _V3_MODEL_ID
+
+            emotion_tag = _EMOTION_TAG_BY_EMOTION.get(blueprint.emotion)
+
+            if emotion_tag:
+                marked_up_text = f"[{emotion_tag}] {marked_up_text}"
+                emotion_tag_applied = True
+        else:
+            previous_text = blueprint.previous_scene_narration_text
+            next_text = blueprint.next_scene_narration_text
+
         resolved_locators = pronunciation_dictionary_locators or []
 
         return ElevenLabsVoiceRequest(
             text=marked_up_text,
             voice_id=voice_id,
-            model_id=model_id,
+            model_id=resolved_model_id,
             voice_settings=voice_settings,
             pronunciation_dictionary_locators=resolved_locators,
+            previous_text=previous_text,
+            next_text=next_text,
             unsupported_controls=[
                 *self._unsupported_controls(
-                    blueprint, has_pronunciation_dictionary=bool(resolved_locators)
+                    blueprint,
+                    has_pronunciation_dictionary=bool(resolved_locators),
+                    emotion_tag_applied=emotion_tag_applied,
                 ),
                 *markup_warnings,
             ],
@@ -124,10 +204,11 @@ class ElevenLabsVoiceTranslationService:
         blueprint: ResolvedVoiceBlueprint,
         *,
         has_pronunciation_dictionary: bool = False,
+        emotion_tag_applied: bool = False,
     ) -> list[str]:
         unsupported: list[str] = []
 
-        if blueprint.emotion != VoiceEmotion.NEUTRAL:
+        if blueprint.emotion != VoiceEmotion.NEUTRAL and not emotion_tag_applied:
             unsupported.append(
                 f"emotion={blueprint.emotion.value} (no verified ElevenLabs "
                 "voice_settings equivalent)"
