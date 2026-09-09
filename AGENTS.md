@@ -86,10 +86,27 @@ never skip hooks.
 
 ## Scope boundary
 
-Google Flow, browser automation targeting Google Flow, or any
-Flow-specific integration are explicitly out of scope. If a task
-description implies automating a third-party product's web UI outside
-its published API, stop and ask rather than building it.
+**Corrected 2026-09-10 - this section had gone stale.** Google Flow was
+originally out of scope under this same rule, and every earlier
+initiative correctly respected and documented that exclusion. The user
+later explicitly overrode it - shown the real, named risk (Google ToS
+exposure, fragility, no public API) and chose to proceed anyway, with
+two things kept non-negotiable regardless: no CAPTCHA/MFA bypass, and
+never entering the user's Google password directly. A full external-UI-
+automation initiative then shipped real, working Google Flow browser
+automation (see `src/providers/google_flow/` -
+`real_adapter.py`/`locators.py`/`adapter.py`; `src/services/google_flow_*`
+- account router, generation orchestrator, generation ledger;
+`src/desktop/views/google_flow_provider_panel_view.py`; and the "Google
+Flow External UI Automation" section of `docs/IMPLEMENTATION_STATE.md`/
+`docs/SYSTEM_TRACEABILITY_MATRIX.md`). This file was never updated after
+that override - treat Google Flow as real, in scope, and something to
+extend, not rebuild or refuse.
+
+The rule this section originally meant, kept for everything else: don't
+start automating a *different* third-party product's web UI outside its
+published API without asking first and getting the same kind of
+explicit, risk-acknowledged authorization Google Flow itself required.
 
 ## Where to look first
 
