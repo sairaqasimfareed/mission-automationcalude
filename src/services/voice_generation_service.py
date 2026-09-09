@@ -352,6 +352,7 @@ class VoiceGenerationService:
     def resolve_provider_voice(
         *,
         blueprint: ResolvedVoiceBlueprint,
+        require_real_id: bool = False,
     ) -> str:
         """
         Resolve the voice identifier sent to a provider.
@@ -361,6 +362,24 @@ class VoiceGenerationService:
         implementation, so both this service's own call site and
         every provider's fallback resolve a voice ID exactly the same
         way rather than maintaining two copies that could drift apart.
+
+        require_real_id=False (the default, used by every existing
+        caller and by DryRunVoiceProvider) preserves this method's
+        original, permissive behavior exactly - falling back to
+        `blueprint.profile.resolved_profile_id` (an internal profile
+        id, e.g. "voice.horror_whisper") when nothing real is
+        configured, which is harmless for a dry-run provider that
+        never actually calls a real API with it.
+
+        require_real_id=True is voice gap #1's (2026-09-09 audit)
+        other real fix: a REAL provider (ElevenLabsVoiceProvider passes
+        this) must never silently send that internal profile id to a
+        real API as if it were a real voice_id - ElevenLabs would just
+        reject it with a confusing error. Raising a clear, actionable
+        ValueError here instead turns that into an honest, specific
+        failure the caller's own exception handling already surfaces
+        cleanly (see VoiceGenerationService.generate()'s broad
+        except-and-fail wrapper around provider calls).
         """
 
         preferred_voice_id = blueprint.provider_preferences.preferred_voice_id
@@ -378,6 +397,15 @@ class VoiceGenerationService:
             and mapping_voice_id.strip()
         ):
             return mapping_voice_id.strip()
+
+        if require_real_id:
+            raise ValueError(
+                "No real provider voice_id is configured for voice "
+                f"profile '{blueprint.profile.resolved_profile_id}'. "
+                "Register one via VoiceProviderMappingService.set_voice_id() "
+                "once a matching voice exists in the target account "
+                '(e.g. added to ElevenLabs\' own "My Voices").'
+            )
 
         return blueprint.profile.resolved_profile_id
 

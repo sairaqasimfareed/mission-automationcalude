@@ -19,6 +19,7 @@ from src.services.voice_directive_validation_service import (
 from src.services.voice_profile_registry_service import (
     VoiceProfileRegistryService,
 )
+from src.services.voice_provider_mapping_service import VoiceProviderMappingService
 
 
 class VoiceDirectiveResolutionService:
@@ -32,10 +33,18 @@ class VoiceDirectiveResolutionService:
         *,
         voice_profile_registry: VoiceProfileRegistryService,
         validation_service: VoiceDirectiveValidationService,
+        voice_provider_mapping_service: VoiceProviderMappingService | None = None,
     ) -> None:
         self.voice_profile_registry = voice_profile_registry
 
         self.validation_service = validation_service
+
+        # Voice gap #1 (2026-09-09 audit) - optional so every existing
+        # caller/test keeps working unchanged; when supplied, a real,
+        # persisted voice_id overlays whatever the resolved profile's
+        # own provider_mappings carries (see resolve()'s own comment
+        # for why a real id can never simply be hardcoded there).
+        self.voice_provider_mapping_service = voice_provider_mapping_service
 
     def resolve(
         self,
@@ -43,8 +52,25 @@ class VoiceDirectiveResolutionService:
         *,
         narration_text: str,
         scene_duration_seconds: float | None = None,
+        target_provider: str | None = None,
     ) -> ResolvedVoiceBlueprint:
-        """Validate and resolve one scene voice request."""
+        """
+        Validate and resolve one scene voice request.
+
+        target_provider is a real fix for a second real bug found
+        alongside gap #1: _select_provider_mapping only ever returns a
+        non-empty mapping when directives.provider_preferences.preferred_provider
+        is explicitly set - but the ordinary genre-driven directive
+        path (GenreVoiceDirectiveGenerationService) never sets it, so
+        selected_provider_mapping was always {} in the real pipeline,
+        making any per-profile provider_mappings (including a real
+        voice_id, once registered) silently unreachable end to end.
+        target_provider lets the real caller (which knows which
+        provider it's about to generate through) supply it explicitly
+        without requiring every directive to carry a provider
+        preference of its own; directives' own explicit preference
+        still wins when both are set.
+        """
 
         validation = self.validation_service.validate(
             directives,
@@ -83,10 +109,26 @@ class VoiceDirectiveResolutionService:
             profile_warning=(profile_resolution.warning),
         )
 
+        effective_provider = (
+            directives.provider_preferences.preferred_provider or target_provider
+        )
+
         selected_provider_mapping = self._select_provider_mapping(
             provider_mappings=(profile.provider_mappings),
-            preferred_provider=(directives.provider_preferences.preferred_provider),
+            preferred_provider=effective_provider,
         )
+
+        if self.voice_provider_mapping_service is not None and effective_provider:
+            real_voice_id = self.voice_provider_mapping_service.get_voice_id(
+                voice_profile_id=profile_resolution.resolved_profile_id,
+                provider_name=effective_provider,
+            )
+
+            if real_voice_id:
+                selected_provider_mapping = {
+                    **selected_provider_mapping,
+                    "voice_id": real_voice_id,
+                }
 
         status = (
             VoiceBlueprintResolutionStatus.RESOLVED_WITH_FALLBACK
@@ -171,6 +213,8 @@ class VoiceDirectiveResolutionService:
                 float | None,
             ]
         ],
+        *,
+        target_provider: str | None = None,
     ) -> list[ResolvedVoiceBlueprint]:
         """
         Resolve multiple scene voice requests.
@@ -192,6 +236,7 @@ class VoiceDirectiveResolutionService:
                 directives,
                 narration_text=narration_text,
                 scene_duration_seconds=(scene_duration_seconds),
+                target_provider=target_provider,
             )
             for (
                 directives,

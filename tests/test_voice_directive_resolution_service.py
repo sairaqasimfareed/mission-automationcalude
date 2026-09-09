@@ -259,4 +259,100 @@ restored = fallback_blueprint.__class__.model_validate_json(serialized)
 assert restored == fallback_blueprint
 
 
+# --- Voice gap #1 (2026-09-09 audit): target_provider reaches
+# _select_provider_mapping even when the directive's own
+# provider_preferences never set one - the real, ordinary
+# genre-driven path. ---
+
+no_preference_directives = SceneVoiceDirectives(
+    scene_number=8,
+    voice_profile_id="voice.horror_whisper",
+)
+
+assert no_preference_directives.provider_preferences.preferred_provider is None
+
+no_target_blueprint = resolution_service.resolve(
+    no_preference_directives,
+    narration_text="A short narration.",
+    scene_duration_seconds=8.0,
+)
+
+assert no_target_blueprint.selected_provider_mapping == {}
+
+with_target_directives = SceneVoiceDirectives(
+    scene_number=9,
+    voice_profile_id="voice.horror_whisper",
+)
+
+with_target_blueprint = resolution_service.resolve(
+    with_target_directives,
+    narration_text="A short narration.",
+    scene_duration_seconds=8.0,
+    target_provider="elevenlabs",
+)
+
+assert with_target_blueprint.selected_provider_mapping["model_id"] == (
+    "eleven_multilingual_v2"
+)
+
+print("target_provider reaches the real per-genre mapping.")
+
+
+# --- A real, persisted voice_id from VoiceProviderMappingService
+# overlays whatever the built-in profile's own provider_mappings
+# carries (today: never a real voice_id, only recommended_voice_tags). ---
+
+from src.services.registry.voice_provider_mapping_repository import (  # noqa: E402
+    InMemoryVoiceProviderMappingRepository,
+)
+from src.services.voice_provider_mapping_service import (  # noqa: E402
+    VoiceProviderMappingService,
+)
+
+mapping_service = VoiceProviderMappingService(
+    repository=InMemoryVoiceProviderMappingRepository()
+)
+mapping_service.load()
+mapping_service.set_voice_id(
+    voice_profile_id="voice.horror_whisper",
+    provider_name="elevenlabs",
+    voice_id="real-horror-voice-42",
+)
+
+resolution_service_with_mapping = VoiceDirectiveResolutionService(
+    voice_profile_registry=registry,
+    validation_service=validation_service,
+    voice_provider_mapping_service=mapping_service,
+)
+
+overlaid_blueprint = resolution_service_with_mapping.resolve(
+    SceneVoiceDirectives(scene_number=10, voice_profile_id="voice.horror_whisper"),
+    narration_text="A short narration.",
+    scene_duration_seconds=8.0,
+    target_provider="elevenlabs",
+)
+
+assert overlaid_blueprint.selected_provider_mapping["voice_id"] == (
+    "real-horror-voice-42"
+)
+# The rest of the profile's own real mapping (model_id) survives the overlay.
+assert overlaid_blueprint.selected_provider_mapping["model_id"] == (
+    "eleven_multilingual_v2"
+)
+
+# An unregistered profile falls through untouched - no fabricated id.
+unmapped_blueprint = resolution_service_with_mapping.resolve(
+    SceneVoiceDirectives(
+        scene_number=11, voice_profile_id="voice.documentary_authoritative"
+    ),
+    narration_text="A short narration.",
+    scene_duration_seconds=8.0,
+    target_provider="elevenlabs",
+)
+
+assert "voice_id" not in unmapped_blueprint.selected_provider_mapping
+
+print("Real, persisted voice_id mapping overlays the resolved blueprint.")
+
+
 print("Voice Directive Resolution Service " "tests completed successfully.")

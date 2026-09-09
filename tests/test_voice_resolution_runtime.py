@@ -263,6 +263,86 @@ def test_unknown_profile_uses_neutral_fallback() -> None:
     assert blueprint.profile.used_fallback
 
 
+def test_target_provider_defaults_to_none() -> None:
+    runtime = _runtime()
+
+    assert runtime.target_provider is None
+
+
+def test_target_provider_reaches_the_resolved_blueprint() -> None:
+    runtime = VoiceResolutionRuntimeFactory().build(
+        profiles=[_neutral_profile(), _documentary_profile()],
+        target_provider="elevenlabs",
+    )
+
+    assert runtime.target_provider == "elevenlabs"
+
+    blueprints = runtime.resolve_many(
+        [
+            (
+                _directives(scene_number=1),
+                "First scene narration.",
+                20.0,
+            ),
+        ]
+    )
+
+    assert blueprints[0].selected_provider_mapping["voice_id"] == "test-voice"
+
+
+def test_without_target_provider_selected_mapping_stays_empty() -> None:
+    runtime = _runtime()
+
+    blueprints = runtime.resolve_many(
+        [
+            (
+                _directives(scene_number=1),
+                "First scene narration.",
+                20.0,
+            ),
+        ]
+    )
+
+    assert blueprints[0].selected_provider_mapping == {}
+
+
+def test_voice_provider_mapping_service_overlays_a_real_voice_id() -> None:
+    from src.services.registry.voice_provider_mapping_repository import (
+        InMemoryVoiceProviderMappingRepository,
+    )
+    from src.services.voice_provider_mapping_service import VoiceProviderMappingService
+
+    mapping_service = VoiceProviderMappingService(
+        repository=InMemoryVoiceProviderMappingRepository()
+    )
+    mapping_service.load()
+    mapping_service.set_voice_id(
+        voice_profile_id="voice.documentary",
+        provider_name="elevenlabs",
+        voice_id="real-voice-override",
+    )
+
+    runtime = VoiceResolutionRuntimeFactory().build(
+        profiles=[_neutral_profile(), _documentary_profile()],
+        target_provider="elevenlabs",
+        voice_provider_mapping_service=mapping_service,
+    )
+
+    blueprints = runtime.resolve_many(
+        [
+            (
+                _directives(scene_number=1),
+                "First scene narration.",
+                20.0,
+            ),
+        ]
+    )
+
+    assert blueprints[0].selected_provider_mapping["voice_id"] == (
+        "real-voice-override"
+    )
+
+
 def test_runtime_does_not_require_provider_credentials() -> None:
     runtime = _runtime()
 

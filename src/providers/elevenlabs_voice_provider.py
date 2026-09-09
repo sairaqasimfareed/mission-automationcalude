@@ -127,7 +127,15 @@ class ElevenLabsVoiceProvider(VoiceProvider):
         instead of being silently swallowed.
         """
 
-        voice_id = VoiceGenerationService.resolve_provider_voice(blueprint=blueprint)
+        # Voice gap #1 (2026-09-09 audit): a real provider must never
+        # silently send an internal profile id (e.g.
+        # "voice.horror_whisper") to ElevenLabs as if it were a real
+        # voice_id - require_real_id=True turns that into a clear,
+        # actionable error instead of a confusing rejection from
+        # ElevenLabs itself.
+        voice_id = VoiceGenerationService.resolve_provider_voice(
+            blueprint=blueprint, require_real_id=True
+        )
 
         pronunciation_dictionary_locators: list[
             ElevenLabsPronunciationDictionaryLocator

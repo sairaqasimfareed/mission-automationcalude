@@ -9,7 +9,7 @@ from src.models.resolved_voice_blueprint import (
     ResolvedVoiceProfileReference,
     VoiceBlueprintResolutionStatus,
 )
-from src.models.voice_directives import PronunciationDirective
+from src.models.voice_directives import PronunciationDirective, VoiceProviderPreferences
 from src.providers.elevenlabs_voice_provider import ElevenLabsVoiceProvider
 from src.services.http.http_provider_executor import (
     HttpProviderExecutionError,
@@ -132,6 +132,7 @@ blueprint = ResolvedVoiceBlueprint(
     similarity_boost=0.8,
     style_strength=0.3,
     speaker_boost=False,
+    provider_preferences=VoiceProviderPreferences(preferred_voice_id="voice-real-123"),
 )
 
 blueprint_transport = _RecordingTransport(
@@ -200,6 +201,7 @@ pronunciation_blueprint = ResolvedVoiceBlueprint(
             text="Celeste", pronunciation="seh-LEST", alphabet="alias"
         )
     ],
+    provider_preferences=VoiceProviderPreferences(preferred_voice_id="voice-real-123"),
 )
 
 routed_transport = _RoutedTransport(
@@ -275,5 +277,47 @@ with TemporaryDirectory() as temp_dir:
     assert "pronunciation_dictionary_locators" not in tts_request.json_body
 
 print("ElevenLabsVoiceProvider pronunciation-dictionary failure-tolerance case passed.")
+
+# --- Voice gap #1 (2026-09-09 audit): generate_from_blueprint() must
+# never silently send an internal profile id to ElevenLabs as if it
+# were a real voice_id - a blueprint with no real voice_id configured
+# anywhere must raise a clear, actionable error instead. ---
+
+no_real_voice_blueprint = ResolvedVoiceBlueprint(
+    scene_number=3,
+    status=VoiceBlueprintResolutionStatus.RESOLVED,
+    profile=ResolvedVoiceProfileReference(
+        requested_profile_id="voice.horror_whisper",
+        resolved_profile_id="voice.horror_whisper",
+        display_name="Horror Whisper",
+    ),
+    narration_text="Something moved in the dark.",
+)
+
+unreachable_transport = _RecordingTransport(
+    HttpTransportResponse(status_code=200, headers={}, content=b"should-not-be-called")
+)
+
+with TemporaryDirectory() as temp_dir:
+    provider = ElevenLabsVoiceProvider(
+        profile=profile,
+        api_key="real-key-123",
+        transport=unreachable_transport,
+        output_directory=temp_dir,
+    )
+
+    try:
+        provider.generate_from_blueprint(no_real_voice_blueprint)
+    except ValueError as error:
+        assert "voice.horror_whisper" in str(error)
+        assert "No real provider voice_id" in str(error)
+        print("No-real-voice-id correctly raised:", error)
+    else:
+        raise AssertionError("Expected ValueError for a missing real voice_id.")
+
+    # The failure must happen before any real HTTP call is made.
+    assert unreachable_transport.received_requests == []
+
+print("ElevenLabsVoiceProvider no-real-voice-id case passed.")
 
 print("ElevenLabsVoiceProvider tests completed successfully.")
