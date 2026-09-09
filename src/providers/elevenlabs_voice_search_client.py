@@ -32,6 +32,14 @@ class ElevenLabsVoiceSearchClient:
     Built on the same injectable-Transport pattern every other
     ElevenLabs-calling service in this codebase already uses, so it
     shares the exact same fake-transport testing approach.
+
+    `search()` is the thin, direct real API call for one query -
+    `suggest()` (verified live 2026-09-10 against a real account) is
+    the real method a caller building a style-based suggestion should
+    use instead, since ElevenLabs' search only matches a whole
+    compound phrase against a voice's literal name, not the
+    fuzzy/labels-aware matching this codebase originally assumed from
+    documentation alone.
     """
 
     def __init__(
@@ -101,6 +109,56 @@ class ElevenLabsVoiceSearchClient:
             self._parse_voice(raw_voice)
             for raw_voice in raw_voices
             if isinstance(raw_voice, dict) and raw_voice.get("voice_id")
+        ]
+
+    def suggest(
+        self,
+        *,
+        terms: list[str],
+        page_size_per_term: int = _DEFAULT_PAGE_SIZE,
+        max_results: int = _DEFAULT_PAGE_SIZE,
+    ) -> list[ElevenLabsVoiceSearchResult]:
+        """
+        Suggest real candidate voices for a list of individual search
+        terms (see build_voice_search_terms()) - real fix for
+        ElevenLabs' verified-live search behavior: `search` matches a
+        voice's real `name` field literally and requires the whole
+        query to appear together, so one compound multi-word query
+        (e.g. "deep dark whisper suspenseful") reliably matches
+        nothing, while individual real terms ("deep", "whisper") do.
+
+        Runs one real search per term, merges results by voice_id, and
+        ranks by how many distinct terms matched that voice - a voice
+        matched by more of a profile's real style terms is a stronger
+        real candidate than one matched by only one. Ties keep
+        first-seen order (Python's sort is stable).
+
+        Returns an empty list, with no real network call, when terms
+        is empty - matching build_voice_search_terms()'s own honest
+        "nothing to search for" contract.
+        """
+
+        if not terms:
+            return []
+
+        hit_counts: dict[str, int] = {}
+        results_by_voice_id: dict[str, ElevenLabsVoiceSearchResult] = {}
+
+        for term in terms:
+            for result in self.search(query=term, page_size=page_size_per_term):
+                hit_counts[result.voice_id] = hit_counts.get(result.voice_id, 0) + 1
+
+                if result.voice_id not in results_by_voice_id:
+                    results_by_voice_id[result.voice_id] = result
+
+        ranked_voice_ids = sorted(
+            results_by_voice_id,
+            key=lambda voice_id: hit_counts[voice_id],
+            reverse=True,
+        )
+
+        return [
+            results_by_voice_id[voice_id] for voice_id in ranked_voice_ids[:max_results]
         ]
 
     @staticmethod

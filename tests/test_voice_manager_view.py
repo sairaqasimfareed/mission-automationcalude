@@ -56,12 +56,16 @@ class _StubVoiceSearchClient:
     ) -> None:
         self.results = results or []
         self.error = error
-        self.last_query: str | None = None
+        self.last_terms: list[str] | None = None
 
-    def search(
-        self, *, query: str, page_size: int = 5
+    def suggest(
+        self,
+        *,
+        terms: list[str],
+        page_size_per_term: int = 5,
+        max_results: int = 5,
     ) -> list[ElevenLabsVoiceSearchResult]:
-        self.last_query = query
+        self.last_terms = list(terms)
 
         if self.error is not None:
             raise self.error
@@ -277,8 +281,13 @@ def test_suggest_populates_real_results(qapp: QApplication) -> None:
 
     assert len(view._suggestions) == 2  # noqa: SLF001
     assert view._suggestions_list.count() == 2  # noqa: SLF001
-    assert stub.last_query is not None
-    assert "deep" in stub.last_query
+    assert stub.last_terms is not None
+    assert "deep" in stub.last_terms
+    # Real terms are passed individually, never joined into one
+    # compound phrase (verified live: ElevenLabs' search matches a
+    # compound phrase literally against a voice's name and finds
+    # nothing).
+    assert all(" " not in term for term in stub.last_terms)
 
 
 def test_suggest_with_no_results_shows_an_informational_row(

@@ -146,3 +146,136 @@ def test_search_skips_a_malformed_voice_entry_missing_voice_id() -> None:
     results = client.search(query="deep dark whisper")
 
     assert results == []
+
+
+# --- suggest(): real fix for ElevenLabs' verified-live search
+# behavior (a compound phrase matches nothing; individual real terms
+# do), merging one-search-per-term results and ranking by hit count. ---
+
+
+class _RoutedBySearchTermTransport:
+    def __init__(
+        self, responses_by_search_term: dict[str, HttpTransportResponse]
+    ) -> None:
+        self.responses_by_search_term = responses_by_search_term
+        self.received_requests: list[PreparedHttpRequest] = []
+
+    def __call__(self, request: PreparedHttpRequest) -> HttpTransportResponse:
+        self.received_requests.append(request)
+        term = (request.params or {}).get("search", "")
+
+        return self.responses_by_search_term[term]
+
+
+def _voice_payload(*voice_ids_and_names: tuple[str, str]) -> bytes:
+    return json.dumps(
+        {
+            "voices": [
+                {"voice_id": voice_id, "name": name}
+                for voice_id, name in voice_ids_and_names
+            ]
+        }
+    ).encode("utf-8")
+
+
+def test_suggest_merges_and_ranks_results_across_terms() -> None:
+    transport = _RoutedBySearchTermTransport(
+        {
+            "deep": HttpTransportResponse(
+                status_code=200,
+                headers={},
+                content=_voice_payload(("voice-a", "Deep A"), ("voice-b", "Deep B")),
+            ),
+            "dark": HttpTransportResponse(
+                status_code=200,
+                headers={},
+                content=_voice_payload(("voice-b", "Deep B")),
+            ),
+            "whisper": HttpTransportResponse(
+                status_code=200, headers={}, content=_voice_payload()
+            ),
+        }
+    )
+    client = ElevenLabsVoiceSearchClient(api_key="real-key-123", transport=transport)
+
+    results = client.suggest(terms=["deep", "dark", "whisper"])
+
+    assert [r.voice_id for r in results] == ["voice-b", "voice-a"]
+
+
+def test_suggest_returns_an_empty_list_for_no_terms_without_a_network_call() -> None:
+    transport = _RoutedBySearchTermTransport({})
+    client = ElevenLabsVoiceSearchClient(api_key="real-key-123", transport=transport)
+
+    results = client.suggest(terms=[])
+
+    assert results == []
+    assert transport.received_requests == []
+
+
+def test_suggest_sends_exactly_one_request_per_term() -> None:
+    transport = _RoutedBySearchTermTransport(
+        {
+            "deep": HttpTransportResponse(
+                status_code=200, headers={}, content=_voice_payload()
+            ),
+            "dark": HttpTransportResponse(
+                status_code=200, headers={}, content=_voice_payload()
+            ),
+        }
+    )
+    client = ElevenLabsVoiceSearchClient(api_key="real-key-123", transport=transport)
+
+    client.suggest(terms=["deep", "dark"])
+
+    assert len(transport.received_requests) == 2
+
+
+def test_suggest_respects_max_results() -> None:
+    transport = _RoutedBySearchTermTransport(
+        {
+            "deep": HttpTransportResponse(
+                status_code=200,
+                headers={},
+                content=_voice_payload(
+                    ("voice-a", "A"), ("voice-b", "B"), ("voice-c", "C")
+                ),
+            ),
+        }
+    )
+    client = ElevenLabsVoiceSearchClient(api_key="real-key-123", transport=transport)
+
+    results = client.suggest(terms=["deep"], max_results=2)
+
+    assert len(results) == 2
+
+
+def test_suggest_preserves_first_seen_order_on_tied_hit_counts() -> None:
+    transport = _RoutedBySearchTermTransport(
+        {
+            "deep": HttpTransportResponse(
+                status_code=200,
+                headers={},
+                content=_voice_payload(("voice-a", "A"), ("voice-b", "B")),
+            ),
+        }
+    )
+    client = ElevenLabsVoiceSearchClient(api_key="real-key-123", transport=transport)
+
+    results = client.suggest(terms=["deep"])
+
+    assert [r.voice_id for r in results] == ["voice-a", "voice-b"]
+
+
+def test_suggest_propagates_a_real_search_failure() -> None:
+    transport = _RoutedBySearchTermTransport(
+        {
+            "deep": HttpTransportResponse(
+                status_code=401, headers={}, content=b"unauthorized"
+            ),
+        }
+    )
+    client = ElevenLabsVoiceSearchClient(api_key="real-key-123", transport=transport)
+
+    with pytest.raises(HttpProviderExecutionError, match="HTTP 401"):
+        client.suggest(terms=["deep"])

@@ -7,28 +7,30 @@ _ELEVENLABS_PROVIDER_NAME = "elevenlabs"
 _RECOMMENDED_TAGS_KEY = "recommended_voice_tags"
 
 
-def build_voice_search_query(profile: VoiceProfile) -> str:
+def build_voice_search_terms(profile: VoiceProfile) -> list[str]:
     """
-    Build a real, honest free-text search query for ElevenLabs' voice
-    search endpoint from one provider-independent VoiceProfile.
+    Build the real, individual search terms to run against ElevenLabs'
+    voice search endpoint for one provider-independent VoiceProfile.
 
-    ElevenLabs' `search` parameter matches free text against a real
-    voice's name/description/labels/category (confirmed via their own
-    current API documentation) - so this joins the profile's own
-    provider_mappings["elevenlabs"]["recommended_voice_tags"]
-    (already curated, real descriptive words like "deep"/"dark"/
-    "whisper" - see VoiceProfileRegistryService) with its pitch_style
-    and (non-neutral) emotion values, rather than hardcoding a mapping
-    onto ElevenLabs' own structured gender/age/accent filters - this
-    codebase has not verified the exact enum values those filters
-    accept, and guessing would risk silently returning zero real
-    matches instead of an honest, broad free-text search.
+    Verified live (2026-09-10) against a real ElevenLabs account, not
+    assumed from documentation: `search` matches a real voice's `name`
+    field literally and requires the whole query to appear together -
+    a compound phrase like "deep dark whisper suspenseful" matched
+    zero real voices, while single real terms like "deep" correctly
+    found real matches ("Charlie - Deep, Confident, Energetic",
+    "Brian - Deep, Resonant and Comforting"). An earlier version of
+    this function joined every term into one query string, which is
+    what surfaced this - corrected once the real behavior was known,
+    not guessed at again.
 
-    Pure/deterministic - no network call. Returns an empty string only
-    when a profile has no real tags and a fully default style (should
-    not happen for any of this codebase's built-in profiles, but
-    callers should treat an empty result as "nothing to search for"
-    rather than searching ElevenLabs with a blank term).
+    Returns each real term separately (recommended_voice_tags, plus
+    pitch_style, plus any non-neutral emotion) so the real caller
+    (ElevenLabsVoiceSearchClient.suggest()) can run one real search
+    per term and merge/rank results - the only strategy confirmed live
+    to actually surface matches for a profile's stylistic tags, which
+    rarely appear together, verbatim, in a premade voice's name.
+
+    Pure/deterministic - no network call.
     """
 
     provider_mapping = profile.provider_mappings.get(_ELEVENLABS_PROVIDER_NAME, {})
@@ -47,4 +49,4 @@ def build_voice_search_query(profile: VoiceProfile) -> str:
         terms.append(profile.emotion.value)
 
     # dict.fromkeys preserves first-seen order while deduping.
-    return " ".join(dict.fromkeys(terms))
+    return list(dict.fromkeys(terms))

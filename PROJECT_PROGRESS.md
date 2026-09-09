@@ -5,6 +5,31 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-10 - Auto-suggest voice search: real fix after the first live test against a paid ElevenLabs account
+
+Direct continuation of the auto-suggest work below. Earlier today that feature was built and unit-tested but had never run against a real ElevenLabs account - the stored API key was an unpaid, since-disabled one. The user created a new paid key, added it through the app, and granted it full permissions on ElevenLabs' dashboard. The first real live run immediately surfaced two things worth recording.
+
+**Two real API-key failure modes, both distinct from an invalid key, both diagnosed against the live API (raw debug scripts, not docs):**
+- A real ElevenLabs key can be *scoped*: the new key initially lacked `voices_read`, returning HTTP 401 with `{"code":"missing_permissions", ...}` - a genuinely different error from "invalid key". The user fixed this on ElevenLabs' own dashboard ("given all accesses").
+- The since-disabled old key returned HTTP 401 `"Invalid API key"` - a third, separate case.
+
+**The real bug this live test found in the original design.** `build_voice_search_query()` joined every one of a profile's style tags into one compound free-text string (e.g. `"deep dark whisper suspenseful"` for `voice.horror_whisper`) and passed it as ElevenLabs' `search` parameter. The API-docs summary this codebase relied on implied `search` did fuzzy/labels-aware matching. **It does not.** Verified directly against the user's real account: `search` matches the whole query *literally* and requires all the words to appear together, against a voice's `name` field only. The real horror query returned `{"voices":[],"total_count":0}` every time. Single real words (`"deep"` matches "Charlie - Deep, Confident, Energetic" and "Brian - Deep, Resonant and Comforting") and structured filters (`gender=male&accent=british` returned George and Daniel) both work reliably; compound phrases reliably return nothing. This was not a syntax bug - the original core assumption about the API's behavior was wrong, and only a real live call could show that.
+
+**The fix.** Search each term on its own, then merge and rank:
+- `build_voice_search_query(profile) -> str` became `build_voice_search_terms(profile) -> list[str]` - same input logic (recommended tags + pitch style + non-neutral emotion, deduped, first-seen order preserved), but each term stays a separate list entry, never joined.
+- New `ElevenLabsVoiceSearchClient.suggest(*, terms, page_size_per_term=5, max_results=5)` - runs one real search per term, merges hits by `voice_id`, and ranks by how many distinct terms matched each voice (a voice matched by more of a profile's real style words is a stronger candidate). Ties keep first-seen order (stable sort). Empty `terms` returns `[]` with no network call. `search()` stays as the thin single-query primitive; `suggest()` is now the method a style-based caller should use, and the class/function docstrings say so and cite the live verification date.
+- `VoiceManagerView._handle_suggest_clicked()` now calls `build_voice_search_terms()` + `suggest(terms=...)`; the empty-results message names the actual terms tried.
+
+**Verified live before rewriting any source**: a scratch script ran the real per-term merge/rank against the user's account for `["deep","dark","whisper","suspenseful"]` and returned real, plausible top candidates (Brian, Charlie) - the approach was proven against the live API first, then committed to code.
+
+**Teeth-verified** (revert / confirm failure / restore): flipping the hit-count sort to ascending made `test_suggest_merges_and_ranks_results_across_terms` fail with the ranking genuinely inverted; removing the `[:max_results]` slice made `test_suggest_respects_max_results` return 3 instead of 2. Both are load-bearing, not decorative.
+
+**Tests**: `test_voice_search_query_builder.py` rewritten for the list signature (8 tests, incl. a new "each term is individual, never space-joined" assertion and an empty-style-profile case); 6 new `suggest()` cases in `test_elevenlabs_voice_search_client.py` (merge-and-rank across terms, no-terms-no-network-call, exactly-one-request-per-term, `max_results`, tie-order preservation, real-failure propagation) via a new `_RoutedBySearchTermTransport` fake that routes responses by the `search` value; `test_voice_manager_view.py`'s stub swapped from `.search(query=...)` to `.suggest(terms=...)` and its assertion now checks the real term list (incl. the no-compound-phrase guarantee). mypy/ruff/black clean; targeted regression across the query builder, the search client, Voice Manager, `ProductionApplicationFactory`, and `entrypoint.py` - 64 cases, all green.
+
+**Still not done**: no client-side re-scoring beyond term-hit-count (no audio analysis exists here); a suggestion's `preview_url` is still surfaced as a link, not played in-app. The end-to-end "new project -> final video" live test the user asked for is the next step now that voice suggestion works against the real account.
+
+---
+
 ## 2026-09-10 - Voice gaps actually wired into real generation, plus real auto-suggest voice matching
 
 Direct follow-up to yesterday's full voice-gap initiative, prompted by the user asking two pointed, fair questions in quick succession: "why not building voice manager screen and wiring" (yesterday's work built the GUI but explicitly deferred wiring it into the two real render call sites), and "mission automation should automatically choose voice from eleven labs as per genre and voice directives from llm. should not it be like this or else?"

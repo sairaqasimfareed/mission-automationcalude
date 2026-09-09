@@ -3,51 +3,51 @@ from __future__ import annotations
 from src.models.voice_directives import VoiceEmotion, VoicePitchStyle
 from src.models.voice_profile import VoiceProfile
 from src.services.voice_profile_registry_service import VoiceProfileRegistryService
-from src.services.voice_search_query_builder import build_voice_search_query
+from src.services.voice_search_query_builder import build_voice_search_terms
 
 
 def _registry() -> VoiceProfileRegistryService:
     return VoiceProfileRegistryService.with_default_profiles()
 
 
-def test_build_query_uses_recommended_tags() -> None:
+def test_build_terms_uses_recommended_tags() -> None:
     profile = _registry().get("voice.horror_whisper")
 
-    query = build_voice_search_query(profile)
+    terms = build_voice_search_terms(profile)
 
-    assert "deep" in query
-    assert "dark" in query
-    assert "whisper" in query
+    assert "deep" in terms
+    assert "dark" in terms
+    assert "whisper" in terms
 
 
-def test_build_query_includes_pitch_style() -> None:
+def test_build_terms_includes_pitch_style() -> None:
     profile = _registry().get("voice.horror_whisper")
 
-    query = build_voice_search_query(profile)
+    terms = build_voice_search_terms(profile)
 
-    assert VoicePitchStyle.DEEP.value in query
+    assert VoicePitchStyle.DEEP.value in terms
 
 
-def test_build_query_includes_non_neutral_emotion() -> None:
+def test_build_terms_includes_non_neutral_emotion() -> None:
     profile = _registry().get("voice.horror_whisper")
 
-    query = build_voice_search_query(profile)
+    terms = build_voice_search_terms(profile)
 
     assert profile.emotion != VoiceEmotion.NEUTRAL
-    assert profile.emotion.value in query
+    assert profile.emotion.value in terms
 
 
-def test_build_query_excludes_neutral_emotion() -> None:
+def test_build_terms_excludes_neutral_emotion() -> None:
     profile = _registry().get("voice.neutral_narrator")
 
     assert profile.emotion == VoiceEmotion.NEUTRAL
 
-    query = build_voice_search_query(profile)
+    terms = build_voice_search_terms(profile)
 
-    assert "neutral" not in query
+    assert "neutral" not in terms
 
 
-def test_build_query_deduplicates_an_exact_repeated_term() -> None:
+def test_build_terms_deduplicates_an_exact_repeated_term() -> None:
     profile = VoiceProfile(
         profile_id="voice.test_dedupe",
         display_name="Test Dedupe",
@@ -60,22 +60,42 @@ def test_build_query_deduplicates_an_exact_repeated_term() -> None:
         },
     )
 
-    query = build_voice_search_query(profile)
+    terms = build_voice_search_terms(profile)
 
     # "deep" appears once from recommended_voice_tags and would
     # otherwise be re-added for pitch_style=DEEP ("deep") too.
-    assert query.split().count("deep") == 1
+    assert terms.count("deep") == 1
 
 
-def test_build_query_has_no_leading_or_trailing_whitespace() -> None:
+def test_build_terms_returns_each_term_individually_not_joined() -> None:
     profile = _registry().get("voice.horror_whisper")
 
-    query = build_voice_search_query(profile)
+    terms = build_voice_search_terms(profile)
 
-    assert query == query.strip()
+    # Each real term stays its own list entry - a caller (e.g.
+    # ElevenLabsVoiceSearchClient.suggest()) is responsible for
+    # searching them one at a time, never joined into one compound
+    # phrase (verified live: ElevenLabs' search only matches a
+    # compound phrase that appears together, literally, in a voice's
+    # name - joining terms reliably returns zero real matches).
+    assert all(" " not in term for term in terms)
 
 
-def test_build_query_ignores_a_provider_mapping_for_a_different_provider() -> None:
+def test_build_terms_returns_no_terms_for_an_empty_style_profile() -> None:
+    profile = VoiceProfile(
+        profile_id="voice.test_empty_style",
+        display_name="Test Empty Style",
+        fallback_profile_id="voice.neutral_narrator",
+    )
+
+    terms = build_voice_search_terms(profile)
+
+    # Default pitch_style ("natural") is still a real, single term -
+    # only emotion is excluded by default (NEUTRAL).
+    assert terms == [VoicePitchStyle.NATURAL.value]
+
+
+def test_build_terms_ignores_a_provider_mapping_for_a_different_provider() -> None:
     profile = VoiceProfile(
         profile_id="voice.test_other_provider",
         display_name="Test Other Provider",
@@ -85,6 +105,6 @@ def test_build_query_ignores_a_provider_mapping_for_a_different_provider() -> No
         },
     )
 
-    query = build_voice_search_query(profile)
+    terms = build_voice_search_terms(profile)
 
-    assert "should-not-appear" not in query
+    assert "should-not-appear" not in terms

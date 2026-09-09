@@ -23,7 +23,7 @@ from src.services.genre_profile_registry_service import GenreProfileRegistryServ
 from src.services.http.http_provider_executor import HttpProviderExecutionError
 from src.services.voice_profile_registry_service import VoiceProfileRegistryService
 from src.services.voice_provider_mapping_service import VoiceProviderMappingService
-from src.services.voice_search_query_builder import build_voice_search_query
+from src.services.voice_search_query_builder import build_voice_search_terms
 
 _LEFT = Qt.AlignmentFlag.AlignLeft
 
@@ -441,9 +441,9 @@ class VoiceManagerView(QWidget):
         if profile is None:
             return
 
-        query = build_voice_search_query(profile)
+        terms = build_voice_search_terms(profile)
 
-        if not query:
+        if not terms:
             QMessageBox.information(
                 self,
                 "Suggest voices",
@@ -453,7 +453,7 @@ class VoiceManagerView(QWidget):
             return
 
         try:
-            results = self._voice_search_client.search(query=query)
+            results = self._voice_search_client.suggest(terms=terms)
         except (HttpProviderExecutionError, ValueError) as error:
             QMessageBox.warning(self, "Could not suggest voices", str(error))
 
@@ -464,7 +464,7 @@ class VoiceManagerView(QWidget):
 
         if not results:
             self._suggestions_list.addItem(
-                f"No real ElevenLabs voices matched '{query}'."
+                f"No real ElevenLabs voices matched {', '.join(terms)}."
             )
 
             return
