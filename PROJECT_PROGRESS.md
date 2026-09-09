@@ -5,6 +5,28 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-09 - Voice gap #9 of 11 (#3): real pitch shifting via FFmpeg, the one control ElevenLabs' API can't do at all
+
+Continuation of today's voice-gap build order. After gaps #10/#4/#9 (emotion tags vs. stitching): gap #3 - pitch adjustment, confirmed earlier this session to have zero real API surface on ElevenLabs, on any model. The only real path is post-processing the generated audio file with FFmpeg.
+
+**Built**: new `VoicePitchShiftService` ([voice_pitch_shift_service.py](src/services/voice_pitch_shift_service.py)) - a real FFmpeg invocation using only core filters (`asetrate` + `aresample` + `atempo`), deliberately avoiding any optional library (like librubberband) so it works with an ordinary bundled or PATH FFmpeg build rather than depending on a specific compile-time option. `asetrate` shifts pitch by resampling the audio (which also changes playback speed as a side effect); `atempo` then corrects the speed back to normal while the pitch stays shifted - the standard, well-established FFmpeg technique for this. Documented honestly as a real tradeoff, not a studio-grade pitch shifter: `atempo` time-stretches the corrected audio, which can introduce mild artifacts for a large shift.
+
+`pitch_adjustment`'s unit is treated as semitones - the natural, musically-meaningful unit for its existing -20..+20 range - though this isn't explicitly documented anywhere else in this codebase's own model; flagged honestly as an assumption in the new service's docstring, not asserted as certain.
+
+FFmpeg's `atempo` filter only accepts a factor between 0.5 and 2.0 per instance (a real, documented, stable FFmpeg constraint) - genuinely exceeded at the extremes of the ±20 semitone range. New `_build_atempo_chain()` chains multiple `atempo` filters to reach an arbitrary factor, exactly matching FFmpeg's own documented recommendation for this case. The real input sample rate is read via an actual `ffprobe` call before building the filter graph - never assumed or hardcoded.
+
+Follows two of this codebase's own established conventions exactly rather than inventing new ones: `MediaTechnicalValidationService`'s injectable-`runner` pattern (so tests never need a real ffmpeg/ffprobe binary), and `ProductionRenderService`'s staged-output-then-atomic-`Path.replace()` pattern (writes to `<name>.part<ext>` first, only promotes on genuine success) - a crash or failure mid-shift can never leave a corrupt or partial file at the path a caller would treat as finished.
+
+Wired live into `ElevenLabsVoiceProvider.generate_from_blueprint()`: runs immediately after the real TTS call, on the just-downloaded audio file, only when `pitch_adjustment != 0.0`. A shift failure is deliberately non-fatal - logged via this codebase's real logger (not silently swallowed), returning the unshifted-but-otherwise-complete audio instead of losing the whole scene's narration over a pitch nuance, matching the exact same discipline gap #5's pronunciation-dictionary failures already established. `ElevenLabsVoiceTranslationService`'s own `unsupported_controls` message for `pitch_adjustment` was updated to say where it's actually handled now, instead of implying it's entirely unaddressed.
+
+**Teeth-verified**: disabling the shift-application branch in the provider broke the real end-to-end shift test with a genuine content mismatch (expected the shifted bytes, got the raw unshifted ones) - confirming the wiring is load-bearing, not decorative.
+
+**Tests**: `test_voice_pitch_shift_service.py` (15 tests: real no-op at zero semitones, missing-input rejection, a real success case with atomic promote verified, correct `asetrate` math confirmed for both a full octave up and down, atempo chaining verified for an extreme shift, ffprobe/ffmpeg failure handling with staging-file cleanup confirmed, empty-output detection, explicit-different-output-file support, and direct `_build_atempo_chain` coverage including both a below-range and an above-range chain with the combined factor checked against the original target). Plus 4 new script-style cases appended to `test_elevenlabs_voice_provider.py` (a real end-to-end shift through the full provider call, a zero-adjustment skip proven via a runner that raises if it's ever called at all, and the teeth-verified failure-tolerance case). mypy/ruff/black clean throughout. Targeted regression (not the full suite, per today's established cadence): 76 cases across the translation service, voice generation service, dry-run provider, media pipeline, and render-runtime factory - all green.
+
+**Not yet done, by design**: not verified against a real FFmpeg binary or a real audio file - every test uses an injected fake runner, matching this codebase's own established testing convention for FFmpeg/ffprobe-calling services (real verification is a natural next step now that a paid ElevenLabs key exists to generate real audio against); no GUI; no batch/bulk pitch-shift entry point beyond the one-scene `apply()` call. Nine of eleven voice gaps now closed (#11, #6, #7, #5, #1, #10, #4, #9, #3). Remaining: #8 (timestamps/alignment), #2 (management GUI, deliberately last).
+
+---
+
 ## 2026-09-09 - Voice gaps #6-8 of 11 (#10/#4/#9): emotion tags vs. request stitching, ElevenLabs' real mutually-exclusive tradeoff
 
 Continuation of today's voice-gap build order. After gap #1 (genre-to-voice mapping): the last of the "content/delivery" gaps - deciding, per genre, whether a scene uses ElevenLabs' real emotional audio tags (gap #4) or real scene-to-scene continuity stitching (gap #9), since ElevenLabs' own API makes the two mutually exclusive (gap #10's real tradeoff).

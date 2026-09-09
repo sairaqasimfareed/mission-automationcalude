@@ -21,6 +21,7 @@ from src.services.http.http_provider_executor import (
     HttpTransportResponse,
     PreparedHttpRequest,
 )
+from src.services.voice_pitch_shift_service import VoicePitchShiftService
 
 
 class _RecordingTransport:
@@ -411,5 +412,129 @@ with TemporaryDirectory() as temp_dir:
     )
 
 print("ElevenLabsVoiceProvider continuity-stitching delivery case passed.")
+
+# --- Voice gap #3 (2026-09-09 audit): a real FFmpeg pitch shift runs
+# after generation, on the downloaded audio file. ---
+
+pitch_blueprint = ResolvedVoiceBlueprint(
+    scene_number=14,
+    status=VoiceBlueprintResolutionStatus.RESOLVED,
+    profile=ResolvedVoiceProfileReference(
+        requested_profile_id="voice.horror_whisper",
+        resolved_profile_id="voice.horror_whisper",
+        display_name="Horror Whisper",
+    ),
+    narration_text="Something moved in the dark.",
+    pitch_adjustment=-2.0,
+    provider_preferences=VoiceProviderPreferences(preferred_voice_id="voice-real-123"),
+)
+
+pitch_transport = _RecordingTransport(
+    HttpTransportResponse(status_code=200, headers={}, content=b"raw-tts-audio")
+)
+
+
+def _ffmpeg_writing_shifted_audio(command: list[str]) -> str:
+    Path(command[-1]).write_bytes(b"shifted-audio")
+    return ""
+
+
+with TemporaryDirectory() as temp_dir:
+    shifted_service = VoicePitchShiftService(
+        ffprobe_runner=lambda command: "44100",
+        ffmpeg_runner=_ffmpeg_writing_shifted_audio,
+    )
+
+    provider = ElevenLabsVoiceProvider(
+        profile=profile,
+        api_key="real-key-123",
+        transport=pitch_transport,
+        output_directory=temp_dir,
+        pitch_shift_service=shifted_service,
+    )
+
+    shifted_path = Path(provider.generate_from_blueprint(pitch_blueprint))
+
+    assert shifted_path.exists()
+    assert shifted_path.read_bytes() == b"shifted-audio"
+
+print("ElevenLabsVoiceProvider real pitch-shift case passed.")
+
+# pitch_adjustment == 0.0 must never invoke the pitch-shift service at all.
+
+no_pitch_blueprint = ResolvedVoiceBlueprint(
+    scene_number=15,
+    status=VoiceBlueprintResolutionStatus.RESOLVED,
+    profile=ResolvedVoiceProfileReference(
+        requested_profile_id="voice.neutral_narrator",
+        resolved_profile_id="voice.neutral_narrator",
+        display_name="Neutral Narrator",
+    ),
+    narration_text="A calm, unshifted narration.",
+    provider_preferences=VoiceProviderPreferences(preferred_voice_id="voice-real-123"),
+)
+
+no_pitch_transport = _RecordingTransport(
+    HttpTransportResponse(status_code=200, headers={}, content=b"unshifted-audio")
+)
+
+
+def _pitch_shift_should_not_run(command: list[str]) -> str:
+    raise AssertionError(f"Pitch shift should not run: {command}")
+
+
+with TemporaryDirectory() as temp_dir:
+    never_shift_service = VoicePitchShiftService(
+        ffprobe_runner=_pitch_shift_should_not_run,
+        ffmpeg_runner=_pitch_shift_should_not_run,
+    )
+
+    provider = ElevenLabsVoiceProvider(
+        profile=profile,
+        api_key="real-key-123",
+        transport=no_pitch_transport,
+        output_directory=temp_dir,
+        pitch_shift_service=never_shift_service,
+    )
+
+    unshifted_path = Path(provider.generate_from_blueprint(no_pitch_blueprint))
+
+    assert unshifted_path.read_bytes() == b"unshifted-audio"
+
+print("ElevenLabsVoiceProvider zero-pitch-adjustment skip case passed.")
+
+# A pitch-shift failure must not fail voice generation - the unshifted
+# (but otherwise complete) audio is still returned.
+
+with TemporaryDirectory() as temp_dir:
+
+    def _failing_ffprobe(command: list[str]) -> str:
+        raise RuntimeError("ffprobe exploded")
+
+    failing_pitch_service = VoicePitchShiftService(
+        ffprobe_runner=_failing_ffprobe,
+        ffmpeg_runner=_pitch_shift_should_not_run,
+    )
+
+    pitch_failure_transport = _RecordingTransport(
+        HttpTransportResponse(
+            status_code=200, headers={}, content=b"raw-tts-audio-again"
+        )
+    )
+
+    provider = ElevenLabsVoiceProvider(
+        profile=profile,
+        api_key="real-key-123",
+        transport=pitch_failure_transport,
+        output_directory=temp_dir,
+        pitch_shift_service=failing_pitch_service,
+    )
+
+    fallback_path = Path(provider.generate_from_blueprint(pitch_blueprint))
+
+    assert fallback_path.exists()
+    assert fallback_path.read_bytes() == b"raw-tts-audio-again"
+
+print("ElevenLabsVoiceProvider pitch-shift failure-tolerance case passed.")
 
 print("ElevenLabsVoiceProvider tests completed successfully.")

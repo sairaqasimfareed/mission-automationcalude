@@ -22,6 +22,8 @@ from src.services.http.http_provider_executor import (
     default_transport,
 )
 from src.services.voice_generation_service import VoiceGenerationService
+from src.services.voice_pitch_shift_service import VoicePitchShiftService
+from src.shared.logger import logger
 
 _DEFAULT_BASE_URL = "https://api.elevenlabs.io"
 _DEFAULT_MODEL_ID = "eleven_multilingual_v2"
@@ -64,6 +66,7 @@ class ElevenLabsVoiceProvider(VoiceProvider):
         pronunciation_dictionary_client: (
             ElevenLabsPronunciationDictionaryClient | None
         ) = None,
+        pitch_shift_service: VoicePitchShiftService | None = None,
     ) -> None:
         self._profile = profile
         self._api_key = api_key
@@ -87,6 +90,11 @@ class ElevenLabsVoiceProvider(VoiceProvider):
                 timeout_seconds=float(profile.timeout_seconds),
             )
         )
+        # Voice gap #3 (2026-09-09 audit) - real FFmpeg pitch
+        # post-processing. ElevenLabs has no pitch control in its API
+        # at all, on any model, so this runs after generation, on the
+        # already-downloaded audio file.
+        self._pitch_shift_service = pitch_shift_service or VoicePitchShiftService()
 
     @property
     def provider_name(self) -> str:
@@ -188,10 +196,52 @@ class ElevenLabsVoiceProvider(VoiceProvider):
         if request.next_text:
             json_body["next_text"] = request.next_text
 
-        return self._call_text_to_speech(
+        output_file = self._call_text_to_speech(
             voice_id=request.voice_id,
             json_body=json_body,
         )
+
+        return self._apply_pitch_shift_if_requested(
+            output_file,
+            blueprint=blueprint,
+        )
+
+    def _apply_pitch_shift_if_requested(
+        self,
+        output_file: str,
+        *,
+        blueprint: ResolvedVoiceBlueprint,
+    ) -> str:
+        """
+        Voice gap #3 (2026-09-09 audit): apply a real FFmpeg pitch
+        shift to the just-generated audio file when the blueprint
+        requests one. Deliberately non-fatal, same discipline as
+        pronunciation-dictionary creation failures - losing a pitch
+        adjustment is a much smaller problem than losing the whole
+        scene's narration over it. A failure is logged, not silently
+        swallowed, and the unshifted (but otherwise complete) audio is
+        still returned.
+        """
+
+        if blueprint.pitch_adjustment == 0.0:
+            return output_file
+
+        result = self._pitch_shift_service.apply(
+            Path(output_file),
+            semitones=blueprint.pitch_adjustment,
+        )
+
+        if not result.success:
+            logger.warning(
+                "Voice pitch shift failed for scene %s (%s semitones): %s. "
+                "Returning the unshifted audio instead.",
+                blueprint.scene_number,
+                blueprint.pitch_adjustment,
+                result.error_message,
+            )
+            return output_file
+
+        return result.output_file or output_file
 
     def _call_text_to_speech(
         self, *, voice_id: str, json_body: dict[str, object]

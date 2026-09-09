@@ -74,14 +74,14 @@ class ElevenLabsVoiceTranslationService:
     ResolvedVoiceBlueprint fields with a genuinely documented
     ElevenLabs `voice_settings` equivalent (stability, similarity_boost,
     style, use_speaker_boost, speed). Every other rich control the
-    blueprint carries (emotion, pace, pitch_adjustment, volume_gain_db,
-    pronunciation directives) has no verified ElevenLabs API surface
-    backing it in this codebase's own testing (see
-    ElevenLabsVoiceProvider's own docstring: "has not been verified
-    against a live ElevenLabs account") - rather than fabricate an
-    unverified mapping, this service names each one explicitly in
-    `unsupported_controls` only when it actually holds a non-default,
-    meaningful value, so a person can see exactly what would be lost
+    blueprint carries (emotion, pace, volume_gain_db, pronunciation
+    directives) has no verified ElevenLabs API surface backing it in
+    this codebase's own testing (see ElevenLabsVoiceProvider's own
+    docstring: "has not been verified against a live ElevenLabs
+    account") - rather than fabricate an unverified mapping, this
+    service names each one explicitly in `unsupported_controls` only
+    when it actually holds a non-default, meaningful value, so a
+    person can see exactly what would be lost
     without this being silently dropped or spuriously flagged on every
     call.
 
@@ -223,7 +223,9 @@ class ElevenLabsVoiceTranslationService:
         if blueprint.pitch_adjustment != 0.0:
             unsupported.append(
                 f"pitch_adjustment={blueprint.pitch_adjustment} (no verified "
-                "ElevenLabs voice_settings equivalent)"
+                "ElevenLabs voice_settings equivalent - applied separately, "
+                "after generation, via VoicePitchShiftService's real FFmpeg "
+                "post-processing, not by this request)"
             )
 
         if blueprint.volume_gain_db != 0.0:
