@@ -5,6 +5,26 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-09 - Three real bugs found in the installed app: a hang-then-error on Check Connection, wrong model matching, and silent x2 credit waste
+
+The user installed the previous day's `MissionAutomationSetup.exe` on a real machine, connected a real Google Flow account (Add Account -> Open Login -> real sign-in), and clicked Check Connection - it hung, then failed with Playwright's real "Executable doesn't exist" error, even though Chromium was already correctly installed on the machine (confirmed: a working `chromium-1234` install sat at the real, standard `%LOCALAPPDATA%\ms-playwright\` location the whole time).
+
+**Root-caused via direct, hands-on reproduction against the real frozen exe, not guessed**: two distinct, compounding causes. (1) `app.py`'s heavy top-level imports (PySide6, MainWindow, every AI SDK) ran at module load time regardless of which branch `main()` took - the frozen self-reinvocation path added for Chromium auto-install paid the same ~30-90s import cost as launching the full GUI, with zero visible progress, indistinguishable from a genuine hang. (2) Playwright's own bundled Node driver, once PyInstaller has flattened its package directory, falls back to a "local" browsers path relative to itself (`driver/package/local-browsers/`) instead of the standard `%LOCALAPPDATA%\ms-playwright\` cache every ordinary Playwright install (including this exact machine's own) already uses - so the real, working Chromium install was never found.
+
+**Fixed**: every heavy import in `app.py` is now local to the branch that needs it - the install-flag branch imports nothing beyond `chromium_bootstrap`. `PLAYWRIGHT_BROWSERS_PATH` is now set explicitly at import time (Playwright's own documented override), removing the location ambiguity entirely.
+
+**Two more real bugs found while investigating, from screenshots the user sent of the live product**: the real Flow UI now offers "Veo 3.1 - Lite" and "Veo 3.1 - Lite [Lower Priority]" as two genuinely separate, distinct model options - added the new one to `VERIFIED_MODEL_FAMILIES`. Separately, and more seriously: a fresh Flow project defaults to **x2** (two videos generated per submission for the same prompt), not x1 - confirmed directly from the user's own screenshot of a real "New project" screen. This codebase's whole Google Flow architecture (one scene -> one generation attempt -> one downloaded clip) assumes exactly one result per submission; leaving `variation_count` unset meant silently trusting whatever Flow's own current default happened to be - actively wrong the moment that default became x2, silently generating (and likely paying for) twice what was intended on every default-settings submission. Fixed: `GoogleFlowExecutionSettings.variation_count` now defaults to `1`, not `None` - every real submission, including the common path with no caller-supplied settings at all, now explicitly forces x1 unless something deliberately asks for more.
+
+**Tests**: 3 new (browsers-path resolution coverage; a direct regression proving x1 is forced with zero execution_settings supplied) plus updates to existing tests whose assumptions were genuinely outdated by the variation_count fix (the settings popover now always opens at least to force x1). Teeth-verified (each fix reverted, confirmed the exact real failure reproduced, restored, confirmed passing again). Full `google_flow`-tagged sweep (180 tests): green.
+
+**Real, hands-on verification beyond unit tests**: rebuilt the packaged exe, launched it standalone (confirmed a real, responsive "Mission Automation" window via `tasklist /v`), compiled a fresh `MissionAutomationSetup.exe`, and ran a complete real silent install -> launch -> uninstall cycle against it - confirmed the installed app launches cleanly with all four fixes and the uninstaller still correctly preserves `data\`.
+
+**Also confirmed and explained to the user**: `data\google_flow_profiles\` (the real login session) is never touched by the installer's own `[Files]`/`[Dirs]` sections and is preserved automatically across an in-place upgrade to the same install location - verified by re-reading the actual `.iss` script, not just asserted from general Inno Setup knowledge.
+
+**Not yet done**: FFmpeg/FFprobe bundling for this exact build - the download stalled repeatedly today due to poor network conditions (multiple attempts from two different trusted sources, none completed); the shipped installer currently falls back to PATH resolution exactly as before, unaffected by any of today's fixes. Will retry when the connection cooperates.
+
+---
+
 ## 2026-09-08 - Installer packaging: a real, working MissionAutomationSetup.exe, fully verified end to end
 
 Final stretch of the same day's installer-packaging effort. With the user's explicit go-ahead for both real downloads involved:
