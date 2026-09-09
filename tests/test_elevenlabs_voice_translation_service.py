@@ -8,7 +8,9 @@ from src.models.resolved_voice_blueprint import (
 from src.models.voice_directives import (
     PronunciationDirective,
     VoiceEmotion,
+    VoiceEmphasisDirective,
     VoicePace,
+    VoicePauseDirective,
 )
 from src.services.elevenlabs_voice_translation_service import (
     ElevenLabsVoiceTranslationService,
@@ -109,6 +111,58 @@ def test_translate_flags_pause_before_seconds_as_unsupported() -> None:
     )
 
     assert any("pause" in control for control in request.unsupported_controls)
+
+
+def test_translate_applies_emphasis_directive_as_capitalization() -> None:
+    service = ElevenLabsVoiceTranslationService()
+
+    request = service.translate(
+        _blueprint(
+            emphasis_directives=[VoiceEmphasisDirective(text="found", strength=0.8)]
+        ),
+        voice_id="voice-abc",
+    )
+
+    assert "FOUND" in request.text
+    assert "found" not in request.text
+    assert not any("emphasis" in control for control in request.unsupported_controls)
+
+
+def test_translate_applies_pause_directive_as_text_markup() -> None:
+    service = ElevenLabsVoiceTranslationService()
+
+    request = service.translate(
+        _blueprint(
+            pause_directives=[
+                VoicePauseDirective(after_text="adrift", duration_seconds=1.0)
+            ]
+        ),
+        voice_id="voice-abc",
+    )
+
+    assert "adrift" in request.text
+    assert "…" in request.text
+    assert request.text.index("…") > request.text.index("adrift")
+    assert not any(
+        "pause directive" in control for control in request.unsupported_controls
+    )
+
+
+def test_translate_flags_unmatched_emphasis_directive_as_unsupported() -> None:
+    service = ElevenLabsVoiceTranslationService()
+
+    request = service.translate(
+        _blueprint(
+            emphasis_directives=[
+                VoiceEmphasisDirective(text="not in the narration", strength=0.5)
+            ]
+        ),
+        voice_id="voice-abc",
+    )
+
+    assert any(
+        "not found in narration" in control for control in request.unsupported_controls
+    )
 
 
 def test_translate_uses_default_model_id() -> None:

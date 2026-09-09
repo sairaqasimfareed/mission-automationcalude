@@ -21,7 +21,27 @@ New `VoiceDirectiveAssemblyService` ([voice_directive_assembly_service.py](src/s
 
 ---
 
-## 2026-09-09 - Three real bugs found in the installed app: a hang-then-error on Check Connection, wrong model matching, and silent x2 credit waste
+## 2026-09-09 - Voice gaps #2 and #3 of 11: pause and emphasis directives now really reach ElevenLabs, as text markup
+
+Continuation of today's approved voice-gap build order, right after gap #11 (real directive-content generation). Next in that order: pause (gap #6 in the original numbering) and emphasis (gap #7) - the simplest real wins once real directive content exists to act on.
+
+**The gap**: ElevenLabs has no request-parameter equivalent for either pause or emphasis at all - confirmed against ElevenLabs' own documentation, not assumed. Before today, a mid-narration pause was faked downstream as an audio fade during mixing (not a real pause in the generated speech itself), and emphasis directives were completely inert - stored, never acted on.
+
+**Built**: new `VoiceNarrationMarkupService` ([voice_narration_markup_service.py](src/services/voice_narration_markup_service.py)) - pure, deterministic text rewriting (no LLM, no network call). ElevenLabs' real, documented mechanism for both is text-based: ellipses for a pause, CAPITALIZATION for emphasis - so this service rewrites the narration text itself before it's sent, rather than inventing a payload field ElevenLabs doesn't accept (the same "never fabricate an unverified mapping" discipline `ElevenLabsVoiceTranslationService` already followed). Emphasis finds the requested occurrence of a directive's text (case-insensitive match, case preserved in every other occurrence) and capitalizes it. Pause inserts duration-scaled ellipsis markup either after a matched `after_text` substring or at a raw character index; the duration-to-markup mapping is a deliberately coarse 3-tier scale, honestly documented as an approximation, since ElevenLabs' text-based pause mechanism has no literal second-level guarantee - matching the same "coarse heuristic, not a compliance guarantee" precedent already set by `AudioCuePolicyService`'s loudness check. A directive whose target text can't be found verbatim in the narration is skipped with a specific warning, never silently dropped.
+
+The trickiest real piece: multiple pause directives can't each be inserted independently without shifting each other's positions. Fixed by resolving every directive's target position against one text snapshot up front, then applying all insertions right-to-left. **Teeth-verified**: reverting that ordering didn't just misplace a pause - it corrupted the literal text of a later word entirely (confirmed via a real test failure: `three` became unfindable, not just misplaced), proving the fix is load-bearing, not decorative.
+
+Wired live into `ElevenLabsVoiceTranslationService.translate()` - the marked-up text now replaces `blueprint.narration_text` in the real request sent to ElevenLabs, and `pause_directives`/`emphasis_directives` were removed from `unsupported_controls` (they're real now). `pause_before_seconds`/`pause_after_seconds` remain separately flagged as unsupported, since those stay a distinct concern - lead-in/lead-out silence applied downstream as an audio fade during mixing, not an in-text pause.
+
+**Tests**: `test_voice_narration_markup_service.py` (13 tests: no-op with no directives, capitalization, case-insensitive matching, occurrence targeting, not-found warnings for both directive types, pause placement via both location methods, duration-based scaling, the teeth-verified multi-directive position-drift regression, emphasis-before-pause ordering, whitespace cleanup) plus 4 new cases in `test_elevenlabs_voice_translation_service.py`. mypy/ruff/black clean. Targeted regression (not the full suite - see below): `test_elevenlabs_voice_provider.py`/`test_dry_run_voice_provider.py`/`test_voice_generation_service.py`/`test_elevenlabs_voice_request_model.py` (33 cases), all green.
+
+**On test cadence today**: per the user's own steer, the full ~40-minute suite is not being re-run after every individual gap - each gap gets its own targeted-test verification plus teeth-verification as it lands, with one full sweep planned once all 11 gaps are complete.
+
+**Not yet done, by design**: not wired into any live pipeline call site beyond the translation service itself (same deferral as gap #11); no GUI to preview marked-up text before generation; pronunciation directives (gap #5) remain unbuilt - next in the build order.
+
+---
+
+## 2026-09-09 - Voice gap #1 of 11: real LLM-generated pronunciation/pause/emphasis content, closing a gap Phase 9 left honestly documented but unbuilt
 
 The user installed the previous day's `MissionAutomationSetup.exe` on a real machine, connected a real Google Flow account (Add Account -> Open Login -> real sign-in), and clicked Check Connection - it hung, then failed with Playwright's real "Executable doesn't exist" error, even though Chromium was already correctly installed on the machine (confirmed: a working `chromium-1234` install sat at the real, standard `%LOCALAPPDATA%\ms-playwright\` location the whole time).
 
