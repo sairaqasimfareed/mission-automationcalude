@@ -9,6 +9,7 @@ from src.models.resolved_voice_blueprint import (
     ResolvedVoiceProfileReference,
     VoiceBlueprintResolutionStatus,
 )
+from src.models.voice_directives import PronunciationDirective
 from src.providers.elevenlabs_voice_provider import ElevenLabsVoiceProvider
 from src.services.http.http_provider_executor import (
     HttpProviderExecutionError,
@@ -160,5 +161,119 @@ with TemporaryDirectory() as temp_dir:
     assert voice_settings["use_speaker_boost"] is False
 
 print("ElevenLabsVoiceProvider generate_from_blueprint case passed.")
+
+# --- Voice gap #5 (2026-09-09 audit): a pronunciation directive
+# triggers a real dictionary-creation call before the TTS call, and
+# the TTS request references its locator. ---
+
+
+class _RoutedTransport:
+    """Returns a different response depending on the request's URL."""
+
+    def __init__(
+        self, responses_by_url_fragment: dict[str, HttpTransportResponse]
+    ) -> None:
+        self.responses_by_url_fragment = responses_by_url_fragment
+        self.received_requests: list[PreparedHttpRequest] = []
+
+    def __call__(self, request: PreparedHttpRequest) -> HttpTransportResponse:
+        self.received_requests.append(request)
+
+        for fragment, response in self.responses_by_url_fragment.items():
+            if fragment in request.url:
+                return response
+
+        raise AssertionError(f"No fake response configured for {request.url}")
+
+
+pronunciation_blueprint = ResolvedVoiceBlueprint(
+    scene_number=2,
+    status=VoiceBlueprintResolutionStatus.RESOLVED,
+    profile=ResolvedVoiceProfileReference(
+        requested_profile_id="voice.neutral_narrator",
+        resolved_profile_id="voice.neutral_narrator",
+        display_name="Neutral Narrator",
+    ),
+    narration_text="The Mary Celeste was found adrift in 1872.",
+    pronunciation_directives=[
+        PronunciationDirective(
+            text="Celeste", pronunciation="seh-LEST", alphabet="alias"
+        )
+    ],
+)
+
+routed_transport = _RoutedTransport(
+    {
+        "pronunciation-dictionaries": HttpTransportResponse(
+            status_code=200,
+            headers={},
+            content=b'{"id": "dict-123", "version_id": "ver-456"}',
+        ),
+        "text-to-speech": HttpTransportResponse(
+            status_code=200, headers={}, content=b"pronunciation-audio"
+        ),
+    }
+)
+
+with TemporaryDirectory() as temp_dir:
+    provider = ElevenLabsVoiceProvider(
+        profile=profile,
+        api_key="real-key-123",
+        transport=routed_transport,
+        output_directory=temp_dir,
+    )
+
+    result_path = Path(provider.generate_from_blueprint(pronunciation_blueprint))
+
+    assert result_path.exists()
+    assert result_path.read_bytes() == b"pronunciation-audio"
+    assert len(routed_transport.received_requests) == 2
+
+    dictionary_request = routed_transport.received_requests[0]
+    assert "pronunciation-dictionaries/add-from-rules" in dictionary_request.url
+    assert dictionary_request.json_body is not None
+    assert dictionary_request.json_body["rules"][0]["string_to_replace"] == "Celeste"
+
+    tts_request = routed_transport.received_requests[1]
+    assert tts_request.json_body is not None
+    locators = tts_request.json_body["pronunciation_dictionary_locators"]
+    assert locators == [
+        {"pronunciation_dictionary_id": "dict-123", "version_id": "ver-456"}
+    ]
+
+print("ElevenLabsVoiceProvider pronunciation-dictionary success case passed.")
+
+# A failed dictionary-creation call must not fail voice generation
+# itself - it degrades to no pronunciation_dictionary_locators.
+
+failing_dictionary_transport = _RoutedTransport(
+    {
+        "pronunciation-dictionaries": HttpTransportResponse(
+            status_code=500, headers={}, content=b"server error"
+        ),
+        "text-to-speech": HttpTransportResponse(
+            status_code=200, headers={}, content=b"fallback-audio"
+        ),
+    }
+)
+
+with TemporaryDirectory() as temp_dir:
+    provider = ElevenLabsVoiceProvider(
+        profile=profile,
+        api_key="real-key-123",
+        transport=failing_dictionary_transport,
+        output_directory=temp_dir,
+    )
+
+    fallback_path = Path(provider.generate_from_blueprint(pronunciation_blueprint))
+
+    assert fallback_path.exists()
+    assert fallback_path.read_bytes() == b"fallback-audio"
+
+    tts_request = failing_dictionary_transport.received_requests[1]
+    assert tts_request.json_body is not None
+    assert "pronunciation_dictionary_locators" not in tts_request.json_body
+
+print("ElevenLabsVoiceProvider pronunciation-dictionary failure-tolerance case passed.")
 
 print("ElevenLabsVoiceProvider tests completed successfully.")

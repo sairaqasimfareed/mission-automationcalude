@@ -3,6 +3,9 @@ from __future__ import annotations
 from pydantic import Field
 
 from src.models.base import MissionBaseModel
+from src.models.elevenlabs_pronunciation_dictionary import (
+    ElevenLabsPronunciationDictionaryLocator,
+)
 
 
 class ElevenLabsVoiceSettings(MissionBaseModel):
@@ -41,4 +44,7 @@ class ElevenLabsVoiceRequest(MissionBaseModel):
     voice_id: str = Field(min_length=1)
     model_id: str = Field(min_length=1)
     voice_settings: ElevenLabsVoiceSettings
+    pronunciation_dictionary_locators: list[
+        ElevenLabsPronunciationDictionaryLocator
+    ] = Field(default_factory=list)
     unsupported_controls: list[str] = Field(default_factory=list)

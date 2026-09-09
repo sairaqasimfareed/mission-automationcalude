@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from src.models.elevenlabs_pronunciation_dictionary import (
+    ElevenLabsPronunciationDictionaryLocator,
+)
 from src.models.elevenlabs_voice_request import (
     ElevenLabsVoiceRequest,
     ElevenLabsVoiceSettings,
@@ -49,6 +52,18 @@ class ElevenLabsVoiceTranslationService:
     A directive that couldn't be located in the narration text still
     surfaces in `unsupported_controls` (its own targeted warning, not
     a generic "unsupported" label), so nothing is silently dropped.
+
+    pronunciation_directives is a second, real exception (voice gap
+    #5) - but unlike voice_settings or text markup, a pronunciation
+    dictionary must be CREATED via its own, separate ElevenLabs API
+    call before a TTS request can reference it, which this pure/
+    no-network service cannot do itself. The caller (the real,
+    network-calling ElevenLabsVoiceProvider) is responsible for
+    creating the dictionary first and passing its resolved locator in
+    via `pronunciation_dictionary_locators` - when supplied and
+    non-empty, pronunciation_directives is no longer flagged
+    unsupported; omitting it (the default) reproduces this service's
+    exact prior behavior.
     """
 
     def __init__(
@@ -66,6 +81,9 @@ class ElevenLabsVoiceTranslationService:
         *,
         voice_id: str,
         model_id: str = _DEFAULT_MODEL_ID,
+        pronunciation_dictionary_locators: (
+            list[ElevenLabsPronunciationDictionaryLocator] | None
+        ) = None,
     ) -> ElevenLabsVoiceRequest:
         clamped_speed = max(
             _MIN_PROVIDER_SPEED, min(_MAX_PROVIDER_SPEED, blueprint.speed)
@@ -85,19 +103,28 @@ class ElevenLabsVoiceTranslationService:
             emphasis_directives=blueprint.emphasis_directives,
         )
 
+        resolved_locators = pronunciation_dictionary_locators or []
+
         return ElevenLabsVoiceRequest(
             text=marked_up_text,
             voice_id=voice_id,
             model_id=model_id,
             voice_settings=voice_settings,
+            pronunciation_dictionary_locators=resolved_locators,
             unsupported_controls=[
-                *self._unsupported_controls(blueprint),
+                *self._unsupported_controls(
+                    blueprint, has_pronunciation_dictionary=bool(resolved_locators)
+                ),
                 *markup_warnings,
             ],
         )
 
     @staticmethod
-    def _unsupported_controls(blueprint: ResolvedVoiceBlueprint) -> list[str]:
+    def _unsupported_controls(
+        blueprint: ResolvedVoiceBlueprint,
+        *,
+        has_pronunciation_dictionary: bool = False,
+    ) -> list[str]:
         unsupported: list[str] = []
 
         if blueprint.emotion != VoiceEmotion.NEUTRAL:
@@ -124,10 +151,11 @@ class ElevenLabsVoiceTranslationService:
                 "ElevenLabs voice_settings equivalent)"
             )
 
-        if blueprint.pronunciation_directives:
+        if blueprint.pronunciation_directives and not has_pronunciation_dictionary:
             unsupported.append(
                 f"{len(blueprint.pronunciation_directives)} pronunciation "
-                "directive(s) (no verified ElevenLabs text-markup equivalent)"
+                "directive(s) (no pronunciation dictionary was created/"
+                "supplied for this request)"
             )
 
         # pause_directives/emphasis_directives are no longer unsupported -

@@ -3,8 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import uuid4
 
+from src.models.elevenlabs_pronunciation_dictionary import (
+    ElevenLabsPronunciationDictionaryLocator,
+)
 from src.models.provider_profile import ProviderProfile
 from src.models.resolved_voice_blueprint import ResolvedVoiceBlueprint
+from src.providers.elevenlabs_pronunciation_dictionary_client import (
+    ElevenLabsPronunciationDictionaryClient,
+)
 from src.providers.voice_provider import VoiceProvider
 from src.services.elevenlabs_voice_translation_service import (
     ElevenLabsVoiceTranslationService,
@@ -55,6 +61,9 @@ class ElevenLabsVoiceProvider(VoiceProvider):
         output_directory: str | Path = _DEFAULT_OUTPUT_DIRECTORY,
         model_id: str = _DEFAULT_MODEL_ID,
         translation_service: ElevenLabsVoiceTranslationService | None = None,
+        pronunciation_dictionary_client: (
+            ElevenLabsPronunciationDictionaryClient | None
+        ) = None,
     ) -> None:
         self._profile = profile
         self._api_key = api_key
@@ -65,6 +74,18 @@ class ElevenLabsVoiceProvider(VoiceProvider):
         # Post-Script-Approval Production Plan, Phase 9.
         self._translation_service = (
             translation_service or ElevenLabsVoiceTranslationService()
+        )
+        # Voice gap #5 (2026-09-09 audit) - real pronunciation
+        # dictionaries. Shares this provider's own api_key/base_url/
+        # transport so tests can fake both HTTP calls the same way.
+        self._pronunciation_dictionary_client = (
+            pronunciation_dictionary_client
+            or ElevenLabsPronunciationDictionaryClient(
+                api_key=api_key,
+                base_url=self._base_url,
+                transport=self._transport,
+                timeout_seconds=float(profile.timeout_seconds),
+            )
         )
 
     @property
@@ -92,20 +113,66 @@ class ElevenLabsVoiceProvider(VoiceProvider):
         without a trace (see that service's own `unsupported_controls`
         list, carried on the returned request for a caller to log or
         surface).
+
+        Voice gap #5 (2026-09-09 audit): when the blueprint carries
+        pronunciation directives, a real ElevenLabs pronunciation
+        dictionary is created first (its own, separate API call - a
+        TTS request can only reference an already-created dictionary,
+        never inline rules), and its locator is passed into
+        translate() so the real request actually applies it. Dictionary
+        creation failing is deliberately non-fatal to voice generation
+        itself - losing a pronunciation nuance is a much smaller
+        problem than losing the whole scene's narration over it; the
+        real failure reason is appended to `unsupported_controls`
+        instead of being silently swallowed.
         """
 
         voice_id = VoiceGenerationService.resolve_provider_voice(blueprint=blueprint)
+
+        pronunciation_dictionary_locators: list[
+            ElevenLabsPronunciationDictionaryLocator
+        ] = []
+        pronunciation_dictionary_failure: str | None = None
+
+        if blueprint.pronunciation_directives:
+            try:
+                locator = self._pronunciation_dictionary_client.create_from_directives(
+                    blueprint.pronunciation_directives,
+                    name=f"scene-{blueprint.scene_number}-pronunciation",
+                )
+                pronunciation_dictionary_locators = [locator]
+            except (HttpProviderExecutionError, ValueError) as error:
+                pronunciation_dictionary_failure = (
+                    f"pronunciation dictionary creation failed: {error}"
+                )
+
         request = self._translation_service.translate(
-            blueprint, voice_id=voice_id, model_id=self._model_id
+            blueprint,
+            voice_id=voice_id,
+            model_id=self._model_id,
+            pronunciation_dictionary_locators=pronunciation_dictionary_locators,
         )
+
+        if pronunciation_dictionary_failure:
+            request.unsupported_controls.append(pronunciation_dictionary_failure)
+
+        json_body: dict[str, object] = {
+            "text": request.text,
+            "model_id": request.model_id,
+            "voice_settings": request.voice_settings.model_dump(),
+        }
+
+        if request.pronunciation_dictionary_locators:
+            json_body["pronunciation_dictionary_locators"] = [
+                locator.model_dump(
+                    include={"pronunciation_dictionary_id", "version_id"}
+                )
+                for locator in request.pronunciation_dictionary_locators
+            ]
 
         return self._call_text_to_speech(
             voice_id=request.voice_id,
-            json_body={
-                "text": request.text,
-                "model_id": request.model_id,
-                "voice_settings": request.voice_settings.model_dump(),
-            },
+            json_body=json_body,
         )
 
     def _call_text_to_speech(
