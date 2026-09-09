@@ -236,6 +236,53 @@ class VoiceEmphasisDirective(MissionBaseModel):
         return cleaned
 
 
+class SceneVoiceDirectiveContent(MissionBaseModel):
+    """
+    Real, scene-specific pronunciation/pause/emphasis directive
+    content - the output of VoiceDirectiveContentGenerationService.
+
+    Introduced because SceneVoiceDirectives' own pronunciation_directives/
+    pause_directives/emphasis_directives fields, while modeled since
+    Phase 9, had no real producer anywhere in this codebase (confirmed
+    via a direct search: nothing outside tests ever constructed a
+    PronunciationDirective/VoicePauseDirective/VoiceEmphasisDirective) -
+    every real generation carried empty lists, so ElevenLabsVoiceTranslationService's
+    own "unsupported_controls" reporting for these three fields never
+    had anything real to report on in the first place. This is a
+    separate, small container (not folded directly into
+    SceneVoiceDirectives) so the LLM-generation step and the genre/
+    voice-profile-driven step that builds the rest of
+    SceneVoiceDirectives stay independently testable, matching this
+    codebase's existing "one service, one responsibility" convention.
+    """
+
+    schema_version: str = "1.0"
+
+    scene_number: int = Field(
+        ge=1,
+    )
+
+    pronunciation_directives: list[PronunciationDirective] = Field(
+        default_factory=list,
+    )
+
+    pause_directives: list[VoicePauseDirective] = Field(
+        default_factory=list,
+    )
+
+    emphasis_directives: list[VoiceEmphasisDirective] = Field(
+        default_factory=list,
+    )
+
+    warnings: list[str] = Field(
+        default_factory=list,
+    )
+
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+    )
+
+
 class VoiceProviderPreferences(MissionBaseModel):
     """
     Optional provider selection preferences.
