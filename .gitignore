@@ -43,3 +43,5 @@ audit/
 # (and everything else under packaging/) IS committed.
 /dist/
 /build/
+# Claude Code session output artifacts (audits, scratch reports)
+Claude outputs/
