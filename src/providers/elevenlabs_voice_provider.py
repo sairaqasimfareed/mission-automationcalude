@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import base64
+import json
 from pathlib import Path
 from uuid import uuid4
 
 from src.models.elevenlabs_pronunciation_dictionary import (
     ElevenLabsPronunciationDictionaryLocator,
 )
+from src.models.elevenlabs_voice_alignment import (
+    ElevenLabsVoiceCharacterAlignment,
+    ElevenLabsVoiceWithTimestampsResult,
+)
+from src.models.elevenlabs_voice_request import ElevenLabsVoiceRequest
 from src.models.provider_profile import ProviderProfile
 from src.models.resolved_voice_blueprint import ResolvedVoiceBlueprint
 from src.providers.elevenlabs_pronunciation_dictionary_client import (
@@ -114,12 +121,105 @@ class ElevenLabsVoiceProvider(VoiceProvider):
         Post-Script-Approval Production Plan, Phase 9: "The voice
         provider must consume a translated ResolvedVoiceBlueprint
         rather than only raw narration text." Overrides the base
-        class's plain-text fallback with a real translation - every
-        supported blueprint property ElevenLabsVoiceTranslationService
-        can map becomes part of the request; everything it can't is
-        simply absent from `voice_settings` rather than silently lost
-        without a trace (see that service's own `unsupported_controls`
-        list, carried on the returned request for a caller to log or
+        class's plain-text fallback with a real translation.
+
+        See _build_request_and_json_body() for how the real request is
+        assembled (translation, pronunciation dictionaries, request
+        stitching) - shared verbatim with
+        generate_from_blueprint_with_timestamps() below.
+        """
+
+        _request, json_body = self._build_request_and_json_body(blueprint)
+
+        output_file = self._call_text_to_speech(
+            voice_id=_request.voice_id,
+            json_body=json_body,
+        )
+
+        return self._apply_pitch_shift_if_requested(
+            output_file,
+            blueprint=blueprint,
+        )
+
+    def generate_from_blueprint_with_timestamps(
+        self, blueprint: ResolvedVoiceBlueprint
+    ) -> ElevenLabsVoiceWithTimestampsResult:
+        """
+        Voice gap #8 (2026-09-09 audit): real character-level timing
+        data, via ElevenLabs' real, separate text-to-speech-with-
+        timestamps endpoint (POST /v1/text-to-speech/{voice_id}/
+        with-timestamps - verified directly against ElevenLabs' own
+        current API documentation, not assumed). Never requested
+        anywhere in this codebase before now - this is an additive
+        method, not a replacement for generate_from_blueprint(), since
+        most callers don't need per-character timing and the plain
+        endpoint is the simpler, already-proven path for them.
+
+        Builds and sends the exact same real request
+        generate_from_blueprint() does (same translation, same
+        pronunciation-dictionary/stitching handling, same pitch-shift
+        post-processing) - only the endpoint and response shape
+        differ, since /with-timestamps returns the audio base64-
+        encoded inside a JSON body alongside the alignment data,
+        rather than as a raw audio/mpeg response body.
+        """
+
+        _request, json_body = self._build_request_and_json_body(blueprint)
+
+        response_data = self._call_text_to_speech_with_timestamps(
+            voice_id=_request.voice_id,
+            json_body=json_body,
+        )
+
+        audio_base64 = response_data.get("audio_base64")
+
+        if not isinstance(audio_base64, str) or not audio_base64:
+            raise HttpProviderExecutionError(
+                "ElevenLabs text-to-speech-with-timestamps response was "
+                "missing audio_base64."
+            )
+
+        try:
+            audio_bytes = base64.b64decode(audio_base64)
+        except (ValueError, TypeError) as error:
+            raise HttpProviderExecutionError(
+                "ElevenLabs text-to-speech-with-timestamps returned "
+                "undecodable audio_base64."
+            ) from error
+
+        output_file = self._write_audio_bytes(audio_bytes)
+
+        output_file = self._apply_pitch_shift_if_requested(
+            output_file,
+            blueprint=blueprint,
+        )
+
+        return ElevenLabsVoiceWithTimestampsResult(
+            output_file=output_file,
+            alignment=self._parse_alignment(response_data.get("alignment")),
+            normalized_alignment=self._parse_alignment(
+                response_data.get("normalized_alignment")
+            ),
+        )
+
+    def _build_request_and_json_body(
+        self, blueprint: ResolvedVoiceBlueprint
+    ) -> tuple[ElevenLabsVoiceRequest, dict[str, object]]:
+        """
+        Shared request-building logic for both the plain and
+        with-timestamps endpoints (voice gap #8, 2026-09-09 audit) -
+        extracted so the two real ElevenLabs endpoints this provider
+        calls always build their request the exact same way, rather
+        than maintaining two copies that could silently drift apart.
+
+        Post-Script-Approval Production Plan, Phase 9: "The voice
+        provider must consume a translated ResolvedVoiceBlueprint
+        rather than only raw narration text." Every supported
+        blueprint property ElevenLabsVoiceTranslationService can map
+        becomes part of the request; everything it can't is simply
+        absent from `voice_settings` rather than silently lost without
+        a trace (see that service's own `unsupported_controls` list,
+        carried on the returned request for a caller to log or
         surface).
 
         Voice gap #5 (2026-09-09 audit): when the blueprint carries
@@ -196,14 +296,23 @@ class ElevenLabsVoiceProvider(VoiceProvider):
         if request.next_text:
             json_body["next_text"] = request.next_text
 
-        output_file = self._call_text_to_speech(
-            voice_id=request.voice_id,
-            json_body=json_body,
-        )
+        return request, json_body
 
-        return self._apply_pitch_shift_if_requested(
-            output_file,
-            blueprint=blueprint,
+    @staticmethod
+    def _parse_alignment(
+        raw_alignment: object,
+    ) -> ElevenLabsVoiceCharacterAlignment | None:
+        if not isinstance(raw_alignment, dict):
+            return None
+
+        return ElevenLabsVoiceCharacterAlignment(
+            characters=raw_alignment.get("characters", []),
+            character_start_times_seconds=raw_alignment.get(
+                "character_start_times_seconds", []
+            ),
+            character_end_times_seconds=raw_alignment.get(
+                "character_end_times_seconds", []
+            ),
         )
 
     def _apply_pitch_shift_if_requested(
@@ -265,8 +374,57 @@ class ElevenLabsVoiceProvider(VoiceProvider):
                 f"{response.status_code}."
             )
 
+        return self._write_audio_bytes(response.content)
+
+    def _call_text_to_speech_with_timestamps(
+        self, *, voice_id: str, json_body: dict[str, object]
+    ) -> dict[str, object]:
+        """
+        Voice gap #8 (2026-09-09 audit): the real, separate
+        with-timestamps endpoint - same auth/JSON-body shape as the
+        plain endpoint, but a different URL and a JSON response
+        (audio_base64 + alignment + normalized_alignment) instead of a
+        raw audio/mpeg body.
+        """
+
+        request = PreparedHttpRequest(
+            method="POST",
+            url=f"{self._base_url}/v1/text-to-speech/{voice_id}/with-timestamps",
+            headers={
+                "xi-api-key": self._api_key,
+                "Content-Type": "application/json",
+            },
+            json_body=json_body,
+            timeout_seconds=float(self._profile.timeout_seconds),
+        )
+
+        response = self._transport(request)
+
+        if response.status_code >= 400:
+            raise HttpProviderExecutionError(
+                "ElevenLabs text-to-speech-with-timestamps request failed "
+                f"with HTTP {response.status_code}."
+            )
+
+        try:
+            parsed = json.loads(response.content)
+        except json.JSONDecodeError as error:
+            raise HttpProviderExecutionError(
+                "ElevenLabs text-to-speech-with-timestamps returned a "
+                "non-JSON response."
+            ) from error
+
+        if not isinstance(parsed, dict):
+            raise HttpProviderExecutionError(
+                "ElevenLabs text-to-speech-with-timestamps response was "
+                "not a JSON object."
+            )
+
+        return parsed
+
+    def _write_audio_bytes(self, audio_bytes: bytes) -> str:
         self._output_directory.mkdir(parents=True, exist_ok=True)
         destination = self._output_directory / f"{uuid4()}.mp3"
-        destination.write_bytes(response.content)
+        destination.write_bytes(audio_bytes)
 
         return str(destination.resolve())

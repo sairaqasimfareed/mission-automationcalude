@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -536,5 +538,158 @@ with TemporaryDirectory() as temp_dir:
     assert fallback_path.read_bytes() == b"raw-tts-audio-again"
 
 print("ElevenLabsVoiceProvider pitch-shift failure-tolerance case passed.")
+
+# --- Voice gap #8 (2026-09-09 audit): real character-level timing
+# data via the real, separate with-timestamps endpoint. ---
+
+timestamps_blueprint = ResolvedVoiceBlueprint(
+    scene_number=16,
+    status=VoiceBlueprintResolutionStatus.RESOLVED,
+    profile=ResolvedVoiceProfileReference(
+        requested_profile_id="voice.neutral_narrator",
+        resolved_profile_id="voice.neutral_narrator",
+        display_name="Neutral Narrator",
+    ),
+    narration_text="Hi",
+    provider_preferences=VoiceProviderPreferences(preferred_voice_id="voice-real-123"),
+)
+
+_TIMESTAMPS_PAYLOAD = json.dumps(
+    {
+        "audio_base64": base64.b64encode(b"timestamped-audio").decode("ascii"),
+        "alignment": {
+            "characters": ["H", "i"],
+            "character_start_times_seconds": [0.0, 0.1],
+            "character_end_times_seconds": [0.1, 0.2],
+        },
+        "normalized_alignment": {
+            "characters": ["H", "i"],
+            "character_start_times_seconds": [0.0, 0.1],
+            "character_end_times_seconds": [0.1, 0.2],
+        },
+    }
+).encode("utf-8")
+
+timestamps_transport = _RecordingTransport(
+    HttpTransportResponse(status_code=200, headers={}, content=_TIMESTAMPS_PAYLOAD)
+)
+
+with TemporaryDirectory() as temp_dir:
+    provider = ElevenLabsVoiceProvider(
+        profile=profile,
+        api_key="real-key-123",
+        transport=timestamps_transport,
+        output_directory=temp_dir,
+    )
+
+    result = provider.generate_from_blueprint_with_timestamps(timestamps_blueprint)
+
+    assert Path(result.output_file).read_bytes() == b"timestamped-audio"
+    assert result.alignment is not None
+    assert result.alignment.characters == ["H", "i"]
+    assert result.alignment.character_start_times_seconds == [0.0, 0.1]
+    assert result.normalized_alignment is not None
+    assert result.normalized_alignment.characters == ["H", "i"]
+
+    sent = timestamps_transport.received_requests[0]
+    assert (
+        sent.url
+        == "https://api.elevenlabs.io/v1/text-to-speech/voice-real-123/with-timestamps"
+    )
+
+print("ElevenLabsVoiceProvider with-timestamps success case passed.")
+
+# ElevenLabs documents alignment/normalized_alignment as nullable.
+
+_NULL_ALIGNMENT_PAYLOAD = json.dumps(
+    {
+        "audio_base64": base64.b64encode(b"no-alignment-audio").decode("ascii"),
+        "alignment": None,
+        "normalized_alignment": None,
+    }
+).encode("utf-8")
+
+null_alignment_transport = _RecordingTransport(
+    HttpTransportResponse(status_code=200, headers={}, content=_NULL_ALIGNMENT_PAYLOAD)
+)
+
+with TemporaryDirectory() as temp_dir:
+    provider = ElevenLabsVoiceProvider(
+        profile=profile,
+        api_key="real-key-123",
+        transport=null_alignment_transport,
+        output_directory=temp_dir,
+    )
+
+    result = provider.generate_from_blueprint_with_timestamps(timestamps_blueprint)
+
+    assert Path(result.output_file).read_bytes() == b"no-alignment-audio"
+    assert result.alignment is None
+    assert result.normalized_alignment is None
+
+print("ElevenLabsVoiceProvider with-timestamps null-alignment case passed.")
+
+# A response missing audio_base64 must raise, not silently write junk.
+
+_MISSING_AUDIO_PAYLOAD = json.dumps({"alignment": None}).encode("utf-8")
+
+missing_audio_transport = _RecordingTransport(
+    HttpTransportResponse(status_code=200, headers={}, content=_MISSING_AUDIO_PAYLOAD)
+)
+
+with TemporaryDirectory() as temp_dir:
+    provider = ElevenLabsVoiceProvider(
+        profile=profile,
+        api_key="real-key-123",
+        transport=missing_audio_transport,
+        output_directory=temp_dir,
+    )
+
+    try:
+        provider.generate_from_blueprint_with_timestamps(timestamps_blueprint)
+    except HttpProviderExecutionError as error:
+        print("Missing audio_base64 correctly raised:", error)
+    else:
+        raise AssertionError("Expected HttpProviderExecutionError.")
+
+print("ElevenLabsVoiceProvider with-timestamps missing-audio case passed.")
+
+# Pitch shift still runs on the with-timestamps output when requested.
+
+pitch_and_timestamps_blueprint = ResolvedVoiceBlueprint(
+    scene_number=17,
+    status=VoiceBlueprintResolutionStatus.RESOLVED,
+    profile=ResolvedVoiceProfileReference(
+        requested_profile_id="voice.horror_whisper",
+        resolved_profile_id="voice.horror_whisper",
+        display_name="Horror Whisper",
+    ),
+    narration_text="Hi",
+    pitch_adjustment=-2.0,
+    provider_preferences=VoiceProviderPreferences(preferred_voice_id="voice-real-123"),
+)
+
+with TemporaryDirectory() as temp_dir:
+    pitch_service_for_timestamps = VoicePitchShiftService(
+        ffprobe_runner=lambda command: "44100",
+        ffmpeg_runner=_ffmpeg_writing_shifted_audio,
+    )
+
+    provider = ElevenLabsVoiceProvider(
+        profile=profile,
+        api_key="real-key-123",
+        transport=timestamps_transport,
+        output_directory=temp_dir,
+        pitch_shift_service=pitch_service_for_timestamps,
+    )
+
+    result = provider.generate_from_blueprint_with_timestamps(
+        pitch_and_timestamps_blueprint
+    )
+
+    assert Path(result.output_file).read_bytes() == b"shifted-audio"
+    assert result.alignment is not None
+
+print("ElevenLabsVoiceProvider with-timestamps pitch-shift case passed.")
 
 print("ElevenLabsVoiceProvider tests completed successfully.")

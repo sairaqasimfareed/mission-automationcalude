@@ -5,6 +5,26 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-09 - Voice gap #10 of 11 (#8): real character-level timing data, closing the last "content and delivery" gap
+
+Continuation of today's voice-gap build order. After gap #3 (pitch shift): gap #8 - character-level timing/alignment data, the last of the gaps that changes what's actually sent to or received from ElevenLabs. Only gap #2 (the management GUI, deliberately saved for last) remains after this.
+
+**Verified live before building**: fetched ElevenLabs' own current API documentation for the real, separate text-to-speech-with-timestamps endpoint - `POST /v1/text-to-speech/{voice_id}/with-timestamps` - and its real response shape: `audio_base64` (the audio, base64-encoded inside the JSON body rather than a raw response), plus `alignment` and `normalized_alignment` (both nullable objects, each carrying parallel `characters`/`character_start_times_seconds`/`character_end_times_seconds` arrays).
+
+**Built**: new `ElevenLabsVoiceCharacterAlignment`/`ElevenLabsVoiceWithTimestampsResult` models matching that real shape exactly, with a validator enforcing the three alignment arrays stay the same length (a real ElevenLabs response should never have them disagree; catching it here surfaces a genuinely malformed response rather than silently indexing past the end of a shorter array downstream).
+
+The real engineering piece: `ElevenLabsVoiceProvider.generate_from_blueprint()` had accumulated a lot of shared logic across today's earlier gaps (voice-id resolution, pronunciation-dictionary creation, translation, stitching-field population) that a second, with-timestamps method would otherwise have had to duplicate. Refactored that shared logic into `_build_request_and_json_body()` so both real endpoints this provider now calls build their request identically, rather than risking two copies that could silently drift apart as future gaps touch one but not the other. Confirmed the refactor was genuinely behavior-preserving by running the full pre-existing test suite unchanged immediately after the refactor, before writing a single line of new gap #8 code - all 10 existing cases passed exactly as before.
+
+New `generate_from_blueprint_with_timestamps()` - deliberately additive, not a replacement for `generate_from_blueprint()`, since most callers don't need per-character timing and the plain endpoint remains the simpler, already-proven path for them. Calls the real with-timestamps endpoint, decodes the real `audio_base64`, writes it via the same `_write_audio_bytes()` helper the plain endpoint's own audio-writing logic was factored into, still applies gap #3's real pitch-shift post-processing to the result, and returns the real alignment data alongside the finished audio file.
+
+**Teeth-verified**: disabling the stitching-field population inside the newly-shared `_build_request_and_json_body()` helper broke the pre-existing stitching regression test with a real `KeyError` - confirming the extraction is genuinely shared, load-bearing logic serving both real endpoints, not just refactored-for-appearance's-sake.
+
+**Tests**: `test_elevenlabs_voice_alignment_model.py` (5 tests: matching lengths, empty defaults, mismatched-length rejection, nullable alignment, a full JSON round-trip) plus 5 new script-style cases appended to `test_elevenlabs_voice_provider.py` (a real end-to-end with-timestamps success case checking both the exact URL called and the decoded audio/alignment content, nullable-alignment handling matching ElevenLabs' own documented nullability, a missing-`audio_base64` rejection case, and confirmation that pitch-shift post-processing still runs correctly on with-timestamps output). mypy/ruff/black clean throughout. Targeted regression (not the full suite, per today's cadence): 57 cases across the translation service, voice generation service, dry-run provider, and media pipeline - all green.
+
+**Not yet done, by design**: not verified against a real ElevenLabs account or a real audio file (fake transport throughout, matching this codebase's established testing convention for every ElevenLabs-calling service built today); no caller anywhere in this codebase actually requests timestamps yet - the same "capability built, not yet wired into a real caller" pattern nearly every gap today has followed, since there's no real subtitle/caption consumer in this codebase yet to feed the data to; no GUI. Ten of eleven voice gaps now closed (#11, #6, #7, #5, #1, #10, #4, #9, #3, #8) - every gap except #2, the management GUI, which was deliberately saved for last since it needs real data (registered voice mappings, generated content) worth managing before it's worth building.
+
+---
+
 ## 2026-09-09 - Voice gap #9 of 11 (#3): real pitch shifting via FFmpeg, the one control ElevenLabs' API can't do at all
 
 Continuation of today's voice-gap build order. After gaps #10/#4/#9 (emotion tags vs. stitching): gap #3 - pitch adjustment, confirmed earlier this session to have zero real API surface on ElevenLabs, on any model. The only real path is post-processing the generated audio file with FFmpeg.
