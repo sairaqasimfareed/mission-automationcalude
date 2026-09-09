@@ -18,6 +18,7 @@ from src.desktop.views.project_form_view import ProjectFormView
 from src.desktop.views.project_workspace_view import ProjectWorkspaceView
 from src.desktop.views.provider_manager_view import ProviderManagerView
 from src.desktop.views.settings_view import SettingsView
+from src.desktop.views.voice_manager_view import VoiceManagerView
 
 
 class MainWindow(QMainWindow):
@@ -97,6 +98,14 @@ class MainWindow(QMainWindow):
             browser_worker=services.get_google_flow_browser_worker(),
         )
 
+        self._voice_manager_view = VoiceManagerView(
+            voice_provider_mapping_service=(
+                services.get_voice_provider_mapping_service()
+            ),
+            voice_profile_registry=services.get_voice_profile_registry_service(),
+            genre_profile_registry=services.get_runtime_configuration().genre_registry,
+        )
+
         for view in (
             self._dashboard_view,
             self._form_view,
@@ -104,6 +113,7 @@ class MainWindow(QMainWindow):
             self._settings_view,
             self._provider_manager_view,
             self._google_flow_provider_panel_view,
+            self._voice_manager_view,
         ):
             self._stack.addWidget(view)
 
@@ -133,6 +143,10 @@ class MainWindow(QMainWindow):
         google_flow_action.triggered.connect(self.show_google_flow_provider_panel)
         toolbar.addAction(google_flow_action)
 
+        voice_manager_action = QAction(primary_icon("audio"), "Voices", self)
+        voice_manager_action.triggered.connect(self.show_voice_manager)
+        toolbar.addAction(voice_manager_action)
+
         settings_action = QAction(primary_icon("settings"), "Settings", self)
         settings_action.triggered.connect(self.show_settings)
         toolbar.addAction(settings_action)
@@ -156,6 +170,10 @@ class MainWindow(QMainWindow):
     def show_google_flow_provider_panel(self) -> None:
         self._google_flow_provider_panel_view.refresh()
         self._stack.setCurrentWidget(self._google_flow_provider_panel_view)
+
+    def show_voice_manager(self) -> None:
+        self._voice_manager_view.refresh()
+        self._stack.setCurrentWidget(self._voice_manager_view)
 
     def _open_project(self, job_id: UUID) -> None:
         self._detail_view.set_job(job_id)

@@ -41,6 +41,9 @@ from src.services.provider_profile_management_service import (
 from src.services.registry.provider_profile_repository import (
     JsonProviderProfileRepository,
 )
+from src.services.registry.voice_provider_mapping_repository import (
+    JsonVoiceProviderMappingRepository,
+)
 from src.services.reviewer_service import ReviewerService
 from src.services.runtime_configuration_loader import (
     RuntimeConfiguration,
@@ -73,6 +76,8 @@ from src.services.thumbnail.thumbnail_package_service import (
 from src.services.topic_candidate_generation_service import (
     TopicCandidateGenerationService,
 )
+from src.services.voice_profile_registry_service import VoiceProfileRegistryService
+from src.services.voice_provider_mapping_service import VoiceProviderMappingService
 from src.shared.logger import logger
 
 CHECKPOINT_STORAGE_ROOT = Path("data/checkpoints")
@@ -81,6 +86,7 @@ FINAL_EXPORT_STORAGE_ROOT = Path("data/final_exports")
 PROVIDER_PROFILE_STORAGE_PATH = Path("data/provider_profiles.json")
 PROJECTS_STORAGE_ROOT = Path("data/projects")
 THEME_PREFERENCE_STORAGE_PATH = Path("data/desktop_preferences.json")
+VOICE_PROVIDER_MAPPING_STORAGE_PATH = Path("data/voice_provider_mappings.json")
 
 
 @lru_cache
@@ -344,6 +350,43 @@ def get_provider_profile_management_service() -> ProviderProfileManagementServic
         registry=infrastructure.provider_registry,
         repository=_get_provider_profile_repository(),
         secret_manager=infrastructure.provider_secret_manager,
+    )
+
+
+@lru_cache
+def _get_voice_provider_mapping_repository() -> JsonVoiceProviderMappingRepository:
+    return JsonVoiceProviderMappingRepository(VOICE_PROVIDER_MAPPING_STORAGE_PATH)
+
+
+@lru_cache
+def get_voice_provider_mapping_service() -> VoiceProviderMappingService:
+    """
+    Voice gap #2 (2026-09-09 audit) - the real, persisted per-profile
+    voice_id mappings Voice Manager reads and edits. Same
+    data/*.json local-storage convention as
+    PROVIDER_PROFILE_STORAGE_PATH.
+    """
+
+    service = VoiceProviderMappingService(
+        repository=_get_voice_provider_mapping_repository()
+    )
+    service.load()
+
+    return service
+
+
+@lru_cache
+def get_voice_profile_registry_service() -> VoiceProfileRegistryService:
+    """
+    Voice Manager's own registry of this app's built-in voice
+    profiles - built from the exact same voice_profiles
+    RuntimeConfiguration already resolves for real generation, so
+    Voice Manager can never show a profile the real pipeline
+    wouldn't also resolve.
+    """
+
+    return VoiceProfileRegistryService(
+        profiles=get_runtime_configuration().voice_profiles
     )
 
 
