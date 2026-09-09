@@ -334,7 +334,30 @@ class GoogleFlowExecutionSettings(MissionBaseModel):
     # field above. Still open, not a closed enum, for the same reason
     # every other field here is.
     resolution: str | None = None
-    variation_count: int | None = Field(default=None, gt=0)
+    # Real-world finding: Flow's own current default, confirmed
+    # directly against a real "New project" (a fresh project with no
+    # settings ever touched), is x2 - two videos generated per
+    # submission for the same prompt, not one. Every part of this
+    # codebase's own Google Flow architecture (one scene -> one
+    # generation attempt -> one downloaded clip, GoogleFlowGenerationLedgerService's
+    # whole model) assumes exactly one result per submission -
+    # leaving variation_count unset (this field's own prior default,
+    # None) meant "never explicitly select an x-count", silently
+    # trusting whatever Flow's own current default happened to be.
+    # That is fine when the default genuinely is x1, but was actively
+    # wrong the moment Flow's own default became x2 - every default-
+    # settings submission through this codebase would generate two
+    # videos (not necessarily double credits - GOOGLE_FLOW_REAL_UI_FINDINGS.md's
+    # own earlier finding confirmed variation_count is NOT a simple
+    # credits multiplier - but still two result tiles where this
+    # codebase's own observe()/download() logic expects exactly one).
+    # Defaulting to 1 here means every construction site, including
+    # the bare GoogleFlowExecutionSettings() fallback
+    # GoogleFlowGenerationOrchestratorService.submit_new_attempt() uses
+    # when no caller-supplied settings exist, now always explicitly
+    # requests x1 - correct regardless of whatever Flow's own current
+    # UI default is or later becomes.
+    variation_count: int = Field(default=1, gt=0)
     # Real, verified control (docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md
     # section 3/4a): the "Agent" toggle. None means "leave Flow's own
     # current toggle state alone" (this class's usual "never touch a

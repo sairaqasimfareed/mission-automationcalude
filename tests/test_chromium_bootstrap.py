@@ -8,6 +8,7 @@ from playwright.sync_api import Error as PlaywrightError
 
 from src.browser.chromium_bootstrap import (
     INTERNAL_PLAYWRIGHT_INSTALL_FLAG,
+    _default_browsers_path,
     ensure_chromium_and_retry,
     install_chromium,
     is_missing_browser_error,
@@ -218,3 +219,41 @@ def test_run_playwright_install_entrypoint_sets_argv_and_calls_the_real_playwrig
     # process (this only matters for a genuinely short-lived install
     # invocation, but the contract should hold regardless).
     assert sys.argv == original_argv
+
+
+# --- PLAYWRIGHT_BROWSERS_PATH: the real, second bug found via the
+# same live repro as the hang-then-error above. Playwright's own
+# bundled/frozen driver does not use the standard, well-known
+# %LOCALAPPDATA%\ms-playwright cache - it falls back to a "local"
+# path relative to its own driver/package directory once PyInstaller
+# has flattened that directory in a way that no longer looks like a
+# normal npm install. Confirmed directly: a real, already-working
+# Chromium install sat untouched at the real, standard location the
+# whole time the app kept looking in the wrong, empty one. ---
+
+
+def test_default_browsers_path_uses_the_real_localappdata_convention(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("LOCALAPPDATA", r"C:\Users\test\AppData\Local")
+
+    assert _default_browsers_path() == r"C:\Users\test\AppData\Local\ms-playwright"
+
+
+def test_default_browsers_path_is_none_off_windows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("LOCALAPPDATA", r"C:\Users\test\AppData\Local")
+
+    assert _default_browsers_path() is None
+
+
+def test_default_browsers_path_is_none_when_localappdata_is_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+
+    assert _default_browsers_path() is None

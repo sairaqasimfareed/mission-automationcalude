@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from collections.abc import Callable
+from pathlib import Path
 
 from playwright.sync_api import Error as PlaywrightError
 
@@ -29,6 +31,57 @@ from playwright.sync_api import Error as PlaywrightError
 INTERNAL_PLAYWRIGHT_INSTALL_FLAG = "--internal-playwright-install"
 
 _INSTALL_TIMEOUT_SECONDS = 900.0
+
+
+def _default_browsers_path() -> str | None:
+    """
+    Real-world finding: Playwright's own Node driver decides where to
+    install/look for browsers using ITS OWN heuristic (not documented
+    anywhere this codebase found, only observed directly) - when the
+    driver's own package directory doesn't look like a normal npm
+    install (exactly the case once PyInstaller has copied it flat into
+    `_internal/playwright/driver/package/`), it treats the browsers
+    path as "local", i.e. `driver/package/local-browsers/`, instead of
+    the standard, well-known `%LOCALAPPDATA%\\ms-playwright` every
+    ordinary (non-frozen) Playwright install already uses - including
+    this exact machine's own real, already-populated cache. A real
+    install into that "local" path then genuinely works (confirmed
+    directly), but only after paying for a full, unnecessary
+    re-download, and - worse - if that download stalls or fails, the
+    app is left looking in a directory that will never contain a
+    browser THIS install already has, real evidence via a real
+    Check Connection hang-then-error.
+
+    Setting PLAYWRIGHT_BROWSERS_PATH explicitly removes the ambiguity
+    entirely - Playwright's own documented, first-class override for
+    exactly this. Windows-only (matches this app's own Windows-first
+    environment); returns None on any other platform or if
+    %LOCALAPPDATA% is somehow unset, letting Playwright fall back to
+    its own default rather than pointing at a guessed, wrong path.
+    """
+
+    if sys.platform != "win32":
+        return None
+
+    local_app_data = os.environ.get("LOCALAPPDATA")
+
+    if not local_app_data:
+        return None
+
+    return str(Path(local_app_data) / "ms-playwright")
+
+
+# Applied at import time, once, for the whole process - every real
+# Playwright launch in this codebase goes through FlowBrowserWorker,
+# which imports this module before ever calling sync_playwright();
+# install_chromium()'s own subprocess inherits the current process
+# environment automatically. setdefault() only - an operator or CI
+# environment that already set this explicitly is always respected
+# as-is, never overridden.
+_browsers_path = _default_browsers_path()
+
+if _browsers_path is not None:
+    os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", _browsers_path)
 
 
 def is_missing_browser_error(exc: Exception) -> bool:

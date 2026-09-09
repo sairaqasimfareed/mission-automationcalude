@@ -54,6 +54,11 @@ VERIFIED_MODEL_FAMILIES: tuple[str, ...] = (
     "Veo 3.1 - Lite",
     "Veo 3.1 - Fast",
     "Veo 3.1 - Quality",
+    # Confirmed real, separate option (not a suffix on "Veo 3.1 -
+    # Lite" - both appear as their own distinct rows in a real
+    # settings popover) - a lower-priority-queue variant of the same
+    # base model, real label including the brackets.
+    "Veo 3.1 - Lite [Lower Priority]",
 )
 
 # Confirmed by the account owner: their account's unlimited

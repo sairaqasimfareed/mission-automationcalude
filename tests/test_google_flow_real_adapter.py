@@ -213,6 +213,15 @@ def _authenticated_page(
     start_button = _FakeLocator(disabled=prompt_disabled)
     start_button.disabled_after_click = True
     page.register_role("button", "Start generation", start_button)
+    # GoogleFlowExecutionSettings.variation_count now defaults to 1
+    # (a real-world fix: Flow's own current default is x2, not x1 -
+    # see that field's own docstring), so _apply_settings() now
+    # always opens the real settings popover and clicks "x1" even
+    # when a caller supplies no execution_settings at all - every
+    # test using this default authenticated page needs both real
+    # controls registered for that always-taken path to succeed.
+    page.register_role("button", "Settings trigger", _FakeLocator())
+    page.register_role("radio", "x1", _FakeLocator())
     return page
 
 
@@ -579,6 +588,39 @@ def test_submit_applies_a_known_model_family_and_real_settings() -> None:
     assert page.keyboard.pressed == ["Escape"]
 
 
+def test_submit_forces_x1_by_default_even_with_no_execution_settings_requested() -> (
+    None
+):
+    """
+    Real-world finding: a fresh Flow project defaults to x2 (two
+    videos generated per submission for the same prompt), not x1 -
+    confirmed directly against the real product. This codebase's
+    whole Google Flow architecture (one scene -> one generation
+    attempt -> one downloaded clip) assumes exactly one result per
+    submission, so leaving variation_count unset used to mean
+    "trust whatever Flow's own current default is" - silently wrong
+    the moment that default became x2. GoogleFlowExecutionSettings.
+    variation_count now defaults to 1, not None - the most common
+    real path (an orchestrator call supplying no execution_settings
+    at all, GoogleFlowGenerationOrchestratorService's own
+    `execution_settings or GoogleFlowExecutionSettings()` fallback)
+    must still explicitly click "x1", not silently accept Flow's own
+    x2 default.
+    """
+
+    page = _authenticated_page()
+    x1_radio = _FakeLocator()
+    page.register_role("radio", "x1", x1_radio)  # overrides the auto-registered one
+    adapter = _adapter(page)
+    request = _request()  # no execution_settings at all
+
+    result = adapter.submit(request, _attempt(request))
+
+    assert result.state == GoogleFlowGenerationState.GENERATING
+    assert x1_radio.click_calls == 1
+    assert page.keyboard.pressed == ["Escape"]
+
+
 def test_submit_clicks_the_real_agent_toggle_when_requested() -> None:
     page = _authenticated_page()
     agent_button = _FakeLocator()
@@ -590,9 +632,13 @@ def test_submit_clicks_the_real_agent_toggle_when_requested() -> None:
 
     assert result.state == GoogleFlowGenerationState.GENERATING
     assert agent_button.click_calls == 1
-    # agent_mode is the only setting requested here - no popover-
-    # related control should ever be touched.
-    assert page.keyboard.pressed == []
+    # variation_count now always defaults to 1 (a deliberate,
+    # separate real-world fix - see GoogleFlowExecutionSettings'
+    # own docstring), so the settings popover always opens at least
+    # to force x1, even when agent_mode is the only setting a caller
+    # explicitly requested - Escape is real, expected evidence of
+    # that popover being opened and closed, not a stray extra action.
+    assert page.keyboard.pressed == ["Escape"]
 
 
 def test_submit_never_clicks_agent_toggle_when_not_requested() -> None:

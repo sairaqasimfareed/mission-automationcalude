@@ -546,6 +546,15 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
                 timeout=self._action_timeout_ms
             )
 
+        # variation_count is no longer Optional (GoogleFlowExecutionSettings'
+        # own model default is now 1, a deliberate policy - see that
+        # field's own docstring for why), so it is always truthy and
+        # this check now always opens the settings popover, at
+        # minimum to explicitly click x1 - the one case this used to
+        # skip entirely (every field unset) is exactly the case that
+        # needs fixing: Flow's own current default is x2, not x1, and
+        # this codebase's whole architecture assumes one video per
+        # submission.
         if not any(
             (
                 settings.model_family,
@@ -555,10 +564,7 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
                 settings.variation_count,
             )
         ):
-            # Nothing else requested - Flow's own current defaults for
-            # this project stand, matching "never guess a value the
-            # caller didn't ask for".
-            return
+            return  # unreachable while variation_count defaults to 1; kept for clarity/safety
 
         page.get_by_role("button", name=self._names.settings_trigger_button).click(
             timeout=self._action_timeout_ms
@@ -568,6 +574,15 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
             page.get_by_role(
                 "button", name=self._names.select_model_family_button
             ).click(timeout=self._action_timeout_ms)
+
+            # Real-world finding: Flow now offers "Veo 3.1 - Lite" and
+            # "Veo 3.1 - Lite [Lower Priority]" as two GENUINELY
+            # SEPARATE, distinct real options (confirmed directly - a
+            # real settings popover shows both as their own list rows,
+            # not one label with a transient suffix). exact=True stays
+            # correct and necessary here specifically because of that
+            # - a substring match would ambiguously match both real
+            # options whenever "Veo 3.1 - Lite" itself is requested.
             option = page.get_by_role(
                 "menuitem", name=settings.model_family, exact=True
             )
