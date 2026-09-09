@@ -11,8 +11,14 @@ import pytest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
 from src.desktop.views.voice_manager_view import VoiceManagerView  # noqa: E402
+from src.models.elevenlabs_voice_search import (  # noqa: E402
+    ElevenLabsVoiceSearchResult,
+)
 from src.services.genre_profile_registry_service import (  # noqa: E402
     GenreProfileRegistryService,
+)
+from src.services.http.http_provider_executor import (  # noqa: E402
+    HttpProviderExecutionError,
 )
 from src.services.registry.voice_provider_mapping_repository import (  # noqa: E402
     InMemoryVoiceProviderMappingRepository,
@@ -41,15 +47,39 @@ def _mapping_service() -> VoiceProviderMappingService:
     return service
 
 
+class _StubVoiceSearchClient:
+    def __init__(
+        self,
+        *,
+        results: list[ElevenLabsVoiceSearchResult] | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self.results = results or []
+        self.error = error
+        self.last_query: str | None = None
+
+    def search(
+        self, *, query: str, page_size: int = 5
+    ) -> list[ElevenLabsVoiceSearchResult]:
+        self.last_query = query
+
+        if self.error is not None:
+            raise self.error
+
+        return self.results
+
+
 def _view(
     qapp: QApplication,
     *,
     mapping_service: VoiceProviderMappingService | None = None,
+    search_client: _StubVoiceSearchClient | None = None,
 ) -> VoiceManagerView:
     return VoiceManagerView(
         voice_provider_mapping_service=mapping_service or _mapping_service(),
         voice_profile_registry=VoiceProfileRegistryService.with_default_profiles(),
         genre_profile_registry=GenreProfileRegistryService.with_default_profiles(),
+        voice_search_client=search_client,  # type: ignore[arg-type]
     )
 
 
@@ -205,3 +235,129 @@ def test_genre_overview_table_reflects_real_delivery_mode(qapp: QApplication) ->
     assert voice_id_cell is not None
     assert delivery_cell.text() == "emotion_tags"
     assert voice_id_cell.text() == "not configured"
+
+
+# --- 2026-09-10 follow-up to voice gap #2: real auto-suggest-then-
+# confirm voice matching. ---
+
+
+def test_suggest_button_is_disabled_without_a_search_client(
+    qapp: QApplication,
+) -> None:
+    view = _view(qapp)
+    view.refresh()
+
+    assert view._suggest_button.isEnabled() is False  # noqa: SLF001
+
+
+def test_suggest_button_is_enabled_with_a_search_client(qapp: QApplication) -> None:
+    view = _view(qapp, search_client=_StubVoiceSearchClient())
+    view.refresh()
+
+    assert view._suggest_button.isEnabled() is True  # noqa: SLF001
+
+
+def test_suggest_populates_real_results(qapp: QApplication) -> None:
+    stub = _StubVoiceSearchClient(
+        results=[
+            ElevenLabsVoiceSearchResult(
+                voice_id="voice-abc",
+                name="Deep Dark Narrator",
+                labels={"gender": "male", "accent": "american"},
+                preview_url="https://example.com/preview.mp3",
+            ),
+            ElevenLabsVoiceSearchResult(voice_id="voice-def", name="Whisper Voice"),
+        ]
+    )
+    view = _view(qapp, search_client=stub)
+    view.refresh()
+    view._select_profile_id("voice.horror_whisper")  # noqa: SLF001
+
+    view._handle_suggest_clicked()  # noqa: SLF001
+
+    assert len(view._suggestions) == 2  # noqa: SLF001
+    assert view._suggestions_list.count() == 2  # noqa: SLF001
+    assert stub.last_query is not None
+    assert "deep" in stub.last_query
+
+
+def test_suggest_with_no_results_shows_an_informational_row(
+    qapp: QApplication,
+) -> None:
+    view = _view(qapp, search_client=_StubVoiceSearchClient(results=[]))
+    view.refresh()
+    view._select_profile_id("voice.horror_whisper")  # noqa: SLF001
+
+    view._handle_suggest_clicked()  # noqa: SLF001
+
+    assert view._suggestions == []  # noqa: SLF001
+    assert view._suggestions_list.count() == 1  # noqa: SLF001
+
+
+def test_suggest_handles_a_real_search_failure(qapp: QApplication) -> None:
+    view = _view(
+        qapp,
+        search_client=_StubVoiceSearchClient(
+            error=HttpProviderExecutionError("ElevenLabs voice search failed.")
+        ),
+    )
+    view.refresh()
+    view._select_profile_id("voice.horror_whisper")  # noqa: SLF001
+
+    with patch("src.desktop.views.voice_manager_view.QMessageBox.warning") as warning:
+        view._handle_suggest_clicked()  # noqa: SLF001
+
+    warning.assert_called_once()
+    assert view._suggestions == []  # noqa: SLF001
+
+
+def test_use_selected_suggestion_fills_the_voice_id_field(
+    qapp: QApplication,
+) -> None:
+    stub = _StubVoiceSearchClient(
+        results=[
+            ElevenLabsVoiceSearchResult(voice_id="voice-abc", name="Deep Narrator"),
+        ]
+    )
+    view = _view(qapp, search_client=stub)
+    view.refresh()
+    view._select_profile_id("voice.horror_whisper")  # noqa: SLF001
+    view._handle_suggest_clicked()  # noqa: SLF001
+
+    view._suggestions_list.setCurrentRow(0)  # noqa: SLF001
+    view._handle_use_suggestion_clicked()  # noqa: SLF001
+
+    assert view._voice_id_field.text() == "voice-abc"  # noqa: SLF001
+
+
+def test_use_suggestion_without_a_selection_shows_guidance(
+    qapp: QApplication,
+) -> None:
+    view = _view(qapp, search_client=_StubVoiceSearchClient())
+    view.refresh()
+    view._select_profile_id("voice.horror_whisper")  # noqa: SLF001
+
+    with patch(
+        "src.desktop.views.voice_manager_view.QMessageBox.information"
+    ) as information:
+        view._handle_use_suggestion_clicked()  # noqa: SLF001
+
+    information.assert_called_once()
+
+
+def test_switching_profile_clears_suggestions(qapp: QApplication) -> None:
+    stub = _StubVoiceSearchClient(
+        results=[
+            ElevenLabsVoiceSearchResult(voice_id="voice-abc", name="Deep Narrator"),
+        ]
+    )
+    view = _view(qapp, search_client=stub)
+    view.refresh()
+    view._select_profile_id("voice.horror_whisper")  # noqa: SLF001
+    view._handle_suggest_clicked()  # noqa: SLF001
+    assert view._suggestions_list.count() == 1  # noqa: SLF001
+
+    view._select_profile_id("voice.neutral_narrator")  # noqa: SLF001
+
+    assert view._suggestions == []  # noqa: SLF001
+    assert view._suggestions_list.count() == 0  # noqa: SLF001

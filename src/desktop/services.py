@@ -7,9 +7,11 @@ from src.browser.flow_browser_worker import FlowBrowserWorker
 from src.desktop.job_store import JsonJobStore
 from src.desktop.theme_preference_store import ThemePreferenceStore
 from src.entrypoint import build_production_runtime
+from src.models.provider_profile import ProviderCategory
 from src.providers.dry_run_thumbnail_image_provider import (
     DryRunThumbnailImageProvider,
 )
+from src.providers.elevenlabs_voice_search_client import ElevenLabsVoiceSearchClient
 from src.providers.google_flow.real_adapter import GoogleFlowRealUIAdapter
 from src.services.application_infrastructure_factory import (
     ApplicationInfrastructure,
@@ -179,6 +181,10 @@ def get_production_runtime() -> ProductionApplicationRuntime:
             if report.stock_video_providers
             else None
         ),
+        # Voice gap #1 (2026-09-09 audit) - a real voice_id registered
+        # through Voice Manager now actually reaches real generation,
+        # not just persisted storage nothing reads.
+        voice_provider_mapping_service=get_voice_provider_mapping_service(),
     )
 
     for profile in desktop_profiles:
@@ -387,6 +393,61 @@ def get_voice_profile_registry_service() -> VoiceProfileRegistryService:
 
     return VoiceProfileRegistryService(
         profiles=get_runtime_configuration().voice_profiles
+    )
+
+
+@lru_cache
+def get_elevenlabs_voice_search_client() -> ElevenLabsVoiceSearchClient | None:
+    """
+    Real ElevenLabs voice-search client for Voice Manager's
+    "Suggest voices" feature (2026-09-09 follow-up to voice gap #2) -
+    the user explicitly chose auto-suggest-then-confirm over fully
+    automatic or fully manual voice selection.
+
+    Resolves the real, currently-configured, enabled ElevenLabs voice
+    provider's real API key the exact same way ProviderAdapterFactory
+    does for real generation (ProviderSecretManager.resolve_secret()
+    against the real provider_registry), so a suggestion search always
+    authenticates with the same real credentials real generation
+    would - never a second, separately-typed key.
+
+    Returns None when no real, enabled ElevenLabs voice provider is
+    configured yet (or its secret fails to resolve) - Voice Manager's
+    "Suggest voices" button disables itself in that case rather than
+    failing on click. Cached like every other factory here: if a
+    voice provider is added or changed after this first resolves,
+    picking that up needs a fresh process, matching this module's
+    existing @lru_cache behavior for provider-derived services.
+    """
+
+    infrastructure = get_infrastructure()
+
+    profile = next(
+        (
+            candidate
+            for candidate in infrastructure.provider_registry.list_by_category(
+                ProviderCategory.VOICE
+            )
+            if candidate.provider_name.strip().lower() == "elevenlabs"
+            and candidate.enabled
+            and candidate.secret_reference
+        ),
+        None,
+    )
+
+    if profile is None or not profile.secret_reference:
+        return None
+
+    try:
+        api_key = infrastructure.provider_secret_manager.resolve_secret(
+            profile.secret_reference
+        )
+    except Exception:
+        return None
+
+    return ElevenLabsVoiceSearchClient(
+        api_key=api_key,
+        base_url=profile.base_url or "https://api.elevenlabs.io",
     )
 
 

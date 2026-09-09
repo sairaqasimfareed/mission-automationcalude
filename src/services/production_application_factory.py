@@ -66,6 +66,7 @@ from src.services.sound_effect_generation_service import (
 from src.services.voice_generation_service import (
     VoiceGenerationService,
 )
+from src.services.voice_provider_mapping_service import VoiceProviderMappingService
 from src.services.voice_resolution_runtime import (
     VoiceResolutionRuntime,
     VoiceResolutionRuntimeFactory,
@@ -186,6 +187,7 @@ class ProductionApplicationFactory:
         checkpoint_storage_root: str | Path | None = None,
         llm_gateway: LLMGateway | None = None,
         production_render_service: ProductionRenderService | None = None,
+        voice_provider_mapping_service: VoiceProviderMappingService | None = None,
     ) -> None:
         if not provider_profiles:
             raise ValueError(
@@ -268,6 +270,13 @@ class ProductionApplicationFactory:
         )
 
         self._llm_gateway = llm_gateway
+
+        # Voice gap #1 (2026-09-09 audit) - optional so every existing
+        # caller/test keeps working unchanged; when supplied, a
+        # registered real voice_id (see VoiceManagerView) actually
+        # reaches real generation. See build()'s own comment for
+        # target_provider.
+        self._voice_provider_mapping_service = voice_provider_mapping_service
 
         if production_render_service is not None:
             self._production_render_service: ProductionRenderService | None = (
@@ -376,8 +385,27 @@ class ProductionApplicationFactory:
             genre_registry=(self._genre_registry),
         )
 
+        # Voice gaps #1/#9 (2026-09-09 audit): target_provider is
+        # derived from the first real, configured voice provider
+        # (never hardcoded "elevenlabs") - this is what makes a real
+        # voice_id registered through VoiceManagerView, and real
+        # scene-to-scene stitching context, actually reach real
+        # generation rather than only ever being computed and
+        # discarded. self._voice_providers is validated non-empty in
+        # __init__, so indexing [0] here is always safe. getattr, not
+        # a direct attribute access - this codebase's own composition
+        # tests deliberately construct an identity-only provider stub
+        # (a bare object(), "provider execution is intentionally not
+        # exercised by these composition tests") that has no
+        # provider_name at all; every real VoiceProvider implementation
+        # (ElevenLabsVoiceProvider, DryRunVoiceProvider,
+        # GenericHttpVoiceProvider) already has one.
+        target_provider = getattr(self._voice_providers[0], "provider_name", None)
+
         voice_resolution_runtime = VoiceResolutionRuntimeFactory().build(
             profiles=list(self._voice_profiles),
+            target_provider=target_provider,
+            voice_provider_mapping_service=self._voice_provider_mapping_service,
         )
 
         voice_generation_service = VoiceGenerationService(

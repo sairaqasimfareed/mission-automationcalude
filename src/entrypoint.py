@@ -31,6 +31,7 @@ from src.services.scene_asset_workflow_service import (
 )
 from src.services.secrets.provider_secret_manager import SecretStore
 from src.services.startup_diagnostics import StartupDiagnosticsReporter
+from src.services.voice_provider_mapping_service import VoiceProviderMappingService
 
 
 def build_production_runtime(
@@ -44,6 +45,7 @@ def build_production_runtime(
     checkpoint_storage_root: str | Path | None = None,
     settings: Settings | None = None,
     secret_store: SecretStore | None = None,
+    voice_provider_mapping_service: VoiceProviderMappingService | None = None,
 ) -> ProductionApplicationRuntime:
     """
     Compose and validate one production Mission Automation runtime.
@@ -76,6 +78,13 @@ def build_production_runtime(
     (WAITING_FOR_USER) cannot be resumed - re-running execute() from
     scratch re-runs already-completed stages like voice generation
     against a job that already has voice tracks, which fails.
+
+    voice_provider_mapping_service (voice gap #1, 2026-09-09 audit) is
+    the real, persisted registry of per-voice-profile real provider
+    voice ids (see VoiceManagerView) - passed through so a mapping
+    registered there actually reaches real generation. Omitting it
+    reproduces this function's exact prior behavior (no real voice_id
+    ever resolves, matching every caller before this option existed).
     """
 
     configuration = RuntimeConfigurationLoader(
@@ -129,6 +138,7 @@ def build_production_runtime(
         genre_timeline_service=genre_timeline_service,
         advanced_settings=configuration.advanced_settings,
         checkpoint_storage_root=effective_checkpoint_storage_root,
+        voice_provider_mapping_service=voice_provider_mapping_service,
     ).build()
 
     validation_result = ProviderStartupValidator(

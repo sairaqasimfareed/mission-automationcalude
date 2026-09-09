@@ -16,10 +16,14 @@ from PySide6.QtWidgets import (
 )
 
 from src.desktop.widgets import badge, button, card, heading, muted, row, subheading
+from src.models.elevenlabs_voice_search import ElevenLabsVoiceSearchResult
 from src.models.voice_profile import VoiceProfile
+from src.providers.elevenlabs_voice_search_client import ElevenLabsVoiceSearchClient
 from src.services.genre_profile_registry_service import GenreProfileRegistryService
+from src.services.http.http_provider_executor import HttpProviderExecutionError
 from src.services.voice_profile_registry_service import VoiceProfileRegistryService
 from src.services.voice_provider_mapping_service import VoiceProviderMappingService
+from src.services.voice_search_query_builder import build_voice_search_query
 
 _LEFT = Qt.AlignmentFlag.AlignLeft
 
@@ -54,6 +58,7 @@ class VoiceManagerView(QWidget):
         voice_provider_mapping_service: VoiceProviderMappingService,
         voice_profile_registry: VoiceProfileRegistryService,
         genre_profile_registry: GenreProfileRegistryService,
+        voice_search_client: ElevenLabsVoiceSearchClient | None = None,
         provider_name: str = "elevenlabs",
     ) -> None:
         super().__init__()
@@ -61,10 +66,18 @@ class VoiceManagerView(QWidget):
         self._mapping_service = voice_provider_mapping_service
         self._voice_profile_registry = voice_profile_registry
         self._genre_profile_registry = genre_profile_registry
+        # 2026-09-10 follow-up to voice gap #2: real, auto-suggest-
+        # then-confirm voice matching (the user's own explicitly
+        # chosen automation level - not fully automatic, not fully
+        # manual). None when no real, enabled ElevenLabs voice
+        # provider is configured yet - the Suggest button disables
+        # itself in that case.
+        self._voice_search_client = voice_search_client
         self._provider_name = provider_name
 
         self._profiles: list[VoiceProfile] = []
         self._selected_profile_id: str | None = None
+        self._suggestions: list[ElevenLabsVoiceSearchResult] = []
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(24, 20, 24, 20)
@@ -182,6 +195,35 @@ class VoiceManagerView(QWidget):
         remove_button.clicked.connect(self._handle_remove_clicked)
 
         card_layout.addLayout(row(save_button, remove_button))
+
+        card_layout.addWidget(subheading("Suggest a real voice"))
+
+        self._suggest_note = muted(
+            "Searches ElevenLabs' real voice library by this profile's "
+            "own style - always review and listen before using one."
+        )
+        card_layout.addWidget(self._suggest_note)
+
+        self._suggest_button = button("Suggest voices", icon_name="search")
+        self._suggest_button.clicked.connect(self._handle_suggest_clicked)
+        self._suggest_button.setEnabled(self._voice_search_client is not None)
+
+        if self._voice_search_client is None:
+            self._suggest_button.setToolTip(
+                "Configure a real, enabled ElevenLabs voice provider in "
+                "Provider Manager first."
+            )
+
+        card_layout.addLayout(row(self._suggest_button))
+
+        self._suggestions_list = QListWidget()
+        self._suggestions_list.setMaximumHeight(140)
+        card_layout.addWidget(self._suggestions_list)
+
+        use_suggestion_button = button("Use selected suggestion")
+        use_suggestion_button.clicked.connect(self._handle_use_suggestion_clicked)
+        card_layout.addLayout(row(use_suggestion_button))
+
         card_layout.addStretch()
 
         return frame
@@ -312,6 +354,8 @@ class VoiceManagerView(QWidget):
             else "Not configured"
         )
 
+        self._clear_suggestions()
+
     def _reset_form(self) -> None:
         self._display_name.setText("")
         self._description.setText("")
@@ -321,6 +365,12 @@ class VoiceManagerView(QWidget):
         self._voice_id_field.clear()
         self._notes_field.clear()
         self._status_badge.setText("")
+
+        self._clear_suggestions()
+
+    def _clear_suggestions(self) -> None:
+        self._suggestions = []
+        self._suggestions_list.clear()
 
     def _handle_save_clicked(self) -> None:
         if self._selected_profile_id is None:
@@ -374,3 +424,77 @@ class VoiceManagerView(QWidget):
             provider_name=self._provider_name,
         )
         self.refresh()
+
+    def _handle_suggest_clicked(self) -> None:
+        if self._voice_search_client is None or self._selected_profile_id is None:
+            return
+
+        profile = next(
+            (
+                candidate
+                for candidate in self._profiles
+                if candidate.profile_id == self._selected_profile_id
+            ),
+            None,
+        )
+
+        if profile is None:
+            return
+
+        query = build_voice_search_query(profile)
+
+        if not query:
+            QMessageBox.information(
+                self,
+                "Suggest voices",
+                "This profile has no real style information to search on.",
+            )
+
+            return
+
+        try:
+            results = self._voice_search_client.search(query=query)
+        except (HttpProviderExecutionError, ValueError) as error:
+            QMessageBox.warning(self, "Could not suggest voices", str(error))
+
+            return
+
+        self._suggestions = results
+        self._suggestions_list.clear()
+
+        if not results:
+            self._suggestions_list.addItem(
+                f"No real ElevenLabs voices matched '{query}'."
+            )
+
+            return
+
+        for result in results:
+            label_text = ", ".join(
+                f"{key}: {value}" for key, value in result.labels.items()
+            )
+            summary = f"{result.name or result.voice_id}"
+
+            if label_text:
+                summary += f" ({label_text})"
+
+            if result.preview_url:
+                summary += f" — preview: {result.preview_url}"
+
+            self._suggestions_list.addItem(summary)
+
+    def _handle_use_suggestion_clicked(self) -> None:
+        selected_row = self._suggestions_list.currentRow()
+
+        if selected_row < 0 or selected_row >= len(self._suggestions):
+            QMessageBox.information(
+                self,
+                "Use selected suggestion",
+                "Select a suggestion first, then click this to fill in "
+                "its real voice id - you'll still need to click Save to "
+                "register it.",
+            )
+
+            return
+
+        self._voice_id_field.setText(self._suggestions[selected_row].voice_id)

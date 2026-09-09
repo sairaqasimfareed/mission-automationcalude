@@ -104,6 +104,7 @@ class MainWindow(QMainWindow):
             ),
             voice_profile_registry=services.get_voice_profile_registry_service(),
             genre_profile_registry=services.get_runtime_configuration().genre_registry,
+            voice_search_client=services.get_elevenlabs_voice_search_client(),
         )
 
         for view in (
