@@ -210,6 +210,18 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
                     timeout=self._action_timeout_ms,
                 )
 
+            # Real-world finding, 2026-09-11: goto() only waits for the
+            # 'load' event, not for this real, client-rendered Angular
+            # app to finish hydrating its buttons - _looks_authenticated's
+            # own checks are all instant, non-waiting .count() reads
+            # (unlike an action such as .click(), .count() never
+            # auto-waits for an element to appear), so calling it
+            # immediately after goto() raced the real render and
+            # intermittently reported a fully authenticated, healthy
+            # real session (confirmed directly - the same page moments
+            # later showed "Account details" present) as unhealthy.
+            page.wait_for_timeout(1500)
+
             return self._looks_authenticated(page)
 
         return self._worker.submit(_run).result(
