@@ -28,7 +28,7 @@ from src.browser.manual_signin_bootstrap import (
     manual_sign_in_command,
 )
 from src.desktop.widgets import badge, button, card, heading, muted, row, status_label
-from src.models.provider_profile import ProviderCategory
+from src.models.provider_profile import ProviderCategory, ProviderHealthStatus
 from src.models.provider_profile_management import (
     ProviderProfileSummary,
     ProviderProfileUpsertCommand,
@@ -537,6 +537,27 @@ class GoogleFlowProviderPanelView(QWidget):
         except Exception as error:  # noqa: BLE001
             self._show_status(f"Check failed: {error}", role="error")
             return
+
+        # 2026-09-11 real fix, found live: this real, adapter-based
+        # check result was never actually persisted onto the profile -
+        # ProviderProfile.usable requires health_status HEALTHY/DEGRADED,
+        # so a real, working, authenticated account's health_status
+        # stayed "unknown" forever and GoogleFlowAccountRouterService.
+        # select_account() always raised "No usable Google Flow account
+        # is configured", regardless of whether this check ever passed.
+        # See ProviderProfileManagementService.set_health_status()'s own
+        # docstring for the full real finding.
+        updated_summary = self._service.set_health_status(
+            self._selected_profile_id,
+            (
+                ProviderHealthStatus.HEALTHY
+                if healthy
+                else ProviderHealthStatus.UNHEALTHY
+            ),
+        )
+        self._health_badge.setText(
+            f"{updated_summary.display_name}  ·  {updated_summary.health_status.value}"
+        )
 
         if healthy:
             self._show_status("Connection looks healthy.", role="success")

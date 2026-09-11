@@ -310,3 +310,76 @@ else:
 
 
 print("Provider Profile Management Service tests completed successfully.")
+
+
+# --- 2026-09-11 real fix, found live running the first real Google
+# Flow generation: check_health() always returns MISCONFIGURED for a
+# profile with no secret_reference - every real EXTERNAL_UI_VIDEO
+# (Google Flow) profile legitimately has none by design. Nothing in
+# this codebase ever set a real Google Flow profile's health_status
+# to HEALTHY, so ProviderProfile.usable (requires HEALTHY/DEGRADED)
+# never returned True, and GoogleFlowAccountRouterService.select_account()
+# always raised "No usable Google Flow account is configured" -
+# regardless of whether the account actually worked. ---
+
+
+def test_set_health_status_makes_a_real_flow_profile_usable() -> None:
+    repository = InMemoryProviderProfileRepository()
+    service = build_service(repository)
+
+    service.upsert_profile(
+        ProviderProfileUpsertCommand(
+            profile_id="flow-health-test",
+            display_name="Flow Health Test",
+            provider_name="Google Flow",
+            category=ProviderCategory.EXTERNAL_UI_VIDEO,
+            enabled=True,
+            browser_profile_reference="flow_profiles/flow-health-test",
+        )
+    )
+
+    before = service.get_profile("flow-health-test")
+    assert before.health_status == ProviderHealthStatus.UNKNOWN
+
+    updated = service.set_health_status(
+        "flow-health-test", ProviderHealthStatus.HEALTHY
+    )
+
+    assert updated.health_status == ProviderHealthStatus.HEALTHY
+
+    # The real point of this fix: usable (what
+    # GoogleFlowAccountRouterService.select_account() actually reads)
+    # must flip to True once a real check has been persisted - not
+    # just the raw health_status field in isolation.
+    stored_profile = repository.load_all()[0]
+    assert stored_profile.usable is True
+
+
+def test_set_health_status_does_not_require_a_secret_reference() -> None:
+    """
+    The real bug this fix closes: check_health() (via
+    ProviderSecretResolutionChecker) always short-circuits to
+    MISCONFIGURED for a profile with no secret - set_health_status()
+    is the real, separate path a caller with its own health signal
+    (Google Flow's real adapter-based check) uses instead.
+    """
+
+    repository = InMemoryProviderProfileRepository()
+    service = build_service(repository)
+
+    service.upsert_profile(
+        ProviderProfileUpsertCommand(
+            profile_id="flow-no-secret",
+            display_name="Flow No Secret",
+            provider_name="Google Flow",
+            category=ProviderCategory.EXTERNAL_UI_VIDEO,
+            enabled=True,
+            browser_profile_reference="flow_profiles/flow-no-secret",
+        )
+    )
+
+    assert service.get_profile("flow-no-secret").has_secret is False
+
+    updated = service.set_health_status("flow-no-secret", ProviderHealthStatus.HEALTHY)
+
+    assert updated.health_status == ProviderHealthStatus.HEALTHY

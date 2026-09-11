@@ -5,6 +5,20 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-11 - Real bug found live: a real, working Google Flow account could never actually be used - its health status was never set
+
+Direct continuation of today's live-testing work. With real voice generation finally succeeding, moved to real Google Flow visual generation - submitted a real attempt via `GoogleFlowGenerationOrchestratorService.submit_new_attempt()` for scene 1. It failed immediately, before any browser automation even ran: `NoEligibleGoogleFlowAccountError: No usable Google Flow account is configured.`
+
+**Root cause**: `ProviderProfile.usable` requires `health_status in {HEALTHY, DEGRADED}`, and `GoogleFlowAccountRouterService.select_account()` filters on exactly that (`registry.list_by_category(EXTERNAL_UI_VIDEO, usable_only=True)`). Traced how a Google Flow profile's `health_status` could ever become HEALTHY - and found nothing does. `ProviderProfileManagementService.check_health()` (the standard path) always calls `ProviderHealthService.check_profile()`, whose very first real check is `if not profile.secret_reference: return MISCONFIGURED` - and every real Google Flow profile legitimately has no `secret_reference` by design (GF-13: "Google Flow must NOT display an API Key field"; it authenticates via `browser_profile_reference` instead). The real Google Flow panel's own "Check Connection" button *does* run a real, adapter-based check appropriate for this category (`GoogleFlowRealUIAdapter.check_profile_health()`) - but its handler only ever showed a status message; it never persisted the result back onto the profile. **This meant a real, working, fully-authenticated Google Flow account could never actually be selected for real generation, for any user, ever** - not something introduced today, a structural gap in the whole Google Flow feature that simply had never been exercised end to end before.
+
+**Fixed**: new `ProviderProfileManagementService.set_health_status(profile_id, status)` - a real, direct health-status setter that bypasses the secret-based checker entirely (appropriate for a caller, like the Flow panel, that already has its own real health signal from a different source). `_handle_check_connection_clicked()` now calls it with `HEALTHY`/`UNHEALTHY` based on the real adapter check's real result, and updates the visible health badge immediately.
+
+**Teeth-verified**: removing the persistence step (registry-register + repository-save) from `set_health_status()` broke the new test with a real `stored_profile.usable is False` - the whole point of the fix.
+
+**Tests**: `test_provider_profile_management_service.py` gained 2 cases (setting health status makes a real Flow profile genuinely `usable` - the actual property the router reads, not just the raw field in isolation, teeth-verified; setting it works with no `secret_reference` at all, the exact real gap `check_health()` couldn't cross). 37-case regression across provider management, Provider Manager's view, and the Google Flow panel: all green. mypy/ruff/black clean.
+
+---
+
 ## 2026-09-11 - Real bug found live: every real ElevenLabs voice generation call was crashing on a UUID that can't be JSON-serialized
 
 Direct continuation of today's live-testing work. With the scene-duration bug fixed, re-ran real voice generation for the horror test job - it failed again, generically: `job.errors = ["Voice provider failed during audio generation."]`, no further detail. `VoiceGenerationService._fail()`'s real exception metadata (`exception_type`/`exception_message`) is attached to the *returned failure result*, not persisted onto `VideoJob` itself, so nothing in the saved job JSON carried the real cause.

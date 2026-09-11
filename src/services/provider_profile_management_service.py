@@ -243,6 +243,44 @@ class ProviderProfileManagementService:
     ) -> ProviderHealthResult:
         return self._health_service.check_profile(profile_id, self._health_checker)
 
+    def set_health_status(
+        self,
+        profile_id: str,
+        status: ProviderHealthStatus,
+    ) -> ProviderProfileSummary:
+        """
+        Directly set a profile's real health_status, bypassing
+        check_health()'s secret-based ProviderHealthChecker entirely.
+
+        2026-09-11 real fix, found live while running the first real
+        Google Flow generation: check_health() (and the
+        ProviderSecretResolutionChecker it always uses) immediately
+        returns MISCONFIGURED for any profile with no secret_reference
+        - which every real EXTERNAL_UI_VIDEO (Google Flow) profile
+        legitimately has by design (GF-13: "Google Flow must NOT
+        display an API Key field"; it authenticates via
+        browser_profile_reference instead). Nothing in this codebase
+        ever called this before, so a real, working, authenticated
+        Google Flow account's health_status stayed "unknown" forever -
+        ProviderProfile.usable requires HEALTHY/DEGRADED, so
+        GoogleFlowAccountRouterService.select_account() always raised
+        "No usable Google Flow account is configured", regardless of
+        whether the account actually worked. The real Google Flow
+        panel's own "Check Connection" button already runs a real,
+        adapter-based check (GoogleFlowRealUIAdapter.check_profile_health())
+        appropriate for this category - it just never persisted the
+        result. This method is what that persistence step calls.
+        """
+
+        profile = self._registry.get(profile_id)
+
+        updated = profile.model_copy(update={"health_status": status})
+
+        self._registry.register(updated, replace=True)
+        self._persist()
+
+        return self._to_summary(updated)
+
     def _persist(self) -> None:
         self._repository.save_all(self._registry.list_all())
 
