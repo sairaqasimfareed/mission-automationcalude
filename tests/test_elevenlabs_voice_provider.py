@@ -169,6 +169,30 @@ with TemporaryDirectory() as temp_dir:
     assert voice_settings["style"] == 0.3
     assert voice_settings["use_speaker_boost"] is False
 
+    # 2026-09-11 real fix, found live: a bare .model_dump() here used
+    # to also include MissionBaseModel's own inherited id (a real
+    # UUID)/created_at/updated_at fields - not real ElevenLabs
+    # parameters, and id specifically isn't JSON serializable by
+    # requests' plain json.dumps() at all, so every real voice
+    # generation call failed. voice_settings must contain exactly the
+    # 5 real, documented ElevenLabs fields, nothing else.
+    assert set(voice_settings.keys()) == {
+        "stability",
+        "similarity_boost",
+        "style",
+        "use_speaker_boost",
+        "speed",
+    }
+
+    # The fake transport above never actually calls json.dumps() on
+    # json_body (it intercepts before any real network/serialization
+    # call), so it could never have caught the real bug on its own -
+    # this proves the exact real body genuinely round-trips through
+    # real JSON serialization the way `requests` would do it.
+    import json as _json
+
+    _json.dumps(sent.json_body)
+
 print("ElevenLabsVoiceProvider generate_from_blueprint case passed.")
 
 # --- Voice gap #5 (2026-09-09 audit): a pronunciation directive

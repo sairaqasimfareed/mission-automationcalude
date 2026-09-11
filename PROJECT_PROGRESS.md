@@ -5,6 +5,24 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-11 - Real bug found live: every real ElevenLabs voice generation call was crashing on a UUID that can't be JSON-serialized
+
+Direct continuation of today's live-testing work. With the scene-duration bug fixed, re-ran real voice generation for the horror test job - it failed again, generically: `job.errors = ["Voice provider failed during audio generation."]`, no further detail. `VoiceGenerationService._fail()`'s real exception metadata (`exception_type`/`exception_message`) is attached to the *returned failure result*, not persisted onto `VideoJob` itself, so nothing in the saved job JSON carried the real cause.
+
+**Diagnosed by bypassing the wrapper entirely**: built the real `ElevenLabsVoiceProvider` the same way `desktop/services.py` does (`ProviderAdapterFactory` over the real desktop profiles) and called `generate_from_blueprint()` directly for one real scene, letting the real exception propagate with a full traceback instead of being flattened into a generic message. Real result: `TypeError: Object of type UUID is not JSON serializable when serializing dict item 'id' when serializing dict item 'voice_settings'`.
+
+**Root cause**: `ElevenLabsVoiceProvider._build_request_and_json_body()` built the request body's `voice_settings` key with a bare `request.voice_settings.model_dump()`. `ElevenLabsVoiceSettings` inherits `MissionBaseModel`, which carries `id: UUID`/`created_at`/`updated_at` on every model in this codebase - a bare `.model_dump()` includes them, and Python's `json.dumps()` (called inside `requests`' own request-preparation code) can't serialize a raw `UUID`. This meant **every real ElevenLabs voice generation call this codebase has ever made was broken** - not something introduced today, just never exercised against a real API until now. Notably, the exact same function already gets this right two lines below for `pronunciation_dictionary_locators` (`locator.model_dump(include={"pronunciation_dictionary_id", "version_id"})`) - `voice_settings` was simply the one call site that didn't follow that same, already-established pattern.
+
+**Fixed**: scoped `voice_settings`'s dump to `include={"stability", "similarity_boost", "style", "use_speaker_boost", "speed"}` - exactly the 5 fields `ElevenLabsVoiceSettings`'s own docstring already promises are real, documented ElevenLabs parameters (matching the sibling `pronunciation_dictionary_locators` call's own pattern).
+
+**A real, structural test-coverage gap this also surfaced**: the existing test's fake `_RecordingTransport` intercepts before any real `requests`/`json.dumps()` call, so `json_body` stays a raw Python dict with the UUID never actually serialized - this class of bug was structurally uncatchable by the existing test, regardless of how thorough its assertions were. Added a new assertion that genuinely calls `json.dumps()` on the real captured body, so a future regression of this exact kind would be caught for real, not just by field-presence checks.
+
+**Teeth-verified**: reverting to the bare `.model_dump()` reproduced the exact real bug immediately - the new `set(voice_settings.keys())` assertion failed with the real, unwanted `id`/`created_at`/`updated_at` keys visible in the diff.
+
+**Tests**: `test_elevenlabs_voice_provider.py` gained 2 new assertions (voice_settings contains exactly the 5 real fields, and the real body genuinely survives real `json.dumps()`) - both teeth-verified together. 46-case regression across every `elevenlabs_voice`-matching test: all green (run with `.env` moved aside, the already-documented global-settings interaction - unrelated to this fix). mypy/ruff/black clean.
+
+---
+
 ## 2026-09-11 - Real bug found starting real voice generation: flat 8-second scene duration didn't fit real narration length
 
 Direct continuation of today's live-testing work. With the script/scene bugs above fixed, the 8-scene horror test script looked genuinely good, so moved to real voice generation - `ProjectRenderRuntimeFactory.build(job=job, genre_id="genre.horror").execute(job, dry_run=False)`. It failed immediately: `ValueError: Voice directives cannot be resolved. Estimated narration duration exceeds the scene duration.`

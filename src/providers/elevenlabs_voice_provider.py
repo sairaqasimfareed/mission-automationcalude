@@ -275,7 +275,29 @@ class ElevenLabsVoiceProvider(VoiceProvider):
         json_body: dict[str, object] = {
             "text": request.text,
             "model_id": request.model_id,
-            "voice_settings": request.voice_settings.model_dump(),
+            # 2026-09-11 real fix, found live: a bare .model_dump()
+            # here included MissionBaseModel's own inherited id/
+            # created_at/updated_at fields alongside the real
+            # ElevenLabsVoiceSettings ones - id (a UUID) isn't JSON
+            # serializable by requests' plain json.dumps() at all, so
+            # every real voice generation call failed with a real
+            # TypeError, silently flattened by VoiceGenerationService's
+            # own broad except-and-fail wrapper into a generic "Voice
+            # provider failed during audio generation." with no
+            # visible cause. Scoped to exactly the fields
+            # ElevenLabsVoiceSettings' own docstring promises are real,
+            # documented ElevenLabs parameters - the same include=
+            # pattern already used a few lines below for
+            # pronunciation_dictionary_locators, just missed here.
+            "voice_settings": request.voice_settings.model_dump(
+                include={
+                    "stability",
+                    "similarity_boost",
+                    "style",
+                    "use_speaker_boost",
+                    "speed",
+                }
+            ),
         }
 
         if request.pronunciation_dictionary_locators:
