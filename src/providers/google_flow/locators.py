@@ -114,8 +114,15 @@ class GoogleFlowRealAccessibleNames(BaseModel):
     start_generation_button: str = "Start generation"
 
     generated_video_thumbnail: str = "Generated video thumbnail"
-    download_scene_button: str = "Download scene"
-    done_editing_scene_button: str = "Done editing scene"
+    # Real-world finding, 2026-09-11: ground-truthed directly against
+    # a real completed scene's edit view - these are plain Material
+    # icon-button accessible names ("download"/"Done"), not the
+    # earlier assumed "Download scene"/"Done editing scene" labels,
+    # which never matched any real control and made download() hang
+    # until timeout even after a real video had genuinely finished
+    # generating.
+    download_scene_button: str = "download"
+    done_editing_scene_button: str = "Done"
 
     # Agent settings (docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md section 4a):
     # confirmed to be the SAME "Settings trigger" popover, showing this

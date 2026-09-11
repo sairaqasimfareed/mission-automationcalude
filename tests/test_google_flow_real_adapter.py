@@ -779,8 +779,8 @@ def test_download_saves_a_file_and_transitions_to_downloaded(
     submitted = adapter.submit(request, _attempt(request))
 
     page.register_role("img", "Generated video thumbnail", _FakeLocator())
-    page.register_role("button", "Download scene", _FakeLocator())
-    page.register_role("button", "Done editing scene", _FakeLocator())
+    page.register_role("button", "download", _FakeLocator())
+    page.register_role("button", "Done", _FakeLocator())
 
     ready = adapter.observe(submitted)
     assert ready.state == GoogleFlowGenerationState.READY_TO_DOWNLOAD
@@ -888,8 +888,8 @@ def test_orchestrator_drives_a_real_adapter_end_to_end(tmp_path: Path) -> None:
     assert job.flow_generation_attempts[0].id == submitted.id
 
     page.register_role("img", "Generated video thumbnail", _FakeLocator())
-    page.register_role("button", "Download scene", _FakeLocator())
-    page.register_role("button", "Done editing scene", _FakeLocator())
+    page.register_role("button", "download", _FakeLocator())
+    page.register_role("button", "Done", _FakeLocator())
 
     observed = orchestrator.observe_attempt(job, submitted)
     assert observed.state == GoogleFlowGenerationState.READY_TO_DOWNLOAD
