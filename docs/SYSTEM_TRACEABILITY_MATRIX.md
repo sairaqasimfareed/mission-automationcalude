@@ -169,6 +169,8 @@ route to it are covered here only for their non-Flow paths.
 
 **This completes all 16 phases (0-15) of the Post-Script-Approval Production Plan** (Phase 7 out of scope throughout - the Google Flow browser-automation mechanism itself).
 
+| 2026-09-11: Real Claude 5 `temperature` incompatibility | `AnthropicProviderAdapter._execute()` no longer includes `temperature` in the real Messages API request | Found live via this session's first real (non-dry-run) LLM call: the real Claude Messages API rejects an explicit `temperature` for the current Claude 5 model family (real HTTP 400, `"temperature is deprecated for this model"`) - every real Claude 5 call through this adapter was broken until now, for any caller, simply never previously exercised outside dry-run. Documented as deliberate; OpenAI/Gemini adapters unaffected. | - | - | `test_anthropic_provider.py` updated (asserts `temperature` absent, was asserting a value); teeth-verified. Live-verified end to end: real success, `content='PONG'`, no failover needed. 30-case regression green; mypy/ruff/black clean |
+
 ## SEO, Thumbnail & Publishing Reconciliation
 
 A third, separate initiative - SEO metadata, thumbnails, and final

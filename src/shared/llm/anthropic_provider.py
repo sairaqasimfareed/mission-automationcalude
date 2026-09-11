@@ -57,7 +57,22 @@ class AnthropicProviderAdapter(LLMProviderAdapter):
         self,
         request: LLMRequest,
     ) -> LLMProviderResponse:
-        """Execute one Claude Messages API request."""
+        """
+        Execute one Claude Messages API request.
+
+        2026-09-11 real fix, found live during this session's first
+        real (non-dry-run) end-to-end test: the real Claude Messages
+        API rejects an explicit temperature parameter for the current
+        Claude 5 model family with a real HTTP 400 - the API's own
+        error message: "temperature is deprecated for this model" -
+        confirmed directly against the real API, not assumed.
+        request.temperature is never sent to Anthropic; every other
+        provider's request-building is unaffected. If a future caller
+        genuinely needs Anthropic temperature control against an
+        older model that still accepts it, this should become
+        conditional (e.g. retry once without temperature only on this
+        specific error) rather than removed outright as it is here.
+        """
 
         request_arguments: dict[str, Any] = {
             "model": request.model,
@@ -72,7 +87,6 @@ class AnthropicProviderAdapter(LLMProviderAdapter):
                     "content": request.prompt,
                 }
             ],
-            "temperature": request.temperature,
         }
 
         if request.system_prompt is not None:

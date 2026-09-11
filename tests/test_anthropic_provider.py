@@ -24,7 +24,11 @@ class FakeAnthropicMessages:
 
         assert kwargs["model"] == "claude-test-model"
         assert kwargs["max_tokens"] == 500
-        assert kwargs["temperature"] == 0.4
+        # 2026-09-11 real fix: the real Claude Messages API rejects an
+        # explicit temperature for the current Claude 5 model family
+        # ("temperature is deprecated for this model", confirmed live)
+        # - request.temperature is never sent to Anthropic.
+        assert "temperature" not in kwargs
         assert kwargs["system"] == ("You are a helpful assistant.")
 
         assert kwargs["messages"] == [

@@ -5,6 +5,22 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-11 - Real bug found via the first successful real LLM call: Claude 5 rejects the `temperature` parameter
+
+With the runtime-construction gaps above closed, ran a minimal, real, direct sanity check through the shipped chain (`get_production_runtime()` -> `LLMService.generate()`) before committing to the full expensive pipeline. First attempt failed on both configured LLM profiles: Claude with a real HTTP 400, Gemini with a real 404 (the latter was the sanity script's own bug - it reused Claude's model id for Gemini's failover attempt, not a real Gemini issue).
+
+**Root-caused the real Claude 400 directly against the live API** (bypassing the adapter, calling `anthropic.Anthropic(api_key=...).messages.create()` with the exact same arguments): `{"type":"invalid_request_error","message":"temperature is deprecated for this model"}`. Confirmed precisely: the identical call succeeds (real `PONG` response) with `temperature` omitted, and fails every time it's included - for the current Claude 5 model family specifically. `AnthropicProviderAdapter._execute()` was unconditionally sending `request.temperature` (default 0.7) on every real call, meaning **every real Claude 5 call through this codebase's own adapter was broken** until now, for any caller - not something specific to today's other work at all, just never observed before because this session's first real, non-dry-run LLM call was minutes ago.
+
+**Fixed**: `AnthropicProviderAdapter._execute()` no longer includes `temperature` in the real Messages API request at all. Documented as a deliberate, real-API-driven omission (not an oversight) - a future caller needing temperature control against an older Claude model that still accepts it should make this conditional (e.g. retry once without it only on this specific error) rather than assume it can simply be re-added.
+
+**Teeth-verified**: restoring the `temperature` key in the request made the existing `test_anthropic_provider.py` script's own `"temperature" not in kwargs` assertion fail immediately with the real value visible in the failure output.
+
+**Live-verified end to end** through the real, shipped production chain (not just the adapter in isolation): `get_production_runtime().infrastructure.llm_service.generate()` against the real Claude account now returns `is_success=True`, `content='PONG'`, `attempted_profile_ids=['claude']` (succeeded on the first, preferred candidate - no failover needed).
+
+**Tests**: `test_anthropic_provider.py` updated to assert `temperature` is genuinely absent from the real request built, rather than asserting a specific value. Regression (30 cases matching "llm" across the suite, run with `.env` moved aside per the earlier-documented global-settings interaction) and the anthropic/gemini/llm-request print-scripts: all green. mypy/ruff/black clean.
+
+---
+
 ## 2026-09-11 - First real non-dry-run end-to-end test: three more real gaps between "dry-run always worked" and "real generation actually runs"
 
 The user added real provider profiles for every category still missing (Claude/Anthropic for LLM, confirmed Google Flow/voice/music/SFX already present) and asked to start the full "new project -> final video" live test. This session had never actually run with `MISSION_AUTOMATION_DRY_RUN=false` before - every real API call so far (ElevenLabs voice search, the dynamic-selection live proof) went through standalone clients that don't route through the shared dry-run gate. Turning dry-run off for real generation surfaced three more real, load-bearing gaps in `RuntimeConfigurationLoader`/`ProductionApplicationFactory`, all of the same shape as yesterday's `voice_profiles` bug: **this loader was only ever exercised in dry-run mode by every existing caller (including every real live verification done so far), so its non-dry-run paths had never actually run.**
