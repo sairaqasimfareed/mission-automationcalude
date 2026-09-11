@@ -124,6 +124,53 @@ class _FakeLocator:
 _MISSING = _FakeLocator(count=0)
 
 
+class _FakeContainerLocator:
+    """
+    Minimal stand-in for a real Playwright locator that itself
+    supports get_by_role() - models one real <flow-batch-info>
+    container's own scoped controls (e.g. its own "download" button),
+    distinct from any other batch's identically-named controls.
+    """
+
+    def __init__(self) -> None:
+        self._by_role: dict[tuple[str, str], _FakeLocator] = {}
+
+    def register_role(self, role: str, name: str, locator: _FakeLocator) -> None:
+        self._by_role[(role, name)] = locator
+
+    def get_by_role(
+        self, role: str, name: str | None = None, exact: bool = False
+    ) -> _FakeLocator:
+        return self._by_role.get((role, name or ""), _MISSING)
+
+
+class _FakeBatchInfoLocator:
+    """
+    Stands in for page.locator("flow-batch-info") - supports
+    .filter(has=...) to return the one real container structurally
+    containing a given thumbnail locator, mirroring Playwright's own
+    containment filter rather than a page-wide, ambiguous search.
+    """
+
+    def __init__(self) -> None:
+        self._by_thumbnail: dict[int, _FakeContainerLocator] = {}
+
+    def register_for(
+        self, thumbnail: _FakeLocator, container: _FakeContainerLocator
+    ) -> None:
+        self._by_thumbnail[id(thumbnail)] = container
+
+    def filter(self, *, has: _FakeLocator | None = None) -> _FakeContainerLocator:
+        if has is not None and id(has) in self._by_thumbnail:
+            return self._by_thumbnail[id(has)]
+
+        raise AssertionError(
+            "filter(has=...) resolved to no registered real batch container "
+            "- a real page-wide, unscoped search would have raised "
+            "Playwright's own strict-mode violation here instead."
+        )
+
+
 class _FakeKeyboard:
     def __init__(self) -> None:
         self.typed: list[str] = []
@@ -778,8 +825,14 @@ def test_download_saves_a_file_and_transitions_to_downloaded(
     request = _request()
     submitted = adapter.submit(request, _attempt(request))
 
-    page.register_role("img", "Generated video thumbnail", _FakeLocator())
-    page.register_role("button", "download", _FakeLocator())
+    thumbnail = _FakeLocator()
+    page.register_role("img", "Generated video thumbnail", thumbnail)
+    download_button = _FakeLocator()
+    container = _FakeContainerLocator()
+    container.register_role("button", "download", download_button)
+    batch_info = _FakeBatchInfoLocator()
+    batch_info.register_for(thumbnail, container)
+    page.register_css("flow-batch-info", batch_info)  # type: ignore[arg-type]
     page.register_role("button", "Done", _FakeLocator())
 
     ready = adapter.observe(submitted)
@@ -788,8 +841,57 @@ def test_download_saves_a_file_and_transitions_to_downloaded(
     downloaded = adapter.download(ready)
 
     assert downloaded.state == GoogleFlowGenerationState.DOWNLOADED
+    assert download_button.click_calls == 1
     saved_files = [path for path in tmp_path.rglob("*") if path.is_file()]
     assert len(saved_files) == 1
+
+
+def test_download_scopes_to_the_clicked_batch_when_multiple_batches_exist(
+    tmp_path: Path,
+) -> None:
+    """
+    Real-world finding, 2026-09-11: once a second real generation
+    batch exists in the same project, a page-wide search for the
+    download button raised Playwright's own strict-mode violation -
+    real Flow renders one <flow-batch-info> per batch, each with its
+    own identically-named "Download batch" control. download() must
+    scope its search to the specific batch container structurally
+    containing the thumbnail it just clicked, never a bare page-wide
+    search that would ambiguously match every batch's button at once.
+    """
+
+    page = _authenticated_page()
+    adapter = GoogleFlowRealUIAdapter(
+        worker=_FakeWorker(page),  # type: ignore[arg-type]
+        base_url="https://flow.google.com/project/test-project",
+        operation_timeout_seconds=5.0,
+        download_root=tmp_path,
+        profile_directory_resolver=lambda profile_id: Path("unused") / profile_id,
+    )
+    request = _request()
+    submitted = adapter.submit(request, _attempt(request))
+
+    # Two batches now exist - the img locator resolves to more than
+    # one real thumbnail, exactly the real, live situation.
+    thumbnail = _FakeLocator(count=2)
+    page.register_role("img", "Generated video thumbnail", thumbnail)
+
+    correct_download_button = _FakeLocator()
+    correct_container = _FakeContainerLocator()
+    correct_container.register_role("button", "download", correct_download_button)
+
+    batch_info = _FakeBatchInfoLocator()
+    batch_info.register_for(thumbnail, correct_container)
+    page.register_css("flow-batch-info", batch_info)  # type: ignore[arg-type]
+    page.register_role("button", "Done", _FakeLocator())
+
+    ready = adapter.observe(submitted)
+    assert ready.state == GoogleFlowGenerationState.READY_TO_DOWNLOAD
+
+    downloaded = adapter.download(ready)
+
+    assert downloaded.state == GoogleFlowGenerationState.DOWNLOADED
+    assert correct_download_button.click_calls == 1
 
 
 # --- cancel_or_abandon ---
@@ -887,8 +989,14 @@ def test_orchestrator_drives_a_real_adapter_end_to_end(tmp_path: Path) -> None:
     assert len(job.flow_generation_attempts) == 1
     assert job.flow_generation_attempts[0].id == submitted.id
 
-    page.register_role("img", "Generated video thumbnail", _FakeLocator())
-    page.register_role("button", "download", _FakeLocator())
+    thumbnail = _FakeLocator()
+    page.register_role("img", "Generated video thumbnail", thumbnail)
+    download_button = _FakeLocator()
+    container = _FakeContainerLocator()
+    container.register_role("button", "download", download_button)
+    batch_info = _FakeBatchInfoLocator()
+    batch_info.register_for(thumbnail, container)
+    page.register_css("flow-batch-info", batch_info)  # type: ignore[arg-type]
     page.register_role("button", "Done", _FakeLocator())
 
     observed = orchestrator.observe_attempt(job, submitted)

@@ -373,14 +373,31 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
             # docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md section 7 - real Flow
             # has no direct "download from the grid" control observed;
             # Download scene lives inside the per-video edit view.
-            page.get_by_role(
+            first_thumbnail = page.get_by_role(
                 "img", name=self._names.generated_video_thumbnail
-            ).first.click(timeout=self._action_timeout_ms)
+            ).first
+            first_thumbnail.click(timeout=self._action_timeout_ms)
+
+            # Real-world finding, 2026-09-11: once a SECOND batch exists
+            # in the same real project, a page-wide search for the
+            # download button raised Playwright's own strict-mode
+            # violation - real Flow renders one <flow-batch-info>
+            # container per generated batch, each with its own
+            # identically-named "Download batch" button, so an
+            # unscoped page-wide search matches every batch at once,
+            # not just the one just clicked. Scope to the specific
+            # <flow-batch-info> that structurally contains the
+            # thumbnail this method just clicked - never guess which
+            # of several identically-labeled real controls is the
+            # right one.
+            batch_container = page.locator("flow-batch-info").filter(
+                has=first_thumbnail
+            )
 
             with page.expect_download(
                 timeout=self._operation_timeout_seconds * 1000
             ) as download_info:
-                page.get_by_role(
+                batch_container.get_by_role(
                     "button", name=self._names.download_scene_button
                 ).click(timeout=self._action_timeout_ms)
 
