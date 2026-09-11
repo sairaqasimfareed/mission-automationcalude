@@ -325,6 +325,29 @@ def test_check_profile_health_false_when_not_authenticated() -> None:
     assert adapter.check_profile_health("flow.primary") is False
 
 
+def test_check_profile_health_true_on_the_library_view_with_no_new_project_button() -> (
+    None
+):
+    """
+    Real-world finding, 2026-09-11: a real project's "All media"
+    library view (reachable via that project's own left-hand nav)
+    shows neither "New project" nor "Account details" at all, even
+    for a fully authenticated session - confirmed directly by the
+    account owner's own screenshot of three intact, real generated
+    videos while this method was reporting the profile unhealthy.
+    check_profile_health must not report unhealthy just because the
+    project happens to be showing that view - the persistent compose
+    bar's prompt box is present there too and is a real, verified
+    signal of its own.
+    """
+
+    page = _FakePage()
+    page.register_css(".prompt-input .ProseMirror", _FakeLocator())
+    adapter = _adapter(page)
+
+    assert adapter.check_profile_health("flow.primary") is True
+
+
 def test_get_or_open_page_recovers_when_the_cached_page_is_closed() -> None:
     """
     Real-world finding: a real operator hit Playwright's own "Target

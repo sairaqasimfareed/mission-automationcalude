@@ -704,12 +704,30 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
         bar/back button only renders for an authenticated session too -
         this checks account details instead when New project itself
         isn't present (i.e. base_url is a project, not the dashboard).
+
+        Real-world finding, 2026-09-11: a real project has more than
+        one internal view (the compose view vs. the "All media"
+        library view, reachable via that project's own left-hand
+        nav), and neither "New project" nor "Account details" is
+        present on that library view, even for a fully authenticated
+        session - confirmed directly by the account owner's own
+        screenshot showing three intact, real generated videos while
+        this method was reporting the profile unhealthy. The prompt
+        box (prompt_input_css) is a persistent, always-visible compose
+        bar shown on every real internal project view regardless of
+        which left-nav tab is selected - the most view-independent
+        real signal available, so it's checked last as a genuine
+        alternative, never as a substitute for the other two checks'
+        own real meaning.
         """
 
         if page.get_by_role("button", name=self._names.new_project_button).count() > 0:
             return True
 
-        return page.get_by_role("button", name="Account details").count() > 0
+        if page.get_by_role("button", name="Account details").count() > 0:
+            return True
+
+        return page.locator(self._names.prompt_input_css).count() > 0
 
     def _preflight(self, page: Page) -> None:
         """
