@@ -166,3 +166,53 @@ else:
 
 
 print("Anthropic Provider tests completed successfully.")
+
+
+# --- 2026-09-11 real fix, found live: the fallback max_tokens sent
+# when a caller (e.g. ResearchAgent) never sets max_output_tokens was
+# too small (1024) for real content generation - a real research call
+# consumed the whole budget and returned zero "text" content blocks. ---
+
+
+class _RecordingAnthropicMessages:
+    """Minimal fake Messages API that just records kwargs and replies."""
+
+    def __init__(self) -> None:
+        self.last_arguments: dict[str, Any] = {}
+
+    def create(self, **kwargs: Any) -> Any:
+        self.last_arguments = kwargs
+
+        return SimpleNamespace(
+            id="message-002",
+            content=[SimpleNamespace(type="text", text="ok")],
+            usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+            stop_reason="end_turn",
+        )
+
+
+class _RecordingAnthropicClient:
+    def __init__(self) -> None:
+        self.messages = _RecordingAnthropicMessages()
+
+    def with_options(self, *, timeout: int) -> _RecordingAnthropicClient:
+        return self
+
+
+def test_execute_sends_a_generous_default_max_tokens_when_unset() -> None:
+    recording_client = _RecordingAnthropicClient()
+    adapter = AnthropicProviderAdapter(
+        api_key="anthropic-test-api-key",
+        client=recording_client,  # type: ignore[arg-type]
+    )
+
+    request = LLMRequest(
+        provider=LLMProvider.ANTHROPIC,
+        model="claude-test-model",
+        prompt="Generate a response.",
+        prompt_version="v1",
+    )
+
+    adapter.create_operation(request)()
+
+    assert recording_client.messages.last_arguments["max_tokens"] == 8192

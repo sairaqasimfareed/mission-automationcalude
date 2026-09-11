@@ -16,6 +16,20 @@ from src.shared.llm.providers import (
 )
 from src.shared.llm.request import LLMRequest
 
+# 2026-09-11 real fix, found live during this session's first real
+# end-to-end content-generation call: unlike OpenAI/Gemini (where
+# max_output_tokens is only sent when a caller explicitly sets it,
+# letting the provider's own generous default apply), Anthropic's
+# real Messages API requires max_tokens on every request - some
+# fallback is unavoidable when a caller (e.g. ResearchAgent, which
+# never sets max_output_tokens) omits one. The previous fallback,
+# 1024, was too small for real content generation: a real research
+# call against the live API consumed the entire 1024-token budget
+# and returned a real response with zero "text" content blocks,
+# surfacing as "Research provider returned empty content." - not a
+# parsing bug, a genuinely too-small budget.
+_DEFAULT_MAX_OUTPUT_TOKENS = 8192
+
 
 class AnthropicProviderAdapter(LLMProviderAdapter):
     """Production Anthropic adapter using the Claude Messages API."""
@@ -79,7 +93,7 @@ class AnthropicProviderAdapter(LLMProviderAdapter):
             "max_tokens": (
                 request.max_output_tokens
                 if request.max_output_tokens is not None
-                else 1024
+                else _DEFAULT_MAX_OUTPUT_TOKENS
             ),
             "messages": [
                 {

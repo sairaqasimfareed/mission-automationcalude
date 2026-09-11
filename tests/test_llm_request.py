@@ -55,7 +55,10 @@ plain_request = LLMRequest(
 assert plain_request.expect_json is False
 assert plain_request.response_schema is None
 assert plain_request.temperature == 0.7
-assert plain_request.timeout_seconds == 60
+# 2026-09-11 real fix: a real, substantial call can genuinely take
+# more than 60 real seconds server-side (found live) - default raised
+# to 180.
+assert plain_request.timeout_seconds == 180
 
 
 try:

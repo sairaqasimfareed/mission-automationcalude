@@ -5,6 +5,24 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-11 - Two more real bugs found running the first real content-generation call: output budget and timeout both too small for real Claude 5 responses
+
+Direct continuation of today's live-testing work, immediately after the `temperature` fix. Re-ran the real content-generation step (`ContentPipeline.run()` -> `ResearchAgent.research()`, a real Claude call for a short horror test video) and it failed with `"Research provider returned empty content."` - a real HTTP 200 response with `output_tokens=1024` but zero usable text.
+
+**Bug 1 - output token budget.** `ResearchAgent` (and every other content-generation agent in this codebase) never sets `LLMRequest.max_output_tokens`, relying on the provider adapter's own fallback. OpenAI and Gemini's adapters only send a token limit when the caller explicitly sets one, letting the provider's own generous default apply - only `AnthropicProviderAdapter` hardcodes a fallback (`max_tokens=1024` when unset), because the real Anthropic Messages API requires the field on every request, unlike OpenAI/Gemini. 1024 tokens is far too small for real "long-form YouTube video" research output - the real call consumed the entire budget (confirmed via the real response) and returned no closed "text" content block at all. Raised the fallback to 8192 (`_DEFAULT_MAX_OUTPUT_TOKENS`), a named constant with the live-discovered reasoning documented inline.
+
+**Bug 2 - request timeout.** With bug 1 fixed, the retried research call finally succeeded, but the real log line was stark: `latency_seconds=484.1369, retry_count=2` - eight real minutes, because `LLMRequest.timeout_seconds` defaults to 60 and a real, substantial (4362-token) non-streaming Claude 5 response can genuinely take longer than 60 real seconds to finish generating server-side. Each of the first two attempts hit that 60-second client timeout and got retried by the Anthropic SDK's own backoff logic before the third attempt finally had enough time to complete. Raised the shared `LLMRequest.timeout_seconds` default from 60 to 180 - broad (affects every provider, not just Anthropic) but low-risk: a longer timeout only lets slower-but-successful real calls complete instead of needlessly failing and retrying.
+
+**Teeth-verified both**: reverting `_DEFAULT_MAX_OUTPUT_TOKENS` to 1024 broke the new `test_execute_sends_a_generous_default_max_tokens_when_unset` test with the real value visible; the `timeout_seconds` default change is covered by `test_llm_request.py`'s existing default-value assertion, updated to the new value (60 -> 180).
+
+**User asked directly why content generation was taking so long** ("why content creation taking time, it is a simple front end task?") - explained plainly: it is a real LLM call producing real, substantial written content, and the two bugs above were compounding a naturally-slower real operation into an 8-minute one through unnecessary timeout/retry cycles, not a front-end delay.
+
+**Separately, the user asked which real Claude model the app uses** (from a screenshot of the real Claude Console's model picker: Fable 5.1/Opus 5/Sonnet 5/Haiku 4.5) - confirmed **Sonnet 5** (`claude-sonnet-5`, set as `default_model` on the real "claude" provider profile earlier today, alongside `gemini-2.5-flash` for the "gemini" profile - both were previously unset, which is what caused an earlier real 404 by sending the literal placeholder string `"provider-default-model"` to both APIs). User confirmed keeping Sonnet 5 (good balance of quality/cost/speed for script writing) over switching to Opus 5.
+
+**Tests**: `test_anthropic_provider.py` gained a real pytest-style test for the new default (the file's existing tests are an older top-level-script convention; this one is a proper `def test_...()`); `test_llm_request.py`'s existing default-timeout assertion updated. 30-case "llm"-matching regression green (run with `.env` moved aside, confirming the earlier-documented global-settings interaction is the only reason to do so - these two fixes themselves needed no such isolation). mypy/ruff/black clean.
+
+---
+
 ## 2026-09-11 - Real bug found via the first successful real LLM call: Claude 5 rejects the `temperature` parameter
 
 With the runtime-construction gaps above closed, ran a minimal, real, direct sanity check through the shipped chain (`get_production_runtime()` -> `LLMService.generate()`) before committing to the full expensive pipeline. First attempt failed on both configured LLM profiles: Claude with a real HTTP 400, Gemini with a real 404 (the latter was the sanity script's own bug - it reused Claude's model id for Gemini's failover attempt, not a real Gemini issue).

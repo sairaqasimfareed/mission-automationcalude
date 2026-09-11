@@ -46,8 +46,18 @@ class LLMRequest(MissionBaseModel):
         ge=1,
     )
 
+    # 2026-09-11 real fix, found live during this session's first real
+    # end-to-end content-generation call: a real research call against
+    # the live Claude API (with the also-just-raised, more realistic
+    # max_output_tokens headroom) repeatedly hit a 60-second per-attempt
+    # client timeout before finally succeeding on a 3rd retry at ~8
+    # minutes total wall-clock - a real, substantial generation with a
+    # large output genuinely can take more than 60 seconds server-side,
+    # non-streaming. 180 seconds lets most real calls with a generous
+    # token budget succeed on the first attempt instead of wastefully
+    # timing out and retrying.
     timeout_seconds: int = Field(
-        default=60,
+        default=180,
         ge=1,
         le=3600,
     )
