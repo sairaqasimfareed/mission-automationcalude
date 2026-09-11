@@ -1,13 +1,18 @@
 from __future__ import annotations
 
-from src.models.voice_directives import VoiceEmotion
+from src.models.voice_directives import VoiceEmotion, VoicePitchStyle
 from src.models.voice_profile import VoiceProfile
 
 _ELEVENLABS_PROVIDER_NAME = "elevenlabs"
 _RECOMMENDED_TAGS_KEY = "recommended_voice_tags"
 
 
-def build_voice_search_terms(profile: VoiceProfile) -> list[str]:
+def build_voice_search_terms(
+    profile: VoiceProfile,
+    *,
+    emotion: VoiceEmotion | None = None,
+    pitch_style: VoicePitchStyle | None = None,
+) -> list[str]:
     """
     Build the real, individual search terms to run against ElevenLabs'
     voice search endpoint for one provider-independent VoiceProfile.
@@ -30,6 +35,15 @@ def build_voice_search_terms(profile: VoiceProfile) -> list[str]:
     to actually surface matches for a profile's stylistic tags, which
     rarely appear together, verbatim, in a premade voice's name.
 
+    emotion/pitch_style default to the profile's own static baseline
+    (profile.emotion/profile.pitch_style) exactly as before -
+    overriding them is the real fix for "don't hardcode a voice per
+    genre": DynamicVoiceSelectionService passes the *resolved scene
+    directive's* actual emotion/pitch_style (often LLM-produced, and
+    free to differ scene-to-scene) instead of the profile's fixed
+    default, so the real voice ElevenLabs suggests can legitimately
+    vary by what the LLM actually asked for, not just by genre.
+
     Pure/deterministic - no network call.
     """
 
@@ -40,13 +54,18 @@ def build_voice_search_terms(profile: VoiceProfile) -> list[str]:
         str(tag).strip() for tag in recommended_tags if str(tag).strip()
     ]
 
-    pitch_style = profile.pitch_style.value
+    effective_pitch_style = (pitch_style or profile.pitch_style).value
 
-    if pitch_style not in terms:
-        terms.append(pitch_style)
+    if effective_pitch_style not in terms:
+        terms.append(effective_pitch_style)
 
-    if profile.emotion != VoiceEmotion.NEUTRAL and profile.emotion.value not in terms:
-        terms.append(profile.emotion.value)
+    effective_emotion = emotion or profile.emotion
+
+    if (
+        effective_emotion != VoiceEmotion.NEUTRAL
+        and effective_emotion.value not in terms
+    ):
+        terms.append(effective_emotion.value)
 
     # dict.fromkeys preserves first-seen order while deduping.
     return list(dict.fromkeys(terms))

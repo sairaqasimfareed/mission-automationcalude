@@ -7,7 +7,7 @@ from src.browser.flow_browser_worker import FlowBrowserWorker
 from src.desktop.job_store import JsonJobStore
 from src.desktop.theme_preference_store import ThemePreferenceStore
 from src.entrypoint import build_production_runtime
-from src.models.provider_profile import ProviderCategory
+from src.models.provider_profile import ProviderCategory, ProviderProfile
 from src.providers.dry_run_thumbnail_image_provider import (
     DryRunThumbnailImageProvider,
 )
@@ -18,6 +18,7 @@ from src.services.application_infrastructure_factory import (
 )
 from src.services.content_intelligence_pipeline import ContentIntelligencePipeline
 from src.services.content_pipeline import ContentPipeline
+from src.services.dynamic_voice_selection_service import DynamicVoiceSelectionService
 from src.services.fact_check_service import FactCheckService
 from src.services.factory.provider_adapter_factory import ProviderAdapterFactory
 from src.services.final_export.final_export_service import FinalExportService
@@ -161,12 +162,33 @@ def get_production_runtime() -> ProductionApplicationRuntime:
 
     secret_store = KeyringSecretStore()
 
+    secret_manager = ProviderSecretManager(secret_store=secret_store)
+
     report = ProviderAdapterFactory(
-        secret_manager=ProviderSecretManager(secret_store=secret_store),
+        secret_manager=secret_manager,
     ).build(desktop_profiles)
 
     for warning in report.warnings:
         logger.warning(warning)
+
+    # 2026-09-11 real fix ("don't hardcode a voice per genre, I want
+    # it flexible") - built here, before the full provider_registry
+    # exists (that only comes into being inside build_production_
+    # runtime() below), directly from the raw desktop-persisted
+    # profiles, to avoid the circularity of calling
+    # get_elevenlabs_voice_search_client() (which itself calls
+    # get_infrastructure() -> this very function) from inside this
+    # function. None when no real, enabled ElevenLabs voice provider
+    # is configured yet - dynamic selection then simply never fires,
+    # reproducing prior behavior exactly.
+    voice_search_client = _build_elevenlabs_voice_search_client(
+        voice_profiles=[
+            profile
+            for profile in desktop_profiles
+            if profile.category == ProviderCategory.VOICE
+        ],
+        secret_manager=secret_manager,
+    )
 
     runtime = build_production_runtime(
         checkpoint_storage_root=CHECKPOINT_STORAGE_ROOT,
@@ -185,6 +207,14 @@ def get_production_runtime() -> ProductionApplicationRuntime:
         # through Voice Manager now actually reaches real generation,
         # not just persisted storage nothing reads.
         voice_provider_mapping_service=get_voice_provider_mapping_service(),
+        # 2026-09-11 - a voice not explicitly pinned above is still
+        # resolved live from ElevenLabs at generation time instead of
+        # requiring a human to have registered one first.
+        dynamic_voice_selection_service=(
+            DynamicVoiceSelectionService(search_client=voice_search_client)
+            if voice_search_client is not None
+            else None
+        ),
     )
 
     for profile in desktop_profiles:
@@ -396,6 +426,51 @@ def get_voice_profile_registry_service() -> VoiceProfileRegistryService:
     )
 
 
+def _build_elevenlabs_voice_search_client(
+    *,
+    voice_profiles: list[ProviderProfile],
+    secret_manager: ProviderSecretManager,
+) -> ElevenLabsVoiceSearchClient | None:
+    """
+    Real, shared resolution logic behind get_elevenlabs_voice_search_client()
+    - factored out (2026-09-11) so get_production_runtime() can build the
+    same real client for DynamicVoiceSelectionService without calling
+    get_infrastructure()/get_production_runtime() itself (that would
+    recurse: get_production_runtime() is what constructs the
+    infrastructure get_elevenlabs_voice_search_client() reads).
+
+    voice_profiles is any iterable of already-VOICE-category provider
+    profiles (get_elevenlabs_voice_search_client() passes the real
+    provider_registry's; get_production_runtime() passes the raw
+    desktop-persisted profiles filtered to VOICE, before the full
+    registry exists yet).
+    """
+
+    profile = next(
+        (
+            candidate
+            for candidate in voice_profiles
+            if candidate.provider_name.strip().lower() == "elevenlabs"
+            and candidate.enabled
+            and candidate.secret_reference
+        ),
+        None,
+    )
+
+    if profile is None or not profile.secret_reference:
+        return None
+
+    try:
+        api_key = secret_manager.resolve_secret(profile.secret_reference)
+    except Exception:
+        return None
+
+    return ElevenLabsVoiceSearchClient(
+        api_key=api_key,
+        base_url=profile.base_url or "https://api.elevenlabs.io",
+    )
+
+
 @lru_cache
 def get_elevenlabs_voice_search_client() -> ElevenLabsVoiceSearchClient | None:
     """
@@ -422,32 +497,11 @@ def get_elevenlabs_voice_search_client() -> ElevenLabsVoiceSearchClient | None:
 
     infrastructure = get_infrastructure()
 
-    profile = next(
-        (
-            candidate
-            for candidate in infrastructure.provider_registry.list_by_category(
-                ProviderCategory.VOICE
-            )
-            if candidate.provider_name.strip().lower() == "elevenlabs"
-            and candidate.enabled
-            and candidate.secret_reference
+    return _build_elevenlabs_voice_search_client(
+        voice_profiles=list(
+            infrastructure.provider_registry.list_by_category(ProviderCategory.VOICE)
         ),
-        None,
-    )
-
-    if profile is None or not profile.secret_reference:
-        return None
-
-    try:
-        api_key = infrastructure.provider_secret_manager.resolve_secret(
-            profile.secret_reference
-        )
-    except Exception:
-        return None
-
-    return ElevenLabsVoiceSearchClient(
-        api_key=api_key,
-        base_url=profile.base_url or "https://api.elevenlabs.io",
+        secret_manager=infrastructure.provider_secret_manager,
     )
 
 

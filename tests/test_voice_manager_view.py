@@ -106,12 +106,15 @@ def test_selecting_a_profile_shows_its_real_details(qapp: QApplication) -> None:
     assert "Horror" in view._used_by_genres.text()  # noqa: SLF001
 
 
-def test_unconfigured_profile_shows_not_configured(qapp: QApplication) -> None:
+def test_unconfigured_profile_shows_auto_selected(qapp: QApplication) -> None:
     view = _view(qapp)
     view.refresh()
     view._select_profile_id("voice.horror_whisper")  # noqa: SLF001
 
-    assert view._status_badge.text() == "Not configured"  # noqa: SLF001
+    # 2026-09-11: no pin means the real dynamic-selection path picks a
+    # voice live at generation time - this is no longer "broken"/
+    # unconfigured, so the badge says so rather than warning.
+    assert view._status_badge.text() == "Auto (live-selected)"  # noqa: SLF001
     assert view._voice_id_field.text() == ""  # noqa: SLF001
 
 
@@ -131,7 +134,7 @@ def test_save_registers_a_real_voice_id(qapp: QApplication) -> None:
         )
         == "real-voice-abc"
     )
-    assert view._status_badge.text() == "Configured: real-voice-abc"  # noqa: SLF001
+    assert view._status_badge.text() == "Pinned: real-voice-abc"  # noqa: SLF001
 
 
 def test_save_without_a_voice_id_is_rejected(qapp: QApplication) -> None:
@@ -238,7 +241,7 @@ def test_genre_overview_table_reflects_real_delivery_mode(qapp: QApplication) ->
     assert delivery_cell is not None
     assert voice_id_cell is not None
     assert delivery_cell.text() == "emotion_tags"
-    assert voice_id_cell.text() == "not configured"
+    assert voice_id_cell.text() == "auto (live-selected)"
 
 
 # --- 2026-09-10 follow-up to voice gap #2: real auto-suggest-then-

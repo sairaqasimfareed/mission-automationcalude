@@ -1,7 +1,15 @@
 from __future__ import annotations
 
 from src.desktop import services
-from src.models.provider_profile import ProviderHealthStatus
+from src.models.provider_profile import (
+    ProviderCategory,
+    ProviderHealthStatus,
+    ProviderProfile,
+)
+from src.services.secrets.provider_secret_manager import (
+    InMemorySecretStore,
+    ProviderSecretManager,
+)
 
 
 def _clear_caches() -> None:
@@ -71,3 +79,81 @@ def test_get_final_export_service_is_ready() -> None:
 
     assert final_export_service.packaging_service is not None
     assert final_export_service.validation_service is not None
+
+
+# --- 2026-09-11 real fix ("don't hardcode a voice per genre, I want
+# it flexible"): _build_elevenlabs_voice_search_client() is the
+# shared logic behind both get_elevenlabs_voice_search_client() (the
+# GUI's manual "Suggest voices" button) and get_production_runtime()'s
+# new DynamicVoiceSelectionService wiring - factored out so the latter
+# doesn't have to call get_infrastructure()/get_production_runtime()
+# from inside itself (which would recurse). ---
+
+
+def _secret_manager_with(*, secret_value: str) -> tuple[ProviderSecretManager, str]:
+    secret_manager = ProviderSecretManager(secret_store=InMemorySecretStore())
+    result = secret_manager.create_secret(profile_id="voice", secret_value=secret_value)
+
+    return secret_manager, result.secret_reference
+
+
+def _voice_profile(
+    *, provider_name: str, enabled: bool, secret_reference: str | None
+) -> ProviderProfile:
+    return ProviderProfile(
+        profile_id="voice-profile",
+        display_name="Voice Profile",
+        provider_name=provider_name,
+        category=ProviderCategory.VOICE,
+        enabled=enabled,
+        secret_reference=secret_reference,
+    )
+
+
+def test_build_elevenlabs_voice_search_client_resolves_a_real_key() -> None:
+    secret_manager, secret_reference = _secret_manager_with(secret_value="real-key-123")
+    profile = _voice_profile(
+        provider_name="elevenlabs", enabled=True, secret_reference=secret_reference
+    )
+
+    client = services._build_elevenlabs_voice_search_client(
+        voice_profiles=[profile], secret_manager=secret_manager
+    )
+
+    assert client is not None
+
+
+def test_build_elevenlabs_voice_search_client_ignores_a_disabled_profile() -> None:
+    secret_manager, secret_reference = _secret_manager_with(secret_value="real-key-123")
+    profile = _voice_profile(
+        provider_name="elevenlabs", enabled=False, secret_reference=secret_reference
+    )
+
+    client = services._build_elevenlabs_voice_search_client(
+        voice_profiles=[profile], secret_manager=secret_manager
+    )
+
+    assert client is None
+
+
+def test_build_elevenlabs_voice_search_client_ignores_a_different_provider() -> None:
+    secret_manager, secret_reference = _secret_manager_with(secret_value="real-key-123")
+    profile = _voice_profile(
+        provider_name="openai", enabled=True, secret_reference=secret_reference
+    )
+
+    client = services._build_elevenlabs_voice_search_client(
+        voice_profiles=[profile], secret_manager=secret_manager
+    )
+
+    assert client is None
+
+
+def test_build_elevenlabs_voice_search_client_none_without_any_profile() -> None:
+    secret_manager = ProviderSecretManager(secret_store=InMemorySecretStore())
+
+    client = services._build_elevenlabs_voice_search_client(
+        voice_profiles=[], secret_manager=secret_manager
+    )
+
+    assert client is None

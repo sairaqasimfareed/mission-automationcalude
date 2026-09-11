@@ -11,6 +11,7 @@ from src.models.voice_directives import (
 from src.models.voice_profile import (
     VoiceProfile,
 )
+from src.services.dynamic_voice_selection_service import DynamicVoiceSelectionService
 from src.services.voice_directive_resolution_service import (
     VoiceDirectiveResolutionService,
 )
@@ -81,6 +82,7 @@ class VoiceResolutionRuntimeFactory:
         profiles: list[VoiceProfile],
         target_provider: str | None = None,
         voice_provider_mapping_service: VoiceProviderMappingService | None = None,
+        dynamic_voice_selection_service: DynamicVoiceSelectionService | None = None,
     ) -> VoiceResolutionRuntime:
         """
         Build one internally consistent voice-resolution runtime.
@@ -94,6 +96,11 @@ class VoiceResolutionRuntimeFactory:
         production caller wiring in an actually-configured provider
         name and a loaded VoiceProviderMappingService is a separate,
         deliberate step from building this capability.
+
+        dynamic_voice_selection_service (2026-09-11, "don't hardcode a
+        voice per genre") is likewise optional and additive - omitting
+        it reproduces this factory's exact prior behavior (a manual
+        pin or a static profile mapping, or nothing).
         """
 
         registry = VoiceProfileRegistryService(
@@ -108,6 +115,7 @@ class VoiceResolutionRuntimeFactory:
             voice_profile_registry=registry,
             validation_service=validation_service,
             voice_provider_mapping_service=voice_provider_mapping_service,
+            dynamic_voice_selection_service=dynamic_voice_selection_service,
         )
 
         return VoiceResolutionRuntime(

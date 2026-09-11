@@ -13,6 +13,7 @@ from src.models.voice_directives import (
     SceneVoiceDirectives,
     VoiceDirectiveStatus,
 )
+from src.services.dynamic_voice_selection_service import DynamicVoiceSelectionService
 from src.services.voice_directive_validation_service import (
     VoiceDirectiveValidationService,
 )
@@ -34,6 +35,7 @@ class VoiceDirectiveResolutionService:
         voice_profile_registry: VoiceProfileRegistryService,
         validation_service: VoiceDirectiveValidationService,
         voice_provider_mapping_service: VoiceProviderMappingService | None = None,
+        dynamic_voice_selection_service: DynamicVoiceSelectionService | None = None,
     ) -> None:
         self.voice_profile_registry = voice_profile_registry
 
@@ -45,6 +47,14 @@ class VoiceDirectiveResolutionService:
         # own provider_mappings carries (see resolve()'s own comment
         # for why a real id can never simply be hardcoded there).
         self.voice_provider_mapping_service = voice_provider_mapping_service
+
+        # 2026-09-11 real fix ("don't hardcode a voice per genre, I
+        # want it flexible") - optional so every existing caller/test
+        # keeps working unchanged; when supplied, resolve() falls
+        # through to a real, live ElevenLabs search only after both
+        # tiers above found nothing, so an explicit manual pin (via
+        # voice_provider_mapping_service) still wins when one exists.
+        self.dynamic_voice_selection_service = dynamic_voice_selection_service
 
     def resolve(
         self,
@@ -139,6 +149,31 @@ class VoiceDirectiveResolutionService:
                 selected_provider_mapping = {
                     **selected_provider_mapping,
                     "voice_id": real_voice_id,
+                }
+
+        if (
+            self.dynamic_voice_selection_service is not None
+            and effective_provider
+            and not selected_provider_mapping.get("voice_id")
+        ):
+            # 2026-09-11 real fix ("don't hardcode a voice per genre,
+            # I want it flexible") - only reached when neither a
+            # manual pin (voice_provider_mapping_service) nor a
+            # static profile.provider_mappings entry already resolved
+            # a voice_id, so an explicit pin still wins when one
+            # exists. Uses the directive's own emotion/pitch_style
+            # (which may be LLM-produced and differ scene-to-scene),
+            # not the profile's fixed baseline.
+            dynamic_voice_id = self.dynamic_voice_selection_service.select_voice_id(
+                profile=profile,
+                emotion=directives.emotion,
+                pitch_style=directives.pitch_style,
+            )
+
+            if dynamic_voice_id:
+                selected_provider_mapping = {
+                    **selected_provider_mapping,
+                    "voice_id": dynamic_voice_id,
                 }
 
         status = (

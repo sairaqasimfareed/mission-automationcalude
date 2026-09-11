@@ -19,6 +19,7 @@ from src.services.application_infrastructure_factory import (
 )
 from src.services.content_intelligence_pipeline import ContentIntelligencePipeline
 from src.services.content_pipeline import ContentPipeline
+from src.services.dynamic_voice_selection_service import DynamicVoiceSelectionService
 from src.services.genre_profile_registry_service import (
     GenreProfileRegistryService,
 )
@@ -188,6 +189,7 @@ class ProductionApplicationFactory:
         llm_gateway: LLMGateway | None = None,
         production_render_service: ProductionRenderService | None = None,
         voice_provider_mapping_service: VoiceProviderMappingService | None = None,
+        dynamic_voice_selection_service: DynamicVoiceSelectionService | None = None,
     ) -> None:
         if not provider_profiles:
             raise ValueError(
@@ -277,6 +279,14 @@ class ProductionApplicationFactory:
         # reaches real generation. See build()'s own comment for
         # target_provider.
         self._voice_provider_mapping_service = voice_provider_mapping_service
+
+        # 2026-09-11 real fix ("don't hardcode a voice per genre, I
+        # want it flexible") - optional so every existing caller/test
+        # keeps working unchanged; when supplied, a real voice never
+        # explicitly pinned by voice_provider_mapping_service is still
+        # selected live from ElevenLabs at generation time instead of
+        # requiring one. See VoiceResolutionRuntimeFactory.build().
+        self._dynamic_voice_selection_service = dynamic_voice_selection_service
 
         if production_render_service is not None:
             self._production_render_service: ProductionRenderService | None = (
@@ -406,6 +416,7 @@ class ProductionApplicationFactory:
             profiles=list(self._voice_profiles),
             target_provider=target_provider,
             voice_provider_mapping_service=self._voice_provider_mapping_service,
+            dynamic_voice_selection_service=self._dynamic_voice_selection_service,
         )
 
         voice_generation_service = VoiceGenerationService(

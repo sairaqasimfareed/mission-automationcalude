@@ -7,6 +7,7 @@ from src.config.settings import Settings
 from src.providers.music_provider import MusicProvider
 from src.providers.sound_effect_provider import SoundEffectProvider
 from src.providers.voice_provider import VoiceProvider
+from src.services.dynamic_voice_selection_service import DynamicVoiceSelectionService
 from src.services.genre_timeline_pipeline_service import (
     GenreTimelinePipelineService,
 )
@@ -46,6 +47,7 @@ def build_production_runtime(
     settings: Settings | None = None,
     secret_store: SecretStore | None = None,
     voice_provider_mapping_service: VoiceProviderMappingService | None = None,
+    dynamic_voice_selection_service: DynamicVoiceSelectionService | None = None,
 ) -> ProductionApplicationRuntime:
     """
     Compose and validate one production Mission Automation runtime.
@@ -85,6 +87,13 @@ def build_production_runtime(
     registered there actually reaches real generation. Omitting it
     reproduces this function's exact prior behavior (no real voice_id
     ever resolves, matching every caller before this option existed).
+
+    dynamic_voice_selection_service (2026-09-11, "don't hardcode a
+    voice per genre, I want it flexible") is likewise passed straight
+    through - when supplied, a voice not explicitly pinned via
+    voice_provider_mapping_service is still resolved live from
+    ElevenLabs' real catalog at generation time. Omitting it
+    reproduces this function's exact prior behavior.
     """
 
     configuration = RuntimeConfigurationLoader(
@@ -139,6 +148,7 @@ def build_production_runtime(
         advanced_settings=configuration.advanced_settings,
         checkpoint_storage_root=effective_checkpoint_storage_root,
         voice_provider_mapping_service=voice_provider_mapping_service,
+        dynamic_voice_selection_service=dynamic_voice_selection_service,
     ).build()
 
     validation_result = ProviderStartupValidator(

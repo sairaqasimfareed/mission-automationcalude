@@ -166,6 +166,11 @@ class VoiceManagerView(QWidget):
         card_layout.addWidget(subheading(f"Real {self._provider_name} voice"))
         card_layout.addWidget(
             muted(
+                "Optional. Leave this blank and generation picks a real "
+                "voice live from your account automatically, based on "
+                "this profile's style plus the actual per-scene "
+                "directive - nothing is hardcoded to this genre. Enter "
+                "a voice id here only to pin one specific voice instead. "
                 "Only a voice already added to this account's own "
                 '"My Voices" will actually work - ElevenLabs\' Free tier '
                 "blocks API access to library (non-owned) voices."
@@ -283,7 +288,7 @@ class VoiceManagerView(QWidget):
             self._genre_table.setItem(
                 genre_row,
                 3,
-                QTableWidgetItem(configured if configured else "not configured"),
+                QTableWidgetItem(configured if configured else "auto (live-selected)"),
             )
 
     def _select_profile_id(self, profile_id: str) -> None:
@@ -349,9 +354,9 @@ class VoiceManagerView(QWidget):
         self._notes_field.clear()
 
         self._status_badge.setText(
-            f"Configured: {registered_voice_id}"
+            f"Pinned: {registered_voice_id}"
             if registered_voice_id
-            else "Not configured"
+            else "Auto (live-selected)"
         )
 
         self._clear_suggestions()

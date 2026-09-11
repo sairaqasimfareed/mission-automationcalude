@@ -108,3 +108,52 @@ def test_build_terms_ignores_a_provider_mapping_for_a_different_provider() -> No
     terms = build_voice_search_terms(profile)
 
     assert "should-not-appear" not in terms
+
+
+# --- 2026-09-11 real fix ("don't hardcode a voice per genre, I want
+# it flexible"): emotion/pitch_style overrides let a caller build
+# terms from the actual (possibly LLM-produced) scene directive
+# instead of the profile's own fixed baseline. ---
+
+
+def test_build_terms_uses_profile_defaults_when_no_override_given() -> None:
+    profile = _registry().get("voice.horror_whisper")
+
+    terms = build_voice_search_terms(profile)
+
+    assert profile.pitch_style.value in terms
+    assert profile.emotion.value in terms
+
+
+def test_build_terms_pitch_style_override_replaces_the_profile_default() -> None:
+    profile = VoiceProfile(
+        profile_id="voice.test_pitch_override",
+        display_name="Test Pitch Override",
+        fallback_profile_id="voice.neutral_narrator",
+        pitch_style=VoicePitchStyle.DEEP,
+    )
+
+    terms = build_voice_search_terms(profile, pitch_style=VoicePitchStyle.BRIGHT)
+
+    assert terms == [VoicePitchStyle.BRIGHT.value]
+
+
+def test_build_terms_emotion_override_replaces_the_profile_default() -> None:
+    profile = _registry().get("voice.horror_whisper")
+    assert profile.emotion != VoiceEmotion.HAPPY
+
+    terms = build_voice_search_terms(profile, emotion=VoiceEmotion.HAPPY)
+
+    assert VoiceEmotion.HAPPY.value in terms
+    assert profile.emotion.value not in terms
+
+
+def test_build_terms_neutral_emotion_override_excludes_emotion_like_the_default() -> (
+    None
+):
+    profile = _registry().get("voice.horror_whisper")
+    assert profile.emotion != VoiceEmotion.NEUTRAL
+
+    terms = build_voice_search_terms(profile, emotion=VoiceEmotion.NEUTRAL)
+
+    assert "neutral" not in terms

@@ -343,6 +343,185 @@ def test_voice_provider_mapping_service_overlays_a_real_voice_id() -> None:
     )
 
 
+# --- 2026-09-11 real fix ("don't hardcode a voice per genre, I want
+# it flexible"): dynamic_voice_selection_service is the new, real
+# fallback tier - only reached when neither an explicit
+# voice_provider_mapping_service pin nor a static profile mapping
+# already resolved a voice_id. ---
+
+
+class _StubDynamicVoiceSelectionService:
+    def __init__(self, *, voice_id: str | None) -> None:
+        self.voice_id = voice_id
+        self.calls: list[tuple[str, str, str]] = []
+
+    def select_voice_id(
+        self,
+        *,
+        profile: VoiceProfile,
+        emotion: object,
+        pitch_style: object,
+    ) -> str | None:
+        self.calls.append(
+            (
+                profile.profile_id,
+                getattr(emotion, "value", str(emotion)),
+                getattr(pitch_style, "value", str(pitch_style)),
+            )
+        )
+
+        return self.voice_id
+
+
+def _documentary_profile_without_static_mapping() -> VoiceProfile:
+    return VoiceProfile(
+        profile_id="voice.documentary_no_mapping",
+        display_name="Documentary Narrator (no static mapping)",
+        fallback_profile_id="voice.neutral_narrator",
+    )
+
+
+def test_dynamic_voice_selection_fires_when_nothing_else_resolved_a_voice_id() -> None:
+    dynamic_service = _StubDynamicVoiceSelectionService(voice_id="dynamic-voice-id")
+
+    runtime = VoiceResolutionRuntimeFactory().build(
+        profiles=[_neutral_profile(), _documentary_profile_without_static_mapping()],
+        target_provider="elevenlabs",
+        dynamic_voice_selection_service=dynamic_service,  # type: ignore[arg-type]
+    )
+
+    blueprints = runtime.resolve_many(
+        [
+            (
+                _directives(
+                    scene_number=1,
+                    voice_profile_id="voice.documentary_no_mapping",
+                ),
+                "First scene narration.",
+                20.0,
+            ),
+        ]
+    )
+
+    assert blueprints[0].selected_provider_mapping["voice_id"] == "dynamic-voice-id"
+    assert len(dynamic_service.calls) == 1
+
+
+def test_a_static_profile_mapping_wins_over_dynamic_selection() -> None:
+    dynamic_service = _StubDynamicVoiceSelectionService(voice_id="dynamic-voice-id")
+
+    runtime = VoiceResolutionRuntimeFactory().build(
+        profiles=[_neutral_profile(), _documentary_profile()],
+        target_provider="elevenlabs",
+        dynamic_voice_selection_service=dynamic_service,  # type: ignore[arg-type]
+    )
+
+    blueprints = runtime.resolve_many(
+        [
+            (
+                _directives(scene_number=1),
+                "First scene narration.",
+                20.0,
+            ),
+        ]
+    )
+
+    assert blueprints[0].selected_provider_mapping["voice_id"] == "test-voice"
+    assert dynamic_service.calls == []
+
+
+def test_an_explicit_mapping_service_pin_wins_over_dynamic_selection() -> None:
+    from src.services.registry.voice_provider_mapping_repository import (
+        InMemoryVoiceProviderMappingRepository,
+    )
+    from src.services.voice_provider_mapping_service import VoiceProviderMappingService
+
+    mapping_service = VoiceProviderMappingService(
+        repository=InMemoryVoiceProviderMappingRepository()
+    )
+    mapping_service.load()
+    mapping_service.set_voice_id(
+        voice_profile_id="voice.documentary_no_mapping",
+        provider_name="elevenlabs",
+        voice_id="pinned-voice-id",
+    )
+    dynamic_service = _StubDynamicVoiceSelectionService(voice_id="dynamic-voice-id")
+
+    runtime = VoiceResolutionRuntimeFactory().build(
+        profiles=[_neutral_profile(), _documentary_profile_without_static_mapping()],
+        target_provider="elevenlabs",
+        voice_provider_mapping_service=mapping_service,
+        dynamic_voice_selection_service=dynamic_service,  # type: ignore[arg-type]
+    )
+
+    blueprints = runtime.resolve_many(
+        [
+            (
+                _directives(
+                    scene_number=1,
+                    voice_profile_id="voice.documentary_no_mapping",
+                ),
+                "First scene narration.",
+                20.0,
+            ),
+        ]
+    )
+
+    assert blueprints[0].selected_provider_mapping["voice_id"] == "pinned-voice-id"
+    assert dynamic_service.calls == []
+
+
+def test_dynamic_voice_selection_is_not_consulted_without_a_target_provider() -> None:
+    dynamic_service = _StubDynamicVoiceSelectionService(voice_id="dynamic-voice-id")
+
+    runtime = VoiceResolutionRuntimeFactory().build(
+        profiles=[_neutral_profile(), _documentary_profile_without_static_mapping()],
+        dynamic_voice_selection_service=dynamic_service,  # type: ignore[arg-type]
+    )
+
+    blueprints = runtime.resolve_many(
+        [
+            (
+                _directives(
+                    scene_number=1,
+                    voice_profile_id="voice.documentary_no_mapping",
+                ),
+                "First scene narration.",
+                20.0,
+            ),
+        ]
+    )
+
+    assert blueprints[0].selected_provider_mapping == {}
+    assert dynamic_service.calls == []
+
+
+def test_dynamic_voice_selection_finding_nothing_leaves_mapping_empty() -> None:
+    dynamic_service = _StubDynamicVoiceSelectionService(voice_id=None)
+
+    runtime = VoiceResolutionRuntimeFactory().build(
+        profiles=[_neutral_profile(), _documentary_profile_without_static_mapping()],
+        target_provider="elevenlabs",
+        dynamic_voice_selection_service=dynamic_service,  # type: ignore[arg-type]
+    )
+
+    blueprints = runtime.resolve_many(
+        [
+            (
+                _directives(
+                    scene_number=1,
+                    voice_profile_id="voice.documentary_no_mapping",
+                ),
+                "First scene narration.",
+                20.0,
+            ),
+        ]
+    )
+
+    assert blueprints[0].selected_provider_mapping == {}
+    assert len(dynamic_service.calls) == 1
+
+
 def test_runtime_does_not_require_provider_credentials() -> None:
     runtime = _runtime()
 
