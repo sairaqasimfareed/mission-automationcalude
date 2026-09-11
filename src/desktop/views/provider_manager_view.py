@@ -75,6 +75,44 @@ _KNOWN_PROVIDER_NAMES: dict[ProviderCategory, list[str]] = {
     ProviderCategory.STOCK_IMAGE: ["pexels", "pixabay", "envato"],
 }
 
+# Real model id suggestions for "Default model" - found this session's
+# real, live-discovered gap: leaving this field blank makes
+# create_llm_adapter() fall back to the literal request-level
+# placeholder string "provider-default-model", which every real
+# provider rejects with a real 404 - nothing in the form previously
+# told a person what a valid value even looks like. Keyed by the same
+# normalized provider_name _resolve_llm_provider() itself accepts
+# (src/services/factory/provider_factory.py), so "claude" and
+# "anthropic" both work. Claude's ids are this app's own real,
+# current model family; Gemini's were confirmed live against the
+# user's real account this session (2026-09-11); OpenAI is
+# deliberately left without suggestions - this session never
+# live-verified a current OpenAI model id, and a wrong guess here
+# would be worse than an empty, honestly-free-text field. The combo
+# stays editable, so any of these lists can still be overridden or
+# extended by typing - never a hard restriction.
+_KNOWN_MODEL_NAMES: dict[str, list[str]] = {
+    "anthropic": [
+        "claude-sonnet-5",
+        "claude-opus-5",
+        "claude-haiku-4-5-20251001",
+        "claude-fable-5-1",
+    ],
+    "claude": [
+        "claude-sonnet-5",
+        "claude-opus-5",
+        "claude-haiku-4-5-20251001",
+        "claude-fable-5-1",
+    ],
+    "gemini": [
+        "gemini-2.5-flash",
+        "gemini-2.5-pro",
+        "gemini-2.5-flash-lite",
+        "gemini-flash-latest",
+        "gemini-pro-latest",
+    ],
+}
+
 
 class ProviderManagerView(QWidget):
     """
@@ -186,6 +224,9 @@ class ProviderManagerView(QWidget):
         # name for the generic HTTP adapter path.
         self._provider_name = QComboBox()
         self._provider_name.setEditable(True)
+        self._provider_name.currentTextChanged.connect(
+            self._update_default_model_options
+        )
         form.addRow("Provider name", self._provider_name)
 
         self._category = QComboBox()
@@ -204,7 +245,15 @@ class ProviderManagerView(QWidget):
         self._category.currentIndexChanged.connect(self._update_provider_name_options)
         form.addRow("Category", self._category)
 
-        self._default_model = QLineEdit()
+        # Editable combo, same pattern as Provider name above - offers
+        # real, known model ids for the current provider_name (see
+        # _KNOWN_MODEL_NAMES) so a person adding a real API key also
+        # sees real choices for what to run it against, rather than a
+        # blank field with no hint. Leaving this genuinely blank still
+        # works exactly as before (falls back to request-level
+        # defaults) - these are suggestions, not a requirement.
+        self._default_model = QComboBox()
+        self._default_model.setEditable(True)
         self._default_model.setPlaceholderText("Optional")
         form.addRow("Default model", self._default_model)
 
@@ -391,6 +440,35 @@ class ProviderManagerView(QWidget):
         self._provider_name.setCurrentText(current_text)
         self._provider_name.blockSignals(False)
 
+        # blockSignals above means currentTextChanged (wired to
+        # _update_default_model_options) never fires for this
+        # category-driven repopulation - called explicitly here so
+        # model suggestions stay in sync with whatever provider name
+        # ended up selected, not just when a person edits it directly.
+        self._update_default_model_options()
+
+    def _update_default_model_options(self) -> None:
+        """
+        Repopulate the Default model combo's suggestions for the
+        currently selected/typed provider name - same
+        preserve-whatever's-already-there behavior as
+        _update_provider_name_options(). Real Claude model ids in
+        particular were a genuine, live-discovered gap (2026-09-11):
+        an empty default_model here silently sent a literal
+        placeholder string to the real API instead of a working model
+        id, with no hint in the form about what a valid value even
+        looks like.
+        """
+
+        provider_name = self._provider_name.currentText().strip().lower()
+        current_text = self._default_model.currentText()
+
+        self._default_model.blockSignals(True)
+        self._default_model.clear()
+        self._default_model.addItems(_KNOWN_MODEL_NAMES.get(provider_name, []))
+        self._default_model.setCurrentText(current_text)
+        self._default_model.blockSignals(False)
+
     def _update_response_mode_visibility(self) -> None:
         mode = self._response_mode.currentData()
 
@@ -498,7 +576,7 @@ class ProviderManagerView(QWidget):
         # one of those suggestions or a custom/generic-adapter value.
         self._provider_name.setCurrentText(profile.provider_name)
 
-        self._default_model.setText(profile.default_model or "")
+        self._default_model.setCurrentText(profile.default_model or "")
         self._base_url.setText(profile.base_url or "")
         self._secret_value.clear()
         self._priority.setValue(profile.priority)
@@ -679,7 +757,7 @@ class ProviderManagerView(QWidget):
                 enabled=self._enabled.isChecked(),
                 priority=self._priority.value(),
                 base_url=self._base_url.text(),
-                default_model=self._default_model.text(),
+                default_model=self._default_model.currentText(),
                 daily_budget_usd=self._daily_budget.value(),
                 monthly_budget_usd=self._monthly_budget.value(),
                 capabilities=capabilities,

@@ -28,7 +28,20 @@ from src.shared.llm.request import LLMRequest
 # and returned a real response with zero "text" content blocks,
 # surfacing as "Research provider returned empty content." - not a
 # parsing bug, a genuinely too-small budget.
-_DEFAULT_MAX_OUTPUT_TOKENS = 8192
+#
+# Raised again the same day, still live-discovered: 8192 was not
+# reliably enough either. Real Claude 5 responses include a real
+# "thinking" content block that shares the same max_tokens budget
+# with the actual "text" block - confirmed directly: one real call to
+# the exact same prompt used only 1179 thinking tokens and finished
+# normally (stop_reason="end_turn") with a full real text response,
+# while another real call to the same prompt hit max_tokens=8192
+# exactly with zero text ever produced, meaning that attempt spent
+# the *entire* budget thinking. This is real, observed variance in
+# how much a given call thinks, not a bug in a specific request - a
+# fixed token budget needs real headroom for an occasional
+# thinking-heavy attempt to still leave room for the actual answer.
+_DEFAULT_MAX_OUTPUT_TOKENS = 16384
 
 
 class AnthropicProviderAdapter(LLMProviderAdapter):

@@ -215,4 +215,4 @@ def test_execute_sends_a_generous_default_max_tokens_when_unset() -> None:
 
     adapter.create_operation(request)()
 
-    assert recording_client.messages.last_arguments["max_tokens"] == 8192
+    assert recording_client.messages.last_arguments["max_tokens"] == 16384
