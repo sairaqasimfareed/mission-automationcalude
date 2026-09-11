@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import zipfile
 from collections.abc import Callable
 from pathlib import Path
 
@@ -49,6 +50,42 @@ class GoogleFlowAuthRequiredError(RuntimeError):
     """Raised internally when the real product shows no sign of an
     authenticated session (see _detect_auth_required's own docstring
     for exactly what's checked and why)."""
+
+
+def _extract_sole_video_from_zip(zip_path: Path, destination_dir: Path) -> Path:
+    """
+    Real Flow's download is a .zip archive containing exactly one real
+    video file, not a raw video file directly (confirmed directly
+    against a real download). Extracts that one video and removes the
+    zip, so downloaded_file always points at a real, directly playable
+    media file - never a zip - matching what downstream technical
+    validation (MediaTechnicalValidationService) expects.
+
+    Raises if the zip doesn't contain exactly one video - never
+    guessing which of several files is the real one.
+    """
+
+    video_suffixes = {".mp4", ".mov", ".webm"}
+
+    with zipfile.ZipFile(zip_path) as archive:
+        video_names = [
+            name
+            for name in archive.namelist()
+            if Path(name).suffix.lower() in video_suffixes
+        ]
+
+        if len(video_names) != 1:
+            raise RuntimeError(
+                f"Expected exactly one real video file inside the "
+                f"downloaded zip, found {len(video_names)}: {video_names}."
+            )
+
+        archive.extract(video_names[0], destination_dir)
+
+    extracted_path = destination_dir / video_names[0]
+    zip_path.unlink()
+
+    return extracted_path
 
 
 class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
@@ -381,53 +418,88 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
             destination_dir = self._download_root / attempt.profile_id / str(attempt.id)
             destination_dir.mkdir(parents=True, exist_ok=True)
 
-            # Opens the first completed thumbnail's edit view, matching
-            # docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md section 7 - real Flow
-            # has no direct "download from the grid" control observed;
-            # Download scene lives inside the per-video edit view.
+            # Real-world finding, 2026-09-11 (superseding an earlier,
+            # wrong assumption that download lived inside a single-
+            # video edit view modal reachable straight from the
+            # compose view): the real download control only exists on
+            # the "All media" library view.
+            page.get_by_text(self._names.all_media_nav_item, exact=True).first.click(
+                timeout=self._action_timeout_ms
+            )
+            # goto()/navigation only waits for load, not for this
+            # client-rendered Angular view to finish hydrating - same
+            # real race check_profile_health hit (see its own fix).
+            page.wait_for_timeout(1500)
+
             first_thumbnail = page.get_by_role(
                 "img", name=self._names.generated_video_thumbnail
             ).first
-            first_thumbnail.click(timeout=self._action_timeout_ms)
+            # The row's own controls (its "More options" button among
+            # them) only render into the DOM on a real hover event -
+            # confirmed directly (a page-wide search found 0 of them
+            # before hovering, exactly 1 new one after).
+            first_thumbnail.hover(timeout=self._action_timeout_ms)
+            page.wait_for_timeout(1500)
 
-            # Real-world finding, 2026-09-11: once a SECOND batch exists
-            # in the same real project, a page-wide search for the
-            # download button raised Playwright's own strict-mode
-            # violation - real Flow renders one <flow-batch-info>
-            # container per generated batch, each with its own
-            # identically-named "Download batch" button, so an
-            # unscoped page-wide search matches every batch at once,
-            # not just the one just clicked. Scope to the specific
-            # <flow-batch-info> that structurally contains the
-            # thumbnail this method just clicked - never guess which
-            # of several identically-labeled real controls is the
-            # right one.
-            batch_container = page.locator("flow-batch-info").filter(
-                has=first_thumbnail
+            # Real Flow renders one <flow-video-tile> per row, each
+            # with its own identically-named "More options" button (on
+            # top of a separate, ALWAYS-present, unrelated "More
+            # options" button elsewhere on the page) - scope to the
+            # specific tile structurally containing the thumbnail just
+            # hovered, exactly like the earlier <flow-batch-info>
+            # download-button scoping fix. Never guess which of
+            # several identically-labeled real controls is the right
+            # one.
+            tile = page.locator("flow-video-tile").filter(has=first_thumbnail)
+            tile.get_by_role("button", name=self._names.more_options_button).click(
+                timeout=self._action_timeout_ms
+            )
+
+            # Clicking "Download" alone never fires a real download -
+            # it only opens a further submenu of format/resolution
+            # choices (Animated GIF / Original size / Upscaled / 4K),
+            # confirmed directly (expect_download() timed out waiting
+            # after only this click). "Original size" is the one real,
+            # free choice (Upscaled/4K cost extra real credits) that
+            # always matches whatever resolution the video actually
+            # generated at.
+            page.get_by_role("menuitem", name=self._names.download_menu_item).click(
+                timeout=self._action_timeout_ms
             )
 
             with page.expect_download(
                 timeout=self._operation_timeout_seconds * 1000
             ) as download_info:
-                batch_container.get_by_role(
-                    "button", name=self._names.download_scene_button
+                page.get_by_role(
+                    "menuitem", name=self._names.download_original_size_menu_item
                 ).click(timeout=self._action_timeout_ms)
 
             download = download_info.value
-            destination = destination_dir / download.suggested_filename
-            download.save_as(str(destination))
+            saved_path = destination_dir / download.suggested_filename
+            download.save_as(str(saved_path))
 
-            done_button = page.get_by_role(
-                "button", name=self._names.done_editing_scene_button
-            )
+            # Real-world finding, 2026-09-11: Flow's real download is a
+            # .zip archive containing the video file, not a raw video
+            # file directly (confirmed directly - a real download was
+            # a "download.zip" containing exactly one real .mp4).
+            # Downstream technical validation
+            # (GoogleFlowGenerationOrchestratorService.validate_downloaded_attempt)
+            # expects downloaded_file to point at a real, directly
+            # playable media file, so extract it here rather than
+            # leaking zip-handling into that unrelated service.
+            destination = _extract_sole_video_from_zip(saved_path, destination_dir)
 
-            if done_button.count() > 0:
-                done_button.click(timeout=self._action_timeout_ms)
-
+            # Real-world finding, 2026-09-11: with_transition() only
+            # ever records the state/history, never touches
+            # downloaded_file - this field was never actually being
+            # set here, so validate_downloaded_attempt() would always
+            # have raised "Cannot validate an attempt with no
+            # downloaded_file set" even on an otherwise-successful
+            # download.
             return attempt.with_transition(
                 GoogleFlowGenerationState.DOWNLOADED,
                 detail=f"Saved to {destination}.",
-            )
+            ).model_copy(update={"downloaded_file": str(destination)})
 
         return self._worker.submit(_run).result(
             timeout=self._operation_timeout_seconds * 2

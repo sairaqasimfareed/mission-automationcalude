@@ -114,15 +114,27 @@ class GoogleFlowRealAccessibleNames(BaseModel):
     start_generation_button: str = "Start generation"
 
     generated_video_thumbnail: str = "Generated video thumbnail"
-    # Real-world finding, 2026-09-11: ground-truthed directly against
-    # a real completed scene's edit view - these are plain Material
-    # icon-button accessible names ("download"/"Done"), not the
-    # earlier assumed "Download scene"/"Done editing scene" labels,
-    # which never matched any real control and made download() hang
-    # until timeout even after a real video had genuinely finished
-    # generating.
-    download_scene_button: str = "download"
-    done_editing_scene_button: str = "Done"
+    # Real-world finding, 2026-09-11 (superseding an earlier, wrong
+    # assumption that download lived inside a single-video edit view
+    # modal reachable straight from the compose view): the real
+    # download control only exists on the "All media" library view,
+    # reachable per-row after hovering a thumbnail (which reveals a
+    # row-scoped "More options" overflow button - real Flow renders
+    # one <flow-video-tile> per row, each with its own identically
+    # named "More options" button, so this must be scoped to the
+    # specific tile containing the thumbnail just hovered, exactly
+    # like the earlier <flow-batch-info> download-button scoping
+    # fix). Clicking "More options" -> "Download" opens a FURTHER
+    # submenu of format/resolution choices (Animated GIF / Original
+    # size / Upscaled / 4K) - "Download" alone never fires a real
+    # download; only clicking one of those submenu items does.
+    # "Original size" is the one real, free (no extra credit cost,
+    # unlike Upscaled/4K) choice that always matches whatever
+    # resolution the video actually generated at.
+    all_media_nav_item: str = "All media"
+    more_options_button: str = "More options"
+    download_menu_item: str = "Download"
+    download_original_size_menu_item: str = "Original size"
 
     # Agent settings (docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md section 4a):
     # confirmed to be the SAME "Settings trigger" popover, showing this

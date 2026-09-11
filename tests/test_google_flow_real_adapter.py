@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import zipfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -95,6 +96,7 @@ class _FakeLocator:
         self._count = count
         self.disabled = disabled
         self.click_calls = 0
+        self.hover_calls = 0
         # If set, click() flips `disabled` to this value - simulates
         # the real, verified behavior of Start generation becoming
         # disabled again once a submission goes through
@@ -119,6 +121,12 @@ class _FakeLocator:
 
         if self.disabled_after_click is not None:
             self.disabled = self.disabled_after_click
+
+    def hover(self, timeout: float | None = None) -> None:
+        if self._count == 0:
+            raise AssertionError("hovered a locator that should not exist")
+
+        self.hover_calls += 1
 
 
 _MISSING = _FakeLocator(count=0)
@@ -184,13 +192,26 @@ class _FakeKeyboard:
 
 
 class _FakeDownload:
-    def __init__(self, filename: str = "lighthouse.mp4") -> None:
+    """
+    Real Flow's real download is a .zip archive containing exactly
+    one real video file, not a raw video file directly (confirmed
+    directly against a real download) - save_as() writes a genuinely
+    valid zip here so download()'s own real extraction logic
+    (_extract_sole_video_from_zip) is actually exercised, not mocked
+    around.
+    """
+
+    def __init__(
+        self, filename: str = "download.zip", inner_video_name: str = "lighthouse.mp4"
+    ) -> None:
         self.suggested_filename = filename
+        self.inner_video_name = inner_video_name
         self.saved_to: Path | None = None
 
     def save_as(self, path: str) -> None:
         self.saved_to = Path(path)
-        self.saved_to.write_bytes(b"fake real video bytes")
+        with zipfile.ZipFile(self.saved_to, "w") as archive:
+            archive.writestr(self.inner_video_name, b"fake real video bytes")
 
 
 class _FakeDownloadInfo:
@@ -215,6 +236,7 @@ class _FakePage:
         self.keyboard = _FakeKeyboard()
         self._by_role: dict[tuple[str, str], _FakeLocator] = {}
         self._by_css: dict[str, _FakeLocator] = {}
+        self._by_text: dict[str, _FakeLocator] = {}
         self._download = _FakeDownload()
         self.closed = False
         self._raise_on_goto = raise_on_goto
@@ -236,6 +258,9 @@ class _FakePage:
     def locator(self, selector: str) -> _FakeLocator:
         return self._by_css.get(selector, _MISSING)
 
+    def get_by_text(self, text: str, exact: bool = False) -> _FakeLocator:
+        return self._by_text.get(text, _MISSING)
+
     def wait_for_timeout(self, ms: float) -> None:
         pass
 
@@ -249,6 +274,9 @@ class _FakePage:
 
     def register_css(self, selector: str, locator: _FakeLocator) -> None:
         self._by_css[selector] = locator
+
+    def register_text(self, text: str, locator: _FakeLocator) -> None:
+        self._by_text[text] = locator
 
 
 def _authenticated_page(
@@ -834,6 +862,53 @@ def test_observe_without_an_open_page_is_ui_changed() -> None:
 # --- download() ---
 
 
+class _DownloadFlowControls:
+    def __init__(
+        self,
+        thumbnail: _FakeLocator,
+        more_options_button: _FakeLocator,
+        download_menuitem: _FakeLocator,
+        original_size_menuitem: _FakeLocator,
+    ) -> None:
+        self.thumbnail = thumbnail
+        self.more_options_button = more_options_button
+        self.download_menuitem = download_menuitem
+        self.original_size_menuitem = original_size_menuitem
+
+
+def _register_download_flow(
+    page: _FakePage, *, thumbnail_count: int = 1
+) -> _DownloadFlowControls:
+    """
+    Registers the real, verified 2026-09-11 download flow: click "All
+    media" -> hover the thumbnail -> the row's own <flow-video-tile>-
+    scoped "More options" button -> "Download" menuitem (opens a
+    format submenu) -> "Original size" menuitem (the one that actually
+    fires a real download).
+    """
+
+    page.register_text("All media", _FakeLocator())
+
+    thumbnail = _FakeLocator(count=thumbnail_count)
+    page.register_role("img", "Generated video thumbnail", thumbnail)
+
+    more_options_button = _FakeLocator()
+    tile = _FakeContainerLocator()
+    tile.register_role("button", "More options", more_options_button)
+    video_tiles = _FakeBatchInfoLocator()
+    video_tiles.register_for(thumbnail, tile)
+    page.register_css("flow-video-tile", video_tiles)  # type: ignore[arg-type]
+
+    download_menuitem = _FakeLocator()
+    page.register_role("menuitem", "Download", download_menuitem)
+    original_size_menuitem = _FakeLocator()
+    page.register_role("menuitem", "Original size", original_size_menuitem)
+
+    return _DownloadFlowControls(
+        thumbnail, more_options_button, download_menuitem, original_size_menuitem
+    )
+
+
 def test_download_saves_a_file_and_transitions_to_downloaded(
     tmp_path: Path,
 ) -> None:
@@ -848,15 +923,7 @@ def test_download_saves_a_file_and_transitions_to_downloaded(
     request = _request()
     submitted = adapter.submit(request, _attempt(request))
 
-    thumbnail = _FakeLocator()
-    page.register_role("img", "Generated video thumbnail", thumbnail)
-    download_button = _FakeLocator()
-    container = _FakeContainerLocator()
-    container.register_role("button", "download", download_button)
-    batch_info = _FakeBatchInfoLocator()
-    batch_info.register_for(thumbnail, container)
-    page.register_css("flow-batch-info", batch_info)  # type: ignore[arg-type]
-    page.register_role("button", "Done", _FakeLocator())
+    controls = _register_download_flow(page)
 
     ready = adapter.observe(submitted)
     assert ready.state == GoogleFlowGenerationState.READY_TO_DOWNLOAD
@@ -864,23 +931,32 @@ def test_download_saves_a_file_and_transitions_to_downloaded(
     downloaded = adapter.download(ready)
 
     assert downloaded.state == GoogleFlowGenerationState.DOWNLOADED
-    assert download_button.click_calls == 1
+    assert controls.thumbnail.hover_calls == 1
+    assert controls.more_options_button.click_calls == 1
+    assert controls.download_menuitem.click_calls == 1
+    assert controls.original_size_menuitem.click_calls == 1
+    # The real download is a .zip containing one video - download()
+    # must extract it and point downloaded_file at the real video,
+    # never leave a .zip behind.
+    assert downloaded.downloaded_file is not None
+    assert downloaded.downloaded_file.endswith(".mp4")
+    assert Path(downloaded.downloaded_file).is_file()
     saved_files = [path for path in tmp_path.rglob("*") if path.is_file()]
     assert len(saved_files) == 1
 
 
-def test_download_scopes_to_the_clicked_batch_when_multiple_batches_exist(
+def test_download_scopes_to_the_clicked_tile_when_multiple_tiles_exist(
     tmp_path: Path,
 ) -> None:
     """
-    Real-world finding, 2026-09-11: once a second real generation
-    batch exists in the same project, a page-wide search for the
-    download button raised Playwright's own strict-mode violation -
-    real Flow renders one <flow-batch-info> per batch, each with its
-    own identically-named "Download batch" control. download() must
-    scope its search to the specific batch container structurally
-    containing the thumbnail it just clicked, never a bare page-wide
-    search that would ambiguously match every batch's button at once.
+    Real-world finding, 2026-09-11: real Flow renders one
+    <flow-video-tile> per row in the "All media" library view, each
+    with an identically-named "More options" button (distinct from a
+    separate, always-present, unrelated "More options" button
+    elsewhere on the page) - download() must scope its search to the
+    specific tile structurally containing the thumbnail it just
+    hovered, never a bare page-wide search that would ambiguously
+    match every row's button at once.
     """
 
     page = _authenticated_page()
@@ -894,19 +970,9 @@ def test_download_scopes_to_the_clicked_batch_when_multiple_batches_exist(
     request = _request()
     submitted = adapter.submit(request, _attempt(request))
 
-    # Two batches now exist - the img locator resolves to more than
-    # one real thumbnail, exactly the real, live situation.
-    thumbnail = _FakeLocator(count=2)
-    page.register_role("img", "Generated video thumbnail", thumbnail)
-
-    correct_download_button = _FakeLocator()
-    correct_container = _FakeContainerLocator()
-    correct_container.register_role("button", "download", correct_download_button)
-
-    batch_info = _FakeBatchInfoLocator()
-    batch_info.register_for(thumbnail, correct_container)
-    page.register_css("flow-batch-info", batch_info)  # type: ignore[arg-type]
-    page.register_role("button", "Done", _FakeLocator())
+    # Three real videos now exist - the img locator resolves to more
+    # than one real thumbnail, exactly the real, live situation.
+    controls = _register_download_flow(page, thumbnail_count=3)
 
     ready = adapter.observe(submitted)
     assert ready.state == GoogleFlowGenerationState.READY_TO_DOWNLOAD
@@ -914,7 +980,7 @@ def test_download_scopes_to_the_clicked_batch_when_multiple_batches_exist(
     downloaded = adapter.download(ready)
 
     assert downloaded.state == GoogleFlowGenerationState.DOWNLOADED
-    assert correct_download_button.click_calls == 1
+    assert controls.more_options_button.click_calls == 1
 
 
 # --- cancel_or_abandon ---
@@ -1012,15 +1078,7 @@ def test_orchestrator_drives_a_real_adapter_end_to_end(tmp_path: Path) -> None:
     assert len(job.flow_generation_attempts) == 1
     assert job.flow_generation_attempts[0].id == submitted.id
 
-    thumbnail = _FakeLocator()
-    page.register_role("img", "Generated video thumbnail", thumbnail)
-    download_button = _FakeLocator()
-    container = _FakeContainerLocator()
-    container.register_role("button", "download", download_button)
-    batch_info = _FakeBatchInfoLocator()
-    batch_info.register_for(thumbnail, container)
-    page.register_css("flow-batch-info", batch_info)  # type: ignore[arg-type]
-    page.register_role("button", "Done", _FakeLocator())
+    _register_download_flow(page)
 
     observed = orchestrator.observe_attempt(job, submitted)
     assert observed.state == GoogleFlowGenerationState.READY_TO_DOWNLOAD
