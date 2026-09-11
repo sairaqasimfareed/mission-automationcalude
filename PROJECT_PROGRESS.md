@@ -5,6 +5,20 @@ current capability status and `docs/REMAINING_GAPS.md` for what's next.
 
 ---
 
+## 2026-09-11 - Real bug found starting real voice generation: flat 8-second scene duration didn't fit real narration length
+
+Direct continuation of today's live-testing work. With the script/scene bugs above fixed, the 8-scene horror test script looked genuinely good, so moved to real voice generation - `ProjectRenderRuntimeFactory.build(job=job, genre_id="genre.horror").execute(job, dry_run=False)`. It failed immediately: `ValueError: Voice directives cannot be resolved. Estimated narration duration exceeds the scene duration.`
+
+**Root cause**: `ScenePlannerAgent.plan()` (the legacy path) assigned every scene a flat `estimated_duration_seconds=8`, regardless of how long that scene's real narration actually takes to speak. One real scene's narration - *"But here's the unsettling part: some sleep researchers say a knock like that can occur entirely inside your own head — a real, harmless condition called Exploding Head Syndrome."* - needs roughly 12 seconds at natural pace, not 8. `VoiceDirectiveResolutionService`'s own real, legitimate validation correctly refused to generate voice for narration that doesn't fit its scene's allotted time - a real safety check working exactly as intended, surfacing a real upstream gap.
+
+**Fixed**: reused `NarrationTimingService.estimate_seconds()` - already imported into this exact file and already used by `plan_from_generated_script()`'s own subdivision logic - so `plan()` now computes each scene's duration from its real word count (same ~2.3 words/second rate used everywhere else in this codebase), with the original `8` kept as a floor (`_MINIMUM_SCENE_DURATION_SECONDS`) rather than replaced outright, so a short sentence still gets reasonable screen time.
+
+**Teeth-verified**: reverting the computed duration back to a flat `_MINIMUM_SCENE_DURATION_SECONDS` broke the new long-sentence test with a real `8 > 8` assertion failure.
+
+**Tests**: `test_scene_planner_agent.py` gained 1 case (a short sentence still gets the 8-second floor; a long one genuinely gets more, teeth-verified). 15-case regression across the scene planner, its generated-script sibling, and `ContentPipeline`: all green. mypy/ruff/black clean.
+
+---
+
 ## 2026-09-11 - Two more real bugs: script generation ignored the requested video length, and scene splitting produced garbage fragments
 
 Direct continuation of today's live-testing work. With the LLM-layer bugs fixed, re-ran the real content pipeline for the short horror test video (40-second target) and it produced something unusable: a **1578-second (26-minute), 3631-word script**, split into **193 scenes**, several of which were real fragments like `"O."` and `")**\n\nIt's 11:47 p."`. Stopped before spending real Google Flow generation on 193 mostly-garbage clips and reported this to the user rather than pushing through - they asked to fix the real bugs first.

@@ -113,3 +113,38 @@ def test_plan_no_longer_produces_single_letter_or_mid_word_fragments() -> None:
     assert "".join(narrations).replace(" ", "") == abbreviation_script.content.replace(
         " ", ""
     )
+
+
+# --- 2026-09-11 real fix, found live: plan() used to assign a flat 8
+# seconds to every scene regardless of how long that scene's real
+# narration takes to speak. A real, legitimate downstream safety
+# check (VoiceDirectiveResolutionService) correctly refused to
+# generate voice the moment a real sentence needed more than 8
+# seconds. ---
+
+
+def test_plan_gives_a_long_sentence_more_than_the_eight_second_floor() -> None:
+    long_sentence_script = Script(
+        title="Midnight Knock",
+        content=(
+            "Short one. "
+            "But here's the unsettling part: some sleep researchers "
+            "say a knock like that can occur entirely inside your "
+            "own head, a real, harmless condition called Exploding "
+            "Head Syndrome."
+        ),
+        prompt_version="script_prompt_v1.0.0",
+        word_count=30,
+        estimated_duration_seconds=15,
+        status=ScriptStatus.APPROVED,
+    )
+
+    scenes = ScenePlannerAgent().plan(long_sentence_script)
+
+    assert len(scenes) == 2
+    # A short sentence still gets the real 8-second floor for pacing.
+    assert scenes[0].estimated_duration_seconds == 8
+    # A long sentence (~28 words, ~12s at 2.3 words/second) must get
+    # more than the flat 8-second default it used to always get - the
+    # exact real scenario that broke real voice generation live.
+    assert scenes[1].estimated_duration_seconds > 8

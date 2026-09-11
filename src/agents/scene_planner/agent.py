@@ -38,6 +38,18 @@ _BEAT_VISUAL_DESCRIPTORS: dict[StoryBeatType, str] = {
 _HIGH_TENSION_THRESHOLD = 70
 _MODERATE_TENSION_THRESHOLD = 40
 
+# 2026-09-11 real fix, found live: plan() used to assign a flat 8
+# seconds to every scene regardless of how long that scene's real
+# narration actually takes to speak. A real, legitimate downstream
+# safety check (VoiceDirectiveResolutionService, "narration duration
+# exceeds scene duration") correctly refused to generate voice the
+# moment a real sentence needed more than 8 seconds - a real scene
+# from a real short-horror test script ("...a real, harmless
+# condition called Exploding Head Syndrome.") needed roughly 12
+# seconds. Kept as a floor, not replaced outright - a short sentence
+# still gets at least this much screen time for reasonable pacing.
+_MINIMUM_SCENE_DURATION_SECONDS = 8
+
 
 class ScenePlannerAgent:
     """
@@ -45,11 +57,12 @@ class ScenePlannerAgent:
 
     Two entry points, kept on one class rather than split into two
     services: plan() for the legacy, flat Script model (sentence
-    splitting, hardcoded duration), and plan_from_generated_script()
-    for the content intelligence engine's GeneratedScript (genre-aware
-    density, tension-aware visual seeding). Both remain available so
-    neither the old ContentPipeline nor the new
-    ContentIntelligencePipeline breaks.
+    splitting; each scene's duration is the real narration-timed
+    estimate with an 8-second floor, not genre-aware density), and
+    plan_from_generated_script() for the content intelligence engine's
+    GeneratedScript (genre-aware density, tension-aware visual
+    seeding). Both remain available so neither the old ContentPipeline
+    nor the new ContentIntelligencePipeline breaks.
 
     Found via external audit: neither entry point ever set
     Scene.source_type explicitly, so every scene silently defaulted
@@ -114,13 +127,18 @@ class ScenePlannerAgent:
                 "volumetric atmosphere, high detail."
             )
 
+            estimated_duration_seconds = max(
+                _MINIMUM_SCENE_DURATION_SECONDS,
+                self._narration_timing_service.estimate_seconds(len(sentence.split())),
+            )
+
             scenes.append(
                 Scene(
                     scene_number=index,
                     title=f"Scene {index}",
                     narration=sentence,
                     visual_prompt=visual_prompt,
-                    estimated_duration_seconds=8,
+                    estimated_duration_seconds=estimated_duration_seconds,
                     camera_direction="Slow cinematic push-in",
                     sound_design="Subtle cinematic ambience",
                     status=SceneStatus.READY,
