@@ -158,3 +158,59 @@ else:
 
 
 print("Script Agent tests completed successfully.")
+
+
+# --- 2026-09-11 real fix, found live: a real 40-second test request
+# produced a real 1578-second script, because generate() always asked
+# for a "long-form" script regardless of the caller's actual target
+# length. ---
+
+
+class _RecordingLLMService:
+    def __init__(self) -> None:
+        self.last_request: LLMRequest | None = None
+
+    def generate(
+        self,
+        request: LLMRequest,
+        *,
+        estimated_cost_usd: float = 0.0,
+        profile_ids: list[str] | None = None,
+    ) -> LLMServiceResult:
+        self.last_request = request
+
+        result = LLMCallResult(
+            status=LLMCallStatus.SUCCESS,
+            provider=LLMProvider.GEMINI,
+            model="gemini-test-model",
+            content="A short scripted response.",
+            usage=LLMUsage(input_tokens=10, output_tokens=10, total_tokens=20),
+        )
+
+        return LLMServiceResult(result=result)
+
+
+def test_generate_with_no_target_duration_asks_for_long_form() -> None:
+    service = _RecordingLLMService()
+    agent = ScriptAgent(llm_service=service)  # type: ignore[arg-type]
+
+    agent.generate(research)
+
+    assert service.last_request is not None
+    assert "long-form" in service.last_request.prompt.lower()
+
+
+def test_generate_with_a_target_duration_scopes_the_prompt() -> None:
+    service = _RecordingLLMService()
+    agent = ScriptAgent(llm_service=service)  # type: ignore[arg-type]
+
+    agent.generate(research, target_duration_seconds=40)
+
+    assert service.last_request is not None
+    prompt = service.last_request.prompt
+    assert "40 seconds" in prompt
+    assert "do not write a long-form script" in prompt.lower()
+    # ~2.3 words/second, matching Script.estimated_duration_seconds'
+    # own formula - keeps the guidance and the script's own
+    # self-reported duration consistent with each other.
+    assert "92 words" in prompt

@@ -32,9 +32,21 @@ class ScriptPipeline:
     def run(
         self,
         research: ResearchResult,
+        *,
+        target_duration_seconds: int | None = None,
     ) -> Script:
-        """Generate a script and pass it through review."""
+        """
+        Generate a script and pass it through review.
 
-        script = self.script_agent.generate(research)
+        target_duration_seconds (2026-09-11 real fix, found live) is
+        passed straight through to ScriptAgent.generate() - see that
+        method's own docstring. None (the default) reproduces this
+        method's exact prior behavior.
+        """
+
+        script = self.script_agent.generate(
+            research,
+            target_duration_seconds=target_duration_seconds,
+        )
 
         return self.review_service.review(script)

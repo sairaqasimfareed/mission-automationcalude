@@ -67,6 +67,8 @@ class FakeScriptPipeline:
     def run(
         self,
         research: ResearchResult,
+        *,
+        target_duration_seconds: int | None = None,
     ) -> Script:
         content = (
             "Beneath ordinary streets, entire cities once "

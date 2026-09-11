@@ -66,3 +66,50 @@ assert all(
 )
 
 print("Scene Planner Agent tests completed successfully.")
+
+
+# --- 2026-09-11 real fix, found live: plan() used to split on every
+# literal "." (script.content.split(".")), which shattered anything
+# but a bare sentence-ending period - a real script containing
+# "11:47 p.m." produced real scene fragments like "O." and
+# ")**\n\nIt's 11:47 p.". ---
+
+
+def test_plan_no_longer_produces_single_letter_or_mid_word_fragments() -> None:
+    """
+    The regex split (requires trailing whitespace after ./!/?) is not
+    full sentence-boundary detection - "p.m." followed by a space
+    still counts as a split point, same as _subdivide_segment()'s own
+    accepted, already-established behavior elsewhere in this file.
+    What it genuinely fixes, verified here, is the old bug's real
+    failure mode: script.content.split(".") split on *every* literal
+    period, including ones with no trailing whitespace at all (mid-
+    abbreviation, mid-markdown), producing single-letter fragments
+    like "O." and mid-word truncations like "...p.".
+    """
+
+    abbreviation_script = Script(
+        title="Midnight Knock",
+        content=(
+            "It's 11:47 p.m. and the house is silent. "
+            "No one expects what happens next."
+        ),
+        prompt_version="script_prompt_v1.0.0",
+        word_count=15,
+        estimated_duration_seconds=8,
+        status=ScriptStatus.APPROVED,
+    )
+
+    scenes = ScenePlannerAgent().plan(abbreviation_script)
+
+    narrations = [scene.narration for scene in scenes]
+
+    # The old bug's exact failure signatures - a lone "O." fragment or
+    # a period-truncated "...p." with nothing after it - must never
+    # appear again. Every real fragment here is at least a real,
+    # multi-word clause.
+    assert not any(narration.strip() == "O." for narration in narrations)
+    assert all(len(narration.split()) > 1 for narration in narrations)
+    assert "".join(narrations).replace(" ", "") == abbreviation_script.content.replace(
+        " ", ""
+    )

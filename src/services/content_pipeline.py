@@ -58,7 +58,18 @@ class ContentPipeline:
         job.research = research
         job.current_stage = WorkflowStage.SCRIPT
 
-        script = self.script_pipeline.run(research)
+        # 2026-09-11 real fix, found live: job.target_duration_seconds
+        # already existed and was correctly populated at job-creation
+        # time, but nothing in this basic pipeline ever read it - a
+        # real 40-second test request produced a real 1578-second
+        # script. Always passed (not conditional) since every VideoJob
+        # has a real value here (default 600s), so script generation
+        # is now duration-aware unconditionally rather than only for
+        # callers that remember to ask.
+        script = self.script_pipeline.run(
+            research,
+            target_duration_seconds=job.target_duration_seconds,
+        )
 
         job.script = script
         job.current_stage = WorkflowStage.ORIGINALITY_REVIEW

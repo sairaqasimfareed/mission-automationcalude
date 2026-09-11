@@ -82,9 +82,19 @@ class ScenePlannerAgent:
         if script.status != ScriptStatus.APPROVED:
             raise ValueError("Scene planning requires an approved script.")
 
+        # 2026-09-11 real fix, found live: this used to split on every
+        # literal "." via script.content.split("."), which breaks on
+        # anything but a bare sentence-ending period - a real script
+        # containing "11:47 p.m." or markdown like "**Section:**"
+        # produced real scene fragments as short as "O." or
+        # ")**\n\nIt's 11:47 p.". Reuses the same lookbehind sentence
+        # boundary regex _subdivide_segment() below already relies on
+        # (requires trailing whitespace after ./!/?, so a mid-sentence
+        # period isn't treated as a boundary) instead of a second,
+        # cruder splitter.
         sentences = [
             sentence.strip()
-            for sentence in script.content.split(".")
+            for sentence in _SENTENCE_SPLIT_PATTERN.split(script.content.strip())
             if sentence.strip()
         ]
 
@@ -93,8 +103,13 @@ class ScenePlannerAgent:
         scenes: list[Scene] = []
 
         for index, sentence in enumerate(sentences, start=1):
+            # sentence already carries its own terminal punctuation
+            # (the lookbehind split above keeps ./!/? attached to the
+            # preceding text) - no longer appending a second "." here,
+            # which used to build strings like "Really?." or
+            # "...survive... Ultra realistic" before this fix.
             visual_prompt = (
-                f"Cinematic visual inspired by: {sentence}. "
+                f"Cinematic visual inspired by: {sentence} "
                 "Ultra realistic, cinematic lighting, "
                 "volumetric atmosphere, high detail."
             )
@@ -103,7 +118,7 @@ class ScenePlannerAgent:
                 Scene(
                     scene_number=index,
                     title=f"Scene {index}",
-                    narration=f"{sentence}.",
+                    narration=sentence,
                     visual_prompt=visual_prompt,
                     estimated_duration_seconds=8,
                     camera_direction="Slow cinematic push-in",

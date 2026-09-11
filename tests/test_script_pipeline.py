@@ -18,6 +18,8 @@ class FakeScriptAgent:
     def generate(
         self,
         research: ResearchResult,
+        *,
+        target_duration_seconds: int | None = None,
     ) -> Script:
         assert research.status == ResearchStatus.APPROVED
 
