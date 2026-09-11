@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 from src.config.settings import Settings
+from src.models.voice_profile import VoiceProfile
 from src.providers.music_provider import MusicProvider
 from src.providers.sound_effect_provider import SoundEffectProvider
 from src.providers.voice_provider import VoiceProvider
@@ -39,6 +40,7 @@ def build_production_runtime(
     *,
     asset_workflow_service: SceneAssetWorkflowService | None = None,
     genre_timeline_service: GenreTimelinePipelineService | None = None,
+    voice_profiles: list[VoiceProfile] | None = None,
     voice_providers: list[VoiceProvider] | None = None,
     music_providers: list[MusicProvider] | None = None,
     sound_effect_providers: list[SoundEffectProvider] | None = None,
@@ -72,6 +74,20 @@ def build_production_runtime(
     ProductionApplicationFactory, which already falls back to dry-run
     (or an empty, stage-skipping list outside dry-run) when omitted.
     Omitting all three reproduces today's behavior exactly.
+
+    voice_profiles (2026-09-11 real fix, found while live-verifying
+    "don't hardcode a voice per genre") overrides
+    RuntimeConfigurationLoader's own voice_profiles, which is always
+    just [voice.neutral_narrator] - a deliberately minimal default for
+    this loader (see test_load_includes_default_voice_profile), never
+    intended as the full set a real desktop render should resolve
+    against. Without this override, every genre-specific
+    voice_profile_id (e.g. "voice.horror_whisper") silently falls back
+    to voice.neutral_narrator in real generation (VoiceProfileRegistryService.
+    resolve()'s own allow_fallback=True) - discovered live, not
+    theoretically, while proving dynamic voice selection actually
+    reaches a real genre profile end to end. Omitting it reproduces
+    this function's exact prior behavior.
 
     checkpoint_storage_root overrides RuntimeConfiguration's own value,
     which RuntimeConfigurationLoader always loads as None today (no
@@ -134,7 +150,11 @@ def build_production_runtime(
     runtime = ProductionApplicationFactory(
         secret_store=configuration.secret_store,
         provider_profiles=configuration.provider_profiles,
-        voice_profiles=configuration.voice_profiles,
+        voice_profiles=(
+            voice_profiles
+            if voice_profiles is not None
+            else configuration.voice_profiles
+        ),
         voice_providers=(
             voice_providers
             if voice_providers is not None

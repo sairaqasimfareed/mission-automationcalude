@@ -18,6 +18,7 @@ def _clear_caches() -> None:
     services.get_content_pipeline.cache_clear()
     services.get_render_runtime_factory.cache_clear()
     services.get_runtime_configuration.cache_clear()
+    services.get_voice_profile_registry_service.cache_clear()
 
 
 def test_get_infrastructure_validates_provider_health() -> None:
@@ -157,3 +158,60 @@ def test_build_elevenlabs_voice_search_client_none_without_any_profile() -> None
     )
 
     assert client is None
+
+
+# --- 2026-09-11 real fix, found live while verifying dynamic voice
+# selection: RuntimeConfigurationLoader's own default voice_profiles
+# is deliberately just [voice.neutral_narrator] (a minimal loader
+# default, not meant as the real desktop set) - without
+# _default_voice_profiles() supplying the full built-in set to both
+# real call sites, every genre-specific voice_profile_id (e.g.
+# "voice.horror_whisper") silently fell back to neutral_narrator in
+# real generation, before any pin or dynamic search was ever
+# consulted. ---
+
+
+def test_default_voice_profiles_includes_genre_specific_profiles() -> None:
+    profile_ids = {profile.profile_id for profile in services._default_voice_profiles()}
+
+    assert "voice.horror_whisper" in profile_ids
+    assert "voice.neutral_narrator" in profile_ids
+    assert len(profile_ids) > 1
+
+
+def test_voice_profile_registry_service_matches_default_voice_profiles() -> None:
+    """
+    Voice Manager's own registry must show every profile real
+    generation would also resolve - the two must never silently
+    diverge.
+    """
+
+    _clear_caches()
+
+    registry_ids = {
+        profile.profile_id
+        for profile in services.get_voice_profile_registry_service().list_all()
+    }
+    default_ids = {profile.profile_id for profile in services._default_voice_profiles()}
+
+    assert registry_ids == default_ids
+    assert "voice.horror_whisper" in registry_ids
+
+
+def test_production_runtime_resolves_a_genre_specific_voice_profile() -> None:
+    """
+    Real integration check: a genre-specific voice_profile_id must
+    resolve to itself in real generation, not silently fall back to
+    voice.neutral_narrator - the bug this fix closes.
+    """
+
+    _clear_caches()
+
+    try:
+        runtime = services.get_production_runtime()
+
+        assert runtime.voice_resolution_runtime.voice_profile_registry.contains(
+            "voice.horror_whisper"
+        )
+    finally:
+        _clear_caches()

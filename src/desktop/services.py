@@ -8,6 +8,7 @@ from src.desktop.job_store import JsonJobStore
 from src.desktop.theme_preference_store import ThemePreferenceStore
 from src.entrypoint import build_production_runtime
 from src.models.provider_profile import ProviderCategory, ProviderProfile
+from src.models.voice_profile import VoiceProfile
 from src.providers.dry_run_thumbnail_image_provider import (
     DryRunThumbnailImageProvider,
 )
@@ -203,6 +204,21 @@ def get_production_runtime() -> ProductionApplicationRuntime:
             if report.stock_video_providers
             else None
         ),
+        # 2026-09-11 real fix, found live while verifying dynamic voice
+        # selection actually reaches a genre-specific profile: without
+        # this, RuntimeConfigurationLoader's own deliberately-minimal
+        # default ([voice.neutral_narrator] only - see
+        # test_load_includes_default_voice_profile) silently starved
+        # the real resolution registry, so EVERY genre-specific
+        # voice_profile_id (e.g. "voice.horror_whisper") fell back to
+        # neutral_narrator in real generation before any pin or
+        # dynamic search was ever consulted - the entire voice-gap
+        # initiative's genre-awareness never actually reached real
+        # generation. _default_voice_profiles() is the same full
+        # built-in set get_voice_profile_registry_service() (Voice
+        # Manager's own registry) uses, so what Voice Manager shows is
+        # guaranteed to be what real generation actually resolves.
+        voice_profiles=_default_voice_profiles(),
         # Voice gap #1 (2026-09-09 audit) - a real voice_id registered
         # through Voice Manager now actually reaches real generation,
         # not just persisted storage nothing reads.
@@ -411,19 +427,35 @@ def get_voice_provider_mapping_service() -> VoiceProviderMappingService:
     return service
 
 
+def _default_voice_profiles() -> list[VoiceProfile]:
+    """
+    The full built-in voice-profile set both real generation
+    (get_production_runtime()) and Voice Manager
+    (get_voice_profile_registry_service()) resolve against.
+
+    2026-09-11 real fix, found live: RuntimeConfiguration.voice_profiles
+    (RuntimeConfigurationLoader's own default) is deliberately just
+    [voice.neutral_narrator] - see test_load_includes_default_voice_profile
+    - never intended as the full genre-linked set a real desktop render
+    should resolve against. Both real call sites here now share this
+    one function instead of each reading RuntimeConfiguration.voice_profiles
+    independently, so they can never again silently diverge.
+    """
+
+    return VoiceProfileRegistryService.with_default_profiles().list_all()
+
+
 @lru_cache
 def get_voice_profile_registry_service() -> VoiceProfileRegistryService:
     """
     Voice Manager's own registry of this app's built-in voice
-    profiles - built from the exact same voice_profiles
-    RuntimeConfiguration already resolves for real generation, so
+    profiles - built from the exact same voice_profiles real
+    generation resolves against (_default_voice_profiles()), so
     Voice Manager can never show a profile the real pipeline
     wouldn't also resolve.
     """
 
-    return VoiceProfileRegistryService(
-        profiles=get_runtime_configuration().voice_profiles
-    )
+    return VoiceProfileRegistryService(profiles=_default_voice_profiles())
 
 
 def _build_elevenlabs_voice_search_client(

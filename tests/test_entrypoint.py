@@ -113,6 +113,62 @@ def test_build_production_runtime_voice_providers_override_is_used() -> None:
     assert runtime.voice_generation_service.providers == [fake_provider]
 
 
+def test_build_production_runtime_no_voice_profiles_override_stays_minimal() -> None:
+    """
+    Regression guard: with no voice_profiles override,
+    build_production_runtime() must reproduce RuntimeConfigurationLoader's
+    own deliberately-minimal default exactly (see
+    test_load_includes_default_voice_profile) - this is a documented,
+    tested characteristic of the loader itself, not something this
+    function should silently widen on its own.
+    """
+
+    runtime = build_production_runtime(
+        asset_workflow_service=_fake_asset_workflow_service(),
+        genre_timeline_service=_fake_genre_timeline_service(),
+        settings=_settings(),
+    )
+
+    profile_ids = [
+        profile.profile_id
+        for profile in runtime.voice_resolution_runtime.voice_profile_registry.list_all()
+    ]
+
+    assert profile_ids == ["voice.neutral_narrator"]
+
+
+def test_build_production_runtime_voice_profiles_override_is_used() -> None:
+    """
+    2026-09-11 real fix, found live while verifying dynamic voice
+    selection: a real caller (the desktop app) must be able to supply
+    the full genre-linked voice-profile set, or every genre-specific
+    voice_profile_id silently falls back to voice.neutral_narrator in
+    real generation before any pin or dynamic search is ever consulted.
+    """
+
+    from src.models.voice_profile import VoiceProfile
+
+    override_profile = VoiceProfile(
+        profile_id="voice.test_override",
+        display_name="Test Override",
+        fallback_profile_id=None,
+    )
+
+    runtime = build_production_runtime(
+        asset_workflow_service=_fake_asset_workflow_service(),
+        genre_timeline_service=_fake_genre_timeline_service(),
+        settings=_settings(),
+        voice_profiles=[override_profile],
+    )
+
+    profile_ids = [
+        profile.profile_id
+        for profile in runtime.voice_resolution_runtime.voice_profile_registry.list_all()
+    ]
+
+    assert profile_ids == ["voice.test_override"]
+
+
 def test_build_production_runtime_propagates_loader_errors() -> None:
     with pytest.raises(ValueError, match="No LLM provider API key"):
         build_production_runtime(
