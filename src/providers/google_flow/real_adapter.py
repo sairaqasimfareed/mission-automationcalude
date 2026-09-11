@@ -570,6 +570,25 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
             timeout=self._action_timeout_ms
         )
 
+        # Real-world finding, 2026-09-11: the same settings popover
+        # also contains an Image/Video generation-mode radio pair
+        # ("image | Image" / "videocam | Video"), and a real project's
+        # compose bar can be left in Image mode (confirmed directly -
+        # the account owner's "semi" project was showing "Nano Banana"
+        # image-model options under "Select model family" instead of
+        # any Veo option). This class exists exclusively to drive
+        # Google Flow's VIDEO generation - never image - so unlike
+        # every other dimension below (which only acts when the
+        # caller explicitly asked), forcing Video mode here is an
+        # unconditional invariant of this class, not a per-request
+        # setting: leaving Flow's current mode silently in place was
+        # exactly what made every model_family selection below search
+        # the wrong catalog and fail with a real, misleading
+        # FLOW_SETTINGS_UNAVAILABLE ("model_family '...' is not one of
+        # the real options") even when the requested model_family
+        # string was byte-for-byte correct.
+        self._click_radio(page, "Video", dimension="generation_mode")
+
         if settings.model_family:
             page.get_by_role(
                 "button", name=self._names.select_model_family_button

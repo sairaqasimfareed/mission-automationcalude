@@ -222,6 +222,14 @@ def _authenticated_page(
     # controls registered for that always-taken path to succeed.
     page.register_role("button", "Settings trigger", _FakeLocator())
     page.register_role("radio", "x1", _FakeLocator())
+    # Real-world finding, 2026-09-11: the same settings popover also
+    # holds an Image/Video generation-mode radio pair, and
+    # _apply_settings() now unconditionally clicks "Video" (this
+    # adapter is video-only) every time it opens the popover - the
+    # same "always taken path" reasoning as the x1 registration just
+    # above, so every test using this default authenticated page
+    # needs this control registered too.
+    page.register_role("radio", "Video", _FakeLocator())
     return page
 
 
@@ -586,6 +594,58 @@ def test_submit_applies_a_known_model_family_and_real_settings() -> None:
     assert duration_radio.click_calls == 1
     assert variation_radio.click_calls == 1
     assert page.keyboard.pressed == ["Escape"]
+
+
+def test_submit_forces_video_mode_before_opening_model_family() -> None:
+    """
+    Real-world finding, 2026-09-11: a real Flow project's compose bar
+    can be left in Image mode (the account owner's "semi" project was
+    showing "Nano Banana" image-model options, not any Veo option,
+    under "Select model family"). _apply_settings() must click the
+    real "Video" radio BEFORE opening "Select model family" - the
+    real product only shows Veo's video-model catalog once Video mode
+    is active, so a model_family value that's byte-for-byte correct
+    still fails to be found while the popover is in Image mode.
+    """
+
+    page = _authenticated_page()
+    video_radio = _FakeLocator()
+    page.register_role(
+        "radio", "Video", video_radio
+    )  # overrides the auto-registered one
+    page.register_role("button", "Select model family", _FakeLocator())
+    menu_item = _FakeLocator()
+    page.register_role("menuitem", "Veo 3.1 - Lite [Lower Priority]", menu_item)
+    adapter = _adapter(page)
+    request = _request(
+        execution_settings={"model_family": "Veo 3.1 - Lite [Lower Priority]"}
+    )
+
+    result = adapter.submit(request, _attempt(request))
+
+    assert result.state == GoogleFlowGenerationState.GENERATING
+    assert video_radio.click_calls == 1
+    assert menu_item.click_calls == 1
+
+
+def test_submit_fails_safely_when_video_mode_control_is_missing() -> None:
+    """
+    Mirrors GoogleFlowUIAdapter's own "ambiguous critical control:
+    UI_CHANGED/FAILED, never guess" rule - if the real "Video" radio
+    can't be found at all (an unrecognized real UI change), this must
+    fail loudly rather than silently proceed to search whatever
+    catalog happens to be showing.
+    """
+
+    page = _authenticated_page()
+    page.register_role("radio", "Video", _FakeLocator(count=0))
+    adapter = _adapter(page)
+    request = _request()
+
+    result = adapter.submit(request, _attempt(request))
+
+    assert result.state == GoogleFlowGenerationState.FAILED
+    assert "FLOW_SETTINGS_UNAVAILABLE" in result.state_history[-1].detail  # type: ignore[operator]
 
 
 def test_submit_forces_x1_by_default_even_with_no_execution_settings_requested() -> (
