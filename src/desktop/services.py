@@ -194,6 +194,20 @@ def get_production_runtime() -> ProductionApplicationRuntime:
     runtime = build_production_runtime(
         checkpoint_storage_root=CHECKPOINT_STORAGE_ROOT,
         secret_store=secret_store,
+        # 2026-09-11 real fix, found live running the first real
+        # non-dry-run end-to-end test: supplying the real,
+        # desktop-persisted profiles directly at construction (rather
+        # than only via the post-hoc registry.register() loop below)
+        # both satisfies ProductionApplicationFactory's own "at least
+        # one provider profile" guard when require_llm_key=False below
+        # would otherwise leave the loader's own list empty, and lets
+        # ProviderStartupValidator (which runs inside
+        # build_production_runtime(), before this function ever sees
+        # the result) actually validate these real profiles instead of
+        # silently skipping them. `or None` on a fresh install with no
+        # profiles configured yet falls back to the loader's own
+        # dry-run placeholder, exactly like every other override here.
+        provider_profiles=desktop_profiles or None,
         voice_providers=report.voice_providers or None,
         music_providers=report.music_providers or None,
         sound_effect_providers=report.sound_effect_providers or None,
@@ -231,6 +245,24 @@ def get_production_runtime() -> ProductionApplicationRuntime:
             if voice_search_client is not None
             else None
         ),
+        # 2026-09-11 real fix, found live running the first real
+        # non-dry-run end-to-end test: this desktop composition root
+        # always registers its own real, keyring-backed LLM profiles
+        # into runtime.infrastructure.provider_registry below, and has
+        # no OPENAI_API_KEY/CLAUDE_API_KEY/GOOGLE_API_KEY env var to
+        # offer (nor should it duplicate a Provider-Manager-stored
+        # secret into one) - require_llm_key=False lets the loader
+        # succeed with an empty starting LLM list instead of raising;
+        # the real profiles registered just below are what generation
+        # actually uses.
+        require_llm_key=False,
+        # Same real fix, same reason, for the voice-provider axis:
+        # this desktop composition root always supplies its own real
+        # voice_providers override just above (report.voice_providers
+        # or None) - it must never be blocked by the loader's own
+        # unconditional "no voice provider configured" raise, which
+        # fires before that override is ever applied.
+        require_voice_provider=False,
     )
 
     for profile in desktop_profiles:

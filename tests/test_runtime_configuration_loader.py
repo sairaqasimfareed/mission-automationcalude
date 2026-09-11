@@ -119,6 +119,106 @@ def test_load_outside_dry_run_raises_for_voice_provider() -> None:
         loader.load()
 
 
+# --- 2026-09-11 real fix, found live running the first real
+# non-dry-run end-to-end test: a caller supplying its own real,
+# keyring-backed LLM profiles (the desktop app) has no env-var key to
+# offer and shouldn't need to duplicate a Provider-Manager-stored
+# secret into one. ---
+
+
+def test_require_llm_key_false_returns_empty_list_outside_dry_run_without_keys() -> (
+    None
+):
+    loader = RuntimeConfigurationLoader(
+        settings=_settings(MISSION_AUTOMATION_DRY_RUN=False),
+        require_llm_key=False,
+        require_voice_provider=False,
+    )
+
+    configuration = loader.load()
+
+    assert configuration.provider_profiles == []
+
+
+def test_require_llm_key_false_still_uses_real_keys_when_present() -> None:
+    loader = RuntimeConfigurationLoader(
+        settings=_settings(
+            OPENAI_API_KEY="sk-real-openai-key",
+            MISSION_AUTOMATION_DRY_RUN=False,
+        ),
+        require_llm_key=False,
+        require_voice_provider=False,
+    )
+
+    configuration = loader.load()
+
+    profile_ids = [profile.profile_id for profile in configuration.provider_profiles]
+
+    assert profile_ids == ["provider.llm.openai"]
+
+
+def test_require_llm_key_false_still_builds_placeholder_in_dry_run() -> None:
+    loader = RuntimeConfigurationLoader(
+        settings=_settings(),
+        require_llm_key=False,
+    )
+
+    configuration = loader.load()
+
+    profile_ids = [profile.profile_id for profile in configuration.provider_profiles]
+
+    assert profile_ids == ["provider.llm.dry_run"]
+
+
+def test_require_llm_key_defaults_to_true_reproducing_prior_behavior() -> None:
+    loader = RuntimeConfigurationLoader(
+        settings=_settings(MISSION_AUTOMATION_DRY_RUN=False),
+    )
+
+    with pytest.raises(ValueError, match="No LLM provider API key"):
+        loader.load()
+
+
+def test_require_voice_provider_false_returns_empty_list_outside_dry_run() -> None:
+    loader = RuntimeConfigurationLoader(
+        settings=_settings(
+            OPENAI_API_KEY="sk-real-openai-key",
+            MISSION_AUTOMATION_DRY_RUN=False,
+        ),
+        require_voice_provider=False,
+    )
+
+    configuration = loader.load()
+
+    assert configuration.voice_providers == []
+
+
+def test_require_voice_provider_false_still_builds_dry_run_provider_in_dry_run() -> (
+    None
+):
+    loader = RuntimeConfigurationLoader(
+        settings=_settings(),
+        require_voice_provider=False,
+    )
+
+    configuration = loader.load()
+
+    assert len(configuration.voice_providers) == 1
+    assert isinstance(configuration.voice_providers[0], DryRunVoiceProvider)
+
+
+def test_require_voice_provider_defaults_to_true_reproducing_prior_behavior() -> None:
+    loader = RuntimeConfigurationLoader(
+        settings=_settings(
+            OPENAI_API_KEY="sk-real-openai-key",
+            MISSION_AUTOMATION_DRY_RUN=False,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="voice-provider adapter"):
+        loader.load()
+
+
 def test_load_in_dry_run_uses_dry_run_voice_provider() -> None:
     loader = RuntimeConfigurationLoader(settings=_settings())
 

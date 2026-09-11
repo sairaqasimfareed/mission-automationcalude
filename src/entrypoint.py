@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 from src.config.settings import Settings
+from src.models.provider_profile import ProviderProfile
 from src.models.voice_profile import VoiceProfile
 from src.providers.music_provider import MusicProvider
 from src.providers.sound_effect_provider import SoundEffectProvider
@@ -40,6 +41,7 @@ def build_production_runtime(
     *,
     asset_workflow_service: SceneAssetWorkflowService | None = None,
     genre_timeline_service: GenreTimelinePipelineService | None = None,
+    provider_profiles: list[ProviderProfile] | None = None,
     voice_profiles: list[VoiceProfile] | None = None,
     voice_providers: list[VoiceProvider] | None = None,
     music_providers: list[MusicProvider] | None = None,
@@ -50,6 +52,8 @@ def build_production_runtime(
     secret_store: SecretStore | None = None,
     voice_provider_mapping_service: VoiceProviderMappingService | None = None,
     dynamic_voice_selection_service: DynamicVoiceSelectionService | None = None,
+    require_llm_key: bool = True,
+    require_voice_provider: bool = True,
 ) -> ProductionApplicationRuntime:
     """
     Compose and validate one production Mission Automation runtime.
@@ -74,6 +78,20 @@ def build_production_runtime(
     ProductionApplicationFactory, which already falls back to dry-run
     (or an empty, stage-skipping list outside dry-run) when omitted.
     Omitting all three reproduces today's behavior exactly.
+
+    provider_profiles (2026-09-11 real fix, found running the first
+    real non-dry-run end-to-end test) overrides RuntimeConfigurationLoader's
+    own provider_profiles for ProductionApplicationFactory's
+    construction - which matters because ProductionApplicationFactory
+    itself requires at least one non-empty provider profile and
+    ProviderStartupValidator only ever validates whatever is present
+    at construction time. Without this override, a caller relying
+    purely on post-construction registry.register() calls (the
+    desktop app's prior pattern) both risked ProductionApplicationFactory's
+    "at least one provider profile" guard when require_llm_key=False
+    left the loader's own list empty, and skipped real startup health
+    validation for its actual profiles entirely. Omitting it
+    reproduces this function's exact prior behavior.
 
     voice_profiles (2026-09-11 real fix, found while live-verifying
     "don't hardcode a voice per genre") overrides
@@ -110,11 +128,31 @@ def build_production_runtime(
     voice_provider_mapping_service is still resolved live from
     ElevenLabs' real catalog at generation time. Omitting it
     reproduces this function's exact prior behavior.
+
+    require_llm_key=False (2026-09-11, found live running the first
+    real non-dry-run end-to-end test) lets RuntimeConfigurationLoader
+    succeed with zero LLM provider_profiles instead of raising, for a
+    caller (the desktop app) that always supplies its own real,
+    keyring-backed LLM profiles into runtime.infrastructure.provider_registry
+    itself, and never needs an OPENAI_API_KEY/CLAUDE_API_KEY/GOOGLE_API_KEY
+    env var duplicating that same secret. Defaults to True, reproducing
+    this function's exact prior behavior for every existing caller.
+
+    require_voice_provider=False is the identical fix for the same
+    root cause on the voice-provider axis: RuntimeConfigurationLoader.load()
+    raises for "no voice-provider adapter configured" unconditionally,
+    BEFORE this function's own voice_providers override parameter
+    (below) is ever applied - so even a caller that always supplies a
+    real, non-empty voice_providers override crashed first outside
+    dry-run. Defaults to True, reproducing this function's exact prior
+    behavior for every existing caller.
     """
 
     configuration = RuntimeConfigurationLoader(
         settings=settings,
         secret_store=secret_store,
+        require_llm_key=require_llm_key,
+        require_voice_provider=require_voice_provider,
     ).load()
 
     effective_checkpoint_storage_root = (
@@ -149,7 +187,11 @@ def build_production_runtime(
 
     runtime = ProductionApplicationFactory(
         secret_store=configuration.secret_store,
-        provider_profiles=configuration.provider_profiles,
+        provider_profiles=(
+            provider_profiles
+            if provider_profiles is not None
+            else configuration.provider_profiles
+        ),
         voice_profiles=(
             voice_profiles
             if voice_profiles is not None

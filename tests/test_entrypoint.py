@@ -16,6 +16,7 @@ from src.models.music_settings import MusicSettings
 from src.models.packaging_settings import PackagingSettings
 from src.models.project_specification import ProjectSpecification
 from src.models.provider_preferences import ProviderPreferences
+from src.models.provider_profile import ProviderCategory, ProviderProfile
 from src.models.upload_settings import UploadSettings
 from src.models.video_settings import VideoSettings
 from src.models.visual_settings import VisualSettings
@@ -33,6 +34,7 @@ from src.services.production_application_factory import (
 from src.services.scene_asset_workflow_service import (
     SceneAssetWorkflowService,
 )
+from src.services.secrets.provider_secret_manager import InMemorySecretStore
 
 
 def _settings(**overrides: object) -> Settings:
@@ -167,6 +169,84 @@ def test_build_production_runtime_voice_profiles_override_is_used() -> None:
     ]
 
     assert profile_ids == ["voice.test_override"]
+
+
+_FAKE_CLAUDE_SECRET_REFERENCE = "secret://providers/claude/fake"
+
+
+def _fake_llm_provider_profile() -> ProviderProfile:
+    return ProviderProfile(
+        profile_id="claude",
+        display_name="Claude",
+        provider_name="anthropic",
+        category=ProviderCategory.LLM,
+        enabled=True,
+        secret_reference=_FAKE_CLAUDE_SECRET_REFERENCE,
+    )
+
+
+def _secret_store_with_fake_claude_secret() -> InMemorySecretStore:
+    store = InMemorySecretStore()
+    store.save(_FAKE_CLAUDE_SECRET_REFERENCE, "fake-anthropic-key")
+
+    return store
+
+
+def test_build_production_runtime_require_llm_key_false_avoids_the_raise() -> None:
+    """
+    2026-09-11 real fix, found live running the first real non-dry-run
+    end-to-end test: a caller with its own real, keyring-backed LLM
+    profiles (not env-var keys) must not be forced through the
+    loader's "no key configured" raise, and must be able to supply
+    those real profiles directly via the new provider_profiles
+    override rather than only via post-construction registry mutation
+    (ProductionApplicationFactory itself requires at least one
+    non-empty provider profile at construction time).
+    """
+
+    fake_voice_provider = DryRunVoiceProvider()
+
+    runtime = build_production_runtime(
+        asset_workflow_service=_fake_asset_workflow_service(),
+        genre_timeline_service=_fake_genre_timeline_service(),
+        settings=_settings(MISSION_AUTOMATION_DRY_RUN=False),
+        secret_store=_secret_store_with_fake_claude_secret(),
+        provider_profiles=[_fake_llm_provider_profile()],
+        voice_providers=[fake_voice_provider],
+        require_llm_key=False,
+        require_voice_provider=False,
+    )
+
+    assert isinstance(runtime, ProductionApplicationRuntime)
+    assert [
+        profile.profile_id
+        for profile in runtime.infrastructure.provider_registry.list_all()
+    ] == ["claude"]
+    assert runtime.voice_generation_service.providers == [fake_voice_provider]
+
+
+def test_build_production_runtime_no_provider_profiles_override_stays_the_loader_default() -> (
+    None
+):
+    """
+    Regression guard, mirroring voice_profiles' own equivalent test:
+    with no provider_profiles override, this function must reproduce
+    RuntimeConfigurationLoader's own default exactly (the harmless
+    dry-run placeholder in dry-run mode).
+    """
+
+    runtime = build_production_runtime(
+        asset_workflow_service=_fake_asset_workflow_service(),
+        genre_timeline_service=_fake_genre_timeline_service(),
+        settings=_settings(),
+    )
+
+    profile_ids = [
+        profile.profile_id
+        for profile in runtime.infrastructure.provider_registry.list_all()
+    ]
+
+    assert profile_ids == ["provider.llm.dry_run"]
 
 
 def test_build_production_runtime_propagates_loader_errors() -> None:

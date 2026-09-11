@@ -67,6 +67,10 @@ class RuntimeConfigurationLoader:
     Settings.MISSION_AUTOMATION_DRY_RUN is also the loader's single
     source of truth for AdvancedSettings.dry_run, keeping LLM-call
     dry-run behavior and pipeline-level dry-run behavior in sync.
+
+    require_llm_key=False (2026-09-11) relaxes the "at least one LLM
+    env-var key or dry-run" requirement for a caller that supplies its
+    own real LLM provider profiles a different way (see __init__).
     """
 
     def __init__(
@@ -74,12 +78,45 @@ class RuntimeConfigurationLoader:
         *,
         settings: Settings | None = None,
         secret_store: SecretStore | None = None,
+        require_llm_key: bool = True,
+        require_voice_provider: bool = True,
     ) -> None:
         self._settings = settings if settings is not None else default_settings
 
         self._secret_store = (
             secret_store if secret_store is not None else InMemorySecretStore()
         )
+
+        # 2026-09-11 real fix, found live while running the first real,
+        # non-dry-run end-to-end test: this loader "has no visibility
+        # into desktop-configured provider profiles" (see class
+        # docstring), so outside dry-run it always required an
+        # OPENAI_API_KEY/CLAUDE_API_KEY/GOOGLE_API_KEY env var or it
+        # raised - even for a caller (the desktop app) that always
+        # supplies its own real, keyring-backed LLM profiles via
+        # ProductionApplicationFactory.build()'s live provider_registry
+        # afterward, and has no reason to duplicate that same secret
+        # into a second, env-var-based store. require_llm_key=False
+        # (opt-in, default True preserves every existing caller's
+        # exact behavior) lets _build_provider_profiles() return an
+        # empty list instead of raising in that one case - the
+        # desktop-registered real profiles are what generation actually
+        # uses; an empty starting list here is honest, not silently
+        # broken, and RuntimeConfigurationValidator already tolerates it.
+        self._require_llm_key = require_llm_key
+
+        # Same real fix, same day, same root cause, for the voice-
+        # provider axis: this loader always required
+        # MISSION_AUTOMATION_DRY_RUN outside of a caller supplying its
+        # own real VoiceProvider list - but that raise fires inside
+        # load() itself, unconditionally, BEFORE build_production_runtime()'s
+        # own voice_providers override parameter is ever applied a few
+        # lines later - so even a caller that always passes a real,
+        # non-empty voice_providers override (the desktop app) crashed
+        # first. require_voice_provider=False lets
+        # _build_voice_providers() return an empty list instead of
+        # raising in that one case.
+        self._require_voice_provider = require_voice_provider
 
     def load(self) -> RuntimeConfiguration:
         """Build one internally consistent runtime configuration."""
@@ -141,6 +178,9 @@ class RuntimeConfigurationLoader:
                 )
             ]
 
+        if not self._require_llm_key:
+            return []
+
         raise ValueError(
             "No LLM provider API key is configured. Set at least one "
             "of OPENAI_API_KEY, CLAUDE_API_KEY, or GOOGLE_API_KEY, or "
@@ -170,10 +210,12 @@ class RuntimeConfigurationLoader:
             secret_reference=secret.secret_reference,
         )
 
-    @staticmethod
-    def _build_voice_providers(*, dry_run: bool) -> list[VoiceProvider]:
+    def _build_voice_providers(self, *, dry_run: bool) -> list[VoiceProvider]:
         if dry_run:
             return [DryRunVoiceProvider()]
+
+        if not self._require_voice_provider:
+            return []
 
         raise ValueError(
             "No production voice-provider adapter is configured. "
