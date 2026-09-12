@@ -370,8 +370,14 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
 
             return self._drive_submission(page, request, attempt)
 
+        # Real-world finding, 2026-09-12: under the account's current
+        # real conditions (a low-credit banner, more account load),
+        # even a doubled _wait_for_new_tiles_or_confirmation() wait
+        # was still intermittently too short - bumped to 4x there, so
+        # this outer budget needs matching headroom for the
+        # settings/typing steps that also run inside the same call.
         return self._worker.submit_with_recovery(
-            _run, timeout=self._operation_timeout_seconds * 3
+            _run, timeout=self._operation_timeout_seconds * 6
         )
 
     def observe(
@@ -799,18 +805,25 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
         generation disabled and a thumbnail present - but took longer
         than operation_timeout_seconds (30s) to visibly disable,
         making this method report a false SUBMISSION_UNCERTAIN on a
-        submission that had actually succeeded. Doubled to give a
-        slower real acknowledgment (e.g. a fresh project's first-ever
-        generation) more room, while still leaving headroom inside the
-        outer submit() call's own operation_timeout_seconds * 3 budget
-        for the settings/typing steps that run before this wait.
+        submission that had actually succeeded.
+
+        Bumped again the same day, 4x instead of 2x: even the doubled
+        wait was still repeatedly too short under the account's real,
+        current conditions (a persistent low-credit banner, more
+        account load) - confirmed directly across a whole batch run,
+        where 4 separate real submissions all reported
+        SUBMISSION_UNCERTAIN, yet a follow-up "All media" check found
+        all 4 had genuinely completed. submit()'s own outer budget
+        (operation_timeout_seconds * 6) was widened to match, so this
+        4x wait always fits inside it alongside the settings/typing
+        steps that run before this wait.
         """
 
         start_button = page.get_by_role(
             "button", name=self._names.start_generation_button
         )
 
-        deadline = time.monotonic() + (self._operation_timeout_seconds * 2)
+        deadline = time.monotonic() + (self._operation_timeout_seconds * 4)
 
         while time.monotonic() < deadline:
             if start_button.is_disabled():
