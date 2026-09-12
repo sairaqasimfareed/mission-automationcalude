@@ -48,6 +48,39 @@ def test_get_infrastructure_validates_provider_health() -> None:
     assert any(profile.usable for profile in profiles)
 
 
+def test_get_runtime_configuration_does_not_require_a_real_llm_or_voice_key(
+    monkeypatch,
+) -> None:
+    """
+    Real-world finding, 2026-09-12: a real operator hit this directly -
+    the desktop app failed to even open its main window with "No
+    production voice-provider adapter is configured", despite already
+    having a real, working ElevenLabs setup, purely because this
+    function's bare RuntimeConfigurationLoader() call never received
+    the same require_llm_key=False/require_voice_provider=False
+    relaxation get_production_runtime() already applies for the exact
+    same reason (this desktop app always supplies its own real LLM/
+    voice profiles a different way, never via env-var keys).
+    MainWindow.__init__ only ever reads `.genre_registry` from this -
+    a self-contained default with no external dependency at all - so
+    neither requirement should ever be able to block it.
+    """
+
+    from src.config.settings import settings as real_settings
+
+    monkeypatch.setattr(real_settings, "OPENAI_API_KEY", "")
+    monkeypatch.setattr(real_settings, "CLAUDE_API_KEY", "")
+    monkeypatch.setattr(real_settings, "GOOGLE_API_KEY", "")
+    monkeypatch.setattr(real_settings, "MISSION_AUTOMATION_DRY_RUN", False)
+
+    _clear_caches()
+
+    configuration = services.get_runtime_configuration()
+
+    assert configuration.genre_registry is not None
+    assert configuration.provider_profiles == []
+
+
 def test_get_content_pipeline_uses_validated_infrastructure() -> None:
     _clear_caches()
 

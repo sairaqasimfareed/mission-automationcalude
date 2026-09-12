@@ -101,9 +101,29 @@ def get_runtime_configuration() -> RuntimeConfiguration:
     Reuses RuntimeConfigurationLoader/RuntimeConfigurationValidator
     from the Sprint 21 production entrypoint boundary rather than
     inventing separate desktop-specific configuration loading.
+
+    Real-world finding, 2026-09-12: this function's only real caller
+    (MainWindow.__init__) uses just `.genre_registry` - a
+    self-contained default with no external dependency at all - yet
+    the bare RuntimeConfigurationLoader() default strictly requires
+    either a real OPENAI_API_KEY/CLAUDE_API_KEY/GOOGLE_API_KEY env var
+    (this desktop app instead always supplies its own real,
+    keyring-backed LLM profiles a different way - see
+    get_production_runtime()'s own require_llm_key=False, applied for
+    the exact same reason) and a real production voice-provider
+    adapter (which this app also never configures via env vars - see
+    that same function's require_voice_provider=False). A real
+    operator hit this directly: the app failed to even open its main
+    window with "No production voice-provider adapter is configured"
+    despite already having a real, working ElevenLabs setup, purely
+    because this narrower, genre-registry-only call path never
+    received the same relaxation already applied to the real
+    production path.
     """
 
-    configuration = RuntimeConfigurationLoader().load()
+    configuration = RuntimeConfigurationLoader(
+        require_llm_key=False, require_voice_provider=False
+    ).load()
 
     RuntimeConfigurationValidator(
         secret_store=configuration.secret_store,
