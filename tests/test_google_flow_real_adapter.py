@@ -56,6 +56,9 @@ class _FakeWorker:
     def submit(self, fn: Callable[[], Any]) -> _ImmediateFuture:
         return _ImmediateFuture(fn())
 
+    def submit_with_recovery(self, fn: Callable[[], Any], *, timeout: float) -> Any:
+        return fn()
+
     def open_persistent_context_from_worker_thread(
         self, profile_id: str, profile_directory: Path, *, headless: bool
     ) -> _FakeContext:
@@ -79,6 +82,9 @@ class _SequentialFakeWorker:
 
     def submit(self, fn: Callable[[], Any]) -> _ImmediateFuture:
         return _ImmediateFuture(fn())
+
+    def submit_with_recovery(self, fn: Callable[[], Any], *, timeout: float) -> Any:
+        return fn()
 
     def open_persistent_context_from_worker_thread(
         self, profile_id: str, profile_directory: Path, *, headless: bool

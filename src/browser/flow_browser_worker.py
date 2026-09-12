@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from pathlib import Path
 from typing import TypeVar
 
@@ -75,6 +76,67 @@ class FlowBrowserWorker:
         )
         self._playwright: Playwright | None = None
         self._contexts: dict[str, BrowserContext] = {}
+
+    def submit_with_recovery(self, fn: Callable[[], T], *, timeout: float) -> T:
+        """
+        Run one callable on the worker thread, waiting up to `timeout`
+        seconds - and if it times out, recover the worker so the NEXT
+        call gets a genuinely fresh thread instead of queuing forever
+        behind a permanently wedged one.
+
+        Real-world finding, 2026-09-12: a real operator hit this
+        directly through Check Connection - the app went unresponsive,
+        then finally reported a failure once its own timeout elapsed.
+        Root cause: this class's worker thread is the ONE and ONLY
+        thread that ever touches Playwright (by design, see this
+        class's own docstring) via a ThreadPoolExecutor(max_workers=1).
+        `Future.result(timeout=...)` only stops the CALLER from
+        waiting any longer - it does NOT cancel the still-running task,
+        because Python has no safe way to force-kill a running thread.
+        If the underlying Chromium process died mid-call (or any other
+        way a Playwright/CDP call can block forever), that one thread
+        stays stuck running the old task forever, and since there is
+        only one thread, every subsequently submit()'d task queues
+        behind it and never runs - permanently wedging every future
+        Google Flow operation for the rest of this process's lifetime,
+        not just the one that happened to time out.
+
+        Recovery means replacing this instance's executor (and its
+        Playwright/context state, which only the OLD, now-abandoned
+        thread may safely touch) with fresh ones. The old stuck thread
+        itself cannot be killed and leaks until process exit - an
+        accepted tradeoff, since the alternative (a permanently wedged
+        app until manually restarted, exactly what a real operator
+        just hit) is far worse.
+        """
+
+        future = self.submit(fn)
+
+        try:
+            return future.result(timeout=timeout)
+        except FutureTimeoutError:
+            self._recover_from_stuck_worker()
+            raise
+
+    def _recover_from_stuck_worker(self) -> None:
+        """
+        Must only ever be called from a thread OTHER than the stuck
+        worker thread itself (submit_with_recovery's own caller, never
+        from inside a callable passed to submit()) - see its own
+        docstring for the full real-world finding this exists for.
+        """
+
+        self._executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="google-flow-browser",
+        )
+        # The abandoned thread may still be running, blocked forever -
+        # never touch _playwright/_contexts from here (this method
+        # runs on the caller's thread, not the worker thread); just
+        # drop the references so the NEW thread lazily reinitializes
+        # everything fresh on its own first real use.
+        self._playwright = None
+        self._contexts = {}
 
     def submit(self, fn: Callable[[], T]) -> Future[T]:
         """

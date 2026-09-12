@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -200,5 +201,48 @@ def test_shutdown_closes_every_open_context(
 
 def test_shutdown_without_ever_opening_anything_does_not_raise() -> None:
     worker = FlowBrowserWorker()
+
+    worker.shutdown()
+
+
+# --- submit_with_recovery() ---
+
+
+def test_submit_with_recovery_raises_on_timeout_and_unblocks_future_calls() -> None:
+    """
+    Real-world finding, 2026-09-12: a real operator hit this directly
+    through Check Connection - a hung Playwright/CDP call blocked the
+    ONE dedicated worker thread forever, and every subsequent call
+    queued behind it, wedging the whole app until manually restarted.
+    concurrent.futures' Future.result(timeout=...) only stops the
+    CALLER from waiting longer - it does NOT cancel the still-running
+    task, so a naive retry through the SAME executor would queue
+    forever behind the stuck one. submit_with_recovery() must still
+    raise on timeout (never silently swallow it), but recover the
+    worker so a call made AFTER the timeout gets a genuinely fresh
+    thread instead of queuing behind the permanently wedged old one.
+    """
+
+    worker = FlowBrowserWorker()
+
+    def _slow() -> str:
+        # Slower than the timeout below, but finite - a genuinely
+        # infinite block here would leak a non-daemon thread that
+        # could hang the whole test process at exit.
+        time.sleep(2.0)
+        return "finished too late"
+
+    with pytest.raises(TimeoutError):
+        worker.submit_with_recovery(_slow, timeout=0.2)
+
+    # The old, now-abandoned thread is still out there running _slow
+    # for another ~1.8s - a call made right now must get a genuinely
+    # fresh thread, not queue behind it. A short timeout here is the
+    # whole point: without real recovery, this second call would have
+    # to wait out the old thread's remaining sleep first and would
+    # itself time out - only a truly fresh thread finishes in time.
+    result = worker.submit_with_recovery(lambda: "fresh thread works", timeout=0.5)
+
+    assert result == "fresh thread works"
 
     worker.shutdown()

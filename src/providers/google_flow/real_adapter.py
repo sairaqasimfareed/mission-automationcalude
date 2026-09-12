@@ -261,8 +261,8 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
 
             return self._looks_authenticated(page)
 
-        return self._worker.submit(_run).result(
-            timeout=self._operation_timeout_seconds * 3
+        return self._worker.submit_with_recovery(
+            _run, timeout=self._operation_timeout_seconds * 3
         )
 
     def set_confirm_before_generating(self, profile_id: str, *, always: bool) -> None:
@@ -323,7 +323,9 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
                 timeout=self._action_timeout_ms
             )
 
-        self._worker.submit(_run).result(timeout=self._operation_timeout_seconds * 3)
+        self._worker.submit_with_recovery(
+            _run, timeout=self._operation_timeout_seconds * 3
+        )
 
     def submit(
         self,
@@ -355,8 +357,8 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
 
             return self._drive_submission(page, request, attempt)
 
-        return self._worker.submit(_run).result(
-            timeout=self._operation_timeout_seconds * 3
+        return self._worker.submit_with_recovery(
+            _run, timeout=self._operation_timeout_seconds * 3
         )
 
     def observe(
@@ -399,7 +401,9 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
                 detail=f"Flow shows {thumbnails.count()} generated thumbnail(s).",
             )
 
-        return self._worker.submit(_run).result(timeout=self._operation_timeout_seconds)
+        return self._worker.submit_with_recovery(
+            _run, timeout=self._operation_timeout_seconds
+        )
 
     def download(
         self,
@@ -504,8 +508,8 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
                 detail=f"Saved to {destination}.",
             ).model_copy(update={"downloaded_file": str(destination)})
 
-        return self._worker.submit(_run).result(
-            timeout=self._operation_timeout_seconds * 2
+        return self._worker.submit_with_recovery(
+            _run, timeout=self._operation_timeout_seconds * 2
         )
 
     def cancel_or_abandon(
