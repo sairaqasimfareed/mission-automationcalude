@@ -478,16 +478,19 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
             saved_path = destination_dir / download.suggested_filename
             download.save_as(str(saved_path))
 
-            # Real-world finding, 2026-09-11: Flow's real download is a
-            # .zip archive containing the video file, not a raw video
-            # file directly (confirmed directly - a real download was
-            # a "download.zip" containing exactly one real .mp4).
-            # Downstream technical validation
-            # (GoogleFlowGenerationOrchestratorService.validate_downloaded_attempt)
-            # expects downloaded_file to point at a real, directly
-            # playable media file, so extract it here rather than
-            # leaking zip-handling into that unrelated service.
-            destination = _extract_sole_video_from_zip(saved_path, destination_dir)
+            # Real-world finding, 2026-09-11: real Flow's download can
+            # be EITHER a raw video file directly (confirmed directly -
+            # clicking "Original size" specifically saved a real,
+            # directly playable .mp4) OR a .zip archive containing one
+            # (also confirmed directly via a real manual download from
+            # the same menu). Never assume which - check the real
+            # saved file itself rather than guessing from the menu
+            # path taken.
+            destination = (
+                _extract_sole_video_from_zip(saved_path, destination_dir)
+                if saved_path.suffix.lower() == ".zip"
+                else saved_path
+            )
 
             # Real-world finding, 2026-09-11: with_transition() only
             # ever records the state/history, never touches

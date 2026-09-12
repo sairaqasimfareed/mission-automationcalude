@@ -193,16 +193,17 @@ class _FakeKeyboard:
 
 class _FakeDownload:
     """
-    Real Flow's real download is a .zip archive containing exactly
-    one real video file, not a raw video file directly (confirmed
-    directly against a real download) - save_as() writes a genuinely
-    valid zip here so download()'s own real extraction logic
-    (_extract_sole_video_from_zip) is actually exercised, not mocked
-    around.
+    Real Flow's real download can be EITHER a raw video file directly
+    (confirmed directly - clicking "Original size" saved a real,
+    directly playable .mp4) OR a .zip archive containing one (also
+    confirmed directly, via a real manual download from the same
+    menu) - save_as() writes whichever this instance was configured
+    for, so download()'s own real suffix-based branching is actually
+    exercised for both real cases, not mocked around.
     """
 
     def __init__(
-        self, filename: str = "download.zip", inner_video_name: str = "lighthouse.mp4"
+        self, filename: str = "lighthouse.mp4", inner_video_name: str = "lighthouse.mp4"
     ) -> None:
         self.suggested_filename = filename
         self.inner_video_name = inner_video_name
@@ -210,8 +211,12 @@ class _FakeDownload:
 
     def save_as(self, path: str) -> None:
         self.saved_to = Path(path)
-        with zipfile.ZipFile(self.saved_to, "w") as archive:
-            archive.writestr(self.inner_video_name, b"fake real video bytes")
+
+        if self.saved_to.suffix.lower() == ".zip":
+            with zipfile.ZipFile(self.saved_to, "w") as archive:
+                archive.writestr(self.inner_video_name, b"fake real video bytes")
+        else:
+            self.saved_to.write_bytes(b"fake real video bytes")
 
 
 class _FakeDownloadInfo:
@@ -935,14 +940,55 @@ def test_download_saves_a_file_and_transitions_to_downloaded(
     assert controls.more_options_button.click_calls == 1
     assert controls.download_menuitem.click_calls == 1
     assert controls.original_size_menuitem.click_calls == 1
-    # The real download is a .zip containing one video - download()
-    # must extract it and point downloaded_file at the real video,
-    # never leave a .zip behind.
+    # Real-world finding: "Original size" saves a real, directly
+    # playable .mp4 - no zip involved for this specific menu path.
     assert downloaded.downloaded_file is not None
     assert downloaded.downloaded_file.endswith(".mp4")
     assert Path(downloaded.downloaded_file).is_file()
     saved_files = [path for path in tmp_path.rglob("*") if path.is_file()]
     assert len(saved_files) == 1
+
+
+def test_download_extracts_the_video_when_flow_saves_a_zip_instead(
+    tmp_path: Path,
+) -> None:
+    """
+    Real-world finding, 2026-09-11: a real MANUAL download from the
+    same menu produced a .zip archive containing one real video, not a
+    raw video file directly - confirmed directly by the account owner
+    (a native Windows "Save As" dialog offering "ZIP File" as the save
+    type). download() must not assume either shape; it checks the
+    real saved file's own suffix and extracts only when it's actually
+    a zip.
+    """
+
+    page = _authenticated_page()
+    adapter = GoogleFlowRealUIAdapter(
+        worker=_FakeWorker(page),  # type: ignore[arg-type]
+        base_url="https://flow.google.com/project/test-project",
+        operation_timeout_seconds=5.0,
+        download_root=tmp_path,
+        profile_directory_resolver=lambda profile_id: Path("unused") / profile_id,
+    )
+    request = _request()
+    submitted = adapter.submit(request, _attempt(request))
+
+    _register_download_flow(page)
+    page._download = _FakeDownload(filename="download.zip")  # noqa: SLF001
+
+    ready = adapter.observe(submitted)
+    assert ready.state == GoogleFlowGenerationState.READY_TO_DOWNLOAD
+
+    downloaded = adapter.download(ready)
+
+    assert downloaded.state == GoogleFlowGenerationState.DOWNLOADED
+    assert downloaded.downloaded_file is not None
+    assert downloaded.downloaded_file.endswith(".mp4")
+    assert Path(downloaded.downloaded_file).is_file()
+    # The zip itself must not be left behind once extracted.
+    saved_files = [path for path in tmp_path.rglob("*") if path.is_file()]
+    assert len(saved_files) == 1
+    assert saved_files[0].suffix == ".mp4"
 
 
 def test_download_scopes_to_the_clicked_tile_when_multiple_tiles_exist(
