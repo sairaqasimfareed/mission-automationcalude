@@ -615,4 +615,15 @@ for transition_type, expected_xfade_name in [
     assert f"transition={expected_xfade_name}" in new_transition_expression
 
 
+# Real-world finding, 2026-09-12: a real narration line containing an
+# apostrophe ("here's") failed a real render with "Error parsing
+# filterchain" - a bare backslash-escaped quote (\') is not valid
+# inside a single-quoted filtergraph string on this ffmpeg build.
+apostrophe_escaped = VideoFilterTranslationService._escape_drawtext(
+    "here's the unsettling part: some"
+)
+
+assert apostrophe_escaped == r"here'\''s the unsettling part\: some"
+
+
 print("Video Filter Translation Service tests " "completed successfully.")

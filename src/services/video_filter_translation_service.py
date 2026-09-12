@@ -1250,6 +1250,15 @@ class VideoFilterTranslationService:
     ) -> str:
         """
         Escape text used inside an FFmpeg drawtext text expression.
+
+        Real-world finding, 2026-09-12: a real narration line
+        containing an apostrophe ("here's") failed a real render with
+        "Error parsing filterchain" - a backslash-escaped quote (\\')
+        is NOT valid inside a single-quoted filtergraph string on this
+        ffmpeg build. FFmpeg's own documented escaping for a literal
+        single quote inside a single-quoted value is to close the
+        quote, insert a backslash-escaped quote, then reopen the
+        quote ('\\'') - not a bare backslash-escape.
         """
 
         return (
@@ -1259,7 +1268,7 @@ class VideoFilterTranslationService:
             )
             .replace(
                 "'",
-                r"\'",
+                r"'\''",
             )
             .replace(
                 ":",
