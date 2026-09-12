@@ -257,7 +257,10 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
             # intermittently reported a fully authenticated, healthy
             # real session (confirmed directly - the same page moments
             # later showed "Account details" present) as unhealthy.
-            page.wait_for_timeout(1500)
+            # Bumped from 1500ms to 3000ms, 2026-09-12: still
+            # intermittently too short under rapid repeated real
+            # automation (multiple scenes submitted back-to-back).
+            page.wait_for_timeout(3000)
 
             return self._looks_authenticated(page)
 
@@ -349,7 +352,7 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
             # right after a real, successful download (which leaves
             # the page on the "All media" view) reported AUTH_REQUIRED
             # on a session that was genuinely still authenticated.
-            page.wait_for_timeout(1500)
+            page.wait_for_timeout(3000)
 
             if not self._looks_authenticated(page):
                 return attempt.with_transition(
@@ -687,6 +690,15 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
         page.get_by_role("button", name=self._names.settings_trigger_button).click(
             timeout=self._action_timeout_ms
         )
+        # Real-world finding, 2026-09-12: the popover's own open
+        # animation/render isn't instant - the same category of race
+        # already fixed elsewhere (an instant, non-waiting .count()
+        # check run immediately after an action that needs a moment to
+        # render). Confirmed directly: a real submission failed with
+        # "requested generation_mode 'Video' is not one of the real
+        # options Flow currently offers" - the Video radio genuinely
+        # wasn't in the DOM yet at the instant _click_radio checked.
+        page.wait_for_timeout(800)
 
         # Real-world finding, 2026-09-11: the same settings popover
         # also contains an Image/Video generation-mode radio pair
