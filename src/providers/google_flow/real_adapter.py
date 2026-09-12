@@ -340,6 +340,16 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
                 self._base_url_resolver(attempt.profile_id),
                 timeout=self._action_timeout_ms,
             )
+            # Real-world finding, 2026-09-12: the exact same race
+            # check_profile_health() was already fixed for (goto()
+            # only waits for 'load', not for this client-rendered
+            # Angular app to finish hydrating, and _looks_authenticated's
+            # own checks are instant, non-waiting .count() reads) also
+            # exists here - confirmed directly: a real submission
+            # right after a real, successful download (which leaves
+            # the page on the "All media" view) reported AUTH_REQUIRED
+            # on a session that was genuinely still authenticated.
+            page.wait_for_timeout(1500)
 
             if not self._looks_authenticated(page):
                 return attempt.with_transition(
