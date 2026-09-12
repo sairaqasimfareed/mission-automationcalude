@@ -768,13 +768,27 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
         confirmed real, immediate behavior for the one real submission
         tested). Returns False, never guessing at an unrecognized
         screen, if that doesn't happen within the timeout.
+
+        Real-world finding, 2026-09-12: a real submission against a
+        brand-new project (the account owner had just switched to a
+        fresh Flow project) genuinely started generating for real -
+        confirmed directly, moments later, by both the account owner
+        watching it happen and a follow-up inspection showing Start
+        generation disabled and a thumbnail present - but took longer
+        than operation_timeout_seconds (30s) to visibly disable,
+        making this method report a false SUBMISSION_UNCERTAIN on a
+        submission that had actually succeeded. Doubled to give a
+        slower real acknowledgment (e.g. a fresh project's first-ever
+        generation) more room, while still leaving headroom inside the
+        outer submit() call's own operation_timeout_seconds * 3 budget
+        for the settings/typing steps that run before this wait.
         """
 
         start_button = page.get_by_role(
             "button", name=self._names.start_generation_button
         )
 
-        deadline = time.monotonic() + self._operation_timeout_seconds
+        deadline = time.monotonic() + (self._operation_timeout_seconds * 2)
 
         while time.monotonic() < deadline:
             if start_button.is_disabled():
