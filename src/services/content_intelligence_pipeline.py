@@ -59,6 +59,7 @@ from src.services.production_semantic_brief_service import (
 from src.services.re_hook_planning_service import ReHookPlanningService
 from src.services.research_planning_service import ResearchPlanningService
 from src.services.retention_audit_service import RetentionAuditService
+from src.services.scene_sound_design_service import SceneSoundDesignService
 from src.services.script_generation_service import ScriptGenerationService
 from src.services.script_intake_service import ScriptIntakeService
 from src.services.script_lock_service import ScriptLockService
@@ -236,6 +237,11 @@ class ContentIntelligencePipeline:
             estimated_cost_usd=estimated_cost_usd,
         )
         self.continuity_validation_service = ContinuityValidationService()
+        self.scene_sound_design_service = SceneSoundDesignService(
+            llm_service=llm_service,
+            profile_ids=profile_ids,
+            estimated_cost_usd=estimated_cost_usd,
+        )
         self.writing_directives_service = WritingDirectivesService(
             llm_service=llm_service,
             profile_ids=profile_ids,
@@ -700,6 +706,54 @@ class ContentIntelligencePipeline:
             job=job,
             stage="continuity_bible",
             summary="Continuity bible extracted.",
+            category=DecisionCategory.GENERATION,
+        )
+
+        return job
+
+    def run_sound_design(self, job: VideoJob) -> VideoJob:
+        """
+        Stage 12b: generate a content-aware SoundDesignPlan - scene-
+        specific SFX cues written from each scene's actual narration,
+        plus a music mood curve across the video - replacing the
+        render pipeline's fallback of a fixed genre-wide preset list
+        applied identically to every scene.
+
+        Runs automatically as part of run_all(), unlike the visual
+        continuity/cinematic-prompt chain (which requires three manual
+        button clicks and was never actually reaching Google Flow as
+        a result) - sound design generation already has a working,
+        automatic path to its providers (SoundEffectPipelineStage/
+        MusicPipelineStage both already call ElevenLabs directly), so
+        gating this behind a manual click would repeat that same
+        disconnection for no reason.
+        """
+
+        if not job.scenes:
+            raise RuntimeError("Sound design generation requires planned scenes.")
+
+        editorial_profile = job.editorial_profile_snapshot or (
+            self.resolve_editorial_profile(job)
+        )
+
+        job.sound_design_plan = self.scene_sound_design_service.generate(
+            scenes=job.scenes,
+            genre_tone=editorial_profile.script.tone.value,
+            genre_narrative_architecture_hint=(
+                editorial_profile.content_intelligence.narrative_architecture_hint
+            ),
+            continuity_bible=job.continuity_bible,
+        )
+
+        self.approval_gate_service.record_event(
+            job=job,
+            stage="sound_design",
+            summary=(
+                f"Sound design plan generated "
+                f"({len(job.sound_design_plan.sfx_cues)} SFX cue(s), "
+                f"{len(job.sound_design_plan.music_segments)} music "
+                "segment(s))."
+            ),
             category=DecisionCategory.GENERATION,
         )
 
@@ -1687,6 +1741,9 @@ class ContentIntelligencePipeline:
 
         if not job.scenes or self.invalidation_service.is_stale(job, "scenes"):
             job = self.run_scene_planning(job)
+
+        if job.sound_design_plan is None and job.scenes:
+            job = self.run_sound_design(job)
 
         return job
 

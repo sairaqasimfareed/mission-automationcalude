@@ -1607,6 +1607,43 @@ def test_run_scene_planning_produces_genre_aware_scenes() -> None:
     assert all(scene.narrative_function is not None for scene in job.scenes)
 
 
+def test_run_sound_design_requires_scenes() -> None:
+    pipeline, _ = _pipeline()
+
+    with pytest.raises(RuntimeError, match="requires planned scenes"):
+        pipeline.run_sound_design(_job())
+
+
+def test_run_sound_design_produces_a_plan() -> None:
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_audience_promise(_job())
+    job = pipeline.run_research(job)
+    job = pipeline.run_story_angles(job)
+    job = pipeline.run_narrative_architecture(job)
+    job = pipeline.run_hooks(job)
+    job = pipeline.run_script(job)
+    job = pipeline.run_scene_planning(job)
+    job = pipeline.run_sound_design(job)
+
+    assert job.sound_design_plan is not None
+
+
+def test_run_all_generates_a_sound_design_plan_automatically() -> None:
+    """
+    Sound design must run automatically as part of run_all() - unlike
+    the visual continuity/cinematic-prompt chain, which requires
+    manual button clicks and was never actually reaching Google Flow
+    as a result.
+    """
+
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_all(_job())
+
+    assert job.sound_design_plan is not None
+
+
 def test_run_all_produces_a_complete_and_quality_gated_script() -> None:
     pipeline, stub = _pipeline()
 
