@@ -4,7 +4,7 @@ from collections.abc import Callable
 from pathlib import Path
 from uuid import UUID
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QObject, Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QFileDialog,
@@ -27,14 +27,72 @@ from src.desktop.widgets import (
 )
 from src.models.bulk_clip_ingestion import BulkClipIngestionEntryStatus
 from src.models.bulk_stock_assignment import BulkStockAssignmentEntryStatus
+from src.models.scene_completeness import SceneCompletenessStatus
 from src.models.video_clip import VideoClip
 from src.models.video_job import VideoJob
 from src.services.bulk_clip_ingestion_service import BulkClipIngestionService
 from src.services.bulk_stock_assignment_service import BulkStockAssignmentService
 from src.services.scene_asset_workflow_service import SceneAssetWorkflowService
+from src.services.scene_completeness_service import SceneCompletenessService
 from src.services.scene_prompt_export_service import ScenePromptExportService
+from src.services.scene_video_generation_service import SceneVideoGenerationService
 
 _LEFT = Qt.AlignmentFlag.AlignLeft
+
+_COMPLETENESS_STATUS_ROLE = {
+    SceneCompletenessStatus.READY: "success",
+    SceneCompletenessStatus.IN_PROGRESS: "warning",
+    SceneCompletenessStatus.NEEDS_ATTENTION: "error",
+    SceneCompletenessStatus.NOT_STARTED: "warning",
+}
+
+
+class _SceneVideoGenerationWorker(QObject):
+    """
+    Runs one Google Flow scene-generation call (one scene, or every
+    planned scene) off the Qt main thread.
+
+    Real Flow generation is a multi-minute, polling-based operation
+    (SceneVideoGenerationService.generate_one/generate_all block on
+    real waits) - calling it directly from a button handler would
+    freeze the whole UI for however long that takes. Mirrors
+    _RenderWorker's own established pattern exactly (bound-method
+    signal connections, job_id carried as a plain attribute rather
+    than a lambda closure) for the same real thread-affinity reason
+    documented on that class - a lambda slot has no owning QObject for
+    Qt's AutoConnection to detect, and silently runs on the wrong
+    thread instead of being queued back to the GUI thread.
+    """
+
+    finished = Signal()
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        *,
+        service: SceneVideoGenerationService,
+        job: VideoJob,
+        scene_number: int | None,
+    ) -> None:
+        super().__init__()
+
+        self._service = service
+        self._job = job
+        self.job_id = job.id
+        self.scene_number = scene_number
+
+    def run(self) -> None:
+        try:
+            if self.scene_number is None:
+                self._service.generate_all(self._job)
+            else:
+                self._service.generate_one(self._job, self.scene_number)
+        except (RuntimeError, ValueError) as error:
+            self.failed.emit(str(error))
+
+            return
+
+        self.finished.emit()
 
 
 class ClipWorkspaceView(QWidget):
@@ -65,6 +123,7 @@ class ClipWorkspaceView(QWidget):
         job_store: JobStore,
         asset_workflow_service: SceneAssetWorkflowService,
         on_change: Callable[[], None],
+        scene_video_generation_service: SceneVideoGenerationService | None = None,
     ) -> None:
         super().__init__()
 
@@ -80,6 +139,18 @@ class ClipWorkspaceView(QWidget):
         self._bulk_stock_assignment_service = BulkStockAssignmentService(
             asset_workflow_service=asset_workflow_service
         )
+
+        # Optional: real Google Flow generation requires a configured
+        # provider/account (browser profile, provider profile) that
+        # not every install has - None disables the automatic
+        # generation card entirely rather than failing to construct
+        # this view, matching this codebase's established "optional to
+        # preserve older call sites" convention.
+        self._scene_video_generation_service = scene_video_generation_service
+        self._generating_job_ids: set[UUID] = set()
+        self._generation_threads: dict[
+            UUID, tuple[QThread, _SceneVideoGenerationWorker]
+        ] = {}
 
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -112,6 +183,7 @@ class ClipWorkspaceView(QWidget):
                 widget.deleteLater()
 
         self._build_summary_card(job)
+        self._build_automatic_generation_card(job)
         self._build_bulk_generation_card(job)
         self._build_clips_card(job)
 
@@ -144,6 +216,229 @@ class ClipWorkspaceView(QWidget):
             )
 
         self._layout.addWidget(frame)
+
+    def _build_automatic_generation_card(self, job: VideoJob) -> None:
+        """
+        Real, automatic Google Flow generation: submit -> poll ->
+        download -> attach per scene, via SceneVideoGenerationService.
+
+        Separate from the manual export/bulk-ingest workflow below,
+        which remains available unchanged - this is an additional,
+        faster path for a project with a real Flow account configured,
+        not a replacement.
+        """
+
+        frame, layout = card(
+            "Automatic scene generation (Google Flow)", icon_name="clapper"
+        )
+
+        service = self._scene_video_generation_service
+
+        if service is None:
+            layout.addWidget(
+                small_muted(
+                    "No Google Flow provider is configured for this "
+                    "installation - use the manual export workflow below."
+                )
+            )
+            self._layout.addWidget(frame)
+
+            return
+
+        if not job.scenes:
+            layout.addWidget(small_muted("No scenes planned yet - see Content Studio."))
+            self._layout.addWidget(frame)
+
+            return
+
+        is_generating = job.id in self._generating_job_ids
+
+        report = SceneCompletenessService().check(job)
+        entries_by_scene = {entry.scene_number: entry for entry in report.entries}
+
+        ready_count = sum(
+            1
+            for entry in report.entries
+            if entry.status == SceneCompletenessStatus.READY
+        )
+        layout.addWidget(
+            muted(f"{ready_count} / {len(report.entries)} scene(s) ready.")
+        )
+
+        if is_generating:
+            layout.addWidget(
+                status_label(
+                    "Generating - this can take several minutes per scene.",
+                    role="warning",
+                )
+            )
+
+        all_button = button(
+            "Generate all scenes", variant="primary", icon_name="clapper"
+        )
+        all_button.setEnabled(not is_generating and ready_count < len(report.entries))
+        all_button.clicked.connect(self._handle_generate_all_scene_videos)
+        layout.addWidget(all_button, alignment=_LEFT)
+
+        for scene in sorted(job.scenes, key=lambda scene: scene.scene_number):
+            entry = entries_by_scene.get(scene.scene_number)
+
+            row_layout = QVBoxLayout()
+            row_layout.setContentsMargins(0, 4, 0, 4)
+            row_layout.setSpacing(2)
+
+            row_layout.addWidget(
+                small_muted(f"Scene {scene.scene_number}: {scene.title}")
+            )
+
+            if entry is not None:
+                row_layout.addWidget(
+                    status_label(
+                        f"{entry.status.value} - {entry.detail}",
+                        role=_COMPLETENESS_STATUS_ROLE[entry.status],
+                    )
+                )
+
+            scene_button = button(
+                "Regenerate"
+                if entry is not None and entry.status == SceneCompletenessStatus.READY
+                else "Generate"
+            )
+            scene_button.setEnabled(not is_generating)
+            scene_button.clicked.connect(
+                lambda checked=False, number=scene.scene_number: (
+                    self._handle_generate_scene_video(number)
+                )
+            )
+            row_layout.addWidget(scene_button, alignment=_LEFT)
+
+            layout.addLayout(row_layout)
+
+        self._layout.addWidget(frame)
+
+    def _handle_generate_scene_video(self, scene_number: int) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        self._execute_scene_generation(job, scene_number=scene_number)
+
+    def _handle_generate_all_scene_videos(self) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        self._execute_scene_generation(job, scene_number=None)
+
+    def _execute_scene_generation(
+        self, job: VideoJob, *, scene_number: int | None
+    ) -> None:
+        service = self._scene_video_generation_service
+
+        if service is None:
+            return
+
+        if job.id in self._generating_job_ids:
+            # Already generating for this job - defense in depth, the
+            # UI already reflects this via disabled buttons.
+            return
+
+        thread = QThread()
+        worker = _SceneVideoGenerationWorker(
+            service=service,
+            job=job,
+            scene_number=scene_number,
+        )
+        worker.moveToThread(thread)
+
+        job_id = job.id
+        # QThread is a QObject too, so it can carry job_id for
+        # thread.finished below (which has no signal argument to carry
+        # it as a parameter) - same convention _RenderWorker/
+        # RenderWorkspaceView already establish.
+        thread.job_id = job_id  # type: ignore[attr-defined]
+
+        # Bound methods, not lambdas: see _SceneVideoGenerationWorker's
+        # own docstring for why - a lambda slot has no owning QObject
+        # for Qt's AutoConnection to detect, and silently runs
+        # cross-thread instead of being queued back to the GUI thread.
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._handle_scene_generation_finished)
+        worker.failed.connect(self._handle_scene_generation_failed)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+
+        # thread.finished only fires once the underlying OS thread has
+        # actually stopped - dropping the (thread, worker) reference
+        # any earlier risks garbage-collecting a QThread wrapper while
+        # its C++ thread is still shutting down (a real crash, not
+        # just a leak), so cleanup is kept separate from and later than
+        # the UI-facing "is this job still generating" bookkeeping.
+        thread.finished.connect(self._handle_scene_generation_thread_finished)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+
+        self._generation_threads[job_id] = (thread, worker)
+        self._generating_job_ids.add(job_id)
+
+        self._rebuild_card(job)
+
+        thread.start()
+
+    def _handle_scene_generation_finished(self) -> None:
+        worker = self.sender()
+        job_id = (
+            worker.job_id if isinstance(worker, _SceneVideoGenerationWorker) else None
+        )
+
+        if job_id is None:
+            return
+
+        self._generating_job_ids.discard(job_id)
+
+        if job_id == self._job_id:
+            self._on_change()
+
+    def _handle_scene_generation_failed(self, message: str) -> None:
+        worker = self.sender()
+
+        if not isinstance(worker, _SceneVideoGenerationWorker):
+            return
+
+        job_id = worker.job_id
+        scene_number = worker.scene_number
+        self._generating_job_ids.discard(job_id)
+
+        job = self._job_store.get(job_id)
+
+        if job is not None:
+            job.errors.append(f"Scene video generation failed: {message}")
+
+        if job_id == self._job_id:
+            on_retry = (
+                (lambda: self._execute_scene_generation(job, scene_number=scene_number))
+                if job is not None
+                else None
+            )
+            show_recoverable_error(
+                self, "Scene generation failed", message, on_retry=on_retry
+            )
+            self._on_change()
+
+    def _handle_scene_generation_thread_finished(self) -> None:
+        """Drop the (thread, worker) bookkeeping entry once the QThread has stopped."""
+
+        thread = self.sender()
+        job_id = getattr(thread, "job_id", None)
+
+        if job_id is not None:
+            self._generation_threads.pop(job_id, None)
+
+    def _rebuild_card(self, job: VideoJob) -> None:
+        if job.id == self._job_id:
+            self.refresh(job)
 
     def _build_clips_card(self, job: VideoJob) -> None:
         frame, layout = card(f"Scenes ({len(job.scenes)})", icon_name="clapper")

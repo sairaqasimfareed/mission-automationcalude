@@ -80,6 +80,9 @@ class MainWindow(QMainWindow):
             final_export_service=services.get_final_export_service(),
             seo_package_service=services.get_seo_package_service(),
             thumbnail_package_service=services.get_thumbnail_package_service(),
+            scene_video_generation_service=(
+                services.get_scene_video_generation_service()
+            ),
             on_back=self.show_dashboard,
         )
 

@@ -62,6 +62,7 @@ from src.services.scene_asset_and_timeline_infrastructure_factory import (
 from src.services.scene_asset_workflow_service import (
     SceneAssetWorkflowService,
 )
+from src.services.scene_video_generation_service import SceneVideoGenerationService
 from src.services.secrets.keyring_secret_store import KeyringSecretStore
 from src.services.secrets.provider_secret_manager import ProviderSecretManager
 from src.services.seo.seo_description_generation_service import (
@@ -674,6 +675,27 @@ def get_google_flow_generation_orchestrator_service() -> (
     return GoogleFlowGenerationOrchestratorService(
         provider=get_google_flow_real_ui_adapter(),
         account_router=get_google_flow_account_router_service(),
+    )
+
+
+def get_scene_video_generation_service() -> SceneVideoGenerationService:
+    """
+    Return the real submit/poll/download/attach loop driving Google
+    Flow generation across every planned scene - the "queue/worker
+    loop" GoogleFlowGenerationOrchestratorService's own docstring says
+    a caller must build, wired here for the desktop process.
+
+    Not cached: SceneVideoGenerationService itself holds no per-call
+    state (poll_interval_seconds/max_poll_attempts are fixed
+    construction-time defaults), so a fresh instance per call is
+    equivalent to a cached one, and matches
+    get_google_flow_generation_orchestrator_service()'s own choice not
+    to cache.
+    """
+
+    return SceneVideoGenerationService(
+        orchestrator=get_google_flow_generation_orchestrator_service(),
+        asset_workflow_service=get_asset_workflow_service(),
     )
 
 

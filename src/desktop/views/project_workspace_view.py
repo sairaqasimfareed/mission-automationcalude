@@ -30,6 +30,7 @@ from src.services.project_header_service import ProjectHeaderService
 from src.services.project_render_runtime_factory import ProjectRenderRuntimeFactory
 from src.services.reviewer_service import ReviewerService
 from src.services.scene_asset_workflow_service import SceneAssetWorkflowService
+from src.services.scene_video_generation_service import SceneVideoGenerationService
 from src.services.seo.seo_package_service import SEOPackageService
 from src.services.thumbnail.thumbnail_package_service import ThumbnailPackageService
 from src.services.topic_candidate_generation_service import (
@@ -130,6 +131,7 @@ class ProjectWorkspaceView(QWidget):
         topic_candidate_generation_service: TopicCandidateGenerationService,
         fact_check_service: FactCheckService,
         on_back: Callable[[], None],
+        scene_video_generation_service: SceneVideoGenerationService | None = None,
     ) -> None:
         super().__init__()
 
@@ -186,6 +188,7 @@ class ProjectWorkspaceView(QWidget):
             job_store=job_store,
             asset_workflow_service=asset_workflow_service,
             on_change=self.refresh,
+            scene_video_generation_service=scene_video_generation_service,
         )
         self.production_audio = ProductionAudioView(
             job_store=job_store,
