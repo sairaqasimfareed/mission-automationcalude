@@ -1401,10 +1401,12 @@ def test_run_visual_continuity_builds_a_bible_bound_to_the_lock() -> None:
 
 
 def test_run_visual_continuity_records_a_generation_event() -> None:
+    # run_all() now runs visual continuity automatically (2026-09-14),
+    # so no separate manual call is needed - it must have already
+    # recorded exactly one event from that single automatic run.
     pipeline, _ = _pipeline()
 
     job = pipeline.run_all(_job())
-    job = pipeline.run_visual_continuity(job)
 
     matching = [
         record
@@ -1419,6 +1421,7 @@ def test_compute_visual_continuity_validation_is_none_before_generation() -> Non
     pipeline, _ = _pipeline()
 
     job = pipeline.run_all(_job())
+    job.visual_continuity_bible = None
 
     assert pipeline.compute_visual_continuity_validation(job) is None
 
@@ -1439,6 +1442,8 @@ def test_run_shot_planning_requires_visual_continuity() -> None:
     pipeline, _ = _pipeline()
 
     job = pipeline.run_all(_job())
+    job.visual_continuity_bible = None
+    job.cinematic_shot_plan = None
 
     with pytest.raises(RuntimeError, match="requires a visual continuity bible"):
         pipeline.run_shot_planning(job)
@@ -1475,11 +1480,11 @@ def test_run_shot_planning_builds_a_plan_with_one_shot_per_scene() -> None:
 
 
 def test_run_shot_planning_records_a_generation_event() -> None:
+    # run_all() now runs shot planning automatically (2026-09-14), so
+    # no separate manual call is needed here either.
     pipeline, _ = _pipeline()
 
     job = pipeline.run_all(_job())
-    job = pipeline.run_visual_continuity(job)
-    job = pipeline.run_shot_planning(job)
 
     matching = [
         record for record in job.content_decisions if record.stage == "shot_planning"
@@ -1492,7 +1497,8 @@ def test_run_cinematic_prompt_compilation_requires_shot_plan() -> None:
     pipeline, _ = _pipeline()
 
     job = pipeline.run_all(_job())
-    job = pipeline.run_visual_continuity(job)
+    job.cinematic_shot_plan = None
+    job.cinematic_prompt_package = None
 
     with pytest.raises(RuntimeError, match="requires a cinematic shot plan"):
         pipeline.run_cinematic_prompt_compilation(job)
@@ -1517,6 +1523,7 @@ def test_run_cinematic_prompt_quality_requires_a_compiled_package() -> None:
     pipeline, _ = _pipeline()
 
     job = pipeline.run_all(_job())
+    job.cinematic_prompt_package = None
 
     with pytest.raises(RuntimeError, match="requires a compiled"):
         pipeline.run_cinematic_prompt_quality(job)
@@ -1630,18 +1637,35 @@ def test_run_sound_design_produces_a_plan() -> None:
 
 
 def test_run_all_generates_a_sound_design_plan_automatically() -> None:
-    """
-    Sound design must run automatically as part of run_all() - unlike
-    the visual continuity/cinematic-prompt chain, which requires
-    manual button clicks and was never actually reaching Google Flow
-    as a result.
-    """
+    """Sound design must run automatically as part of run_all()."""
 
     pipeline, _ = _pipeline()
 
     job = pipeline.run_all(_job())
 
     assert job.sound_design_plan is not None
+
+
+def test_run_all_generates_the_cinematic_prompt_chain_automatically() -> None:
+    """
+    2026-09-14: visual continuity, shot planning, and cinematic prompt
+    compilation now run automatically as part of run_all() - they
+    previously required three separate manual button clicks and,
+    since nothing else consumed the resulting package either, no
+    video generated this way ever had continuity grounding.
+    Submitting the compiled prompts to Google Flow deliberately stays
+    a separate, operator-triggered stage (not run_all()'s job) given
+    that provider's proven flakiness.
+    """
+
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_all(_job())
+
+    assert job.visual_continuity_bible is not None
+    assert job.cinematic_shot_plan is not None
+    assert job.cinematic_prompt_package is not None
+    assert len(job.cinematic_prompt_package.prompts) == len(job.scenes)
 
 
 def test_run_all_produces_a_complete_and_quality_gated_script() -> None:

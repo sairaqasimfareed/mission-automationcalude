@@ -1745,6 +1745,30 @@ class ContentIntelligencePipeline:
         if job.sound_design_plan is None and job.scenes:
             job = self.run_sound_design(job)
 
+        # Real-world finding, 2026-09-14: the visual-continuity ->
+        # shot-planning -> cinematic-prompt-compilation chain is fully
+        # real and working, but previously required three separate
+        # manual button clicks in Content Studio - and with nothing
+        # ever consuming the compiled package automatically either,
+        # every video generated this way used a hand-typed prompt
+        # with no continuity grounding at all. Auto-running these here
+        # closes that gap for the prompt side (same LLM-call risk
+        # profile as continuity_bible/sound_design, already automatic)
+        # - actually SUBMITTING to Google Flow stays a separate,
+        # operator-triggered stage given its proven flakiness this
+        # session, not something run_all() should ever do unattended.
+        # All three require job.script_lock, which is not always set
+        # by this point (an unresolved approval gate, or the fallback
+        # path above) - skipped rather than failing run_all() when
+        # that precondition isn't met.
+        if job.script_lock is not None:
+            if job.visual_continuity_bible is None:
+                job = self.run_visual_continuity(job)
+            if job.cinematic_shot_plan is None:
+                job = self.run_shot_planning(job)
+            if job.cinematic_prompt_package is None:
+                job = self.run_cinematic_prompt_compilation(job)
+
         return job
 
     def resolve_approval(
