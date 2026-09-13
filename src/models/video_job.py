@@ -53,6 +53,7 @@ from src.models.script_lock import ScriptLock
 from src.models.script_quality_report import ScriptQualityReport
 from src.models.script_version import ScriptVersionHistory
 from src.models.shot_planning import CinematicShotPlan
+from src.models.sound_design_plan import SoundDesignPlan
 from src.models.story_angle import StoryAngle, StoryAngleEvaluation
 from src.models.story_blueprint import StoryBlueprint
 from src.models.topic_candidate import TopicCandidate
@@ -245,6 +246,12 @@ class VideoJob(MissionBaseModel):
     audio_timeline: AudioTimeline | None = None
     video_timeline: VideoTimeline | None = None
     render_result: RenderResult | None = None
+
+    # Content-aware sound design (scene-specific SFX cues + a music
+    # mood curve, generated from the actual script) - optional. None
+    # means the render pipeline falls back to genre-level
+    # SoundEffectDirective/MusicDirective behavior unchanged.
+    sound_design_plan: SoundDesignPlan | None = None
 
     final_previews: list[FinalPreview] = Field(default_factory=list)
 
