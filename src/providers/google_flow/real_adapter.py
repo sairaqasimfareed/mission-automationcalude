@@ -392,8 +392,21 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
         # was still intermittently too short - bumped to 4x there, so
         # this outer budget needs matching headroom for the
         # settings/typing steps that also run inside the same call.
+        #
+        # Real-world finding, 2026-09-14: widening page.goto() to its
+        # own 2x _navigation_timeout_ms (a separate real fix, for a
+        # real navigation timeout under slow internet) made the old
+        # 6x outer ceiling too tight - navigation(2x) + the settings/
+        # typing steps + the confirmation wait(4x) can now add up to
+        # more than 6x on a genuinely slow connection, and this exact
+        # failure mode was confirmed live: submit_with_recovery's
+        # outer future timed out and tore the browser down while a
+        # real generation had already started (the account owner
+        # watched it happen). Widened to 9x so navigation(2x) +
+        # confirmation-wait(4x) + a real settings/typing buffer all
+        # fit with room to spare.
         return self._worker.submit_with_recovery(
-            _run, timeout=self._operation_timeout_seconds * 6
+            _run, timeout=self._operation_timeout_seconds * 9
         )
 
     def observe(
