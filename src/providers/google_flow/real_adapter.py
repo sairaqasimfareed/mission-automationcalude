@@ -199,6 +199,22 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
         return self._operation_timeout_seconds * 1000
 
     @property
+    def _navigation_timeout_ms(self) -> float:
+        """
+        Real-world finding, 2026-09-14: the first live run through
+        submit()'s real page.goto() (a heavy, client-rendered Angular
+        app, not a static page) timed out at the same 30s
+        _action_timeout_ms every click/locator check uses - reasonable
+        for "can this element be found on an already-loaded page", far
+        too tight for "load this whole app from scratch" under
+        anything but a fast connection. A slow real network directly
+        hits this call, never the fast, already-rendered-DOM checks
+        elsewhere, so only navigation gets the longer budget.
+        """
+
+        return self._operation_timeout_seconds * 2 * 1000
+
+    @property
     def provider_name(self) -> str:
         return "Google Flow"
 
@@ -236,7 +252,7 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
                 page = self._get_or_open_page(profile_id)
                 page.goto(
                     self._base_url_resolver(profile_id),
-                    timeout=self._action_timeout_ms,
+                    timeout=self._navigation_timeout_ms,
                 )
             except PlaywrightError:
                 self._pages.pop(profile_id, None)
@@ -244,7 +260,7 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
                 page = self._get_or_open_page(profile_id)
                 page.goto(
                     self._base_url_resolver(profile_id),
-                    timeout=self._action_timeout_ms,
+                    timeout=self._navigation_timeout_ms,
                 )
 
             # Real-world finding, 2026-09-11: goto() only waits for the
@@ -297,7 +313,7 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
         def _run() -> None:
             page = self._get_or_open_page(profile_id)
             page.goto(
-                self._base_url_resolver(profile_id), timeout=self._action_timeout_ms
+                self._base_url_resolver(profile_id), timeout=self._navigation_timeout_ms
             )
 
             page.get_by_role("button", name=self._names.agent_toggle_button).click(
@@ -341,7 +357,7 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
             page = self._get_or_open_page(attempt.profile_id)
             page.goto(
                 self._base_url_resolver(attempt.profile_id),
-                timeout=self._action_timeout_ms,
+                timeout=self._navigation_timeout_ms,
             )
             # Real-world finding, 2026-09-12: the exact same race
             # check_profile_health() was already fixed for (goto()
