@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from src.models.ffmpeg_config import (
     FFmpegCapabilities,
 )
@@ -220,7 +222,18 @@ subtitle_expression = subtitle_translation.filters[0].render_expression()
 
 assert "between(t" in (subtitle_expression)
 
-assert "The bunker door opened." in (subtitle_expression)
+assert "textfile=" in (subtitle_expression)
+
+assert "text='The bunker door opened.'" not in (subtitle_expression)
+
+_subtitle_textfile_path = (
+    subtitle_translation.filters[0].options["textfile"].strip("'").replace("\\:", ":")
+)
+
+assert (
+    Path(_subtitle_textfile_path).read_text(encoding="utf-8")
+    == "The bunker door opened."
+)
 
 
 animation_node = RenderNode(
@@ -615,15 +628,29 @@ for transition_type, expected_xfade_name in [
     assert f"transition={expected_xfade_name}" in new_transition_expression
 
 
-# Real-world finding, 2026-09-12: a real narration line containing an
-# apostrophe ("here's") failed a real render with "Error parsing
-# filterchain" - a bare backslash-escaped quote (\') is not valid
-# inside a single-quoted filtergraph string on this ffmpeg build.
-apostrophe_escaped = VideoFilterTranslationService._escape_drawtext(
-    "here's the unsettling part: some"
+# Real-world finding, 2026-09-13: a real narration line containing
+# both an apostrophe and a colon ("here's the unsettling part: some")
+# corrupted the old text= inline-escaping approach on this FFmpeg
+# build, leaking the rest of the text into the following :enable=
+# option. Subtitle text now goes through a real file (textfile=), so
+# only the file path needs filtergraph escaping - verify a path
+# containing a Windows drive-letter colon escapes correctly, and that
+# the exact apostrophe+colon narration line round-trips through the
+# actual file unescaped (the whole point of textfile=).
+escaped_drive_path = VideoFilterTranslationService._escape_drawtext_path(
+    "C:/Windows/Fonts/subtitle.txt"
 )
 
-assert apostrophe_escaped == r"here'\''s the unsettling part\: some"
+assert escaped_drive_path == r"C\:/Windows/Fonts/subtitle.txt"
+
+written_path = VideoFilterTranslationService._write_subtitle_text_file(
+    "here's the unsettling part: some"
+).replace("\\:", ":")
+
+assert (
+    Path(written_path.strip("'")).read_text(encoding="utf-8")
+    == "here's the unsettling part: some"
+)
 
 
 print("Video Filter Translation Service tests " "completed successfully.")

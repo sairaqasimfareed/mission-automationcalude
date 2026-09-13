@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import sys
 from pathlib import Path
 from typing import NamedTuple
@@ -34,6 +35,8 @@ from src.models.transition_execution import (
 from src.models.video_filter_translation import (
     VideoFilterTranslation,
 )
+
+_SUBTITLE_TEXT_CACHE_DIRECTORY = Path("data/subtitle_text_cache")
 
 
 class _ParametricGradeSpec(NamedTuple):
@@ -991,7 +994,9 @@ class VideoFilterTranslationService:
 
         options.update(
             {
-                "text": ("'" + self._escape_drawtext(execution.text) + "'"),
+                "textfile": (
+                    "'" + self._write_subtitle_text_file(execution.text) + "'"
+                ),
                 "enable": (
                     self._enable_expression(
                         local_start,
@@ -1245,24 +1250,54 @@ class VideoFilterTranslationService:
         return cleaned or None
 
     @staticmethod
-    def _escape_drawtext(
-        value: str,
+    def _write_subtitle_text_file(
+        text: str,
     ) -> str:
         """
-        Escape text used inside an FFmpeg drawtext text expression.
+        Write subtitle text to a real file and return its FFmpeg-safe
+        escaped path, for use with drawtext's textfile= option.
 
-        Real-world finding, 2026-09-12: a real narration line
-        containing an apostrophe ("here's") failed a real render with
-        "Error parsing filterchain" - a backslash-escaped quote (\\')
-        is NOT valid inside a single-quoted filtergraph string on this
-        ffmpeg build. FFmpeg's own documented escaping for a literal
-        single quote inside a single-quoted value is to close the
-        quote, insert a backslash-escaped quote, then reopen the
-        quote ('\\'') - not a bare backslash-escape.
+        Real-world finding, 2026-09-13: passing narration text inline
+        via drawtext's text= option requires escaping every FFmpeg-
+        special character (quotes, colons, percent signs, brackets)
+        inside an already-quoted filtergraph value. A real narration
+        line containing both an apostrophe and a colon ("here's the
+        unsettling part: some...") corrupted the quote-close/reopen
+        escape this build of FFmpeg expects for a literal quote,
+        leaking the rest of the text value straight into the following
+        :enable= option and disabling that drawtext's timing entirely
+        - the corrupted line then rendered as raw filter syntax on
+        screen instead of the intended caption. textfile= sidesteps
+        the whole class of inline-escaping bugs: FFmpeg reads the
+        file's raw bytes as the display text, so only the file PATH
+        needs filtergraph escaping, never the narration content.
         """
 
+        _SUBTITLE_TEXT_CACHE_DIRECTORY.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+        file_path = _SUBTITLE_TEXT_CACHE_DIRECTORY / f"{digest}.txt"
+
+        if not file_path.exists():
+            file_path.write_text(
+                text,
+                encoding="utf-8",
+            )
+
+        return VideoFilterTranslationService._escape_drawtext_path(file_path.as_posix())
+
+    @staticmethod
+    def _escape_drawtext_path(
+        path: str,
+    ) -> str:
+        """Escape a file path for use as an FFmpeg drawtext option value."""
+
         return (
-            value.replace(
+            path.replace(
                 "\\",
                 "\\\\",
             )
@@ -1273,22 +1308,6 @@ class VideoFilterTranslationService:
             .replace(
                 ":",
                 r"\:",
-            )
-            .replace(
-                "%",
-                r"\%",
-            )
-            .replace(
-                "[",
-                r"\[",
-            )
-            .replace(
-                "]",
-                r"\]",
-            )
-            .replace(
-                "\n",
-                r"\n",
             )
         )
 
