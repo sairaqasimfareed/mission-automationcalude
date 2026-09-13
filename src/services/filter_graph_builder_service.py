@@ -751,15 +751,59 @@ class FilterGraphBuilderService:
                 round(node.start_time_seconds * 1000.0),
             )
 
-            chain_nodes: list[FilterNode] = [
+            chain_nodes: list[FilterNode] = []
+
+            asetpts_input_label = source_label
+
+            # Real-world finding, 2026-09-13: AudioTrack.loop_enabled
+            # flowed all the way into this node's payload but nothing
+            # ever read it - a track shorter than its own configured
+            # duration_seconds (a generated music clip meant to loop
+            # under a whole multi-scene segment) just played once and
+            # went silent for the remainder instead of looping to fill
+            # it. aloop with a large sample-size cap loops the entire
+            # buffered clip indefinitely; atrim then cuts it back down
+            # to the track's real intended duration.
+            if bool(node.payload.get("loop_enabled")) and node.duration_seconds > 0:
+                looped_label = f"audio_{audio_offset}_looped"
+                trimmed_label = f"audio_{audio_offset}_trimmed"
+
+                chain_nodes.append(
+                    FilterNode(
+                        media_type=(FilterMediaType.AUDIO),
+                        filter_name="aloop",
+                        input_labels=[source_label],
+                        output_labels=[looped_label],
+                        raw_arguments=["loop=-1:size=2147483647"],
+                        source_render_node_id=str(node.id),
+                    )
+                )
+                chain_nodes.append(
+                    FilterNode(
+                        media_type=(FilterMediaType.AUDIO),
+                        filter_name="atrim",
+                        input_labels=[looped_label],
+                        output_labels=[trimmed_label],
+                        raw_arguments=[
+                            f"duration={self._format_number(node.duration_seconds)}"
+                        ],
+                        source_render_node_id=str(node.id),
+                    )
+                )
+
+                asetpts_input_label = trimmed_label
+
+            chain_nodes.append(
                 FilterNode(
                     media_type=(FilterMediaType.AUDIO),
                     filter_name="asetpts",
-                    input_labels=[source_label],
+                    input_labels=[asetpts_input_label],
                     output_labels=[pts_label],
                     raw_arguments=["PTS-STARTPTS"],
                     source_render_node_id=str(node.id),
-                ),
+                )
+            )
+            chain_nodes.append(
                 FilterNode(
                     media_type=(FilterMediaType.AUDIO),
                     filter_name="volume",
@@ -767,8 +811,8 @@ class FilterGraphBuilderService:
                     output_labels=[volume_label],
                     raw_arguments=[self._format_number(volume)],
                     source_render_node_id=str(node.id),
-                ),
-            ]
+                )
+            )
 
             # Post-Script-Approval Production Plan, Phase 11: "Resolve
             # volume, fades, loop, duck_under_voice and provenance" -
