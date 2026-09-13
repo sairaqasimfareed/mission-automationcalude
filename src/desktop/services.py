@@ -652,7 +652,18 @@ def get_google_flow_real_ui_adapter() -> GoogleFlowRealUIAdapter:
     return GoogleFlowRealUIAdapter(
         worker=get_google_flow_browser_worker(),
         base_url_resolver=_resolve_base_url,
-        headless=True,
+        # Real-world finding, 2026-09-14: this adapter backs
+        # SceneVideoGenerationService's automated submit/poll/download
+        # loop, and headless=True here meant the operator could never
+        # actually see it working - the very first live run through
+        # this path stalled during submission with no way to tell
+        # whether Flow's real UI was stuck, waiting, or behaving
+        # differently under a headless browser (Google's product is
+        # known to treat headless Chromium differently). Matches the
+        # Google Flow provider panel's own Check Connection/Open Login
+        # actions, which have always forced headless=False for exactly
+        # this reason - an operator needs to see what's happening.
+        headless=False,
     )
 
 
