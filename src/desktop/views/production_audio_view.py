@@ -4,7 +4,14 @@ from collections.abc import Callable
 from uuid import UUID
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFrame, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLineEdit,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
 
 from src.desktop.job_store import JobStore
 from src.desktop.recovery_dialog import show_recoverable_error
@@ -22,8 +29,20 @@ from src.models.audio_generation_summary import (
     AudioGenerationSummary,
 )
 from src.models.audio_track import AudioTrack, AudioTrackType
+from src.models.sound_design_plan import (
+    MusicMoodSegment,
+    SoundDesignItemStatus,
+    SoundDesignPlan,
+    SoundEffectCueDirective,
+)
 from src.models.video_job import VideoJob
 from src.services.media_generation_pipeline import MediaGenerationPipeline
+
+_ITEM_STATUS_ROLE = {
+    SoundDesignItemStatus.PENDING: "warning",
+    SoundDesignItemStatus.GENERATED: "success",
+    SoundDesignItemStatus.FAILED: "error",
+}
 
 _LEFT = Qt.AlignmentFlag.AlignLeft
 
@@ -94,6 +113,7 @@ class ProductionAudioView(QWidget):
 
         self._build_generation_card(job)
         self._build_summary_card()
+        self._build_sound_design_card(job)
         self._build_voice_card(job)
         self._build_timeline_card(job)
 
@@ -168,6 +188,237 @@ class ProductionAudioView(QWidget):
             )
 
         self._layout.addWidget(frame)
+
+    def _build_sound_design_card(self, job: VideoJob) -> None:
+        """
+        Review-and-approve panel for the content-aware SoundDesignPlan
+        (SceneSoundDesignService): every planned SFX cue and music
+        mood segment listed individually - editable prompt, estimated
+        cost, status, and its own Generate button - plus one "generate
+        all" per category. Absent entirely when the job has no plan
+        (older jobs, or sound design generation not yet run).
+        """
+
+        plan = job.sound_design_plan
+
+        if plan is None:
+            return
+
+        frame, layout = card("Sound design plan", icon_name="audio")
+
+        layout.addWidget(
+            small_muted(
+                "Scene-specific sound effects and a music mood curve, "
+                "generated from this video's actual narration. Edit a "
+                "prompt before generating if it doesn't fit."
+            )
+        )
+
+        self._build_sfx_cue_rows(layout, job=job, plan=plan)
+        self._build_music_segment_rows(layout, job=job, plan=plan)
+
+        self._layout.addWidget(frame)
+
+    def _build_sfx_cue_rows(
+        self, layout: QVBoxLayout, *, job: VideoJob, plan: SoundDesignPlan
+    ) -> None:
+        layout.addWidget(subheading("Planned sound effects"))
+
+        if not plan.sfx_cues:
+            layout.addWidget(small_muted("No sound-effect cues were planned."))
+        else:
+            pending_cost = sum(
+                cue.estimated_cost_usd
+                for cue in plan.sfx_cues
+                if cue.status != SoundDesignItemStatus.GENERATED
+            )
+            layout.addWidget(
+                small_muted(
+                    f"{len(plan.sfx_cues)} cue(s) · "
+                    f"${pending_cost:.4f} estimated for what's not yet generated"
+                )
+            )
+
+            for cue in plan.sfx_cues:
+                layout.addLayout(self._sfx_cue_row(job, cue))
+
+            all_button = button("Generate all sound effects", variant="primary")
+            all_button.clicked.connect(lambda: self._handle_generate_all_sfx(job))
+            layout.addWidget(all_button, alignment=_LEFT)
+
+    def _build_music_segment_rows(
+        self, layout: QVBoxLayout, *, job: VideoJob, plan: SoundDesignPlan
+    ) -> None:
+        layout.addWidget(subheading("Planned music"))
+
+        if not plan.music_segments:
+            layout.addWidget(small_muted("No music mood segments were planned."))
+        else:
+            for segment in plan.music_segments:
+                layout.addLayout(self._music_segment_row(job, segment))
+
+            all_button = button("Generate all music segments", variant="primary")
+            all_button.clicked.connect(lambda: self._handle_generate_all_music(job))
+            layout.addWidget(all_button, alignment=_LEFT)
+
+    def _sfx_cue_row(self, job: VideoJob, cue: SoundEffectCueDirective) -> QVBoxLayout:
+        row_layout = QVBoxLayout()
+        row_layout.setContentsMargins(0, 4, 0, 4)
+        row_layout.setSpacing(2)
+
+        header_row = QHBoxLayout()
+        header_row.addWidget(subheading(f"Scene {cue.scene_number}"))
+        header_row.addWidget(
+            status_label(cue.status.value, role=_ITEM_STATUS_ROLE[cue.status])
+        )
+        header_row.addWidget(small_muted(f"${cue.estimated_cost_usd:.4f}"))
+        header_row.addStretch()
+        row_layout.addLayout(header_row)
+
+        prompt_input = QLineEdit(cue.generation_prompt)
+        prompt_input.textChanged.connect(
+            lambda text, c=cue: setattr(c, "generation_prompt", text)
+        )
+        row_layout.addWidget(prompt_input)
+
+        row_layout.addWidget(small_muted(cue.rationale))
+
+        generate_button = button(
+            "Regenerate"
+            if cue.status == SoundDesignItemStatus.GENERATED
+            else "Generate"
+        )
+        generate_button.clicked.connect(
+            lambda: self._handle_generate_sfx_cue(job, str(cue.id))
+        )
+        row_layout.addWidget(generate_button, alignment=_LEFT)
+
+        return row_layout
+
+    def _music_segment_row(
+        self, job: VideoJob, segment: MusicMoodSegment
+    ) -> QVBoxLayout:
+        row_layout = QVBoxLayout()
+        row_layout.setContentsMargins(0, 4, 0, 4)
+        row_layout.setSpacing(2)
+
+        header_row = QHBoxLayout()
+        header_row.addWidget(
+            subheading(
+                f"Scenes {segment.start_scene_number}-{segment.end_scene_number}"
+            )
+        )
+        header_row.addWidget(
+            status_label(segment.status.value, role=_ITEM_STATUS_ROLE[segment.status])
+        )
+        header_row.addWidget(
+            small_muted(f"${self._music_segment_cost(job, segment):.2f}")
+        )
+        header_row.addStretch()
+        row_layout.addLayout(header_row)
+
+        mood_input = QLineEdit(segment.mood_description)
+        mood_input.textChanged.connect(
+            lambda text, s=segment: setattr(s, "mood_description", text)
+        )
+        row_layout.addWidget(mood_input)
+
+        row_layout.addWidget(small_muted(segment.rationale))
+
+        generate_button = button(
+            "Regenerate"
+            if segment.status == SoundDesignItemStatus.GENERATED
+            else "Generate"
+        )
+        generate_button.clicked.connect(
+            lambda: self._handle_generate_music_segment(job, str(segment.id))
+        )
+        row_layout.addWidget(generate_button, alignment=_LEFT)
+
+        return row_layout
+
+    @staticmethod
+    def _music_segment_cost(job: VideoJob, segment: MusicMoodSegment) -> float:
+        if job.video_timeline is None:
+            return 0.0
+
+        items_by_scene = {item.scene_number: item for item in job.video_timeline.items}
+        start_item = items_by_scene.get(segment.start_scene_number)
+        end_item = items_by_scene.get(segment.end_scene_number)
+
+        if start_item is None or end_item is None:
+            return 0.0
+
+        span_seconds = end_item.end_time_seconds - start_item.start_time_seconds
+
+        return segment.estimated_cost_usd(segment_duration_seconds=span_seconds)
+
+    def _handle_generate_sfx_cue(self, job: VideoJob, cue_id: str) -> None:
+        try:
+            self._media_generation_pipeline.generate_single_sfx_cue(job, cue_id)
+        except (RuntimeError, ValueError) as error:
+            self._record_error(job, f"Sound-effect generation failed: {error}")
+
+            return
+
+        self._on_change()
+
+    def _handle_generate_all_sfx(self, job: VideoJob) -> None:
+        plan = job.sound_design_plan
+
+        if plan is None:
+            return
+
+        for cue in list(plan.sfx_cues):
+            if cue.status == SoundDesignItemStatus.GENERATED:
+                continue
+
+            try:
+                self._media_generation_pipeline.generate_single_sfx_cue(
+                    job, str(cue.id)
+                )
+            except (RuntimeError, ValueError) as error:
+                job.errors.append(
+                    f"Sound-effect generation failed for scene "
+                    f"{cue.scene_number}: {error}"
+                )
+
+        self._on_change()
+
+    def _handle_generate_music_segment(self, job: VideoJob, segment_id: str) -> None:
+        try:
+            self._media_generation_pipeline.generate_single_music_segment(
+                job, segment_id
+            )
+        except (RuntimeError, ValueError) as error:
+            self._record_error(job, f"Music generation failed: {error}")
+
+            return
+
+        self._on_change()
+
+    def _handle_generate_all_music(self, job: VideoJob) -> None:
+        plan = job.sound_design_plan
+
+        if plan is None:
+            return
+
+        for segment in list(plan.music_segments):
+            if segment.status == SoundDesignItemStatus.GENERATED:
+                continue
+
+            try:
+                self._media_generation_pipeline.generate_single_music_segment(
+                    job, str(segment.id)
+                )
+            except (RuntimeError, ValueError) as error:
+                job.errors.append(
+                    "Music generation failed for segment "
+                    f"{segment.start_scene_number}-{segment.end_scene_number}: "
+                    f"{error}"
+                )
+
+        self._on_change()
 
     def _build_voice_card(self, job: VideoJob) -> None:
         frame, layout = card("Voiceover", icon_name="audio")
