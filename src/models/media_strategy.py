@@ -21,8 +21,10 @@ class SceneSourceType(str, Enum):
     LOCAL_LIBRARY = "local_library"
     IMAGE_TO_VIDEO = "image_to_video"
 
-    # Reserved for future API integration.
-    # It must remain unavailable in the active user workflow.
+    # 2026-09-14: wired into the active workflow -
+    # SceneAssetWorkflowService.apply_decision() dispatches
+    # AssetUserDecision.AI_GENERATE to _process_ai_generated_clip(),
+    # driven by SceneVideoGenerationService (Google Flow).
     AI_GENERATE = "ai_generate"
 
 

@@ -112,6 +112,9 @@ class SceneAssetWorkflowService:
         manual_upload_path: str | None = None,
         project_id: str | None = None,
         apply_to_remaining_scenes: bool = False,
+        ai_generated_file_path: str | None = None,
+        ai_generated_duration_seconds: float | None = None,
+        ai_generated_provider: str = "google_flow",
     ) -> SceneAssetState:
         """
         Apply a user decision and continue the workflow.
@@ -132,6 +135,15 @@ class SceneAssetWorkflowService:
                 state=state,
                 manual_upload_path=manual_upload_path,
                 project_id=project_id,
+            )
+
+        if decision == AssetUserDecision.AI_GENERATE:
+            return self._process_ai_generated_clip(
+                scene=scene,
+                state=state,
+                file_path=ai_generated_file_path,
+                duration_seconds=ai_generated_duration_seconds,
+                provider=ai_generated_provider,
             )
 
         updated_state = self.decision_service.apply_decision(
@@ -517,6 +529,76 @@ class SceneAssetWorkflowService:
             state=state,
             warnings=upload_result.warnings,
         )
+
+        return state
+
+    def _process_ai_generated_clip(
+        self,
+        *,
+        scene: Scene,
+        state: SceneAssetState,
+        file_path: str | None,
+        duration_seconds: float | None,
+        provider: str,
+    ) -> SceneAssetState:
+        """
+        Attach a real, already-generated-and-downloaded Google Flow
+        clip for one scene.
+
+        Unlike manual upload (a human picks and hands over a file) or
+        stock (a multi-candidate search), an AI-generated clip is a
+        single, already-resolved artifact by the time this is called
+        - SceneVideoGenerationService only calls apply_decision() with
+        AI_GENERATE once GoogleFlowGenerationOrchestratorService's own
+        ledger + technical validation have already confirmed the file
+        is real and playable. This method's only job is to attach it,
+        the same single round trip _process_manual_upload gives a
+        human-provided file.
+        """
+
+        normalized_file_path = file_path.strip() if file_path is not None else ""
+
+        if not normalized_file_path:
+            missing_failure = AssetModuleFailure(
+                module_name="ai_generate",
+                reason=AssetFailureReason.AI_GENERATION_FILE_MISSING,
+                message=(
+                    "AI_GENERATE was applied without a real, " "downloaded file path."
+                ),
+                recoverable=True,
+                requires_user_decision=True,
+                recovery_options=[
+                    AssetRecoveryAction.SEARCH_STOCK,
+                    AssetRecoveryAction.SKIP_SCENE,
+                ],
+            )
+
+            state.record_failure(missing_failure)
+
+            return state
+
+        state.clear_active_failure()
+
+        state.user_decision = AssetUserDecision.AI_GENERATE
+        state.selected_source = SceneSourceType.AI_GENERATE
+        state.selected_candidate = AssetCandidate(
+            title=scene.title,
+            source_type=SceneSourceType.AI_GENERATE,
+            file_path=normalized_file_path,
+            provider=provider,
+            license_type="generated",
+            duration_seconds=(
+                duration_seconds
+                if duration_seconds is not None
+                else float(scene.estimated_duration_seconds)
+            ),
+            resolution="1920x1080",
+            aspect_ratio="16:9",
+        )
+
+        state.status = AssetWorkflowStatus.READY
+        state.skipped = False
+        state.placeholder_requested = False
 
         return state
 

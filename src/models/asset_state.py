@@ -59,6 +59,13 @@ class AssetUserDecision(str, Enum):
     SEARCH_STOCK = "search_stock"
     USE_STOCK = "use_stock"
 
+    # A scene's clip was produced by an AI video generator (Google
+    # Flow) rather than uploaded or sourced from stock - applied once
+    # SceneVideoGenerationService has a real, downloaded, technically-
+    # validated file ready to attach, mirroring MANUAL_UPLOAD's single
+    # round trip rather than STOCK_FOOTAGE's multi-candidate search.
+    AI_GENERATE = "ai_generate"
+
     RETRY = "retry"
     SKIP_SCENE = "skip_scene"
     USE_PLACEHOLDER = "use_placeholder"
@@ -97,6 +104,13 @@ class AssetFailureReason(str, Enum):
 
     MODULE_DISABLED = "module_disabled"
     UNKNOWN = "unknown"
+
+    # SceneVideoGenerationService called apply_decision(AI_GENERATE)
+    # without a real, already-downloaded file path - a caller error,
+    # not a Google Flow provider failure (those are handled entirely
+    # inside GoogleFlowGenerationOrchestratorService's own ledger,
+    # long before this decision is ever applied).
+    AI_GENERATION_FILE_MISSING = "ai_generation_file_missing"
 
 
 class AssetRecoveryAction(str, Enum):
