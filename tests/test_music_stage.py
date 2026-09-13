@@ -14,6 +14,11 @@ from src.models.resolved_editing_blueprint import (
 )
 from src.models.scene import Scene
 from src.models.script import Script, ScriptStatus
+from src.models.sound_design_plan import (
+    MusicMoodSegment,
+    SoundDesignItemStatus,
+    SoundDesignPlan,
+)
 from src.models.video_clip import VideoClip, VideoClipStatus
 from src.models.video_job import VideoJob
 from src.models.video_timeline import VideoTimeline
@@ -230,6 +235,137 @@ def test_execute_is_non_fatal_when_generation_fails() -> None:
     assert not result.errors
     assert result.warnings
     assert job.audio_timeline is None
+
+
+def test_execute_prefers_content_aware_plan_over_genre_blueprint() -> None:
+    """
+    With a SoundDesignPlan present, its music mood segments drive
+    generation instead of the single genre-wide track - each segment
+    gets its own track, positioned at its own scene range's real
+    start time, not always 0.0.
+    """
+
+    stage = MusicPipelineStage(
+        generation_service=MusicGenerationService(providers=[FakeMusicProvider()]),
+    )
+    job = _job_with_timeline(scene_count=3, music_enabled=True)
+    job.sound_design_plan = SoundDesignPlan(
+        music_segments=[
+            MusicMoodSegment(
+                start_scene_number=1,
+                end_scene_number=2,
+                mood_description="sparse, quiet unease",
+                rationale="Opening setup.",
+            ),
+            MusicMoodSegment(
+                start_scene_number=3,
+                end_scene_number=3,
+                mood_description="tense, building drone",
+                rationale="The reveal.",
+            ),
+        ]
+    )
+
+    result = stage.execute(_context(job))
+
+    assert result.status == PipelineStageStatus.COMPLETED
+    assert result.metadata["attached_count"] == 2
+    assert job.audio_timeline is not None
+    assert len(job.audio_timeline.tracks) == 2
+
+    first_track, second_track = sorted(
+        job.audio_timeline.tracks, key=lambda track: track.start_time_seconds
+    )
+    assert first_track.start_time_seconds == 0.0
+    assert first_track.duration_seconds == 16.0
+    assert second_track.start_time_seconds == 16.0
+    assert second_track.duration_seconds == 8.0
+
+    for segment in job.sound_design_plan.music_segments:
+        assert segment.status == SoundDesignItemStatus.GENERATED
+        assert segment.audio_track_id is not None
+
+
+def test_execute_caps_requested_duration_but_track_spans_full_segment() -> None:
+    """
+    A segment spanning more than MAX_SINGLE_MUSIC_CLIP_REQUEST_SECONDS
+    must still request only a short, provider-safe clip while the
+    resulting track occupies the segment's real full span (loop fills
+    the rest at render time) - never request the whole segment length
+    directly, which is what hits ElevenLabs's real duration ceiling.
+    """
+
+    provider = FakeMusicProvider()
+    stage = MusicPipelineStage(
+        generation_service=MusicGenerationService(providers=[provider]),
+    )
+    job = _job_with_timeline(scene_count=3, music_enabled=True)
+    job.sound_design_plan = SoundDesignPlan(
+        music_segments=[
+            MusicMoodSegment(
+                start_scene_number=1,
+                end_scene_number=3,
+                mood_description="a very long mood segment",
+                rationale="Spans the whole video.",
+            ),
+        ]
+    )
+
+    stage.execute(_context(job))
+
+    assert job.audio_timeline is not None
+    track = job.audio_timeline.tracks[0]
+    assert track.duration_seconds == 24.0
+    assert track.loop_enabled is True
+
+
+def test_execute_skips_already_generated_music_segment() -> None:
+    stage = MusicPipelineStage(
+        generation_service=MusicGenerationService(providers=[FakeMusicProvider()]),
+    )
+    job = _job_with_timeline(scene_count=2, music_enabled=True)
+    job.sound_design_plan = SoundDesignPlan(
+        music_segments=[
+            MusicMoodSegment(
+                start_scene_number=1,
+                end_scene_number=2,
+                mood_description="already generated",
+                rationale="Already done.",
+                status=SoundDesignItemStatus.GENERATED,
+                audio_track_id="existing-track-id",
+            )
+        ]
+    )
+
+    result = stage.execute(_context(job))
+
+    assert result.metadata["attached_count"] == 0
+    assert result.metadata["skipped_existing_count"] == 1
+    assert job.audio_timeline is None or not job.audio_timeline.tracks
+
+
+def test_execute_marks_music_segment_failed_on_generation_failure() -> None:
+    stage = MusicPipelineStage(
+        generation_service=MusicGenerationService(providers=[]),
+    )
+    job = _job_with_timeline(scene_count=2, music_enabled=True)
+    job.sound_design_plan = SoundDesignPlan(
+        music_segments=[
+            MusicMoodSegment(
+                start_scene_number=1,
+                end_scene_number=2,
+                mood_description="will fail, no providers",
+                rationale="Should fail.",
+            )
+        ]
+    )
+
+    result = stage.execute(_context(job))
+
+    assert result.metadata["attached_count"] == 0
+    assert job.sound_design_plan.music_segments[0].status == (
+        SoundDesignItemStatus.FAILED
+    )
 
 
 def test_execute_skips_regeneration_when_background_music_already_attached() -> None:

@@ -177,6 +177,74 @@ def test_generate_fails_on_unsupported_output_format() -> None:
     assert result.failure.reason == "unsupported_output_format"
 
 
+def test_generate_uses_duration_seconds_for_provider_request() -> None:
+    provider = FakeMusicProvider()
+    service = MusicGenerationService(providers=[provider])
+
+    result = service.generate(
+        _instruction(preset=_preset(implementation={"library_query": "drone"})),
+        duration_seconds=18.0,
+        track_duration_seconds=68.0,
+    )
+
+    assert result.success
+    assert result.audio_track is not None
+    # The track occupies the full 68s span on the timeline...
+    assert result.audio_track.duration_seconds == 68.0
+    # ...even though only an 18s clip was actually requested/generated -
+    # real-world finding, 2026-09-13: requesting a whole video's length
+    # in one ElevenLabs call hits their real duration ceiling (HTTP 400).
+
+
+def test_generate_forces_loop_when_track_duration_exceeds_requested_duration() -> None:
+    """
+    A track longer than what was actually generated must loop
+    regardless of the preset's own "loop" flag, or the clip plays
+    once and falls silent for the remainder - the original bug this
+    split parameter exists to prevent.
+    """
+
+    provider = FakeMusicProvider()
+    service = MusicGenerationService(providers=[provider])
+
+    result = service.generate(
+        _instruction(preset=_preset(implementation={"library_query": "drone"})),
+        duration_seconds=18.0,
+        track_duration_seconds=40.0,
+    )
+
+    assert result.audio_track is not None
+    assert result.audio_track.loop_enabled is True
+
+
+def test_generate_without_track_duration_seconds_matches_prior_behavior() -> None:
+    provider = FakeMusicProvider()
+    service = MusicGenerationService(providers=[provider])
+
+    result = service.generate(
+        _instruction(preset=_preset(implementation={"library_query": "drone"})),
+        duration_seconds=40.0,
+    )
+
+    assert result.audio_track is not None
+    assert result.audio_track.duration_seconds == 40.0
+    assert result.audio_track.loop_enabled is False
+
+
+def test_generate_rejects_non_positive_track_duration() -> None:
+    service = MusicGenerationService(providers=[FakeMusicProvider()])
+
+    result = service.generate(
+        _instruction(),
+        duration_seconds=18.0,
+        track_duration_seconds=0.0,
+    )
+
+    assert not result.success
+    assert result.failure is not None
+    assert result.failure.reason == "invalid_duration"
+
+
 def test_generate_honors_requested_provider_name() -> None:
     matching = FakeMusicProvider(name="matching")
     other = FakeMusicProvider(name="other")

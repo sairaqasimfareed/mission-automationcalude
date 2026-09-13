@@ -37,10 +37,39 @@ class MusicGenerationService:
         *,
         duration_seconds: float,
         provider_name: str | None = None,
+        track_duration_seconds: float | None = None,
     ) -> MusicGenerationResult:
-        """Generate one background-music track."""
+        """
+        Generate one background-music track.
+
+        duration_seconds is what gets requested from the provider -
+        real-world finding, 2026-09-13: ElevenLabs's sound-generation
+        endpoint rejects a single request anywhere near a whole
+        video's length with HTTP 400 (confirmed: 20s succeeds, 68s
+        does not). track_duration_seconds, when given, is the actual
+        span the resulting AudioTrack should occupy on the timeline -
+        a short requested clip combined with a longer track duration
+        plus AudioTrack.loop_enabled=True (set from the resolved
+        preset's own "loop" flag) makes the real clip repeat to fill
+        the full span at render time, instead of forcing every
+        request to ask for the whole thing in one call. Defaults to
+        duration_seconds, preserving the original single-call
+        behavior exactly for callers that do not pass it.
+        """
 
         if duration_seconds <= 0:
+            return self._fail(
+                reason="invalid_duration",
+                message="Music track duration must be positive.",
+            )
+
+        resolved_track_duration_seconds = (
+            track_duration_seconds
+            if track_duration_seconds is not None
+            else duration_seconds
+        )
+
+        if resolved_track_duration_seconds <= 0:
             return self._fail(
                 reason="invalid_duration",
                 message="Music track duration must be positive.",
@@ -114,15 +143,25 @@ class MusicGenerationService:
                 metadata={"output_file": normalized_output_file},
             )
 
+        # A track duration longer than what was actually requested/
+        # generated must loop regardless of the preset's own "loop"
+        # flag, or the clip plays once and goes silent for the
+        # remainder - exactly the original duration-cap bug this
+        # track_duration_seconds split exists to prevent.
+        needs_loop_to_fill_track = resolved_track_duration_seconds > duration_seconds
+
         audio_track = AudioTrack(
             track_type=AudioTrackType.BACKGROUND_MUSIC,
             source_file=normalized_output_file,
             start_time_seconds=0.0,
-            duration_seconds=duration_seconds,
+            duration_seconds=resolved_track_duration_seconds,
             volume=instruction.volume_percent / 100.0,
             fade_in_seconds=instruction.fade_in_seconds,
             fade_out_seconds=instruction.fade_out_seconds,
-            loop_enabled=bool(instruction.preset.implementation.get("loop", False)),
+            loop_enabled=(
+                bool(instruction.preset.implementation.get("loop", False))
+                or needs_loop_to_fill_track
+            ),
             duck_under_voice=instruction.duck_under_voice,
             provider=provider.provider_name,
             license_type="library",
