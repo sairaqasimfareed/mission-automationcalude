@@ -7,6 +7,7 @@ from src.models.camera_execution import (
     CameraExecutionPlan,
     CameraExecutionStatus,
 )
+from src.models.media_strategy import SceneSourceType
 from src.models.resolved_editing_blueprint import (
     ResolvedCameraInstruction,
 )
@@ -136,6 +137,40 @@ class CameraExecutionService:
         if blueprint.scene_number != item.scene_number:
             raise ValueError(
                 "Editing blueprint scene number " "does not match timeline item."
+            )
+
+        if item.clip.source_type == SceneSourceType.AI_GENERATE:
+            # Real-world finding: a cinematic prompt already directs
+            # camera movement as part of what Flow generates (shot
+            # planning's whole purpose) - applying the genre's own
+            # camera preset on top would zoom pixels that are already
+            # moving, compounding rather than complementing it. Every
+            # other source type (manual upload, stock) is raw, static
+            # footage with no baked-in movement, so the genre preset
+            # remains the only source of camera motion for those.
+            scene_duration = item.duration_seconds
+
+            return CameraExecution(
+                status=CameraExecutionStatus.PLANNED,
+                scene_number=item.scene_number,
+                track_index=item.track_index,
+                layer_index=item.layer_index,
+                preset_id="camera.none",
+                motion_type="none",
+                intensity=blueprint.camera.intensity,
+                start_time_seconds=item.start_time_seconds,
+                end_time_seconds=item.end_time_seconds,
+                duration_seconds=scene_duration,
+                scene_start_time_seconds=item.start_time_seconds,
+                scene_end_time_seconds=item.end_time_seconds,
+                scene_duration_seconds=scene_duration,
+                local_start_offset_seconds=0.0,
+                local_end_offset_seconds=scene_duration,
+                warnings=[
+                    "Camera preset skipped: this scene's clip is "
+                    "AI-generated and already directs its own camera "
+                    "movement."
+                ],
             )
 
         instruction = blueprint.camera
