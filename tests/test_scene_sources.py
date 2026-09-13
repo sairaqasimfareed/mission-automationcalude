@@ -1,5 +1,3 @@
-from pydantic import ValidationError
-
 from src.models.media_strategy import (
     SceneSourceStatus,
     SceneSourceType,
@@ -71,41 +69,32 @@ image_scene = Scene(
 print("Image source:", image_scene.source_type)
 
 
-disabled_ai_scene = Scene(
+ai_generated_scene = Scene(
     scene_number=5,
-    title="Future AI Generation",
-    narration="Reserved for future video API integration.",
-    visual_prompt="Future AI-generated visual.",
+    title="Google Flow Generation",
+    narration="An old attic hatch swings open in the dark.",
+    visual_prompt="A cinematic attic reveal.",
     estimated_duration_seconds=8,
     source_type=SceneSourceType.AI_GENERATE,
-    source_status=SceneSourceStatus.DISABLED,
-    status=SceneStatus.PENDING,
+    source_status=SceneSourceStatus.READY,
+    status=SceneStatus.READY,
 )
 
-print("AI source:", disabled_ai_scene.source_type)
-print("AI status:", disabled_ai_scene.source_status)
+print("AI source:", ai_generated_scene.source_type)
+print("AI status:", ai_generated_scene.source_status)
 
-
-try:
-    Scene(
-        scene_number=6,
-        title="Invalid AI Scene",
-        narration="This state must be blocked.",
-        visual_prompt="Invalid AI generation request.",
-        estimated_duration_seconds=8,
-        source_type=SceneSourceType.AI_GENERATE,
-        source_status=SceneSourceStatus.PENDING,
-    )
-except ValidationError:
-    print("Invalid AI source state successfully blocked.")
-else:
-    raise AssertionError("AI_GENERATE should remain disabled.")
+assert ai_generated_scene.source_type == SceneSourceType.AI_GENERATE
+assert ai_generated_scene.source_status == SceneSourceStatus.READY
+print(
+    "AI_GENERATE scene construction succeeded (2026-09-14: wired into the "
+    "active workflow, no longer blocked)."
+)
 
 
 assert manual_scene.source_status == SceneSourceStatus.WAITING_FOR_UPLOAD
 assert stock_scene.stock_query == "ancient underground tunnels"
 assert local_scene.local_library_query == "dark stone corridor"
 assert image_scene.image_prompt == "Ancient underground city map"
-assert disabled_ai_scene.source_status == SceneSourceStatus.DISABLED
+assert ai_generated_scene.source_status == SceneSourceStatus.READY
 
 print("Scene Source tests completed successfully.")

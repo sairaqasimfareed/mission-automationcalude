@@ -72,10 +72,6 @@ class Scene(MissionBaseModel):
     def validate_source_configuration(self) -> Scene:
         """Prevent invalid or disabled source states."""
 
-        if self.source_type == SceneSourceType.AI_GENERATE:
-            if self.source_status != SceneSourceStatus.DISABLED:
-                raise ValueError("AI_GENERATE is reserved and must remain disabled.")
-
         if (
             self.source_type == SceneSourceType.MANUAL_UPLOAD
             and self.selected_asset_path is None
