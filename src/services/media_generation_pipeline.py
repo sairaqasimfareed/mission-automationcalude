@@ -14,9 +14,15 @@ from src.models.manual_audio_requirement import (
 )
 from src.models.media_strategy import VoiceStatus
 from src.models.resolved_editing_blueprint import ResolvedSoundEffectInstruction
+from src.models.sound_design_plan import SoundDesignItemStatus
 from src.models.video_job import VideoJob
 from src.models.video_timeline_item import VideoTimelineItem
 from src.models.voice_generation import VoiceGenerationResult
+from src.pipeline.music_stage import (
+    MAX_SINGLE_MUSIC_CLIP_REQUEST_SECONDS,
+    MusicPipelineStage,
+)
+from src.pipeline.sound_effect_stage import SoundEffectPipelineStage
 from src.services.budget.provider_budget_service import ProviderBudgetService
 from src.services.genre_timeline_pipeline_service import GenreTimelinePipelineService
 from src.services.genre_voice_directive_generation_service import (
@@ -323,6 +329,217 @@ class MediaGenerationPipeline:
 
         self.invalidation_service.on_audio_regenerated(
             job, reason="Sound effects were regenerated."
+        )
+
+        return job
+
+    def generate_single_sfx_cue(
+        self, job: VideoJob, cue_id: str, *, estimated_cost_usd: float = 0.0
+    ) -> VideoJob:
+        """
+        Generate exactly one SoundEffectCueDirective from
+        job.sound_design_plan, for a review-and-approve UI where an
+        operator generates cues individually (optionally after editing
+        a cue's prompt) rather than committing to every planned cue at
+        once.
+        """
+
+        if self.sound_effect_generation_service is None:
+            raise RuntimeError("No sound-effect provider is configured.")
+
+        if job.sound_design_plan is None:
+            raise RuntimeError("This job has no sound design plan.")
+
+        if job.video_timeline is None:
+            raise RuntimeError(
+                "Sound-effect generation requires a built video timeline - "
+                "run Timeline first."
+            )
+
+        cue = next(
+            (c for c in job.sound_design_plan.sfx_cues if str(c.id) == cue_id),
+            None,
+        )
+
+        if cue is None:
+            raise RuntimeError(f"No sound-effect cue found with id '{cue_id}'.")
+
+        items_by_scene = {item.scene_number: item for item in job.video_timeline.items}
+        item = items_by_scene.get(cue.scene_number)
+
+        if item is None:
+            raise RuntimeError(
+                f"Scene {cue.scene_number} has no matching timeline item."
+            )
+
+        self._gate_budget(
+            self.sound_effect_profile_id,
+            estimated_cost_usd,
+            stage="Sound-effect generation",
+        )
+
+        try:
+            instruction = SoundEffectPipelineStage._instruction_from_content_aware_cue(
+                cue
+            )
+            start_time_seconds = self._resolve_start_time(item=item, cue=instruction)
+
+            result = self.sound_effect_generation_service.generate(
+                instruction,
+                scene_number=item.scene_number,
+                start_time_seconds=start_time_seconds,
+            )
+
+            if not result.success or result.audio_track is None:
+                message = (
+                    result.failure.message
+                    if result.failure is not None
+                    else "unknown error"
+                )
+                cue.status = SoundDesignItemStatus.FAILED
+
+                raise RuntimeError(f"Sound-effect generation failed: {message}")
+
+            audio_timeline = job.audio_timeline or AudioTimeline()
+            audio_timeline.tracks = [
+                track
+                for track in audio_timeline.tracks
+                if track.metadata.get("sound_design_cue_id") != cue_id
+            ]
+            audio_track = result.audio_track.model_copy(
+                update={
+                    "metadata": {
+                        **result.audio_track.metadata,
+                        "sound_design_cue_id": cue_id,
+                    }
+                }
+            )
+            audio_timeline.tracks.append(audio_track)
+            job.audio_timeline = audio_timeline
+
+            cue.status = SoundDesignItemStatus.GENERATED
+            cue.audio_track_id = str(audio_track.id)
+        except Exception:
+            self._release_budget(self.sound_effect_profile_id, estimated_cost_usd)
+            raise
+
+        self.invalidation_service.on_audio_regenerated(
+            job, reason=f"Sound-effect cue for scene {cue.scene_number} was generated."
+        )
+
+        return job
+
+    def generate_single_music_segment(
+        self, job: VideoJob, segment_id: str, *, estimated_cost_usd: float = 0.0
+    ) -> VideoJob:
+        """
+        Generate exactly one MusicMoodSegment from
+        job.sound_design_plan, for the same review-and-approve UI
+        generate_single_sfx_cue serves.
+        """
+
+        if self.music_generation_service is None:
+            raise RuntimeError("No music provider is configured.")
+
+        if job.sound_design_plan is None:
+            raise RuntimeError("This job has no sound design plan.")
+
+        if job.video_timeline is None:
+            raise RuntimeError(
+                "Music generation requires a built video timeline - run "
+                "Timeline first."
+            )
+
+        segment = next(
+            (
+                s
+                for s in job.sound_design_plan.music_segments
+                if str(s.id) == segment_id
+            ),
+            None,
+        )
+
+        if segment is None:
+            raise RuntimeError(f"No music segment found with id '{segment_id}'.")
+
+        items_by_scene = {item.scene_number: item for item in job.video_timeline.items}
+        start_item = items_by_scene.get(segment.start_scene_number)
+        end_item = items_by_scene.get(segment.end_scene_number)
+
+        if start_item is None or end_item is None:
+            raise RuntimeError(
+                "Music segment "
+                f"{segment.start_scene_number}-{segment.end_scene_number} has "
+                "no matching timeline item(s)."
+            )
+
+        segment_span_seconds = end_item.end_time_seconds - start_item.start_time_seconds
+
+        if segment_span_seconds <= 0:
+            raise RuntimeError(
+                "Music segment "
+                f"{segment.start_scene_number}-{segment.end_scene_number} "
+                "resolved to a non-positive duration."
+            )
+
+        self._gate_budget(
+            self.music_profile_id, estimated_cost_usd, stage="Music generation"
+        )
+
+        try:
+            instruction = MusicPipelineStage._instruction_from_mood_segment(segment)
+            requested_duration_seconds = min(
+                segment_span_seconds,
+                MAX_SINGLE_MUSIC_CLIP_REQUEST_SECONDS,
+            )
+
+            result = self.music_generation_service.generate(
+                instruction,
+                duration_seconds=requested_duration_seconds,
+                track_duration_seconds=segment_span_seconds,
+            )
+
+            if not result.success or result.audio_track is None:
+                message = (
+                    result.failure.message
+                    if result.failure is not None
+                    else "Music generation failed without failure details."
+                )
+                segment.status = SoundDesignItemStatus.FAILED
+
+                raise RuntimeError(f"Music generation failed: {message}")
+
+            audio_timeline = job.audio_timeline or AudioTimeline()
+            audio_timeline.tracks = [
+                track
+                for track in audio_timeline.tracks
+                if track.metadata.get("sound_design_segment_id") != segment_id
+            ]
+            audio_track = result.audio_track.model_copy(
+                update={
+                    "start_time_seconds": start_item.start_time_seconds,
+                    "metadata": {
+                        **result.audio_track.metadata,
+                        "sound_design_segment_id": segment_id,
+                    },
+                }
+            )
+            audio_timeline.tracks.append(audio_track)
+            job.audio_timeline = audio_timeline
+
+            segment.status = SoundDesignItemStatus.GENERATED
+            segment.audio_track_id = str(audio_track.id)
+        except Exception:
+            self._release_budget(self.music_profile_id, estimated_cost_usd)
+            raise
+
+        self.invalidation_service.on_audio_regenerated(
+            job,
+            reason=(
+                "Music segment "
+                f"{segment.start_scene_number}-{segment.end_scene_number} "
+                "was generated."
+            ),
         )
 
         return job

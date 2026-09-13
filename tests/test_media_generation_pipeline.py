@@ -14,6 +14,12 @@ from src.models.manual_audio_requirement import ManualAudioRequirementType
 from src.models.media_strategy import SceneSourceStatus, SceneSourceType, VoiceStatus
 from src.models.provider_profile import ProviderCategory, ProviderProfile
 from src.models.scene import Scene, SceneStatus
+from src.models.sound_design_plan import (
+    MusicMoodSegment,
+    SoundDesignItemStatus,
+    SoundDesignPlan,
+    SoundEffectCueDirective,
+)
 from src.models.story_blueprint import StoryBeatType
 from src.models.video_clip import VideoClip, VideoClipStatus
 from src.models.video_job import VideoJob
@@ -263,6 +269,122 @@ def test_run_sound_effects_attaches_cues() -> None:
         if track.track_type == AudioTrackType.SOUND_EFFECT
     ]
     assert len(sound_effect_tracks) > 0
+
+
+def test_generate_single_sfx_cue_requires_a_sound_design_plan() -> None:
+    job = _job(_scene(1))
+    job.video_clips = [_clip(1)]
+    pipeline = _pipeline()
+    pipeline.run_timeline(job)
+
+    with pytest.raises(RuntimeError, match="has no sound design plan"):
+        pipeline.generate_single_sfx_cue(job, "missing-id")
+
+
+def test_generate_single_sfx_cue_requires_a_known_cue_id() -> None:
+    job = _job(_scene(1))
+    job.video_clips = [_clip(1)]
+    pipeline = _pipeline()
+    pipeline.run_timeline(job)
+    job.sound_design_plan = SoundDesignPlan()
+
+    with pytest.raises(RuntimeError, match="No sound-effect cue found"):
+        pipeline.generate_single_sfx_cue(job, "missing-id")
+
+
+def test_generate_single_sfx_cue_attaches_one_track_and_marks_generated() -> None:
+    job = _job(_scene(1), _scene(2))
+    job.video_clips = [_clip(1), _clip(2)]
+    pipeline = _pipeline()
+    pipeline.run_timeline(job)
+
+    cue = SoundEffectCueDirective(
+        scene_number=2,
+        generation_prompt="three slow deliberate wooden knocks",
+        rationale="Narration mentions knocks.",
+    )
+    job.sound_design_plan = SoundDesignPlan(sfx_cues=[cue])
+
+    result = pipeline.generate_single_sfx_cue(job, str(cue.id))
+
+    assert result.audio_timeline is not None
+    sound_effect_tracks = [
+        track
+        for track in result.audio_timeline.tracks
+        if track.track_type == AudioTrackType.SOUND_EFFECT
+    ]
+    assert len(sound_effect_tracks) == 1
+    assert (
+        sound_effect_tracks[0].metadata["library_query"]
+        == "three slow deliberate wooden knocks"
+    )
+    assert job.sound_design_plan.sfx_cues[0].status == SoundDesignItemStatus.GENERATED
+    assert job.sound_design_plan.sfx_cues[0].audio_track_id is not None
+
+
+def test_generate_single_sfx_cue_twice_replaces_rather_than_duplicates() -> None:
+    job = _job(_scene(1))
+    job.video_clips = [_clip(1)]
+    pipeline = _pipeline()
+    pipeline.run_timeline(job)
+
+    cue = SoundEffectCueDirective(
+        scene_number=1,
+        generation_prompt="a door creaking",
+        rationale="A door is mentioned.",
+    )
+    job.sound_design_plan = SoundDesignPlan(sfx_cues=[cue])
+
+    pipeline.generate_single_sfx_cue(job, str(cue.id))
+    pipeline.generate_single_sfx_cue(job, str(cue.id))
+
+    assert job.audio_timeline is not None
+    sound_effect_tracks = [
+        track
+        for track in job.audio_timeline.tracks
+        if track.track_type == AudioTrackType.SOUND_EFFECT
+    ]
+    assert len(sound_effect_tracks) == 1
+
+
+def test_generate_single_music_segment_requires_a_sound_design_plan() -> None:
+    job = _job(_scene(1))
+    job.video_clips = [_clip(1)]
+    pipeline = _pipeline()
+    pipeline.run_timeline(job)
+
+    with pytest.raises(RuntimeError, match="has no sound design plan"):
+        pipeline.generate_single_music_segment(job, "missing-id")
+
+
+def test_generate_single_music_segment_attaches_track_at_real_scene_start() -> None:
+    job = _job(_scene(1), _scene(2), _scene(3))
+    job.video_clips = [_clip(1), _clip(2), _clip(3)]
+    pipeline = _pipeline()
+    pipeline.run_timeline(job)
+
+    segment = MusicMoodSegment(
+        start_scene_number=2,
+        end_scene_number=3,
+        mood_description="tense, building drone",
+        rationale="The reveal.",
+    )
+    job.sound_design_plan = SoundDesignPlan(music_segments=[segment])
+
+    result = pipeline.generate_single_music_segment(job, str(segment.id))
+
+    assert result.audio_timeline is not None
+    music_tracks = [
+        track
+        for track in result.audio_timeline.tracks
+        if track.track_type == AudioTrackType.BACKGROUND_MUSIC
+    ]
+    assert len(music_tracks) == 1
+    assert music_tracks[0].start_time_seconds == 8.0
+    assert music_tracks[0].duration_seconds == 16.0
+    assert job.sound_design_plan.music_segments[0].status == (
+        SoundDesignItemStatus.GENERATED
+    )
 
 
 def test_full_sequence_produces_a_multi_track_audio_timeline() -> None:
