@@ -15,6 +15,11 @@ from src.models.resolved_editing_blueprint import (
 )
 from src.models.scene import Scene
 from src.models.script import Script, ScriptStatus
+from src.models.sound_design_plan import (
+    SoundDesignItemStatus,
+    SoundDesignPlan,
+    SoundEffectCueDirective,
+)
 from src.models.video_clip import VideoClip, VideoClipStatus
 from src.models.video_job import VideoJob
 from src.models.video_timeline import VideoTimeline
@@ -420,6 +425,94 @@ def test_execute_does_not_duplicate_cues_on_a_second_run() -> None:
     )
     assert job.audio_timeline is not None
     assert len(job.audio_timeline.tracks) == 2
+
+
+def test_execute_prefers_content_aware_plan_over_genre_blueprint() -> None:
+    """
+    When a SoundDesignPlan exists, its scene-specific cues drive
+    generation instead of the genre-level blueprint cues - the genre
+    cue below must be ignored entirely.
+    """
+
+    stage = SoundEffectPipelineStage(
+        generation_service=SoundEffectGenerationService(
+            providers=[FakeSoundEffectProvider()]
+        ),
+    )
+    job = _job_with_timeline(
+        scene_duration=8.0,
+        sound_effects=[_cue(resolved_preset_id="sfx.heartbeat_low")],
+    )
+    job.sound_design_plan = SoundDesignPlan(
+        sfx_cues=[
+            SoundEffectCueDirective(
+                scene_number=1,
+                generation_prompt="three slow deliberate wooden knocks",
+                rationale="Narration mentions knocks.",
+            )
+        ]
+    )
+
+    result = stage.execute(_context(job))
+
+    assert result.metadata["attached_count"] == 1
+    assert job.audio_timeline is not None
+    assert len(job.audio_timeline.tracks) == 1
+    assert (
+        job.audio_timeline.tracks[0].metadata["library_query"]
+        == "three slow deliberate wooden knocks"
+    )
+    assert job.sound_design_plan.sfx_cues[0].status == SoundDesignItemStatus.GENERATED
+    assert job.sound_design_plan.sfx_cues[0].audio_track_id is not None
+
+
+def test_execute_skips_already_generated_content_aware_cue() -> None:
+    stage = SoundEffectPipelineStage(
+        generation_service=SoundEffectGenerationService(
+            providers=[FakeSoundEffectProvider()]
+        ),
+    )
+    job = _job_with_timeline(scene_duration=8.0, sound_effects=[])
+    job.sound_design_plan = SoundDesignPlan(
+        sfx_cues=[
+            SoundEffectCueDirective(
+                scene_number=1,
+                generation_prompt="already generated",
+                rationale="Already done.",
+                status=SoundDesignItemStatus.GENERATED,
+                audio_track_id="existing-track-id",
+            )
+        ]
+    )
+
+    result = stage.execute(_context(job))
+
+    assert result.metadata["attached_count"] == 0
+    assert result.metadata["skipped_existing_count"] == 1
+    assert job.audio_timeline is None or not job.audio_timeline.tracks
+
+
+def test_execute_marks_content_aware_cue_failed_on_provider_failure() -> None:
+    stage = SoundEffectPipelineStage(
+        generation_service=SoundEffectGenerationService(
+            providers=[FakeSoundEffectProvider(fail_queries={"failing prompt"})]
+        ),
+    )
+    job = _job_with_timeline(scene_duration=8.0, sound_effects=[])
+    job.sound_design_plan = SoundDesignPlan(
+        sfx_cues=[
+            SoundEffectCueDirective(
+                scene_number=1,
+                generation_prompt="failing prompt",
+                rationale="Should fail.",
+            )
+        ]
+    )
+
+    result = stage.execute(_context(job))
+
+    assert result.metadata["attached_count"] == 0
+    assert job.sound_design_plan.sfx_cues[0].status == SoundDesignItemStatus.FAILED
 
 
 def test_execute_still_attaches_both_repetitive_cues_within_one_run_after_second_pass() -> (  # noqa: E501

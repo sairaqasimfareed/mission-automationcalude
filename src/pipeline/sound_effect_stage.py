@@ -6,7 +6,11 @@ from collections import Counter
 from src.models.audio_timeline import AudioTimeline
 from src.models.audio_track import AudioTrackType
 from src.models.editing_directives import DirectiveTimingMode
-from src.models.resolved_editing_blueprint import ResolvedSoundEffectInstruction
+from src.models.resolved_editing_blueprint import (
+    ResolvedPresetReference,
+    ResolvedSoundEffectInstruction,
+)
+from src.models.sound_design_plan import SoundDesignItemStatus, SoundEffectCueDirective
 from src.models.video_timeline_item import VideoTimelineItem
 from src.pipeline.base_stage import BasePipelineStage
 from src.pipeline.pipeline_stage import PipelineStageName, PipelineStageStatus
@@ -105,25 +109,45 @@ class SoundEffectPipelineStage(BasePipelineStage):
             if track.track_type == AudioTrackType.SOUND_EFFECT
         )
 
-        for item in sorted(timeline.items, key=lambda value: value.scene_number):
-            if item.editing_blueprint is None:
-                continue
+        items_by_scene = {item.scene_number: item for item in timeline.items}
 
-            for cue in item.editing_blueprint.sound_effects:
-                if not cue.enabled:
-                    continue
+        content_aware_cues = (
+            context.job.sound_design_plan.sfx_cues
+            if context.job.sound_design_plan is not None
+            else None
+        )
 
-                start_time_seconds = self._resolve_start_time(item=item, cue=cue)
-
-                cue_key = (item.scene_number, start_time_seconds)
-
-                if remaining_existing_counts[cue_key] > 0:
-                    remaining_existing_counts[cue_key] -= 1
+        if content_aware_cues is not None:
+            # Content-aware cues carry their own PENDING/GENERATED/
+            # FAILED status (set by SceneSoundDesignService, or reset
+            # by an operator asking to regenerate one), so a rerun of
+            # this stage skips by that status directly instead of the
+            # legacy path's audio_timeline reverse-lookup.
+            for cue in content_aware_cues:
+                if cue.status == SoundDesignItemStatus.GENERATED:
                     skipped_existing_count += 1
                     continue
 
+                item = items_by_scene.get(cue.scene_number)
+
+                if item is None:
+                    warnings.append(
+                        f"Sound design cue for scene {cue.scene_number} has "
+                        "no matching timeline item."
+                    )
+                    cue.status = SoundDesignItemStatus.FAILED
+
+                    continue
+
+                instruction = self._instruction_from_content_aware_cue(cue)
+
+                start_time_seconds = self._resolve_start_time(
+                    item=item,
+                    cue=instruction,
+                )
+
                 result = self._generation_service.generate(
-                    cue,
+                    instruction,
                     scene_number=item.scene_number,
                     start_time_seconds=start_time_seconds,
                     provider_name=self._provider_name,
@@ -140,13 +164,61 @@ class SoundEffectPipelineStage(BasePipelineStage):
                         f"Scene {item.scene_number} sound effect was not "
                         f"generated: {message}"
                     )
+                    cue.status = SoundDesignItemStatus.FAILED
 
                     continue
 
                 assert result.audio_track is not None
 
                 audio_timeline.tracks.append(result.audio_track)
+                cue.status = SoundDesignItemStatus.GENERATED
+                cue.audio_track_id = str(result.audio_track.id)
                 attached_count += 1
+        else:
+            for item in sorted(timeline.items, key=lambda value: value.scene_number):
+                if item.editing_blueprint is None:
+                    continue
+
+                for genre_cue in item.editing_blueprint.sound_effects:
+                    if not genre_cue.enabled:
+                        continue
+
+                    start_time_seconds = self._resolve_start_time(
+                        item=item, cue=genre_cue
+                    )
+
+                    cue_key = (item.scene_number, start_time_seconds)
+
+                    if remaining_existing_counts[cue_key] > 0:
+                        remaining_existing_counts[cue_key] -= 1
+                        skipped_existing_count += 1
+                        continue
+
+                    result = self._generation_service.generate(
+                        genre_cue,
+                        scene_number=item.scene_number,
+                        start_time_seconds=start_time_seconds,
+                        provider_name=self._provider_name,
+                    )
+
+                    if not result.success:
+                        message = (
+                            result.failure.message
+                            if result.failure is not None
+                            else "Sound-effect generation failed without details."
+                        )
+
+                        warnings.append(
+                            f"Scene {item.scene_number} sound effect was not "
+                            f"generated: {message}"
+                        )
+
+                        continue
+
+                    assert result.audio_track is not None
+
+                    audio_timeline.tracks.append(result.audio_track)
+                    attached_count += 1
 
         if skipped_existing_count:
             warnings.append(
@@ -172,6 +244,40 @@ class SoundEffectPipelineStage(BasePipelineStage):
                 "attached_count": attached_count,
                 "skipped_existing_count": skipped_existing_count,
             },
+        )
+
+    @staticmethod
+    def _instruction_from_content_aware_cue(
+        cue: SoundEffectCueDirective,
+    ) -> ResolvedSoundEffectInstruction:
+        """
+        Adapt a content-aware SoundEffectCueDirective (a bespoke,
+        scene-specific generation_prompt) into the same
+        ResolvedSoundEffectInstruction shape SoundEffectGenerationService
+        already consumes, so no change is needed there. preset_id is
+        preserved on the synthetic preset reference purely for
+        traceability (shown in the AudioTrack's own metadata) - the
+        actual provider query always comes from generation_prompt,
+        since that is what the sound designer LLM wrote specifically
+        for this scene.
+        """
+
+        preset = ResolvedPresetReference(
+            directive_path="sound_design.sfx_cue",
+            requested_preset_id=(cue.preset_id or "content_aware.custom"),
+            resolved_preset_id=(cue.preset_id or "content_aware.custom"),
+            found_exact_match=(cue.preset_id is not None),
+            implementation={"library_query": cue.generation_prompt},
+        )
+
+        return ResolvedSoundEffectInstruction(
+            preset=preset,
+            timing_mode=cue.timing_mode,
+            start_offset_seconds=cue.start_offset_seconds,
+            relative_position_percent=cue.relative_position_percent,
+            volume_percent=cue.volume_percent,
+            intensity=cue.intensity,
+            enabled=True,
         )
 
     @staticmethod
