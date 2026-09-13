@@ -10,6 +10,7 @@ from src.models.google_flow_generation import (
     GoogleFlowGenerationAttempt,
     GoogleFlowGenerationState,
 )
+from src.models.provider_profile import ProviderCategory
 from src.models.scene import Scene
 from src.models.scene_completeness import (
     SceneCompletenessEntry,
@@ -23,6 +24,7 @@ from src.services.google_flow_generation_ledger_service import (
 from src.services.google_flow_generation_orchestrator_service import (
     GoogleFlowGenerationOrchestratorService,
 )
+from src.services.registry.provider_registry import ProviderRegistry
 from src.services.scene_asset_video_clip_builder_service import (
     SceneAssetVideoClipBuilderService,
 )
@@ -72,6 +74,7 @@ class SceneVideoGenerationService:
         *,
         orchestrator: GoogleFlowGenerationOrchestratorService,
         asset_workflow_service: SceneAssetWorkflowService,
+        registry: ProviderRegistry | None = None,
         video_clip_builder_service: SceneAssetVideoClipBuilderService | None = None,
         poll_interval_seconds: float = 15.0,
         max_poll_attempts: int = 40,
@@ -86,6 +89,7 @@ class SceneVideoGenerationService:
 
         self._orchestrator = orchestrator
         self._asset_workflow_service = asset_workflow_service
+        self._registry = registry
         self._video_clip_builder_service = (
             video_clip_builder_service or SceneAssetVideoClipBuilderService()
         )
@@ -168,7 +172,8 @@ class SceneVideoGenerationService:
             prompt_version=_PROMPT_VERSION,
             idempotency_key=str(uuid.uuid4()),
             execution_settings=GoogleFlowExecutionSettings(
-                duration_seconds=float(duration_seconds)
+                model_family=self._configured_model_family(),
+                duration_seconds=float(duration_seconds),
             ),
             locked_script_hash=(
                 job.script_lock.script_content_hash
@@ -241,6 +246,44 @@ class SceneVideoGenerationService:
             scenes=job.scenes,
             states=job.scene_asset_states,
         )
+
+    def _configured_model_family(self) -> str | None:
+        """
+        Real-world finding, 2026-09-13: this service used to leave
+        model_family unset, so a submission never actually selected a
+        model in Flow's settings popover - it just used whatever
+        model happened to already be active in that browser profile's
+        project. That silently let a stale/different model dictate
+        which durations were even valid, surfacing as a confusing
+        FLOW_SETTINGS_UNAVAILABLE on duration rather than the real
+        cause. GoogleFlowProviderPanelView already lets an operator
+        record the intended model_family on the EXTERNAL_UI_VIDEO
+        profile's own metadata (GF-13) - read it back here so an
+        automated submission pins the same model an operator would
+        pick by hand, rather than gambling on Flow's current UI state.
+
+        Only applied when exactly one usable EXTERNAL_UI_VIDEO profile
+        is configured (true for every real setup so far) - with more
+        than one, this service has no way to know which one
+        GoogleFlowAccountRouterService will actually route to without
+        duplicating its own selection logic, so it deliberately falls
+        back to leaving model_family unset rather than guessing.
+        """
+
+        if self._registry is None:
+            return None
+
+        candidates = self._registry.list_by_category(
+            category=ProviderCategory.EXTERNAL_UI_VIDEO,
+            usable_only=True,
+        )
+
+        if len(candidates) != 1:
+            return None
+
+        model_family = candidates[0].metadata.get("model_family")
+
+        return model_family.strip() if model_family and model_family.strip() else None
 
     @staticmethod
     def _clamp_to_verified_duration(requested_seconds: int) -> int:

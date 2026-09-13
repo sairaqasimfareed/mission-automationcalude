@@ -105,6 +105,7 @@ class _ScriptedProvider(ExternalUIGenerationProvider):
         self._observe_sequence = list(observe_sequence)
         self.observe_call_count = 0
         self.submitted_prompts: list[str] = []
+        self.submitted_requests: list[GoogleFlowGenerationRequest] = []
         self.downloaded_file = "downloads/scene.mp4"
 
     @property
@@ -133,6 +134,7 @@ class _ScriptedProvider(ExternalUIGenerationProvider):
         attempt: GoogleFlowGenerationAttempt,
     ) -> GoogleFlowGenerationAttempt:
         self.submitted_prompts.append(request.prompt)
+        self.submitted_requests.append(request)
 
         current = attempt
         for state in (
@@ -184,10 +186,14 @@ def _asset_workflow_service() -> SceneAssetWorkflowService:
 
 
 def _orchestrator(
-    provider: _ScriptedProvider, *, probe_output: str = _GOOD_PROBE
+    provider: _ScriptedProvider,
+    *,
+    probe_output: str = _GOOD_PROBE,
+    registry: ProviderRegistry | None = None,
 ) -> GoogleFlowGenerationOrchestratorService:
-    registry = ProviderRegistry(profiles=[_flow_profile()])
-    router = GoogleFlowAccountRouterService(registry)
+    router = GoogleFlowAccountRouterService(
+        registry or ProviderRegistry(profiles=[_flow_profile()])
+    )
 
     return GoogleFlowGenerationOrchestratorService(
         provider=provider,
@@ -203,10 +209,14 @@ def _service(
     *,
     probe_output: str = _GOOD_PROBE,
     max_poll_attempts: int = 10,
+    registry: ProviderRegistry | None = None,
 ) -> SceneVideoGenerationService:
     return SceneVideoGenerationService(
-        orchestrator=_orchestrator(provider, probe_output=probe_output),
+        orchestrator=_orchestrator(
+            provider, probe_output=probe_output, registry=registry
+        ),
         asset_workflow_service=_asset_workflow_service(),
+        registry=registry,
         poll_interval_seconds=1.0,
         max_poll_attempts=max_poll_attempts,
         sleep_fn=lambda _: None,
@@ -297,6 +307,52 @@ def test_generate_one_clamps_duration_to_a_verified_flow_value() -> None:
 
     request = job.flow_generation_attempts[0].request
     assert request.execution_settings.duration_seconds == 10.0
+
+
+def test_generate_one_passes_the_profiles_configured_model_family() -> None:
+    """
+    Real-world finding, 2026-09-13: a submission used to leave
+    model_family unset entirely, so it silently used whatever model
+    happened to already be selected in Flow's UI - a real generation
+    failed on duration because the active model wasn't the one the
+    operator configured on the profile. Confirm the service now reads
+    it back from the one configured EXTERNAL_UI_VIDEO profile.
+    """
+
+    profile = _flow_profile().model_copy(
+        update={"metadata": {"model_family": "Veo 3.1 - Lite [Lower Priority]"}}
+    )
+    registry = ProviderRegistry(profiles=[profile])
+
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            GoogleFlowGenerationState.GENERATING,
+            GoogleFlowGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    service = _service(provider, registry=registry)
+    job = _job(_scene(1))
+
+    service.generate_one(job, 1)
+
+    request = job.flow_generation_attempts[0].request
+    assert request.execution_settings.model_family == "Veo 3.1 - Lite [Lower Priority]"
+
+
+def test_generate_one_leaves_model_family_unset_without_a_registry() -> None:
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            GoogleFlowGenerationState.GENERATING,
+            GoogleFlowGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    service = _service(provider)
+    job = _job(_scene(1))
+
+    service.generate_one(job, 1)
+
+    request = job.flow_generation_attempts[0].request
+    assert request.execution_settings.model_family is None
 
 
 def test_generate_one_marks_a_failing_download_qc_failed_and_does_not_attach(

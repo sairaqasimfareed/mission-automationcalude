@@ -696,6 +696,7 @@ def get_scene_video_generation_service() -> SceneVideoGenerationService:
     return SceneVideoGenerationService(
         orchestrator=get_google_flow_generation_orchestrator_service(),
         asset_workflow_service=get_asset_workflow_service(),
+        registry=get_infrastructure().provider_registry,
     )
 
 
