@@ -70,7 +70,18 @@ VERIFIED_MODEL_FAMILIES: tuple[str, ...] = (
 RECOMMENDED_UNLIMITED_MODEL_FAMILY = "Veo 3.1 - Lite"
 
 VERIFIED_RESOLUTIONS: tuple[str, ...] = ("360p", "720p")
-VERIFIED_DURATIONS_SECONDS: tuple[int, ...] = (4, 6, 8, 10)
+# Real-world finding, 2026-09-14: confirmed directly by the account
+# owner against a real settings popover (screenshot) for "Veo 3.1 -
+# Lite [Lower Priority]" (RECOMMENDED_UNLIMITED_MODEL_FAMILY's close
+# sibling, and the only model this codebase's real generation has
+# actually been tested against) - the duration row shows exactly
+# 4s/6s/8s, no 10s. The previous (4, 6, 8, 10) here was wrong for this
+# model - a real submission requesting 10s failed with
+# FLOW_SETTINGS_UNAVAILABLE every time. Not verified whether a
+# different model family (e.g. "Veo 3.1 - Lite" without the
+# [Lower Priority] suffix) offers a different set - this constant
+# reflects only what has actually been observed.
+VERIFIED_DURATIONS_SECONDS: tuple[int, ...] = (4, 6, 8)
 # How many video variations one submission generates for the same
 # prompt - confirmed by the account owner NOT to be a credit
 # multiplier by itself; the real settings popover shows one combined

@@ -306,7 +306,7 @@ def test_generate_one_clamps_duration_to_a_verified_flow_value() -> None:
     service.generate_one(job, 1)
 
     request = job.flow_generation_attempts[0].request
-    assert request.execution_settings.duration_seconds == 10.0
+    assert request.execution_settings.duration_seconds == 8.0
 
 
 def test_generate_one_passes_the_profiles_configured_model_family() -> None:
