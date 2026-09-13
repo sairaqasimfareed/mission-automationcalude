@@ -6,7 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from playwright.sync_api import Error as PlaywrightError
-from playwright.sync_api import Page
+from playwright.sync_api import Locator, Page
 
 from src.browser.flow_browser_worker import FlowBrowserWorker
 from src.browser.flow_profile_paths import profile_directory
@@ -34,6 +34,23 @@ DEFAULT_FLOW_DOWNLOAD_ROOT = Path("data/google_flow_downloads")
 # except variation_count (an int on GoogleFlowExecutionSettings, "x2"
 # on the real control).
 _VARIATION_COUNT_RADIO_NAMES = {1: "x1", 2: "x2", 3: "x3", 4: "x4"}
+
+# Real-world finding, 2026-09-14: docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md
+# section 5 confirms each new media tile shows "the submitted prompt
+# text underneath" itself. A short PREFIX, not the full prompt, is
+# matched against it - a real prompt here runs to hundreds of
+# characters, and Flow's own caption display is expected to truncate
+# it (the exact real truncation length is NOT verified; this is a
+# conservative guess meant to comfortably survive typical truncation,
+# not a confirmed real limit).
+_TILE_PROMPT_MATCH_CHARS = 40
+
+
+def _normalize_for_tile_match(text: str) -> str:
+    """Collapse whitespace so a multi-line prompt still matches
+    against Flow's own single-line rendered caption text."""
+
+    return " ".join(text.split())
 
 
 class GoogleFlowUIChangedError(RuntimeError):
@@ -433,7 +450,28 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
             }:
                 return attempt
 
-            thumbnails = page.get_by_role(
+            # Real-world finding, 2026-09-14: this used to check
+            # page-wide "is there any generated thumbnail at all",
+            # which is true immediately in any project that already
+            # has other videos in it (this account's real project did,
+            # a leftover unrelated video plus earlier test attempts) -
+            # confirmed live, it reported READY_TO_DOWNLOAD on the very
+            # first poll regardless of whether THIS attempt's own
+            # generation had actually finished. Scope to the one tile
+            # that actually matches this attempt's own prompt instead.
+            matching_tiles = self._tiles_matching_attempt(page, attempt)
+
+            if matching_tiles.count() != 1:
+                # Can't yet uniquely identify this attempt's own tile -
+                # 0 means it hasn't rendered its caption yet (or the
+                # prompt-prefix guess missed), >1 means an ambiguous
+                # real situation (e.g. the same prompt submitted more
+                # than once, which happened during this exact
+                # investigation). Keep polling rather than falsely
+                # reporting ready or guessing among several.
+                return attempt
+
+            thumbnails = matching_tiles.first.get_by_role(
                 "img", name=self._names.generated_video_thumbnail
             )
 
@@ -446,7 +484,7 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
 
             return attempt.with_transition(
                 GoogleFlowGenerationState.READY_TO_DOWNLOAD,
-                detail=f"Flow shows {thumbnails.count()} generated thumbnail(s).",
+                detail="Flow shows a completed thumbnail on this attempt's own matched tile.",
             )
 
         return self._worker.submit_with_recovery(
@@ -483,26 +521,41 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
             # real race check_profile_health hit (see its own fix).
             page.wait_for_timeout(1500)
 
-            first_thumbnail = page.get_by_role(
+            # Real-world finding, 2026-09-14: this used to grab
+            # page.get_by_role(...).first - whichever thumbnail
+            # happened to render topmost in the WHOLE "All media"
+            # grid, with no check that it was actually THIS attempt's
+            # own generation. That silently risks downloading a
+            # different, unrelated video the moment a project has more
+            # than one (an old test clip, another scene generated
+            # around the same time) - a real, disclosed gap that a
+            # live test surfaced directly. Identify the tile by its
+            # own prompt caption instead of trusting position.
+            matching_tiles = self._tiles_matching_attempt(page, attempt)
+            match_count = matching_tiles.count()
+
+            if match_count != 1:
+                return attempt.with_transition(
+                    GoogleFlowGenerationState.UI_CHANGED,
+                    detail=(
+                        "Could not uniquely identify this attempt's own "
+                        f"media tile on the All media view (found "
+                        f"{match_count} tile(s) matching its prompt) - "
+                        "refusing to guess which video to download."
+                    ),
+                )
+
+            tile = matching_tiles.first
+            thumbnail = tile.get_by_role(
                 "img", name=self._names.generated_video_thumbnail
-            ).first
+            )
             # The row's own controls (its "More options" button among
             # them) only render into the DOM on a real hover event -
             # confirmed directly (a page-wide search found 0 of them
             # before hovering, exactly 1 new one after).
-            first_thumbnail.hover(timeout=self._action_timeout_ms)
+            thumbnail.hover(timeout=self._action_timeout_ms)
             page.wait_for_timeout(1500)
 
-            # Real Flow renders one <flow-video-tile> per row, each
-            # with its own identically-named "More options" button (on
-            # top of a separate, ALWAYS-present, unrelated "More
-            # options" button elsewhere on the page) - scope to the
-            # specific tile structurally containing the thumbnail just
-            # hovered, exactly like the earlier <flow-batch-info>
-            # download-button scoping fix. Never guess which of
-            # several identically-labeled real controls is the right
-            # one.
-            tile = page.locator("flow-video-tile").filter(has=first_thumbnail)
             tile.get_by_role("button", name=self._names.more_options_button).click(
                 timeout=self._action_timeout_ms
             )
@@ -805,6 +858,29 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
         # without guessing at a specific close control this session
         # never observed.
         page.keyboard.press("Escape")
+
+    def _tiles_matching_attempt(
+        self, page: Page, attempt: GoogleFlowGenerationAttempt
+    ) -> Locator:
+        """
+        Return the (possibly empty, possibly ambiguous) set of media
+        tiles whose own rendered caption contains this attempt's own
+        prompt - see docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md section 5 for
+        the real finding this is built on, and _TILE_PROMPT_MATCH_CHARS'
+        own comment for why only a prefix is matched.
+
+        Deliberately returns the raw locator rather than asserting a
+        single match itself - observe() and download() each need a
+        different response to "not exactly one" (observe() treats it
+        as "can't confirm yet, keep polling"; download() refuses to
+        guess and surfaces UI_CHANGED instead of picking one).
+        """
+
+        excerpt = _normalize_for_tile_match(attempt.request.prompt)[
+            :_TILE_PROMPT_MATCH_CHARS
+        ]
+
+        return page.locator("flow-video-tile").filter(has_text=excerpt)
 
     def _click_radio(self, page: Page, name: str, *, dimension: str) -> None:
         radio = page.get_by_role("radio", name=name)
