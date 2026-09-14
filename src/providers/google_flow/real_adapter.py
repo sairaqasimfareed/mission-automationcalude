@@ -481,18 +481,33 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
             # a leftover unrelated video plus earlier test attempts) -
             # confirmed live, it reported READY_TO_DOWNLOAD on the very
             # first poll regardless of whether THIS attempt's own
-            # generation had actually finished. Scope to the one tile
-            # that actually matches this attempt's own prompt instead.
+            # generation had actually finished. Scope to the tile(s)
+            # that actually match this attempt's own prompt instead.
+            #
+            # Real-world finding, 2026-09-14 (same day, second real
+            # bug): every scene in one job shares the same "Identity:
+            # ..." continuity preamble at the very start of its prompt
+            # - confirmed directly from a real screenshot showing two
+            # different scenes' tiles with visibly identical captions.
+            # Since Flow's own caption display truncates well within
+            # that shared preamble, prompt-prefix matching alone
+            # cannot distinguish one job's OWN scenes from each other,
+            # only this job from a genuinely different one - it still
+            # does that correctly. When it matches more than one tile,
+            # take the topmost (first): GoogleFlowGenerationLedgerService.
+            # create_attempt()'s own in-flight guard (one non-terminal
+            # attempt per profile per job, enforced at submission time)
+            # guarantees at most one of this job's own tiles can
+            # genuinely still be pending at once, and real Flow always
+            # prepends new tiles to the top - so among this job's own
+            # matches, the newest (topmost) one is always the one THIS
+            # attempt actually produced, never a guess.
             matching_tiles = self._tiles_matching_attempt(page, attempt)
 
-            if matching_tiles.count() != 1:
-                # Can't yet uniquely identify this attempt's own tile -
-                # 0 means it hasn't rendered its caption yet (or the
-                # prompt-prefix guess missed), >1 means an ambiguous
-                # real situation (e.g. the same prompt submitted more
-                # than once, which happened during this exact
-                # investigation). Keep polling rather than falsely
-                # reporting ready or guessing among several.
+            if matching_tiles.count() == 0:
+                # Not rendered yet (or the prompt-prefix guess missed
+                # entirely) - keep polling rather than falsely
+                # reporting ready.
                 return attempt
 
             thumbnails = matching_tiles.first.get_by_role(
@@ -573,16 +588,27 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
             # around the same time) - a real, disclosed gap that a
             # live test surfaced directly. Identify the tile by its
             # own prompt caption instead of trusting position.
+            #
+            # Real-world finding, 2026-09-14 (same day, second real
+            # bug): every scene in one job shares the same "Identity:
+            # ..." continuity preamble, which is all Flow's own
+            # caption display shows before truncating (confirmed via a
+            # real screenshot of two different scenes' visibly
+            # identical captions) - prompt matching alone narrows to
+            # "this job", not "this scene". When more than one of this
+            # job's own tiles match, take the topmost (newest): see
+            # observe()'s own matching comment for why that is always
+            # correct here, not a guess (create_attempt()'s in-flight
+            # guard + Flow always prepending new tiles to the top).
             matching_tiles = self._tiles_matching_attempt(page, attempt)
             match_count = matching_tiles.count()
 
-            if match_count != 1:
+            if match_count == 0:
                 return attempt.with_transition(
                     GoogleFlowGenerationState.UI_CHANGED,
                     detail=(
-                        "Could not uniquely identify this attempt's own "
-                        f"media tile on the All media view (found "
-                        f"{match_count} tile(s) matching its prompt) - "
+                        "Could not find this attempt's own media tile on "
+                        "the All media view (no tile matches its prompt) - "
                         "refusing to guess which video to download."
                     ),
                 )

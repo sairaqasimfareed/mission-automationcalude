@@ -1171,15 +1171,21 @@ def test_download_scopes_to_the_tile_matching_this_attempts_own_prompt(
     assert unrelated_more_options.click_calls == 0
 
 
-def test_download_refuses_to_guess_when_the_tile_is_ambiguous(
+def test_download_takes_the_topmost_tile_when_several_scenes_match_the_same_prompt(
     tmp_path: Path,
 ) -> None:
     """
-    Real-world finding, 2026-09-14: the same prompt got submitted more
-    than once during this session's own investigation (a stuck earlier
-    attempt, then a genuine retry) - a real scenario where two tiles
-    can legitimately match the same prompt text. download() must
-    refuse to guess between them rather than silently picking one.
+    Real-world finding, 2026-09-14: every scene in one job shares the
+    same "Identity: ..." continuity preamble, which is all Flow's own
+    caption display shows before truncating - confirmed directly from
+    a real screenshot of two different scenes' visibly identical
+    captions. Prompt matching alone narrows to "this job", not "this
+    scene", so more than one match is the NORMAL case here, not a rare
+    edge case. download() must take the topmost (newest) match rather
+    than refuse - correct because create_attempt()'s own in-flight
+    guard (one non-terminal attempt per profile per job) guarantees at
+    most one of this job's own tiles can genuinely still be pending,
+    and real Flow always prepends new tiles to the top.
     """
 
     page = _authenticated_page()
@@ -1194,9 +1200,50 @@ def test_download_refuses_to_guess_when_the_tile_is_ambiguous(
     submitted = adapter.submit(request, _attempt(request))
 
     page.register_text("All media", _FakeLocator())
-    tile_a = _FakeVideoTile(caption=request.prompt, thumbnail=_FakeLocator(count=1))
-    tile_b = _FakeVideoTile(caption=request.prompt, thumbnail=_FakeLocator(count=1))
-    page.register_css("flow-video-tile", _FakeVideoTileSet([tile_a, tile_b]))  # type: ignore[arg-type]
+    own_thumbnail = _FakeLocator(count=1)
+    own_more_options = _FakeLocator()
+    newest_tile = _FakeVideoTile(
+        caption=request.prompt,
+        thumbnail=own_thumbnail,
+        more_options=own_more_options,
+    )
+    older_more_options = _FakeLocator()
+    older_scene_tile = _FakeVideoTile(
+        caption=request.prompt,
+        thumbnail=_FakeLocator(count=1),
+        more_options=older_more_options,
+    )
+    # Newest tile listed first - real Flow prepends new tiles to the
+    # top of the grid (docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md section 5).
+    tile_set: Any = _FakeVideoTileSet([newest_tile, older_scene_tile])
+    page.register_css("flow-video-tile", tile_set)
+    page.register_role("menuitem", "Download", _FakeLocator())
+    page.register_role("menuitem", "Original size", _FakeLocator())
+
+    ready = submitted.with_transition(
+        GoogleFlowGenerationState.READY_TO_DOWNLOAD, detail="test setup"
+    )
+
+    result = adapter.download(ready)
+
+    assert result.state == GoogleFlowGenerationState.DOWNLOADED
+    assert own_more_options.click_calls == 1
+    assert older_more_options.click_calls == 0
+
+
+def test_download_is_ui_changed_when_no_tile_matches_at_all(tmp_path: Path) -> None:
+    page = _authenticated_page()
+    adapter = GoogleFlowRealUIAdapter(
+        worker=_FakeWorker(page),  # type: ignore[arg-type]
+        base_url="https://flow.google.com/project/test-project",
+        operation_timeout_seconds=5.0,
+        download_root=tmp_path,
+        profile_directory_resolver=lambda profile_id: Path("unused") / profile_id,
+    )
+    request = _request()
+    submitted = adapter.submit(request, _attempt(request))
+
+    page.register_text("All media", _FakeLocator())
 
     ready = submitted.with_transition(
         GoogleFlowGenerationState.READY_TO_DOWNLOAD, detail="test setup"
