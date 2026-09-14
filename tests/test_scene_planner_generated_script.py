@@ -253,6 +253,74 @@ def test_plan_splits_an_over_ceiling_chunk_at_sentence_boundaries() -> None:
     assert " ".join(scene.narration for scene in scenes) == segment.narration.strip()
 
 
+def test_plan_scene_durations_have_a_floor_at_the_ai_clip_minimum() -> None:
+    """
+    Real-world finding, 2026-09-14: the ceiling fix above stops a scene
+    from being planned longer than Google Flow can generate, but
+    nothing stopped one from being planned SHORTER than Flow's own
+    real minimum clip length either - a real end-to-end test produced
+    a genuine one-sentence scene ("And by most accounts, they lost.",
+    ~2s of real narration), and DurationMismatchPolicyService flagged
+    the resulting mismatch (planned=2s, actual=4s after Flow's own
+    clamp) as BLOCK - a 100% overrun, the worst mismatch this session
+    found. _MINIMUM_FLOW_SCENE_DURATION_SECONDS closes this the same
+    way the ceiling closes the other end.
+    """
+
+    segment = _segment(
+        number=1,
+        start=0,
+        end=16,
+        narrative_function=StoryBeatType.SETUP,
+        narration=(
+            "The soldiers marched toward the enemy line under heavy fire "
+            "and drifting smoke. They lost."
+        ),
+    )
+    script = _script(segment)
+
+    agent = ScenePlannerAgent()
+    scenes = agent.plan_from_generated_script(script, _editorial_profile())
+
+    assert len(scenes) == 2
+    short_scene = next(s for s in scenes if s.narration == "They lost.")
+    assert short_scene.estimated_duration_seconds == 4
+    assert all(scene.estimated_duration_seconds >= 4 for scene in scenes)
+
+
+def test_plan_applies_the_floor_to_a_short_trailing_group_from_ceiling_splitting() -> (
+    None
+):
+    """
+    _split_chunk_to_fit_ceiling's own greedy grouping can leave a short
+    trailing group (e.g. one short sentence left over after its longer
+    neighbors were grouped away) - it must not be exempt from the same
+    floor every other scene gets just because it came from the
+    ceiling-splitting path rather than the main loop.
+    """
+
+    segment = _segment(
+        number=1,
+        start=0,
+        end=12,
+        narrative_function=StoryBeatType.SETUP,
+        narration=(
+            "The old ship drifted alone across the empty ocean water. "
+            "Nobody could explain why the crew had vanished so suddenly. "
+            "They lost."
+        ),
+    )
+    script = _script(segment)
+
+    agent = ScenePlannerAgent()
+    scenes = agent.plan_from_generated_script(script, _editorial_profile())
+
+    assert len(scenes) > 1
+    short_scene = next(s for s in scenes if s.narration == "They lost.")
+    assert short_scene.estimated_duration_seconds >= 4
+    assert all(scene.estimated_duration_seconds <= 8 for scene in scenes)
+
+
 def test_high_tension_scene_gets_dynamic_camera_direction() -> None:
     segment = _segment(
         number=1,

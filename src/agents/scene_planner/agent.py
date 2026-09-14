@@ -72,6 +72,29 @@ _MINIMUM_SCENE_DURATION_SECONDS = 8
 # in every account/model combination actually observed so far.
 _MAXIMUM_SCENE_DURATION_SECONDS = 8
 
+# Real-world finding, 2026-09-14: a real end-to-end test through this
+# session's OWN duration-clamp fix (scene_video_generation_service.py's
+# clamp_to_verified_duration) exposed the other half of the same gap -
+# a genuinely short scene (here, a single short sentence: "And by most
+# accounts, they lost.", ~2s of real narration) had NOTHING stopping
+# it from being planned that short, even though Google Flow's own
+# minimum clip length is 4s. Confirmed directly against
+# DurationMismatchPolicyService: planned=2s vs the real generated
+# clip's actual=4s is a 100% overrun, severe enough to BLOCK outright -
+# by far the worst mismatch this session found, worse than any
+# post-ceiling-fix rounding drift (which tops out around 1-2s). A
+# floor at Flow's own real minimum closes this the same way the
+# ceiling above closes the other end - matching VERIFIED_DURATIONS_SECONDS'
+# own (4, 6, 8) range exactly, kept as a separate, manually-synced
+# constant for the same GF-48 layering reason _MAXIMUM_SCENE_DURATION_SECONDS
+# already is. Unlike the ceiling (which must split narration to avoid
+# losing content), a short chunk just gets more screen time for the
+# same words - the same accepted "short sentence still gets at least
+# this much screen time for reasonable pacing" precedent
+# _MINIMUM_SCENE_DURATION_SECONDS above already established for the
+# legacy plan() path, not a new design decision.
+_MINIMUM_FLOW_SCENE_DURATION_SECONDS = 4
+
 
 class ScenePlannerAgent:
     """
@@ -347,9 +370,11 @@ class ScenePlannerAgent:
             raw_duration = max(proportional_share, required_seconds)
 
             if required_seconds <= _MAXIMUM_SCENE_DURATION_SECONDS:
-                chunks.append(
-                    (chunk, min(raw_duration, _MAXIMUM_SCENE_DURATION_SECONDS))
+                bounded_duration = max(
+                    min(raw_duration, _MAXIMUM_SCENE_DURATION_SECONDS),
+                    _MINIMUM_FLOW_SCENE_DURATION_SECONDS,
                 )
+                chunks.append((chunk, bounded_duration))
                 continue
 
             # This chunk's own real narration needs more than Google
@@ -392,33 +417,32 @@ class ScenePlannerAgent:
             )
 
             if current and candidate_seconds > _MAXIMUM_SCENE_DURATION_SECONDS:
-                groups.append(
-                    (
-                        current,
-                        float(
-                            self._narration_timing_service.estimate_seconds(
-                                len(" ".join(current).split())
-                            )
-                        ),
-                    )
-                )
+                groups.append((current, self._floored_required_seconds(current)))
                 current = [sentence]
             else:
                 current = candidate
 
         if current:
-            groups.append(
-                (
-                    current,
-                    float(
-                        self._narration_timing_service.estimate_seconds(
-                            len(" ".join(current).split())
-                        )
-                    ),
-                )
-            )
+            groups.append((current, self._floored_required_seconds(current)))
 
         return groups
+
+    def _floored_required_seconds(self, sentences: list[str]) -> float:
+        """
+        A group split off here to fit under the ceiling can itself end
+        up short (e.g. one short trailing sentence left over after its
+        longer neighbors were grouped away) - apply
+        _MINIMUM_FLOW_SCENE_DURATION_SECONDS the same way
+        _subdivide_segment's own main loop does, so a scene coming out
+        of ceiling-splitting isn't exempt from the same floor every
+        other scene gets.
+        """
+
+        required_seconds = self._narration_timing_service.estimate_seconds(
+            len(" ".join(sentences).split())
+        )
+
+        return max(float(required_seconds), _MINIMUM_FLOW_SCENE_DURATION_SECONDS)
 
     @staticmethod
     def _build_scene(
