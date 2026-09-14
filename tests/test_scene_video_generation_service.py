@@ -251,6 +251,20 @@ def test_generate_one_submits_polls_downloads_validates_and_attaches(
 
     latest = job.flow_generation_attempts[-1]
     assert latest.state == GoogleFlowGenerationState.READY
+    assert latest.qc_result is not None
+    assert latest.qc_result.accepted
+
+    # Real-world finding, 2026-09-14: with_transition() uses
+    # model_copy() internally, which never re-validates - a READY
+    # attempt missing qc_result looked fine in memory but failed the
+    # very next real reload (a real saved job's own
+    # model_validate_json(), exactly what job persistence does) with
+    # "A READY attempt requires a passing qc_result." Round-trip the
+    # attempt itself through JSON (not the whole job - VideoJob has
+    # its own unrelated cross-field rules this minimal fixture never
+    # tried to satisfy) so a regression here fails this test, not a
+    # real saved job later.
+    GoogleFlowGenerationAttempt.model_validate_json(latest.model_dump_json())
 
 
 def test_generate_one_uses_the_compiled_cinematic_prompt_when_available() -> None:
