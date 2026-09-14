@@ -181,7 +181,21 @@ def test_plan_scene_numbers_are_sequential_across_segments() -> None:
     assert [scene.scene_number for scene in scenes] == list(range(1, len(scenes) + 1))
 
 
-def test_plan_scene_durations_sum_to_segment_duration() -> None:
+def test_plan_scene_durations_are_capped_at_the_ai_clip_ceiling() -> None:
+    """
+    Real-world finding, 2026-09-14: scene durations used to freely
+    stretch to fill a segment's whole allocated time span (this exact
+    segment's own 90 real seconds) regardless of how short its actual
+    narration was - a real end-to-end test then had
+    SceneVideoGenerationService silently clamp every one of those
+    generous durations down to Google Flow's real clip-length ceiling
+    at submission time, a real audio/video mismatch confirmed
+    directly. Scene planning must not promise duration AI video
+    generation cannot deliver - every scene here is now capped at
+    _MAXIMUM_SCENE_DURATION_SECONDS, even though the segment itself
+    spans much longer.
+    """
+
     segment = _segment(
         number=1,
         start=0,
@@ -194,8 +208,49 @@ def test_plan_scene_durations_sum_to_segment_duration() -> None:
     agent = ScenePlannerAgent()
     scenes = agent.plan_from_generated_script(script, _editorial_profile())
 
+    assert len(scenes) == 3
+    assert all(scene.estimated_duration_seconds <= 8 for scene in scenes)
     total = sum(scene.estimated_duration_seconds for scene in scenes)
-    assert total == 90
+    assert total == 24
+
+
+def test_plan_splits_an_over_ceiling_chunk_at_sentence_boundaries() -> None:
+    """
+    Direct test of the actual new splitting path (the two tests above
+    cover the "already under the ceiling, just capped" and "a single
+    sentence alone exceeds it, kept intact" cases - neither exercises
+    genuinely breaking one over-long, multi-sentence chunk apart).
+
+    This segment's own genre density/floor settings group all four
+    sentences into ONE chunk before the ceiling is considered (a real,
+    confirmed 12s of combined narration for four ~10-word sentences in
+    a 12-second segment) - _split_chunk_to_fit_ceiling must break that
+    one chunk into more scenes at real sentence boundaries so each
+    stays at or under _MAXIMUM_SCENE_DURATION_SECONDS, never producing
+    the single 4-sentence, over-ceiling scene the old code would have.
+    """
+
+    segment = _segment(
+        number=1,
+        start=0,
+        end=12,
+        narrative_function=StoryBeatType.SETUP,
+        narration=(
+            "The old ship drifted alone across the empty ocean water. "
+            "Nobody could explain why the crew had vanished so suddenly. "
+            "Every single cabin remained completely untouched and eerily orderly. "
+            "The captain log simply ended without any warning at all."
+        ),
+    )
+    script = _script(segment)
+
+    agent = ScenePlannerAgent()
+    scenes = agent.plan_from_generated_script(script, _editorial_profile())
+
+    assert len(scenes) > 1  # the old code would have produced exactly 1
+    assert all(scene.estimated_duration_seconds <= 8 for scene in scenes)
+    # No narration lost or duplicated in the split.
+    assert " ".join(scene.narration for scene in scenes) == segment.narration.strip()
 
 
 def test_high_tension_scene_gets_dynamic_camera_direction() -> None:
@@ -329,12 +384,25 @@ def test_plan_extends_duration_when_segment_budget_is_too_short_for_narration() 
 
 def test_plan_weights_scene_duration_by_narration_length_not_equal_split() -> None:
     """
-    MRA-PRE-3 real finding, now fixed: two sub-scenes from the same
-    segment used to always split that segment's time budget equally,
-    regardless of how much narration text each one actually carried.
-    A short sentence and a much longer one sharing a generous budget
-    must now receive proportionally different durations, not an equal
-    50/50 split.
+    MRA-PRE-3 real finding: two sub-scenes from the same segment used
+    to always split that segment's time budget equally, regardless of
+    how much narration text each one actually carried. A short
+    sentence and a much longer one sharing a generous budget must
+    still receive proportionally different durations, not an equal
+    50/50 split - that part of the original fix is unchanged.
+
+    Real-world finding, 2026-09-14: the long sentence here needs 11
+    real seconds of narration on its own (26 words) - past
+    _MAXIMUM_SCENE_DURATION_SECONDS. Kept as one scene rather than
+    split (there is no sentence boundary inside it to split at - see
+    _split_chunk_to_fit_ceiling's own docstring for why a grammatically
+    broken split is worse than one scene over the ceiling), a rare,
+    disclosed exception - SceneVideoGenerationService still clamps its
+    submitted Flow duration regardless. The short sentence's own real
+    1-second narration need is well under the ceiling, so it still
+    gets a real, weighted share of the segment's time budget (proving
+    the proportional-weighting fix is still intact), just no longer an
+    unbounded one.
     """
 
     segment = _segment(
@@ -357,13 +425,10 @@ def test_plan_weights_scene_duration_by_narration_length_not_equal_split() -> No
     assert len(scenes) == 2
     short_scene, long_scene = scenes
     assert len(short_scene.narration.split()) < len(long_scene.narration.split())
-    # The old behavior (equal split) would have given both scenes the
-    # same 30-second duration - the fix must give the longer-narration
-    # scene meaningfully more time than the shorter one.
-    assert (
-        long_scene.estimated_duration_seconds > short_scene.estimated_duration_seconds
-    )
-    # Still bounded by the segment's own generous total budget - the
-    # fix redistributes proportionally, it doesn't inflate everything.
+    # The short scene still gets proportionally weighted time (well
+    # under the ceiling); the long scene is the disclosed over-ceiling
+    # exception (single sentence, real narration need is 11s).
+    assert short_scene.estimated_duration_seconds == 5
+    assert long_scene.estimated_duration_seconds == 11
     total = sum(scene.estimated_duration_seconds for scene in scenes)
-    assert total == 60
+    assert total == 16

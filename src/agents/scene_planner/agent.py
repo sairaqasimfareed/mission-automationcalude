@@ -50,6 +50,28 @@ _MODERATE_TENSION_THRESHOLD = 40
 # still gets at least this much screen time for reasonable pacing.
 _MINIMUM_SCENE_DURATION_SECONDS = 8
 
+# Real-world finding, 2026-09-14: a real end-to-end test generated 8
+# scenes whose planned durations (14-26s each, unbounded above) had
+# nothing to do with Google Flow's own real clip-length ceiling for
+# this account's model (VERIFIED_DURATIONS_SECONDS in
+# src/providers/google_flow/locators.py, currently (4, 6, 8)) -
+# SceneVideoGenerationService silently clamps every submission to the
+# nearest verified value regardless, so every one of those 8 scenes
+# got an 8-second clip covering as little as a third of its own
+# planned/narrated duration, a real audio/video mismatch confirmed
+# directly against the generated job. Deliberately a SEPARATE,
+# scene-planning-level constant, not an import of that provider's own
+# locators module (this agent has no business knowing about a
+# specific AI video provider's implementation - GF-48's "browser
+# selectors must never become the application's business logic," the
+# same reasoning extended to any one provider's specific limits) -
+# kept in sync with that real, verified value by hand. Genuinely 8,
+# not "whatever the lowest verified duration currently is" - Flow's
+# own real UI has repeatedly changed which specific durations it
+# offers this session; 8 is the one that has stayed the real ceiling
+# in every account/model combination actually observed so far.
+_MAXIMUM_SCENE_DURATION_SECONDS = 8
+
 
 class ScenePlannerAgent:
     """
@@ -322,9 +344,81 @@ class ScenePlannerAgent:
             proportional_share = (
                 required_seconds / total_required_seconds
             ) * duration_seconds
-            chunks.append((chunk, max(proportional_share, required_seconds)))
+            raw_duration = max(proportional_share, required_seconds)
+
+            if required_seconds <= _MAXIMUM_SCENE_DURATION_SECONDS:
+                chunks.append(
+                    (chunk, min(raw_duration, _MAXIMUM_SCENE_DURATION_SECONDS))
+                )
+                continue
+
+            # This chunk's own real narration needs more than Google
+            # Flow's real clip-length ceiling can cover in one scene -
+            # break it into more, shorter scenes instead of producing
+            # one whose AI-generated clip would silently get clamped
+            # far short of its actual narration (see
+            # _MAXIMUM_SCENE_DURATION_SECONDS' own real-world finding).
+            chunks.extend(self._split_chunk_to_fit_ceiling(chunk))
 
         return chunks
+
+    def _split_chunk_to_fit_ceiling(
+        self, sentences: list[str]
+    ) -> list[tuple[list[str], float]]:
+        """
+        Greedily regroup one over-long chunk's sentences into smaller
+        groups, each with its own real narration time at or under
+        _MAXIMUM_SCENE_DURATION_SECONDS, splitting only at sentence
+        boundaries - never mid-sentence, which would produce a
+        grammatically broken narration/visual prompt, a worse outcome
+        than one scene running slightly over the ceiling.
+
+        A single sentence whose own narration alone already exceeds
+        the ceiling is therefore kept intact as its own one-sentence
+        scene rather than mangled - a rare, disclosed exception, not
+        silently hidden (SceneVideoGenerationService still clamps its
+        submitted duration to the nearest verified value regardless;
+        this only prevents the far more common case of many short
+        sentences being needlessly bundled into one over-long scene).
+        """
+
+        groups: list[tuple[list[str], float]] = []
+        current: list[str] = []
+
+        for sentence in sentences:
+            candidate = [*current, sentence]
+            candidate_seconds = self._narration_timing_service.estimate_seconds(
+                len(" ".join(candidate).split())
+            )
+
+            if current and candidate_seconds > _MAXIMUM_SCENE_DURATION_SECONDS:
+                groups.append(
+                    (
+                        current,
+                        float(
+                            self._narration_timing_service.estimate_seconds(
+                                len(" ".join(current).split())
+                            )
+                        ),
+                    )
+                )
+                current = [sentence]
+            else:
+                current = candidate
+
+        if current:
+            groups.append(
+                (
+                    current,
+                    float(
+                        self._narration_timing_service.estimate_seconds(
+                            len(" ".join(current).split())
+                        )
+                    ),
+                )
+            )
+
+        return groups
 
     @staticmethod
     def _build_scene(
