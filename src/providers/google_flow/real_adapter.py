@@ -297,8 +297,20 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
 
             return self._looks_authenticated(page)
 
+        # Real-world finding, 2026-09-14: the retry-on-PlaywrightError
+        # path above can run page.goto() TWICE, each now budgeted at
+        # _navigation_timeout_ms (2x _operation_timeout_seconds,
+        # widened separately for slow real connections) - worst case
+        # 2 retries x 2x navigation + the 3s hydration wait is ~4x
+        # _operation_timeout_seconds, exceeding the old 3x outer
+        # ceiling here outright. Confirmed live: this call hung with
+        # no error and no browser activity for several minutes before
+        # being killed by hand - the outer future timeout was too
+        # tight to ever fire cleanly relative to what the retry path
+        # can legitimately take. Widened to 6x for real margin over
+        # that ~4x worst case.
         return self._worker.submit_with_recovery(
-            _run, timeout=self._operation_timeout_seconds * 3
+            _run, timeout=self._operation_timeout_seconds * 6
         )
 
     def set_confirm_before_generating(self, profile_id: str, *, always: bool) -> None:
