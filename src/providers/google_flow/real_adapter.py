@@ -81,9 +81,20 @@ def _extract_sole_video_from_zip(zip_path: Path, destination_dir: Path) -> Path:
                 f"downloaded zip, found {len(video_names)}: {video_names}."
             )
 
-        archive.extract(video_names[0], destination_dir)
+        # Real-world finding, 2026-09-14: extract()'s own DESTINATION
+        # path can differ from the zip's internal member name -
+        # confirmed live, Flow's own auto-generated filename started
+        # with "Identity:" (colon is a reserved Windows path
+        # character), and zipfile silently sanitized it to "Identity__"
+        # on write. Reconstructing destination_dir / video_names[0]
+        # (the UNSANITIZED name) pointed at a file that was never
+        # actually created, so every downstream technical validation
+        # failed with "File does not exist" despite a real, valid
+        # video sitting right next to where this code was looking.
+        # extract()'s own return value is the real, normalized path it
+        # actually wrote - use that instead of reconstructing one.
+        extracted_path = Path(archive.extract(video_names[0], destination_dir))
 
-    extracted_path = destination_dir / video_names[0]
     zip_path.unlink()
 
     return extracted_path

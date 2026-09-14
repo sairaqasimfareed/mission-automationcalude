@@ -1042,6 +1042,50 @@ def test_download_extracts_the_video_when_flow_saves_a_zip_instead(
     assert saved_files[0].suffix == ".mp4"
 
 
+def test_download_handles_a_colon_in_the_zips_own_video_filename(
+    tmp_path: Path,
+) -> None:
+    """
+    Real-world finding, 2026-09-14: Flow's own auto-generated batch
+    filenames start with the prompt's "Identity: ..." text, colon
+    included - a reserved Windows path character. zipfile.extract()
+    silently sanitizes it on write (Windows can't create a literal
+    ":" in a filename), but the code used to reconstruct its own
+    "expected" path from the zip's UNSANITIZED internal member name,
+    which was never the file extract() actually wrote - every real
+    scene 2-8 download this session landed on a path that didn't
+    exist, failing technical validation with "File does not exist"
+    despite a real, valid video sitting right next to it.
+    """
+
+    page = _authenticated_page()
+    adapter = GoogleFlowRealUIAdapter(
+        worker=_FakeWorker(page),  # type: ignore[arg-type]
+        base_url="https://flow.google.com/project/test-project",
+        operation_timeout_seconds=5.0,
+        download_root=tmp_path,
+        profile_directory_resolver=lambda profile_id: Path("unused") / profile_id,
+    )
+    request = _request()
+    submitted = adapter.submit(request, _attempt(request))
+
+    _register_download_flow(page)
+    page._download = _FakeDownload(  # noqa: SLF001
+        filename="download.zip",
+        inner_video_name="Identity: Trained soldiers.mp4",
+    )
+
+    ready = adapter.observe(submitted)
+    assert ready.state == GoogleFlowGenerationState.READY_TO_DOWNLOAD
+
+    downloaded = adapter.download(ready)
+
+    assert downloaded.state == GoogleFlowGenerationState.DOWNLOADED
+    assert downloaded.downloaded_file is not None
+    assert Path(downloaded.downloaded_file).is_file()
+    assert ":" not in Path(downloaded.downloaded_file).name
+
+
 def test_download_takes_the_topmost_batch_when_several_exist(
     tmp_path: Path,
 ) -> None:
