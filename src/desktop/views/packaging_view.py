@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Protocol
 from uuid import UUID
 
@@ -8,6 +9,7 @@ from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
+    QComboBox,
     QFrame,
     QLineEdit,
     QScrollArea,
@@ -28,15 +30,23 @@ from src.desktop.widgets import (
 from src.models.approval import ApprovalPolicy
 from src.models.content_decision_record import DecisionCategory
 from src.models.enums import WorkflowStage
+from src.models.export_variant import ExportVariant, ExportVariantCollection
 from src.models.final_export import FinalExportPackage
 from src.models.seo import SEOPackage, SEOStatus
+from src.models.specification_enums import AspectRatio
 from src.models.thumbnail import ThumbnailArtifact, ThumbnailArtifactStatus
 from src.models.video_job import VideoJob
 from src.services.approval_gate_service import ApprovalGateService
+from src.services.export_variant_render_service import ExportVariantRenderService
 from src.services.final_export.final_export_service import FinalExportService
 from src.services.seo.seo_context_builder import SEOContextBuilder
 from src.services.seo.seo_package_service import SEOPackageService
 from src.services.thumbnail.thumbnail_package_service import ThumbnailPackageService
+
+_ORIENTATION_LABELS: list[tuple[str, str]] = [
+    ("Landscape (16:9)", AspectRatio.LANDSCAPE.value),
+    ("Portrait (9:16)", AspectRatio.PORTRAIT.value),
+]
 
 _LEFT = Qt.AlignmentFlag.AlignLeft
 
@@ -126,6 +136,7 @@ class PackagingView(QWidget):
         final_export_service: FinalExportService,
         on_change: Callable[[], None],
         approval_gate_service: ApprovalGateService | None = None,
+        export_variant_render_service: ExportVariantRenderService | None = None,
     ) -> None:
         super().__init__()
 
@@ -135,6 +146,9 @@ class PackagingView(QWidget):
         self._final_export_service = final_export_service
         self._on_change = on_change
         self._approval_gate_service = approval_gate_service or ApprovalGateService()
+        self._export_variant_render_service = (
+            export_variant_render_service or ExportVariantRenderService()
+        )
         self._job_id: UUID | None = None
 
         outer_layout = QVBoxLayout(self)
@@ -169,6 +183,7 @@ class PackagingView(QWidget):
 
         self._build_seo_card(job)
         self._build_thumbnail_card(job)
+        self._build_export_variants_card(job)
         self._build_final_export_card(job)
 
     def _build_seo_card(self, job: VideoJob) -> None:
@@ -444,6 +459,80 @@ class PackagingView(QWidget):
         reject_button.clicked.connect(on_reject)
         layout.addWidget(reject_button, alignment=_LEFT)
 
+    def _build_export_variants_card(self, job: VideoJob) -> None:
+        """
+        Post-Script-Approval Production Plan, post-render export
+        variants: reformat the already-rendered video into other
+        orientations (landscape/portrait, for now - platform-specific
+        watermark/CTA/SEO packaging lands in a later phase) as a
+        separate, lightweight pass, never a re-render of the timeline.
+        """
+
+        frame, layout = card("Export variants", icon_name="clapper")
+
+        assert self._job_id is not None
+
+        render_orchestration_result = self._job_store.get_render_result(self._job_id)
+        render_result = (
+            render_orchestration_result.render_result
+            if render_orchestration_result is not None
+            else None
+        )
+
+        if (
+            render_orchestration_result is None
+            or not render_orchestration_result.success
+            or render_result is None
+        ):
+            layout.addWidget(
+                small_muted("Requires a successful render (see Render Workspace).")
+            )
+            self._layout.addWidget(frame)
+
+            return
+
+        collection = self._job_store.get_export_variants(self._job_id)
+        variants = collection.variants if collection is not None else []
+
+        if not variants:
+            layout.addWidget(small_muted("No export variants generated yet."))
+        else:
+            for variant in variants:
+                layout.addWidget(
+                    small_muted(
+                        f"{variant.orientation.name.title()}: {variant.output_file}"
+                    )
+                )
+                reveal_button = button(
+                    f"Open output folder ({variant.orientation.name.title()})",
+                    icon_name="folder",
+                )
+                reveal_button.clicked.connect(
+                    lambda _checked=False, v=variant: self._handle_open_variant_folder(
+                        v
+                    ),
+                )
+                layout.addWidget(reveal_button, alignment=_LEFT)
+
+        orientation_combo = QComboBox()
+
+        for label, value in _ORIENTATION_LABELS:
+            orientation_combo.addItem(label, userData=value)
+
+        generate_button = button(
+            "Generate variant",
+            variant="primary",
+            icon_name="clapper",
+        )
+        generate_button.clicked.connect(
+            lambda: self._handle_generate_export_variant(orientation_combo)
+        )
+
+        layout.addWidget(orientation_combo)
+        layout.addWidget(generate_button, alignment=_LEFT)
+
+        self._layout.addWidget(frame)
+
     def _build_final_export_card(self, job: VideoJob) -> None:
         frame, layout = card("Final export", icon_name="export")
 
@@ -576,6 +665,72 @@ class PackagingView(QWidget):
     ) -> None:
         QDesktopServices.openUrl(
             QUrl.fromLocalFile(final_export.export_directory),
+        )
+
+    def _handle_generate_export_variant(self, orientation_combo: QComboBox) -> None:
+        job = self._current_job()
+
+        if job is None or self._job_id is None:
+            return
+
+        render_orchestration_result = self._job_store.get_render_result(self._job_id)
+        render_result = (
+            render_orchestration_result.render_result
+            if render_orchestration_result is not None
+            else None
+        )
+
+        if render_result is None:
+            return
+
+        # Real-world finding, 2026-09-14: a QComboBox's userData round-
+        # trips a plain string reliably through PySide6's QVariant
+        # marshalling, but NOT an AspectRatio enum member directly
+        # (confirmed live - a real test's isinstance(data, AspectRatio)
+        # check silently failed after a real .currentData() call,
+        # never even reaching this handler's own service call). The
+        # combo stores AspectRatio.value strings (see
+        # _ORIENTATION_LABELS); converted back here.
+        orientation_value = orientation_combo.currentData()
+
+        if not isinstance(orientation_value, str):
+            return
+
+        try:
+            orientation = AspectRatio(orientation_value)
+        except ValueError:
+            return
+
+        try:
+            variant = self._export_variant_render_service.build(
+                job=job,
+                render_result=render_result,
+                orientation=orientation,
+            )
+        except (RuntimeError, ValueError) as error:
+            self._record_error(
+                job,
+                f"Export variant generation failed: {error}",
+                on_retry=lambda: self._handle_generate_export_variant(
+                    orientation_combo
+                ),
+            )
+
+            return
+
+        existing = self._job_store.get_export_variants(self._job_id)
+        variants = list(existing.variants) if existing is not None else []
+        variants.append(variant)
+
+        self._job_store.set_export_variants(
+            self._job_id, ExportVariantCollection(variants=variants)
+        )
+
+        self._on_change()
+
+    def _handle_open_variant_folder(self, variant: ExportVariant) -> None:
+        QDesktopServices.openUrl(
+            QUrl.fromLocalFile(str(Path(variant.output_file).parent)),
         )
 
     def _handle_copy_manifest_path(

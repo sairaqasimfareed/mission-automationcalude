@@ -8,6 +8,7 @@ import pytest
 
 from src.desktop.job_store import InMemoryJobStore, JobStoreError, JsonJobStore
 from src.models.enums import JobStatus, Platform, WorkflowStage
+from src.models.export_variant import ExportVariant, ExportVariantCollection
 from src.models.final_export import FinalExportPackage
 from src.models.google_flow_generation import (
     GoogleFlowGenerationRequest,
@@ -15,6 +16,7 @@ from src.models.google_flow_generation import (
 )
 from src.models.render_orchestration_result import RenderOrchestrationResult
 from src.models.seo import SEOPackage, SEOPlatformMetadata, TitleCandidate
+from src.models.specification_enums import AspectRatio
 from src.models.thumbnail import (
     ThumbnailArtifact,
     ThumbnailConcept,
@@ -175,6 +177,30 @@ def test_final_export_round_trip() -> None:
     store.set_final_export(job.id, final_export)
 
     assert store.get_final_export(job.id) is final_export
+
+
+def test_export_variants_round_trip() -> None:
+    store = InMemoryJobStore()
+    job = _job()
+
+    variants = ExportVariantCollection(
+        variants=[
+            ExportVariant(
+                orientation=AspectRatio.LANDSCAPE,
+                output_file="data/renders/test/output.mp4",
+            ),
+            ExportVariant(
+                orientation=AspectRatio.PORTRAIT,
+                output_file="data/renders/test/output_portrait.mp4",
+            ),
+        ]
+    )
+
+    assert store.get_export_variants(job.id) is None
+
+    store.set_export_variants(job.id, variants)
+
+    assert store.get_export_variants(job.id) is variants
 
 
 def test_json_store_get_returns_same_instance_within_one_store(tmp_path: Path) -> None:
@@ -439,6 +465,30 @@ def test_json_store_final_export_round_trip(tmp_path: Path) -> None:
     store.set_final_export(job.id, final_export)
 
     assert store.get_final_export(job.id) == final_export
+
+
+def test_json_store_export_variants_round_trip(tmp_path: Path) -> None:
+    store = JsonJobStore(storage_root=tmp_path)
+    job = _job()
+
+    variants = ExportVariantCollection(
+        variants=[
+            ExportVariant(
+                orientation=AspectRatio.LANDSCAPE,
+                output_file="data/renders/test/output.mp4",
+            ),
+            ExportVariant(
+                orientation=AspectRatio.PORTRAIT,
+                output_file="data/renders/test/output_portrait.mp4",
+            ),
+        ]
+    )
+
+    assert store.get_export_variants(job.id) is None
+
+    store.set_export_variants(job.id, variants)
+
+    assert store.get_export_variants(job.id) == variants
 
 
 def test_json_store_corrupt_job_file_raises(tmp_path: Path) -> None:

@@ -9,6 +9,7 @@ from uuid import UUID
 from pydantic import ValidationError
 
 from src.models.base import MissionBaseModel
+from src.models.export_variant import ExportVariantCollection
 from src.models.final_export import FinalExportPackage
 from src.models.render_orchestration_result import RenderOrchestrationResult
 from src.models.seo import SEOPackage
@@ -49,6 +50,12 @@ class JobStore(Protocol):
 
     def get_final_export(self, job_id: UUID) -> FinalExportPackage | None: ...
 
+    def set_export_variants(
+        self, job_id: UUID, export_variants: ExportVariantCollection
+    ) -> None: ...
+
+    def get_export_variants(self, job_id: UUID) -> ExportVariantCollection | None: ...
+
 
 class InMemoryJobStore:
     """
@@ -66,6 +73,7 @@ class InMemoryJobStore:
         self._thumbnails: dict[UUID, ThumbnailArtifact] = {}
         self._render_results: dict[UUID, RenderOrchestrationResult] = {}
         self._final_exports: dict[UUID, FinalExportPackage] = {}
+        self._export_variants: dict[UUID, ExportVariantCollection] = {}
 
     def add(self, job: VideoJob) -> None:
         self._jobs[job.id] = job
@@ -111,6 +119,14 @@ class InMemoryJobStore:
 
     def get_final_export(self, job_id: UUID) -> FinalExportPackage | None:
         return self._final_exports.get(job_id)
+
+    def set_export_variants(
+        self, job_id: UUID, export_variants: ExportVariantCollection
+    ) -> None:
+        self._export_variants[job_id] = export_variants
+
+    def get_export_variants(self, job_id: UUID) -> ExportVariantCollection | None:
+        return self._export_variants.get(job_id)
 
 
 class JobStoreError(RuntimeError):
@@ -159,6 +175,7 @@ class JsonJobStore:
         self._thumbnails: dict[UUID, ThumbnailArtifact] = {}
         self._render_results: dict[UUID, RenderOrchestrationResult] = {}
         self._final_exports: dict[UUID, FinalExportPackage] = {}
+        self._export_variants: dict[UUID, ExportVariantCollection] = {}
 
     def add(self, job: VideoJob) -> None:
         self._jobs[job.id] = job
@@ -241,6 +258,22 @@ class JsonJobStore:
             job_id,
             self._artifact_path(job_id, "final_export"),
             FinalExportPackage,
+        )
+
+    def set_export_variants(
+        self,
+        job_id: UUID,
+        export_variants: ExportVariantCollection,
+    ) -> None:
+        self._export_variants[job_id] = export_variants
+        self._write(self._artifact_path(job_id, "export_variants"), export_variants)
+
+    def get_export_variants(self, job_id: UUID) -> ExportVariantCollection | None:
+        return self._get_cached(
+            self._export_variants,
+            job_id,
+            self._artifact_path(job_id, "export_variants"),
+            ExportVariantCollection,
         )
 
     def _get_cached(

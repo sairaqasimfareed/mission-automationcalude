@@ -11,6 +11,7 @@ from uuid import uuid4  # noqa: E402
 import pytest  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
+    QComboBox,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -25,7 +26,15 @@ from src.models.audience_promise import (  # noqa: E402
 )
 from src.models.content_decision_record import DecisionCategory  # noqa: E402
 from src.models.enums import JobStatus, Platform, WorkflowStage  # noqa: E402
+from src.models.export_variant import (  # noqa: E402
+    ExportVariant,
+    ExportVariantCollection,
+)
 from src.models.final_export import FinalExportPackage, FinalExportStatus  # noqa: E402
+from src.models.render_orchestration_result import (  # noqa: E402
+    RenderOrchestrationResult,
+)
+from src.models.render_result import RenderResult, RenderStatus  # noqa: E402
 from src.models.research import ResearchResult, ResearchStatus  # noqa: E402
 from src.models.script import Script, ScriptStatus  # noqa: E402
 from src.models.script_lock import ScriptLock, ScriptProvenance  # noqa: E402
@@ -35,6 +44,7 @@ from src.models.seo import (  # noqa: E402
     SEOStatus,
     TitleCandidate,
 )
+from src.models.specification_enums import AspectRatio  # noqa: E402
 from src.models.thumbnail import (  # noqa: E402
     ThumbnailArtifact,
     ThumbnailArtifactStatus,
@@ -928,3 +938,185 @@ def test_thumbnail_card_does_not_crash_when_file_is_missing(
     labels = [label.text() for label in view.findChildren(QLabel)]
 
     assert any("this_file_does_not_exist.png" in text for text in labels)
+
+
+def _bare_job() -> VideoJob:
+    """
+    A minimal, valid VideoJob with no script/research - export variant
+    generation only needs a successful render result, and
+    RenderOrchestrationResult's own cross-field validator rejects a
+    job with a script but no research (a real, unrelated invariant
+    _job_with_approved_script()'s job would trip).
+    """
+
+    return VideoJob(
+        project_name="Deep Sea Doc",
+        channel_name="Ocean Channel",
+        niche="documentary",
+        topic="Giant squid",
+        status=JobStatus.COMPLETED,
+        current_stage=WorkflowStage.READY_FOR_UPLOAD,
+    )
+
+
+def _render_orchestration_result(
+    job: VideoJob, *, output_file: str = "F:/renders/job1/output.mp4"
+) -> RenderOrchestrationResult:
+    return RenderOrchestrationResult(
+        success=True,
+        status=JobStatus.COMPLETED,
+        current_stage=WorkflowStage.READY_FOR_UPLOAD,
+        job=job,
+        render_result=RenderResult(
+            success=True,
+            status=RenderStatus.COMPLETED,
+            output_file=output_file,
+            render_engine="ffmpeg",
+            duration_seconds=60,
+        ),
+    )
+
+
+class _FakeExportVariantRenderService:
+    def __init__(self) -> None:
+        self.build_calls: list[AspectRatio] = []
+
+    def build(
+        self,
+        *,
+        job: VideoJob,
+        render_result: RenderResult,
+        orientation: AspectRatio,
+    ) -> ExportVariant:
+        self.build_calls.append(orientation)
+
+        suffix = "" if orientation == AspectRatio.LANDSCAPE else "_portrait"
+
+        return ExportVariant(
+            orientation=orientation,
+            output_file=f"F:/renders/job1/output{suffix}.mp4",
+        )
+
+
+def test_export_variants_card_requires_a_successful_render(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    view = _view(export_root=tmp_path / "exports")
+    job = _job_with_approved_script()
+
+    view._job_store.add(job)
+    view.set_job(job.id)
+
+    view.refresh(job)
+
+    labels = [label.text() for label in view.findChildren(QLabel)]
+
+    assert any("Requires a successful render" in text for text in labels)
+
+
+def test_export_variants_card_shows_no_variants_yet(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    view = _view(export_root=tmp_path / "exports")
+    job = _bare_job()
+
+    view._job_store.add(job)
+    view.set_job(job.id)
+    view._job_store.set_render_result(job.id, _render_orchestration_result(job))
+
+    view.refresh(job)
+
+    labels = [label.text() for label in view.findChildren(QLabel)]
+    buttons = [button.text() for button in view.findChildren(QPushButton)]
+
+    assert any("No export variants generated yet" in text for text in labels)
+    assert "Generate variant" in buttons
+
+
+def test_generate_export_variant_stores_the_result(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    fake_service = _FakeExportVariantRenderService()
+    view = PackagingView(
+        job_store=InMemoryJobStore(),
+        seo_package_service=None,  # type: ignore[arg-type]
+        thumbnail_package_service=None,  # type: ignore[arg-type]
+        final_export_service=FinalExportService(export_root=tmp_path / "exports"),
+        on_change=lambda: None,
+        export_variant_render_service=fake_service,  # type: ignore[arg-type]
+    )
+    job = _bare_job()
+
+    view._job_store.add(job)
+    view.set_job(job.id)
+    view._job_store.set_render_result(job.id, _render_orchestration_result(job))
+    view.refresh(job)
+
+    combo = view.findChild(QComboBox)
+    assert combo is not None
+    combo.setCurrentIndex(0)  # Landscape
+
+    generate_button = next(
+        button
+        for button in view.findChildren(QPushButton)
+        if button.text() == "Generate variant"
+    )
+    generate_button.click()
+
+    assert fake_service.build_calls == [AspectRatio.LANDSCAPE]
+
+    stored = view._job_store.get_export_variants(job.id)
+    assert stored is not None
+    assert len(stored.variants) == 1
+    assert stored.variants[0].orientation == AspectRatio.LANDSCAPE
+    assert stored.variants[0].output_file == "F:/renders/job1/output.mp4"
+
+
+def test_generate_export_variant_appends_to_existing_variants(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    fake_service = _FakeExportVariantRenderService()
+    view = PackagingView(
+        job_store=InMemoryJobStore(),
+        seo_package_service=None,  # type: ignore[arg-type]
+        thumbnail_package_service=None,  # type: ignore[arg-type]
+        final_export_service=FinalExportService(export_root=tmp_path / "exports"),
+        on_change=lambda: None,
+        export_variant_render_service=fake_service,  # type: ignore[arg-type]
+    )
+    job = _bare_job()
+
+    view._job_store.add(job)
+    view.set_job(job.id)
+    view._job_store.set_render_result(job.id, _render_orchestration_result(job))
+    view._job_store.set_export_variants(
+        job.id,
+        ExportVariantCollection(
+            variants=[
+                ExportVariant(
+                    orientation=AspectRatio.LANDSCAPE,
+                    output_file="F:/renders/job1/output.mp4",
+                )
+            ]
+        ),
+    )
+    view.refresh(job)
+
+    combo = view.findChild(QComboBox)
+    assert combo is not None
+    combo.setCurrentIndex(1)  # Portrait
+
+    generate_button = next(
+        button
+        for button in view.findChildren(QPushButton)
+        if button.text() == "Generate variant"
+    )
+    generate_button.click()
+
+    stored = view._job_store.get_export_variants(job.id)
+    assert stored is not None
+    assert len(stored.variants) == 2
+    assert {v.orientation for v in stored.variants} == {
+        AspectRatio.LANDSCAPE,
+        AspectRatio.PORTRAIT,
+    }
