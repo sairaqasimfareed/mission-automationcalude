@@ -29,7 +29,7 @@ from src.desktop.widgets import (
 )
 from src.models.approval import ApprovalPolicy
 from src.models.content_decision_record import DecisionCategory
-from src.models.enums import WorkflowStage
+from src.models.enums import Platform, WorkflowStage
 from src.models.export_variant import ExportVariant, ExportVariantCollection
 from src.models.final_export import FinalExportPackage
 from src.models.seo import SEOPackage, SEOStatus
@@ -47,6 +47,27 @@ _ORIENTATION_LABELS: list[tuple[str, str]] = [
     ("Landscape (16:9)", AspectRatio.LANDSCAPE.value),
     ("Portrait (9:16)", AspectRatio.PORTRAIT.value),
 ]
+
+# "" (not a real Platform value) represents "None" - a plain,
+# optionally-reformatted export with no watermark/end-card CTA.
+_PLATFORM_LABELS: list[tuple[str, str]] = [
+    ("None", ""),
+    ("YouTube", Platform.YOUTUBE.value),
+    ("Facebook", Platform.FACEBOOK.value),
+    ("TikTok", Platform.TIKTOK.value),
+]
+
+# YouTube and TikTok each have one dominant native shape, so picking
+# either suggests (never forces) the matching orientation. Facebook is
+# deliberately absent here - real Facebook video is genuinely bimodal
+# (landscape feed posts vs. portrait Reels), and guessing wrong is
+# worse than not guessing; its own row is left out entirely rather
+# than mapped to some default, so the orientation dropdown is simply
+# left untouched when Facebook is chosen.
+_PLATFORM_ORIENTATION_SUGGESTION: dict[Platform, AspectRatio] = {
+    Platform.YOUTUBE: AspectRatio.LANDSCAPE,
+    Platform.TIKTOK: AspectRatio.PORTRAIT,
+}
 
 _LEFT = Qt.AlignmentFlag.AlignLeft
 
@@ -463,9 +484,10 @@ class PackagingView(QWidget):
         """
         Post-Script-Approval Production Plan, post-render export
         variants: reformat the already-rendered video into other
-        orientations (landscape/portrait, for now - platform-specific
-        watermark/CTA/SEO packaging lands in a later phase) as a
-        separate, lightweight pass, never a re-render of the timeline.
+        orientations and/or brand it for a specific platform
+        (watermark + 5s end-card CTA; platform-aware SEO/thumbnail
+        packaging lands in a later phase) as a separate, lightweight
+        pass, never a re-render of the timeline.
         """
 
         frame, layout = card("Export variants", icon_name="clapper")
@@ -498,13 +520,18 @@ class PackagingView(QWidget):
             layout.addWidget(small_muted("No export variants generated yet."))
         else:
             for variant in variants:
+                platform_label = (
+                    variant.platform.name.title() if variant.platform else "No CTA"
+                )
                 layout.addWidget(
                     small_muted(
-                        f"{variant.orientation.name.title()}: {variant.output_file}"
+                        f"{variant.orientation.name.title()} - {platform_label}: "
+                        f"{variant.output_file}"
                     )
                 )
                 reveal_button = button(
-                    f"Open output folder ({variant.orientation.name.title()})",
+                    f"Open output folder "
+                    f"({variant.orientation.name.title()} - {platform_label})",
                     icon_name="folder",
                 )
                 reveal_button.clicked.connect(
@@ -519,16 +546,32 @@ class PackagingView(QWidget):
         for label, value in _ORIENTATION_LABELS:
             orientation_combo.addItem(label, userData=value)
 
+        platform_combo = QComboBox()
+
+        for label, value in _PLATFORM_LABELS:
+            platform_combo.addItem(label, userData=value)
+
+        platform_combo.currentIndexChanged.connect(
+            lambda _index, o=orientation_combo, p=platform_combo: (
+                self._handle_export_platform_changed(o, p)
+            )
+        )
+
         generate_button = button(
             "Generate variant",
             variant="primary",
             icon_name="clapper",
         )
         generate_button.clicked.connect(
-            lambda: self._handle_generate_export_variant(orientation_combo)
+            lambda: self._handle_generate_export_variant(
+                orientation_combo, platform_combo
+            )
         )
 
+        layout.addWidget(small_muted("Orientation"))
         layout.addWidget(orientation_combo)
+        layout.addWidget(small_muted("Platform"))
+        layout.addWidget(platform_combo)
         layout.addWidget(generate_button, alignment=_LEFT)
 
         self._layout.addWidget(frame)
@@ -667,7 +710,37 @@ class PackagingView(QWidget):
             QUrl.fromLocalFile(final_export.export_directory),
         )
 
-    def _handle_generate_export_variant(self, orientation_combo: QComboBox) -> None:
+    def _handle_export_platform_changed(
+        self, orientation_combo: QComboBox, platform_combo: QComboBox
+    ) -> None:
+        """
+        A one-click convenience, never a hard constraint - picking
+        YouTube or TikTok suggests (overwrites) the orientation
+        dropdown to that platform's one dominant native shape; picking
+        Facebook or None leaves the orientation dropdown exactly as it
+        was, since Facebook video is genuinely bimodal (landscape feed
+        posts vs. portrait Reels) and guessing wrong is worse than not
+        guessing. Every combination stays manually reachable regardless.
+        """
+
+        platform = self._read_platform(platform_combo)
+
+        if platform is None:
+            return
+
+        suggested_orientation = _PLATFORM_ORIENTATION_SUGGESTION.get(platform)
+
+        if suggested_orientation is None:
+            return
+
+        index = orientation_combo.findData(suggested_orientation.value)
+
+        if index >= 0:
+            orientation_combo.setCurrentIndex(index)
+
+    def _handle_generate_export_variant(
+        self, orientation_combo: QComboBox, platform_combo: QComboBox
+    ) -> None:
         job = self._current_job()
 
         if job is None or self._job_id is None:
@@ -701,18 +774,21 @@ class PackagingView(QWidget):
         except ValueError:
             return
 
+        platform = self._read_platform(platform_combo)
+
         try:
             variant = self._export_variant_render_service.build(
                 job=job,
                 render_result=render_result,
                 orientation=orientation,
+                platform=platform,
             )
         except (RuntimeError, ValueError) as error:
             self._record_error(
                 job,
                 f"Export variant generation failed: {error}",
                 on_retry=lambda: self._handle_generate_export_variant(
-                    orientation_combo
+                    orientation_combo, platform_combo
                 ),
             )
 
@@ -727,6 +803,24 @@ class PackagingView(QWidget):
         )
 
         self._on_change()
+
+    @staticmethod
+    def _read_platform(platform_combo: QComboBox) -> Platform | None:
+        """
+        Same plain-string userData convention as the orientation combo
+        (see _handle_generate_export_variant's own real-world-finding
+        comment) - "" (not a real Platform value) represents "None".
+        """
+
+        platform_value = platform_combo.currentData()
+
+        if not isinstance(platform_value, str) or not platform_value:
+            return None
+
+        try:
+            return Platform(platform_value)
+        except ValueError:
+            return None
 
     def _handle_open_variant_folder(self, variant: ExportVariant) -> None:
         QDesktopServices.openUrl(

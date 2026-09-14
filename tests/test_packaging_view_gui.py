@@ -979,7 +979,7 @@ def _render_orchestration_result(
 
 class _FakeExportVariantRenderService:
     def __init__(self) -> None:
-        self.build_calls: list[AspectRatio] = []
+        self.build_calls: list[tuple[AspectRatio, Platform | None]] = []
 
     def build(
         self,
@@ -987,13 +987,20 @@ class _FakeExportVariantRenderService:
         job: VideoJob,
         render_result: RenderResult,
         orientation: AspectRatio,
+        platform: Platform | None = None,
     ) -> ExportVariant:
-        self.build_calls.append(orientation)
+        self.build_calls.append((orientation, platform))
 
-        suffix = "" if orientation == AspectRatio.LANDSCAPE else "_portrait"
+        suffix_parts = []
+        if orientation == AspectRatio.PORTRAIT:
+            suffix_parts.append("portrait")
+        if platform is not None:
+            suffix_parts.append(platform.value)
+        suffix = ("_" + "_".join(suffix_parts)) if suffix_parts else ""
 
         return ExportVariant(
             orientation=orientation,
+            platform=platform,
             output_file=f"F:/renders/job1/output{suffix}.mp4",
         )
 
@@ -1052,9 +1059,10 @@ def test_generate_export_variant_stores_the_result(
     view._job_store.set_render_result(job.id, _render_orchestration_result(job))
     view.refresh(job)
 
-    combo = view.findChild(QComboBox)
-    assert combo is not None
-    combo.setCurrentIndex(0)  # Landscape
+    combos = view.findChildren(QComboBox)
+    orientation_combo, platform_combo = combos[0], combos[1]
+    orientation_combo.setCurrentIndex(0)  # Landscape
+    platform_combo.setCurrentIndex(0)  # None
 
     generate_button = next(
         button
@@ -1063,7 +1071,7 @@ def test_generate_export_variant_stores_the_result(
     )
     generate_button.click()
 
-    assert fake_service.build_calls == [AspectRatio.LANDSCAPE]
+    assert fake_service.build_calls == [(AspectRatio.LANDSCAPE, None)]
 
     stored = view._job_store.get_export_variants(job.id)
     assert stored is not None
@@ -1102,9 +1110,10 @@ def test_generate_export_variant_appends_to_existing_variants(
     )
     view.refresh(job)
 
-    combo = view.findChild(QComboBox)
-    assert combo is not None
-    combo.setCurrentIndex(1)  # Portrait
+    combos = view.findChildren(QComboBox)
+    orientation_combo, platform_combo = combos[0], combos[1]
+    orientation_combo.setCurrentIndex(1)  # Portrait
+    platform_combo.setCurrentIndex(0)  # None
 
     generate_button = next(
         button
@@ -1120,3 +1129,124 @@ def test_generate_export_variant_appends_to_existing_variants(
         AspectRatio.LANDSCAPE,
         AspectRatio.PORTRAIT,
     }
+
+
+def _view_with_render_result(
+    tmp_path: Path, fake_service: _FakeExportVariantRenderService
+) -> tuple[PackagingView, VideoJob]:
+    view = PackagingView(
+        job_store=InMemoryJobStore(),
+        seo_package_service=None,  # type: ignore[arg-type]
+        thumbnail_package_service=None,  # type: ignore[arg-type]
+        final_export_service=FinalExportService(export_root=tmp_path / "exports"),
+        on_change=lambda: None,
+        export_variant_render_service=fake_service,  # type: ignore[arg-type]
+    )
+    job = _bare_job()
+
+    view._job_store.add(job)
+    view.set_job(job.id)
+    view._job_store.set_render_result(job.id, _render_orchestration_result(job))
+    view.refresh(job)
+
+    return view, job
+
+
+def test_choosing_youtube_suggests_landscape_orientation(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    view, _job = _view_with_render_result(tmp_path, _FakeExportVariantRenderService())
+
+    combos = view.findChildren(QComboBox)
+    orientation_combo, platform_combo = combos[0], combos[1]
+    orientation_combo.setCurrentIndex(1)  # start on Portrait
+
+    platform_index = platform_combo.findData(Platform.YOUTUBE.value)
+    platform_combo.setCurrentIndex(platform_index)
+
+    assert orientation_combo.currentData() == AspectRatio.LANDSCAPE.value
+
+
+def test_choosing_tiktok_suggests_portrait_orientation(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    view, _job = _view_with_render_result(tmp_path, _FakeExportVariantRenderService())
+
+    combos = view.findChildren(QComboBox)
+    orientation_combo, platform_combo = combos[0], combos[1]
+    orientation_combo.setCurrentIndex(0)  # start on Landscape
+
+    platform_index = platform_combo.findData(Platform.TIKTOK.value)
+    platform_combo.setCurrentIndex(platform_index)
+
+    assert orientation_combo.currentData() == AspectRatio.PORTRAIT.value
+
+
+def test_choosing_facebook_leaves_orientation_untouched(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    """
+    Real Facebook video is genuinely bimodal (landscape feed posts vs.
+    portrait Reels) - guessing wrong is worse than not guessing, so
+    Facebook deliberately has no entry in the suggestion table.
+    """
+
+    view, _job = _view_with_render_result(tmp_path, _FakeExportVariantRenderService())
+
+    combos = view.findChildren(QComboBox)
+    orientation_combo, platform_combo = combos[0], combos[1]
+    orientation_combo.setCurrentIndex(1)  # Portrait
+
+    platform_index = platform_combo.findData(Platform.FACEBOOK.value)
+    platform_combo.setCurrentIndex(platform_index)
+
+    assert orientation_combo.currentData() == AspectRatio.PORTRAIT.value
+
+
+def test_generate_export_variant_passes_the_chosen_platform_through(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    fake_service = _FakeExportVariantRenderService()
+    view, job = _view_with_render_result(tmp_path, fake_service)
+
+    combos = view.findChildren(QComboBox)
+    orientation_combo, platform_combo = combos[0], combos[1]
+    orientation_combo.setCurrentIndex(0)  # Landscape
+    platform_combo.setCurrentIndex(platform_combo.findData(Platform.FACEBOOK.value))
+
+    generate_button = next(
+        button
+        for button in view.findChildren(QPushButton)
+        if button.text() == "Generate variant"
+    )
+    generate_button.click()
+
+    assert fake_service.build_calls == [(AspectRatio.LANDSCAPE, Platform.FACEBOOK)]
+
+    stored = view._job_store.get_export_variants(job.id)
+    assert stored is not None
+    assert stored.variants[0].platform == Platform.FACEBOOK
+
+
+def test_variant_list_shows_no_cta_for_a_platformless_variant(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    view, job = _view_with_render_result(tmp_path, _FakeExportVariantRenderService())
+
+    view._job_store.set_export_variants(
+        job.id,
+        ExportVariantCollection(
+            variants=[
+                ExportVariant(
+                    orientation=AspectRatio.LANDSCAPE,
+                    platform=None,
+                    output_file="F:/renders/job1/output.mp4",
+                )
+            ]
+        ),
+    )
+    view.refresh(job)
+
+    labels = [label.text() for label in view.findChildren(QLabel)]
+
+    assert any("No CTA" in text for text in labels)
