@@ -22,6 +22,7 @@ from src.models.script_selection_edit import SelectionEditRequest
 from src.models.story_blueprint import StoryBeatType, StoryBlueprint
 from src.models.video_job import VideoJob
 from src.models.visual_continuity import VisualContinuityValidationResult
+from src.providers.google_flow.locators import clamp_to_verified_duration
 from src.services.approval_gate_service import ApprovalGateService
 from src.services.audience_promise_service import AudiencePromiseService
 from src.services.cinematic_prompt_compilation_service import (
@@ -1349,14 +1350,19 @@ class ContentIntelligencePipeline:
         if not job.scenes:
             raise RuntimeError("Cinematic prompt compilation requires planned scenes.")
 
-        job.cinematic_prompt_package = (
-            self.cinematic_prompt_compilation_service.compile(
-                scenes=job.scenes,
-                shot_plan=job.cinematic_shot_plan,
-                visual_continuity_bible=job.visual_continuity_bible,
-                production_semantic_brief=job.production_semantic_brief,
-                script_lock_hash=job.script_lock.script_content_hash,
-            )
+        job.cinematic_prompt_package = self.cinematic_prompt_compilation_service.compile(
+            scenes=job.scenes,
+            shot_plan=job.cinematic_shot_plan,
+            visual_continuity_bible=job.visual_continuity_bible,
+            production_semantic_brief=job.production_semantic_brief,
+            script_lock_hash=job.script_lock.script_content_hash,
+            # Real generation only ever goes through Google Flow
+            # today (GoogleFlowRealUIAdapter) - resolving against
+            # its own verified duration set here means the
+            # compiled prompt's stated duration always matches
+            # what scene_video_generation_service.py actually
+            # requests, instead of the two drifting independently.
+            duration_seconds_resolver=clamp_to_verified_duration,
         )
 
         self.approval_gate_service.record_event(

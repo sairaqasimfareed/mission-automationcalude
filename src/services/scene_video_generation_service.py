@@ -23,7 +23,7 @@ from src.models.scene_completeness import (
 )
 from src.models.video_job import VideoJob
 from src.providers.external_ui_generation_provider import ExternalUIGenerationProvider
-from src.providers.google_flow.locators import VERIFIED_DURATIONS_SECONDS
+from src.providers.google_flow.locators import clamp_to_verified_duration
 from src.services.google_flow_generation_ledger_service import (
     GoogleFlowGenerationLedgerService,
 )
@@ -487,15 +487,12 @@ class SceneVideoGenerationService:
     @staticmethod
     def _clamp_to_verified_duration(requested_seconds: int) -> int:
         """
-        Real-world finding this session: Google Flow only accepts a
-        fixed set of durations (see VERIFIED_DURATIONS_SECONDS' own
-        docstring for exactly which, and for which model) - requesting
-        anything else (e.g. 12s) fails with FLOW_SETTINGS_UNAVAILABLE.
-        Clamp to the closest verified value rather than passing the
-        raw estimate straight through and letting the submission fail.
+        Thin wrapper kept for this service's own call-site readability -
+        see clamp_to_verified_duration's own docstring for why this is
+        now the one shared implementation (also used by
+        CinematicPromptCompilationService via
+        ContentIntelligencePipeline, so a compiled prompt's stated
+        duration always matches what actually gets requested here).
         """
 
-        return min(
-            VERIFIED_DURATIONS_SECONDS,
-            key=lambda verified: abs(verified - requested_seconds),
-        )
+        return clamp_to_verified_duration(requested_seconds)

@@ -82,6 +82,34 @@ VERIFIED_RESOLUTIONS: tuple[str, ...] = ("360p", "720p")
 # [Lower Priority] suffix) offers a different set - this constant
 # reflects only what has actually been observed.
 VERIFIED_DURATIONS_SECONDS: tuple[int, ...] = (4, 6, 8)
+
+
+def clamp_to_verified_duration(requested_seconds: float) -> int:
+    """
+    Google Flow only accepts VERIFIED_DURATIONS_SECONDS - requesting
+    anything else (e.g. 7s) fails with FLOW_SETTINGS_UNAVAILABLE.
+    Clamp to the closest verified value rather than passing a raw
+    estimate straight through.
+
+    Deliberately the ONE place this clamp is computed - real-world
+    finding, 2026-09-14: scene_video_generation_service.py used to
+    compute this independently at real submission time while
+    CinematicPromptCompilationService's compiled prompt text (baked in
+    far earlier, at Production Plan Phase 4) stated the shot plan's
+    raw, unclamped duration - so a compiled prompt could say "Duration:
+    7 seconds" while the real submission that followed actually
+    requested 8s, a real self-contradiction inside the same prompt a
+    human/Veo would read. Both call sites now use this single function
+    so the number stated in a compiled prompt always matches what gets
+    requested.
+    """
+
+    return min(
+        VERIFIED_DURATIONS_SECONDS,
+        key=lambda verified: abs(verified - requested_seconds),
+    )
+
+
 # How many video variations one submission generates for the same
 # prompt - confirmed by the account owner NOT to be a credit
 # multiplier by itself; the real settings popover shows one combined
