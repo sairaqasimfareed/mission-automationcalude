@@ -125,27 +125,18 @@ class GoogleFlowRealAccessibleNames(BaseModel):
     start_generation_button: str = "Start generation"
 
     generated_video_thumbnail: str = "Generated video thumbnail"
-    # Real-world finding, 2026-09-11 (superseding an earlier, wrong
-    # assumption that download lived inside a single-video edit view
-    # modal reachable straight from the compose view): the real
-    # download control only exists on the "All media" library view,
-    # reachable per-row after hovering a thumbnail (which reveals a
-    # row-scoped "More options" overflow button - real Flow renders
-    # one <flow-video-tile> per row, each with its own identically
-    # named "More options" button, so this must be scoped to the
-    # specific tile containing the thumbnail just hovered, exactly
-    # like the earlier <flow-batch-info> download-button scoping
-    # fix). Clicking "More options" -> "Download" opens a FURTHER
-    # submenu of format/resolution choices (Animated GIF / Original
-    # size / Upscaled / 4K) - "Download" alone never fires a real
-    # download; only clicking one of those submenu items does.
-    # "Original size" is the one real, free (no extra credit cost,
-    # unlike Upscaled/4K) choice that always matches whatever
-    # resolution the video actually generated at.
     all_media_nav_item: str = "All media"
-    more_options_button: str = "More options"
-    download_menu_item: str = "Download"
-    download_original_size_menu_item: str = "Original size"
+    # Real-world finding, 2026-09-14 (supersedes the 2026-09-11 finding
+    # this used to describe - a hover-revealed "More options" button
+    # then a Download menuitem then a further Animated GIF/Original
+    # size/Upscaled/4K submenu - which no longer matches the real
+    # product): confirmed directly via a real DevTools inspection, the
+    # real download control is a single, always-visible button with
+    # this exact aria-label, living inside a real <flow-batch-info>
+    # element (one per completed batch/tile, alongside sibling
+    # "Reuse prompt"/"Trash batch" buttons) - no hover, no submenu,
+    # fires a real download on one click.
+    download_batch_button: str = "Download batch"
 
     # Agent settings (docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md section 4a):
     # confirmed to be the SAME "Settings trigger" popover, showing this

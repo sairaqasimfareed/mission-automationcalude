@@ -154,78 +154,50 @@ class _FakeLocator:
 _MISSING = _FakeLocator(count=0)
 
 
-class _FakeVideoTile:
+class _FakeBatch:
     """
-    Minimal stand-in for one real <flow-video-tile> locator scoped to
-    a single row - supports get_by_role() the same way a real
-    Playwright locator scoped to one tile does (its own "Generated
-    video thumbnail" image, its own "More options" button), plus the
-    prompt caption real Flow renders underneath each tile
-    (docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md section 5) - the real,
-    content-based signal _tiles_matching_attempt() searches on instead
-    of trusting position.
+    Minimal stand-in for one real <flow-batch-info> element - supports
+    get_by_role() the same way a real Playwright locator scoped to one
+    batch does, for its own "Download batch" button (confirmed real
+    via a real DevTools inspection, 2026-09-14 - see
+    _completed_batches()'s own docstring in real_adapter.py).
     """
 
-    def __init__(
-        self,
-        *,
-        caption: str,
-        thumbnail: _FakeLocator | None = None,
-        more_options: _FakeLocator | None = None,
-    ) -> None:
-        self.caption = caption
-        self._thumbnail = thumbnail if thumbnail is not None else _FakeLocator(count=0)
-        self._more_options = (
-            more_options if more_options is not None else _FakeLocator()
+    def __init__(self, *, download_button: _FakeLocator | None = None) -> None:
+        self._download_button = (
+            download_button if download_button is not None else _FakeLocator()
         )
 
     def get_by_role(
         self, role: str, name: str | None = None, exact: bool = False
     ) -> _FakeLocator:
-        if (role, name) == ("img", "Generated video thumbnail"):
-            return self._thumbnail
-
-        if (role, name) == ("button", "More options"):
-            return self._more_options
+        if (role, name) == ("button", "Download batch"):
+            return self._download_button
 
         return _MISSING
 
 
-class _FakeVideoTileSet:
+class _FakeBatchSet:
     """
-    Stands in for page.locator("flow-video-tile") - supports
-    .filter(has_text=...), mirroring Playwright's own real
-    case-insensitive substring match against each tile's own rendered
-    text, so tests can register several tiles (some matching a given
-    attempt's own prompt, some not) and assert the adapter finds the
-    right one rather than a positional .first.
+    Stands in for page.locator("flow-batch-info") - a simple, ordered
+    (newest-first, matching real Flow prepending new tiles to the top)
+    collection with no content filtering, since the real adapter no
+    longer matches by prompt content (see _completed_batches()'s own
+    docstring for why position is now what's trusted, not a guess).
     """
 
-    def __init__(self, tiles: list[_FakeVideoTile]) -> None:
-        self._tiles = tiles
-
-    def filter(
-        self,
-        *,
-        has: _FakeLocator | None = None,
-        has_text: str | None = None,
-    ) -> _FakeVideoTileSet:
-        if has_text is None:
-            return self
-
-        return _FakeVideoTileSet(
-            [tile for tile in self._tiles if has_text.lower() in tile.caption.lower()]
-        )
+    def __init__(self, batches: list[_FakeBatch]) -> None:
+        self._batches = batches
 
     def count(self) -> int:
-        return len(self._tiles)
+        return len(self._batches)
 
     @property
-    def first(self) -> _FakeVideoTile:
-        if not self._tiles:
-            raise AssertionError("`.first` on an empty flow-video-tile locator")
+    def first(self) -> _FakeBatch:
+        if not self._batches:
+            raise AssertionError("`.first` on an empty flow-batch-info locator")
 
-        return self._tiles[0]
+        return self._batches[0]
 
 
 class _FakeKeyboard:
@@ -874,46 +846,19 @@ def test_submit_never_clicks_agent_toggle_when_not_requested() -> None:
 # --- observe() ---
 
 
-def test_observe_reports_ready_to_download_once_a_thumbnail_appears() -> None:
+def test_observe_reports_ready_to_download_once_a_batch_completes() -> None:
     page = _authenticated_page()
     adapter = _adapter(page)
     request = _request()
     submitted = adapter.submit(request, _attempt(request))
     assert submitted.state == GoogleFlowGenerationState.GENERATING
 
-    tile = _FakeVideoTile(caption=request.prompt, thumbnail=_FakeLocator(count=2))
-    page.register_css("flow-video-tile", _FakeVideoTileSet([tile]))  # type: ignore[arg-type]
+    tile_set: Any = _FakeBatchSet([_FakeBatch()])
+    page.register_css("flow-batch-info", tile_set)
 
     observed = adapter.observe(submitted)
 
     assert observed.state == GoogleFlowGenerationState.READY_TO_DOWNLOAD
-
-
-def test_observe_ignores_an_unrelated_tiles_thumbnail() -> None:
-    """
-    Real-world finding, 2026-09-14: observe() used to check for ANY
-    generated thumbnail on the whole page, which is already true in
-    any project with prior videos in it - confirmed live, it reported
-    READY_TO_DOWNLOAD on the very first poll of a brand-new submission
-    purely because an unrelated older video's thumbnail already
-    existed. It must only count a thumbnail on the tile matching THIS
-    attempt's own prompt.
-    """
-
-    page = _authenticated_page()
-    adapter = _adapter(page)
-    request = _request()
-    submitted = adapter.submit(request, _attempt(request))
-
-    unrelated_tile = _FakeVideoTile(
-        caption="A completely different, already-finished video.",
-        thumbnail=_FakeLocator(count=1),
-    )
-    page.register_css("flow-video-tile", _FakeVideoTileSet([unrelated_tile]))  # type: ignore[arg-type]
-
-    observed = adapter.observe(submitted)
-
-    assert observed.state == GoogleFlowGenerationState.GENERATING
 
 
 def test_observe_is_read_only_before_completion() -> None:
@@ -935,9 +880,8 @@ def test_observe_reconciles_submission_uncertain_with_real_matching_evidence() -
     session, despite the account owner directly confirming both had
     actually completed in Flow's own "All media" tab - GF-7's own
     disclosed "real reconciliation needs the live adapter to check"
-    gap. observe() now checks the real evidence (a tile matching this
-    attempt's own prompt with a completed thumbnail) even from
-    SUBMISSION_UNCERTAIN, not just SUBMITTED/GENERATING.
+    gap. observe() now checks the real evidence (a completed batch)
+    even from SUBMISSION_UNCERTAIN, not just SUBMITTED/GENERATING.
     """
 
     page = _authenticated_page()
@@ -948,8 +892,8 @@ def test_observe_reconciles_submission_uncertain_with_real_matching_evidence() -
         GoogleFlowGenerationState.SUBMISSION_UNCERTAIN, detail="test setup"
     )
 
-    tile = _FakeVideoTile(caption=request.prompt, thumbnail=_FakeLocator(count=1))
-    page.register_css("flow-video-tile", _FakeVideoTileSet([tile]))  # type: ignore[arg-type]
+    tile_set: Any = _FakeBatchSet([_FakeBatch()])
+    page.register_css("flow-batch-info", tile_set)
 
     observed = adapter.observe(uncertain)
 
@@ -959,9 +903,9 @@ def test_observe_reconciles_submission_uncertain_with_real_matching_evidence() -
 def test_observe_leaves_submission_uncertain_alone_without_matching_evidence() -> None:
     """
     The reconciliation above must never invent evidence that isn't
-    there - no matching tile (or one still a placeholder) must leave
-    a SUBMISSION_UNCERTAIN attempt exactly as it was, still requiring
-    an operator's own judgment, not silently promoted.
+    there - no completed batch yet must leave a SUBMISSION_UNCERTAIN
+    attempt exactly as it was, still requiring an operator's own
+    judgment, not silently promoted.
     """
 
     page = _authenticated_page()
@@ -1001,52 +945,27 @@ def test_observe_without_an_open_page_is_ui_changed() -> None:
 
 
 class _DownloadFlowControls:
-    def __init__(
-        self,
-        thumbnail: _FakeLocator,
-        more_options_button: _FakeLocator,
-        download_menuitem: _FakeLocator,
-        original_size_menuitem: _FakeLocator,
-    ) -> None:
-        self.thumbnail = thumbnail
-        self.more_options_button = more_options_button
-        self.download_menuitem = download_menuitem
-        self.original_size_menuitem = original_size_menuitem
+    def __init__(self, download_button: _FakeLocator) -> None:
+        self.download_button = download_button
 
 
-def _register_download_flow(
-    page: _FakePage,
-    *,
-    thumbnail_count: int = 1,
-    prompt: str = "A calm lighthouse at sunset, gentle waves below.",
-) -> _DownloadFlowControls:
+def _register_download_flow(page: _FakePage) -> _DownloadFlowControls:
     """
-    Registers the real, verified 2026-09-11 download flow: click "All
-    media" -> hover the thumbnail -> the row's own <flow-video-tile>-
-    scoped "More options" button -> "Download" menuitem (opens a
-    format submenu) -> "Original size" menuitem (the one that actually
-    fires a real download). `prompt` defaults to _request()'s own
-    default so the registered tile's caption matches the attempt
-    _tiles_matching_attempt() will search for.
+    Registers the real, verified 2026-09-14 download flow: click "All
+    media" -> the completed batch's own real, always-visible "Download
+    batch" button (no hover, no submenu - see _completed_batches()'s
+    own docstring in real_adapter.py for the real DevTools finding
+    this replaced the old hover/More-options/submenu flow with).
     """
 
     page.register_text("All media", _FakeLocator())
 
-    thumbnail = _FakeLocator(count=thumbnail_count)
-    more_options_button = _FakeLocator()
-    tile = _FakeVideoTile(
-        caption=prompt, thumbnail=thumbnail, more_options=more_options_button
-    )
-    page.register_css("flow-video-tile", _FakeVideoTileSet([tile]))  # type: ignore[arg-type]
+    download_button = _FakeLocator()
+    batch = _FakeBatch(download_button=download_button)
+    tile_set: Any = _FakeBatchSet([batch])
+    page.register_css("flow-batch-info", tile_set)
 
-    download_menuitem = _FakeLocator()
-    page.register_role("menuitem", "Download", download_menuitem)
-    original_size_menuitem = _FakeLocator()
-    page.register_role("menuitem", "Original size", original_size_menuitem)
-
-    return _DownloadFlowControls(
-        thumbnail, more_options_button, download_menuitem, original_size_menuitem
-    )
+    return _DownloadFlowControls(download_button)
 
 
 def test_download_saves_a_file_and_transitions_to_downloaded(
@@ -1071,12 +990,9 @@ def test_download_saves_a_file_and_transitions_to_downloaded(
     downloaded = adapter.download(ready)
 
     assert downloaded.state == GoogleFlowGenerationState.DOWNLOADED
-    assert controls.thumbnail.hover_calls == 1
-    assert controls.more_options_button.click_calls == 1
-    assert controls.download_menuitem.click_calls == 1
-    assert controls.original_size_menuitem.click_calls == 1
-    # Real-world finding: "Original size" saves a real, directly
-    # playable .mp4 - no zip involved for this specific menu path.
+    assert controls.download_button.click_calls == 1
+    # Real-world finding: the real "Download batch" button saves a
+    # real, directly playable .mp4 - no zip involved for this path.
     assert downloaded.downloaded_file is not None
     assert downloaded.downloaded_file.endswith(".mp4")
     assert Path(downloaded.downloaded_file).is_file()
@@ -1126,19 +1042,18 @@ def test_download_extracts_the_video_when_flow_saves_a_zip_instead(
     assert saved_files[0].suffix == ".mp4"
 
 
-def test_download_scopes_to_the_tile_matching_this_attempts_own_prompt(
+def test_download_takes_the_topmost_batch_when_several_exist(
     tmp_path: Path,
 ) -> None:
     """
-    Real-world finding, 2026-09-14 (supersedes the 2026-09-11 finding
-    this test used to cover): download() used to grab whichever
-    thumbnail rendered first/topmost across the WHOLE "All media"
-    grid, with no check that it belonged to THIS attempt - a real risk
-    the moment a project has more than one video (an unrelated older
-    video, or another scene generated around the same time), which a
-    live test surfaced directly. It must find the one tile whose own
-    caption matches this attempt's own prompt and act only on that
-    tile's own scoped controls, ignoring every other tile on the page.
+    Real-world finding, 2026-09-14: a real project routinely holds
+    more than one completed batch (this job's own earlier scenes,
+    still sitting in "All media"). download() must always act on the
+    topmost (newest) one, never any other - correct because
+    create_attempt()'s own in-flight guard (one non-terminal attempt
+    per profile per job) guarantees at most one batch can genuinely
+    still be pending at once, and real Flow always prepends new tiles
+    to the top of the grid.
     """
 
     page = _authenticated_page()
@@ -1153,23 +1068,17 @@ def test_download_scopes_to_the_tile_matching_this_attempts_own_prompt(
     submitted = adapter.submit(request, _attempt(request))
 
     page.register_text("All media", _FakeLocator())
-
-    unrelated_more_options = _FakeLocator()
-    unrelated_tile = _FakeVideoTile(
-        caption="A completely different video about mountains.",
-        thumbnail=_FakeLocator(count=1),
-        more_options=unrelated_more_options,
+    newest_download_button = _FakeLocator()
+    older_download_button = _FakeLocator()
+    # Newest batch listed first - real Flow prepends new tiles to the
+    # top of the grid (docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md section 5).
+    tile_set: Any = _FakeBatchSet(
+        [
+            _FakeBatch(download_button=newest_download_button),
+            _FakeBatch(download_button=older_download_button),
+        ]
     )
-    thumbnail = _FakeLocator(count=1)
-    more_options_button = _FakeLocator()
-    own_tile = _FakeVideoTile(
-        caption=request.prompt, thumbnail=thumbnail, more_options=more_options_button
-    )
-    tile_set: Any = _FakeVideoTileSet([unrelated_tile, own_tile])
-    page.register_css("flow-video-tile", tile_set)
-
-    page.register_role("menuitem", "Download", _FakeLocator())
-    page.register_role("menuitem", "Original size", _FakeLocator())
+    page.register_css("flow-batch-info", tile_set)
 
     ready = adapter.observe(submitted)
     assert ready.state == GoogleFlowGenerationState.READY_TO_DOWNLOAD
@@ -1177,68 +1086,8 @@ def test_download_scopes_to_the_tile_matching_this_attempts_own_prompt(
     downloaded = adapter.download(ready)
 
     assert downloaded.state == GoogleFlowGenerationState.DOWNLOADED
-    assert more_options_button.click_calls == 1
-    assert unrelated_more_options.click_calls == 0
-
-
-def test_download_takes_the_topmost_tile_when_several_scenes_match_the_same_prompt(
-    tmp_path: Path,
-) -> None:
-    """
-    Real-world finding, 2026-09-14: every scene in one job shares the
-    same "Identity: ..." continuity preamble, which is all Flow's own
-    caption display shows before truncating - confirmed directly from
-    a real screenshot of two different scenes' visibly identical
-    captions. Prompt matching alone narrows to "this job", not "this
-    scene", so more than one match is the NORMAL case here, not a rare
-    edge case. download() must take the topmost (newest) match rather
-    than refuse - correct because create_attempt()'s own in-flight
-    guard (one non-terminal attempt per profile per job) guarantees at
-    most one of this job's own tiles can genuinely still be pending,
-    and real Flow always prepends new tiles to the top.
-    """
-
-    page = _authenticated_page()
-    adapter = GoogleFlowRealUIAdapter(
-        worker=_FakeWorker(page),  # type: ignore[arg-type]
-        base_url="https://flow.google.com/project/test-project",
-        operation_timeout_seconds=5.0,
-        download_root=tmp_path,
-        profile_directory_resolver=lambda profile_id: Path("unused") / profile_id,
-    )
-    request = _request()
-    submitted = adapter.submit(request, _attempt(request))
-
-    page.register_text("All media", _FakeLocator())
-    own_thumbnail = _FakeLocator(count=1)
-    own_more_options = _FakeLocator()
-    newest_tile = _FakeVideoTile(
-        caption=request.prompt,
-        thumbnail=own_thumbnail,
-        more_options=own_more_options,
-    )
-    older_more_options = _FakeLocator()
-    older_scene_tile = _FakeVideoTile(
-        caption=request.prompt,
-        thumbnail=_FakeLocator(count=1),
-        more_options=older_more_options,
-    )
-    # Newest tile listed first - real Flow prepends new tiles to the
-    # top of the grid (docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md section 5).
-    tile_set: Any = _FakeVideoTileSet([newest_tile, older_scene_tile])
-    page.register_css("flow-video-tile", tile_set)
-    page.register_role("menuitem", "Download", _FakeLocator())
-    page.register_role("menuitem", "Original size", _FakeLocator())
-
-    ready = submitted.with_transition(
-        GoogleFlowGenerationState.READY_TO_DOWNLOAD, detail="test setup"
-    )
-
-    result = adapter.download(ready)
-
-    assert result.state == GoogleFlowGenerationState.DOWNLOADED
-    assert own_more_options.click_calls == 1
-    assert older_more_options.click_calls == 0
+    assert newest_download_button.click_calls == 1
+    assert older_download_button.click_calls == 0
 
 
 def test_download_is_ui_changed_when_no_tile_matches_at_all(tmp_path: Path) -> None:

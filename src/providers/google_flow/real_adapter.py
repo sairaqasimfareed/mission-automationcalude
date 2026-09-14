@@ -36,23 +36,6 @@ DEFAULT_FLOW_DOWNLOAD_ROOT = Path("data/google_flow_downloads")
 # on the real control).
 _VARIATION_COUNT_RADIO_NAMES = {1: "x1", 2: "x2", 3: "x3", 4: "x4"}
 
-# Real-world finding, 2026-09-14: docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md
-# section 5 confirms each new media tile shows "the submitted prompt
-# text underneath" itself. A short PREFIX, not the full prompt, is
-# matched against it - a real prompt here runs to hundreds of
-# characters, and Flow's own caption display is expected to truncate
-# it (the exact real truncation length is NOT verified; this is a
-# conservative guess meant to comfortably survive typical truncation,
-# not a confirmed real limit).
-_TILE_PROMPT_MATCH_CHARS = 40
-
-
-def _normalize_for_tile_match(text: str) -> str:
-    """Collapse whitespace so a multi-line prompt still matches
-    against Flow's own single-line rendered caption text."""
-
-    return " ".join(text.split())
-
 
 class GoogleFlowUIChangedError(RuntimeError):
     """
@@ -522,58 +505,35 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
             # Real-world finding, 2026-09-14: this used to check
             # page-wide "is there any generated thumbnail at all",
             # which is true immediately in any project that already
-            # has other videos in it (this account's real project did,
-            # a leftover unrelated video plus earlier test attempts) -
-            # confirmed live, it reported READY_TO_DOWNLOAD on the very
-            # first poll regardless of whether THIS attempt's own
-            # generation had actually finished. Scope to the tile(s)
-            # that actually match this attempt's own prompt instead.
-            #
-            # Real-world finding, 2026-09-14 (same day, second real
-            # bug): every scene in one job shares the same "Identity:
-            # ..." continuity preamble at the very start of its prompt
-            # - confirmed directly from a real screenshot showing two
-            # different scenes' tiles with visibly identical captions.
-            # Since Flow's own caption display truncates well within
-            # that shared preamble, prompt-prefix matching alone
-            # cannot distinguish one job's OWN scenes from each other,
-            # only this job from a genuinely different one - it still
-            # does that correctly. When it matches more than one tile,
-            # take the topmost (first): GoogleFlowGenerationLedgerService.
-            # create_attempt()'s own in-flight guard (one non-terminal
-            # attempt per profile per job, enforced at submission time)
-            # guarantees at most one of this job's own tiles can
-            # genuinely still be pending at once, and real Flow always
-            # prepends new tiles to the top - so among this job's own
-            # matches, the newest (topmost) one is always the one THIS
-            # attempt actually produced, never a guess.
-            matching_tiles = self._tiles_matching_attempt(page, attempt)
-            match_count = matching_tiles.count()
+            # has other videos in it - confirmed live, it reported
+            # READY_TO_DOWNLOAD on the very first poll regardless of
+            # whether THIS attempt's own generation had actually
+            # finished. A later prompt-content-matching fix turned out
+            # to be unusable too (every scene in one job shares the
+            # same "Identity: ..." continuity preamble, which is all
+            # Flow's own caption shows before truncating - confirmed
+            # from a real screenshot of two scenes' identical
+            # captions), and relied on a <flow-video-tile> tag that a
+            # real DevTools inspection then showed does not exist at
+            # all. _completed_batches() (real <flow-batch-info>
+            # elements, newest first) is what real inspection actually
+            # found - see its own docstring for why topmost is always
+            # correct here, not a guess.
+            batches = self._completed_batches(page)
+            batch_count = batches.count()
             logger.info(
-                "google_flow.observe | scene=%s | %d matching tile(s)",
+                "google_flow.observe | scene=%s | %d completed batch(es)",
                 attempt.request.scene_number,
-                match_count,
+                batch_count,
             )
 
-            if match_count == 0:
-                # Not rendered yet (or the prompt-prefix guess missed
-                # entirely) - keep polling rather than falsely
+            if batch_count == 0:
+                # Not rendered yet - keep polling rather than falsely
                 # reporting ready.
                 return attempt
 
-            thumbnails = matching_tiles.first.get_by_role(
-                "img", name=self._names.generated_video_thumbnail
-            )
-
-            if thumbnails.count() == 0:
-                # Still generating - real Flow shows no distinct
-                # progress indicator in the accessible tree, only the
-                # eventual thumbnail (docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md
-                # section 5) - read-only, correctly reports unchanged.
-                return attempt
-
             logger.info(
-                "google_flow.observe | scene=%s | completed thumbnail found - "
+                "google_flow.observe | scene=%s | completed batch found - "
                 "promoting to READY_TO_DOWNLOAD",
                 attempt.request.scene_number,
             )
@@ -646,80 +606,43 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
             # real race check_profile_health hit (see its own fix).
             page.wait_for_timeout(1500)
 
-            # Real-world finding, 2026-09-14: this used to grab
-            # page.get_by_role(...).first - whichever thumbnail
-            # happened to render topmost in the WHOLE "All media"
-            # grid, with no check that it was actually THIS attempt's
-            # own generation. That silently risks downloading a
-            # different, unrelated video the moment a project has more
-            # than one (an old test clip, another scene generated
-            # around the same time) - a real, disclosed gap that a
-            # live test surfaced directly. Identify the tile by its
-            # own prompt caption instead of trusting position.
-            #
-            # Real-world finding, 2026-09-14 (same day, second real
-            # bug): every scene in one job shares the same "Identity:
-            # ..." continuity preamble, which is all Flow's own
-            # caption display shows before truncating (confirmed via a
-            # real screenshot of two different scenes' visibly
-            # identical captions) - prompt matching alone narrows to
-            # "this job", not "this scene". When more than one of this
-            # job's own tiles match, take the topmost (newest): see
-            # observe()'s own matching comment for why that is always
-            # correct here, not a guess (create_attempt()'s in-flight
-            # guard + Flow always prepending new tiles to the top).
-            matching_tiles = self._tiles_matching_attempt(page, attempt)
-            match_count = matching_tiles.count()
+            # Real-world finding, 2026-09-14 (supersedes the 2026-09-11
+            # finding this used to describe - grabbing the topmost
+            # thumbnail page-wide with no identity check at all, then a
+            # since-abandoned prompt-content-matching attempt): a real
+            # DevTools inspection found the actual real control -
+            # <flow-batch-info>, one per completed batch, each with its
+            # own always-visible "Download batch" button. No hover, no
+            # submenu; see _completed_batches()'s own docstring for why
+            # the topmost one is always this attempt's own batch, not a
+            # guess.
+            batches = self._completed_batches(page)
+            batch_count = batches.count()
 
-            if match_count == 0:
+            if batch_count == 0:
                 return attempt.with_transition(
                     GoogleFlowGenerationState.UI_CHANGED,
                     detail=(
-                        "Could not find this attempt's own media tile on "
-                        "the All media view (no tile matches its prompt) - "
-                        "refusing to guess which video to download."
+                        "Could not find any completed batch on the All "
+                        "media view - refusing to guess which video to "
+                        "download."
                     ),
                 )
 
-            tile = matching_tiles.first
-            thumbnail = tile.get_by_role(
-                "img", name=self._names.generated_video_thumbnail
-            )
-            # The row's own controls (its "More options" button among
-            # them) only render into the DOM on a real hover event -
-            # confirmed directly (a page-wide search found 0 of them
-            # before hovering, exactly 1 new one after).
-            thumbnail.hover(timeout=self._action_timeout_ms)
-            page.wait_for_timeout(1500)
-
-            tile.get_by_role("button", name=self._names.more_options_button).click(
-                timeout=self._action_timeout_ms
-            )
-
-            # Clicking "Download" alone never fires a real download -
-            # it only opens a further submenu of format/resolution
-            # choices (Animated GIF / Original size / Upscaled / 4K),
-            # confirmed directly (expect_download() timed out waiting
-            # after only this click). "Original size" is the one real,
-            # free choice (Upscaled/4K cost extra real credits) that
-            # always matches whatever resolution the video actually
-            # generated at.
-            page.get_by_role("menuitem", name=self._names.download_menu_item).click(
-                timeout=self._action_timeout_ms
+            download_button = batches.first.get_by_role(
+                "button", name=self._names.download_batch_button
             )
 
             logger.info(
-                "google_flow.download | scene=%s | menu opened, clicking "
-                "'Original size' and waiting for the real download to fire",
+                "google_flow.download | scene=%s | clicking 'Download batch' "
+                "and waiting for the real download to fire",
                 attempt.request.scene_number,
             )
 
             with page.expect_download(
                 timeout=self._operation_timeout_seconds * 1000
             ) as download_info:
-                page.get_by_role(
-                    "menuitem", name=self._names.download_original_size_menu_item
-                ).click(timeout=self._action_timeout_ms)
+                download_button.click(timeout=self._action_timeout_ms)
 
             download = download_info.value
             saved_path = destination_dir / download.suggested_filename
@@ -1022,28 +945,33 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
         # never observed.
         page.keyboard.press("Escape")
 
-    def _tiles_matching_attempt(
-        self, page: Page, attempt: GoogleFlowGenerationAttempt
-    ) -> Locator:
+    def _completed_batches(self, page: Page) -> Locator:
         """
-        Return the (possibly empty, possibly ambiguous) set of media
-        tiles whose own rendered caption contains this attempt's own
-        prompt - see docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md section 5 for
-        the real finding this is built on, and _TILE_PROMPT_MATCH_CHARS'
-        own comment for why only a prefix is matched.
+        Return every completed batch/tile on the current "All media"
+        view, newest first - real Flow renders one real
+        <flow-batch-info> element per completed batch (confirmed
+        directly via a real DevTools inspection, 2026-09-14), each
+        holding that batch's own "Download batch"/"Reuse prompt"/
+        "Trash batch" buttons. Real Flow prepends new tiles to the top
+        of the grid (docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md section 5),
+        so `.first` here is always the most recently completed batch.
 
-        Deliberately returns the raw locator rather than asserting a
-        single match itself - observe() and download() each need a
-        different response to "not exactly one" (observe() treats it
-        as "can't confirm yet, keep polling"; download() refuses to
-        guess and surfaces UI_CHANGED instead of picking one).
+        Deliberately NOT matched by prompt content (a prior real
+        approach, since replaced): every scene in one job shares the
+        same "Identity: ..." continuity preamble, which is all Flow's
+        own caption display shows before truncating (confirmed
+        directly from a real screenshot of two different scenes'
+        visibly identical captions) - content can narrow to "this
+        job" but never to "this scene". Position is used instead:
+        GoogleFlowGenerationLedgerService.create_attempt()'s own
+        in-flight guard (one non-terminal attempt per profile per job,
+        enforced at submission) guarantees at most one of this job's
+        own batches can genuinely still be pending at once, so the
+        newest (topmost) completed batch is always the one the
+        current attempt actually produced, not a guess.
         """
 
-        excerpt = _normalize_for_tile_match(attempt.request.prompt)[
-            :_TILE_PROMPT_MATCH_CHARS
-        ]
-
-        return page.locator("flow-video-tile").filter(has_text=excerpt)
+        return page.locator("flow-batch-info")
 
     def _click_radio(self, page: Page, name: str, *, dimension: str) -> None:
         radio = page.get_by_role("radio", name=name)
