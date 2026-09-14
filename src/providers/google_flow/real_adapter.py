@@ -21,6 +21,7 @@ from src.providers.external_ui_generation_provider import (
     ExternalUIOperation,
 )
 from src.providers.google_flow.locators import GoogleFlowRealAccessibleNames
+from src.shared.logger import logger
 
 # Matches GoogleFlowUIAdapter's own local-storage convention
 # (src/providers/google_flow/adapter.py's DEFAULT_FLOW_DOWNLOAD_ROOT) -
@@ -250,6 +251,11 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
 
     def check_profile_health(self, profile_id: str) -> bool:
         def _run() -> bool:
+            logger.info(
+                "google_flow.check_profile_health | profile=%s | starting",
+                profile_id,
+            )
+
             # Real-world finding: is_closed() is a CLIENT-SIDE flag
             # that only flips once Playwright's own connection
             # notices the browser process is gone - a real operator
@@ -310,7 +316,9 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
         # can legitimately take. Widened to 6x for real margin over
         # that ~4x worst case.
         return self._worker.submit_with_recovery(
-            _run, timeout=self._operation_timeout_seconds * 6
+            _run,
+            timeout=self._operation_timeout_seconds * 6,
+            label="check_profile_health",
         )
 
     def set_confirm_before_generating(self, profile_id: str, *, always: bool) -> None:
@@ -371,8 +379,17 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
                 timeout=self._action_timeout_ms
             )
 
+        # Audit, 2026-09-14 (part of the same pass that fixed
+        # check_profile_health's and submit()'s outer budgets): one
+        # navigation(2x) plus five sequential click actions gives the
+        # same ~4x-plus-margin shape as the other methods here now
+        # have - widened to match rather than leaving this one the
+        # sole remaining mismatch, even though it has not yet been
+        # exercised live this session.
         self._worker.submit_with_recovery(
-            _run, timeout=self._operation_timeout_seconds * 3
+            _run,
+            timeout=self._operation_timeout_seconds * 6,
+            label="set_confirm_before_generating",
         )
 
     def submit(
@@ -383,6 +400,11 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
         self.ensure_supported(ExternalUIOperation.SUBMIT)
 
         def _run() -> GoogleFlowGenerationAttempt:
+            logger.info(
+                "google_flow.submit | scene=%s | starting (navigating to project)",
+                attempt.request.scene_number,
+            )
+
             page = self._get_or_open_page(attempt.profile_id)
             page.goto(
                 self._base_url_resolver(attempt.profile_id),
@@ -435,7 +457,7 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
         # confirmation-wait(4x) + a real settings/typing buffer all
         # fit with room to spare.
         return self._worker.submit_with_recovery(
-            _run, timeout=self._operation_timeout_seconds * 9
+            _run, timeout=self._operation_timeout_seconds * 9, label="submit"
         )
 
     def observe(
@@ -445,6 +467,12 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
         self.ensure_supported(ExternalUIOperation.OBSERVE)
 
         def _run() -> GoogleFlowGenerationAttempt:
+            logger.info(
+                "google_flow.observe | scene=%s state=%s | starting",
+                attempt.request.scene_number,
+                attempt.state.value,
+            )
+
             page = self._pages.get(attempt.profile_id)
 
             if page is None:
@@ -473,6 +501,23 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
                 GoogleFlowGenerationState.SUBMISSION_UNCERTAIN,
             }:
                 return attempt
+
+            # Real-world finding, 2026-09-14 (third real bug found the
+            # same day): this method never navigated anywhere, unlike
+            # download() (which explicitly clicks "All media" first,
+            # a real, documented requirement - "the real download
+            # control only exists on the All media library view").
+            # <flow-video-tile> is that same All-media-only markup;
+            # searching for it from whatever view check_profile_health()
+            # or submit() last left the page on (the compose view) can
+            # legitimately find zero tiles even once a real thumbnail
+            # exists - not a timeout, an empty search scope. Navigate
+            # the same way download() already correctly does before
+            # searching, so both use the identical, proven view.
+            page.get_by_text(self._names.all_media_nav_item, exact=True).first.click(
+                timeout=self._action_timeout_ms
+            )
+            page.wait_for_timeout(1500)
 
             # Real-world finding, 2026-09-14: this used to check
             # page-wide "is there any generated thumbnail at all",
@@ -503,8 +548,14 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
             # matches, the newest (topmost) one is always the one THIS
             # attempt actually produced, never a guess.
             matching_tiles = self._tiles_matching_attempt(page, attempt)
+            match_count = matching_tiles.count()
+            logger.info(
+                "google_flow.observe | scene=%s | %d matching tile(s)",
+                attempt.request.scene_number,
+                match_count,
+            )
 
-            if matching_tiles.count() == 0:
+            if match_count == 0:
                 # Not rendered yet (or the prompt-prefix guess missed
                 # entirely) - keep polling rather than falsely
                 # reporting ready.
@@ -520,6 +571,12 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
                 # eventual thumbnail (docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md
                 # section 5) - read-only, correctly reports unchanged.
                 return attempt
+
+            logger.info(
+                "google_flow.observe | scene=%s | completed thumbnail found - "
+                "promoting to READY_TO_DOWNLOAD",
+                attempt.request.scene_number,
+            )
 
             current = attempt
 
@@ -544,8 +601,14 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
                 detail="Flow shows a completed thumbnail on this attempt's own matched tile.",
             )
 
+        # Widened from the bare 1x this had before the "All media"
+        # navigation was added above (a click at _action_timeout_ms
+        # plus a 1.5s settle wait) - 2x gives real margin over that
+        # single action, consistent with every other budget in this
+        # file now being sized to its own actual worst case rather
+        # than left at a value nobody computed against real steps.
         return self._worker.submit_with_recovery(
-            _run, timeout=self._operation_timeout_seconds
+            _run, timeout=self._operation_timeout_seconds * 2, label="observe"
         )
 
     def download(
@@ -555,6 +618,11 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
         self.ensure_supported(ExternalUIOperation.DOWNLOAD)
 
         def _run() -> GoogleFlowGenerationAttempt:
+            logger.info(
+                "google_flow.download | scene=%s | starting",
+                attempt.request.scene_number,
+            )
+
             page = self._pages.get(attempt.profile_id)
 
             if page is None:
@@ -640,6 +708,12 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
                 timeout=self._action_timeout_ms
             )
 
+            logger.info(
+                "google_flow.download | scene=%s | menu opened, clicking "
+                "'Original size' and waiting for the real download to fire",
+                attempt.request.scene_number,
+            )
+
             with page.expect_download(
                 timeout=self._operation_timeout_seconds * 1000
             ) as download_info:
@@ -650,6 +724,11 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
             download = download_info.value
             saved_path = destination_dir / download.suggested_filename
             download.save_as(str(saved_path))
+            logger.info(
+                "google_flow.download | scene=%s | saved to %s",
+                attempt.request.scene_number,
+                saved_path,
+            )
 
             # Real-world finding, 2026-09-11: real Flow's download can
             # be EITHER a raw video file directly (confirmed directly -
@@ -677,8 +756,14 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
                 detail=f"Saved to {destination}.",
             ).model_copy(update={"downloaded_file": str(destination)})
 
+        # Audit, 2026-09-14: six sequential action-budgeted steps
+        # (nav click, hover, more-options click, download-menu click,
+        # original-size click, the expect_download wait itself) each
+        # up to _action_timeout_ms/_operation_timeout_seconds*1000 -
+        # worst case around 6x _operation_timeout_seconds, well past
+        # the old 2x outer ceiling here. Widened to 6x to match.
         return self._worker.submit_with_recovery(
-            _run, timeout=self._operation_timeout_seconds * 2
+            _run, timeout=self._operation_timeout_seconds * 6, label="download"
         )
 
     def cancel_or_abandon(
@@ -712,6 +797,10 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
         current = current.with_transition(
             GoogleFlowGenerationState.SETTINGS_VERIFIED,
             detail="Requested settings applied via the real settings popover.",
+        )
+        logger.info(
+            "google_flow.submit | scene=%s | settings verified, typing prompt",
+            request.scene_number,
         )
 
         prompt_box = page.locator(self._names.prompt_input_css)
@@ -762,6 +851,12 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
             detail="Crossing the credit-sensitive submission boundary.",
         )
 
+        logger.info(
+            "google_flow.submit | scene=%s | clicking Start generation, then "
+            "waiting (up to %.0fs) for confirmation it actually began",
+            request.scene_number,
+            self._operation_timeout_seconds * 4,
+        )
         start_button.click(timeout=self._action_timeout_ms)
 
         if self._wait_for_new_tiles_or_confirmation(page):

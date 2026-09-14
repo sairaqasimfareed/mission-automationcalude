@@ -56,7 +56,9 @@ class _FakeWorker:
     def submit(self, fn: Callable[[], Any]) -> _ImmediateFuture:
         return _ImmediateFuture(fn())
 
-    def submit_with_recovery(self, fn: Callable[[], Any], *, timeout: float) -> Any:
+    def submit_with_recovery(
+        self, fn: Callable[[], Any], *, timeout: float, label: str = ""
+    ) -> Any:
         return fn()
 
     def open_persistent_context_from_worker_thread(
@@ -83,7 +85,9 @@ class _SequentialFakeWorker:
     def submit(self, fn: Callable[[], Any]) -> _ImmediateFuture:
         return _ImmediateFuture(fn())
 
-    def submit_with_recovery(self, fn: Callable[[], Any], *, timeout: float) -> Any:
+    def submit_with_recovery(
+        self, fn: Callable[[], Any], *, timeout: float, label: str = ""
+    ) -> Any:
         return fn()
 
     def open_persistent_context_from_worker_thread(
@@ -355,6 +359,12 @@ def _authenticated_page(
     # above, so every test using this default authenticated page
     # needs this control registered too.
     page.register_role("radio", "Video", _FakeLocator())
+    # Real-world finding, 2026-09-14: observe() now navigates to "All
+    # media" before searching for tiles, the same real, always-taken
+    # step download() already required - every test using this
+    # default authenticated page that calls observe() needs this
+    # control registered too.
+    page.register_text("All media", _FakeLocator())
     return page
 
 
