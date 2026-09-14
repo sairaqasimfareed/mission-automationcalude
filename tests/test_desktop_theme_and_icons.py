@@ -72,6 +72,66 @@ def test_apply_theme_sets_a_real_palette_not_just_a_stylesheet(
     assert button_text.name().lower() == TEXT_SECONDARY.lower()
 
 
+def test_combo_box_drop_down_actually_renders_a_visible_arrow(
+    qapp: QApplication, _restore_dark_theme: None
+) -> None:
+    """
+    Real-world finding, 2026-09-14: test_palette_gives_button_text_a_visible_color
+    above only checks a QPalette color VALUE, never whether anything
+    actually appears on screen - it stayed green through the exact
+    regression this test now catches. A real render (grabbed as a
+    QPixmap, same as this file's other icon tests do for isNull())
+    showed the drop-down's own 24px region completely blank in both
+    themes despite that "fix" being in place: QComboBox::drop-down
+    strips the border/background via QSS, and once any subcontrol is
+    QSS-customized, Fusion stops drawing its native palette-based arrow
+    into it - the ButtonText palette color this file already asserts
+    on was never actually being used to paint anything there. A
+    border-based CSS triangle on QComboBox::down-arrow (not an SVG
+    data-URI image - a prior attempt at exactly that, see git history
+    816278e/7e8cd55, silently failed to render in the real app despite
+    looking correct in the stylesheet string) is what actually fills
+    the region now - confirmed here as real pixels, not string
+    presence, since a stylesheet rule existing is not proof it renders
+    (the same false-confidence gap that let the SVG attempt regress
+    unnoticed).
+    """
+
+    from PySide6.QtWidgets import QComboBox
+
+    apply_theme(qapp, ThemeMode.LIGHT)
+
+    combo = QComboBox()
+    combo.setEditable(True)
+    combo.resize(200, 30)
+
+    pixmap = combo.grab()
+    image = pixmap.toImage()
+
+    # The drop-down occupies the rightmost 24px (QComboBox::drop-down's
+    # own configured width) - sample its INTERIOR, inset away from the
+    # widget's own 1px border on every side (the border itself is a
+    # real, always-present non-background color there regardless of
+    # whether an arrow renders - including it would pass even with no
+    # arrow at all, the exact false-negative this test must not have).
+    from PySide6.QtGui import QColor
+
+    from src.desktop.theme import BG_ELEVATED
+
+    background = QColor(BG_ELEVATED)
+    arrow_region_has_content = any(
+        image.pixelColor(x, y) != background
+        for x in range(image.width() - 20, image.width() - 4)
+        for y in range(4, image.height() - 4)
+    )
+
+    assert arrow_region_has_content, (
+        "QComboBox's drop-down region rendered with no visible content - "
+        "the exact 'looks like a plain text field' regression this test "
+        "guards against."
+    )
+
+
 @pytest.mark.parametrize("name", sorted(_ICONS))
 def test_every_defined_icon_renders(qapp: QApplication, name: str) -> None:
     result = icon(name)

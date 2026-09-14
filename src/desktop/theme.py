@@ -504,6 +504,20 @@ def _build_stylesheet() -> str:
         width: 24px;
     }}
 
+    QComboBox::down-arrow {{
+        image: none;
+        width: 0;
+        height: 0;
+        border-left: 4px solid transparent;
+        border-right: 4px solid transparent;
+        border-top: 5px solid {TEXT_SECONDARY};
+        margin-right: 8px;
+    }}
+
+    QComboBox::down-arrow:on {{
+        border-top: 5px solid {TEXT_PRIMARY};
+    }}
+
     QSpinBox::up-button, QSpinBox::down-button {{
         width: 16px;
         border: none;
