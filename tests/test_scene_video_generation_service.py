@@ -30,6 +30,10 @@ from src.services.asset_manager import AssetManager
 from src.services.asset_search_service import AssetSearchService
 from src.services.google_flow_account_router_service import (
     GoogleFlowAccountRouterService,
+    NoEligibleGoogleFlowAccountError,
+)
+from src.services.google_flow_generation_ledger_service import (
+    GoogleFlowGenerationLedgerService,
 )
 from src.services.google_flow_generation_orchestrator_service import (
     GoogleFlowGenerationOrchestratorService,
@@ -101,9 +105,16 @@ class _ScriptedProvider(ExternalUIGenerationProvider):
     real wait) before finally settling.
     """
 
-    def __init__(self, *, observe_sequence: list[GoogleFlowGenerationState]) -> None:
+    def __init__(
+        self,
+        *,
+        observe_sequence: list[GoogleFlowGenerationState],
+        profile_health: bool = True,
+    ) -> None:
         self._observe_sequence = list(observe_sequence)
+        self._profile_health = profile_health
         self.observe_call_count = 0
+        self.check_profile_health_calls: list[str] = []
         self.submitted_prompts: list[str] = []
         self.submitted_requests: list[GoogleFlowGenerationRequest] = []
         self.downloaded_file = "downloads/scene.mp4"
@@ -126,7 +137,8 @@ class _ScriptedProvider(ExternalUIGenerationProvider):
         )
 
     def check_profile_health(self, profile_id: str) -> bool:
-        return True
+        self.check_profile_health_calls.append(profile_id)
+        return self._profile_health
 
     def submit(
         self,
@@ -175,6 +187,29 @@ class _ScriptedProvider(ExternalUIGenerationProvider):
         raise AssertionError("unreachable")
 
 
+class _FakeProfileManagementService:
+    """
+    Minimal stand-in for ProviderProfileManagementService - tracks
+    set_health_status() calls and actually applies the update to the
+    given registry (the same real effect ProviderProfileManagementService.
+    set_health_status() has via registry.register(replace=True), minus
+    the real repository persistence), so a test can observe the
+    self-heal actually letting a submission through, not just that
+    the call happened.
+    """
+
+    def __init__(self, registry: ProviderRegistry) -> None:
+        self._registry = registry
+        self.set_health_status_calls: list[tuple[str, ProviderHealthStatus]] = []
+
+    def set_health_status(self, profile_id: str, status: ProviderHealthStatus) -> None:
+        self.set_health_status_calls.append((profile_id, status))
+        updated = self._registry.get(profile_id).model_copy(
+            update={"health_status": status}
+        )
+        self._registry.register(updated, replace=True)
+
+
 def _asset_workflow_service() -> SceneAssetWorkflowService:
     return SceneAssetWorkflowService(
         asset_manager=AssetManager(
@@ -210,6 +245,8 @@ def _service(
     probe_output: str = _GOOD_PROBE,
     max_poll_attempts: int = 10,
     registry: ProviderRegistry | None = None,
+    self_heal_provider: _ScriptedProvider | None = None,
+    profile_management_service: object | None = None,
 ) -> SceneVideoGenerationService:
     return SceneVideoGenerationService(
         orchestrator=_orchestrator(
@@ -217,6 +254,8 @@ def _service(
         ),
         asset_workflow_service=_asset_workflow_service(),
         registry=registry,
+        provider=self_heal_provider,
+        profile_management_service=profile_management_service,  # type: ignore[arg-type]
         poll_interval_seconds=1.0,
         max_poll_attempts=max_poll_attempts,
         sleep_fn=lambda _: None,
@@ -462,6 +501,45 @@ def test_generate_one_polls_an_existing_in_flight_attempt_without_resubmitting(
     assert provider.observe_call_count == 2
 
 
+def test_generate_one_polls_an_existing_submission_uncertain_attempt() -> None:
+    """
+    Real-world finding, 2026-09-14: SUBMISSION_UNCERTAIN used to stop
+    generate_one() outright - a human had to notice and manually
+    reconcile it, even though the real adapter can now resolve it
+    automatically given real evidence (see
+    test_google_flow_real_adapter.py's own reconciliation tests).
+    Confirm this service actually polls (observes) a
+    SUBMISSION_UNCERTAIN attempt instead of leaving it untouched, so
+    that reconciliation gets a chance to run at all.
+    """
+
+    provider = _ScriptedProvider(observe_sequence=[])
+    service = _service(provider)
+    job = _job(_scene(1))
+
+    seed_provider = _ScriptedProvider(observe_sequence=[])
+    seed_orchestrator = _orchestrator(seed_provider)
+    seeded = seed_orchestrator.submit_new_attempt(
+        job,
+        scene_number=1,
+        prompt="seed",
+        prompt_version="v1",
+        idempotency_key="seed-key",
+    )
+    uncertain = seeded.with_transition(
+        GoogleFlowGenerationState.SUBMISSION_UNCERTAIN, detail="test setup"
+    )
+    GoogleFlowGenerationLedgerService.replace_attempt(job, uncertain)
+
+    provider._observe_sequence = [GoogleFlowGenerationState.FAILED]
+
+    service.generate_one(job, 1)
+
+    assert provider.submitted_prompts == []  # never resubmitted
+    assert provider.observe_call_count == 1  # but it WAS polled
+    assert job.flow_generation_attempts[-1].state == GoogleFlowGenerationState.FAILED
+
+
 def test_generate_one_raises_for_an_unknown_scene_number() -> None:
     provider = _ScriptedProvider(observe_sequence=[])
     service = _service(provider)
@@ -513,3 +591,111 @@ def test_constructor_rejects_non_positive_max_poll_attempts() -> None:
             asset_workflow_service=_asset_workflow_service(),
             max_poll_attempts=0,
         )
+
+
+# --- self-healing Flow account health ---
+
+
+def test_generate_one_self_heals_an_unhealthy_profile_before_submitting(
+    tmp_path: Path,
+) -> None:
+    """
+    Real-world finding, 2026-09-14: this account's health_status kept
+    reverting to UNHEALTHY between runs for reasons outside the
+    generation code's own control, which meant "No usable Google Flow
+    account is configured" on the very next submission unless a human
+    ran a separate health check first - unacceptable for anything
+    meant to run unattended across many scenes. Confirm a real,
+    passing health check heals the profile and lets the submission
+    that triggered it succeed in the same call.
+    """
+
+    unhealthy_profile = _flow_profile().model_copy(
+        update={"health_status": ProviderHealthStatus.UNHEALTHY}
+    )
+    registry = ProviderRegistry(profiles=[unhealthy_profile])
+
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            GoogleFlowGenerationState.GENERATING,
+            GoogleFlowGenerationState.READY_TO_DOWNLOAD,
+        ],
+        profile_health=True,
+    )
+    real_file = tmp_path / "scene.mp4"
+    real_file.write_bytes(b"fake but present video bytes")
+    provider.downloaded_file = str(real_file)
+
+    management_service = _FakeProfileManagementService(registry)
+    service = _service(
+        provider,
+        registry=registry,
+        self_heal_provider=provider,
+        profile_management_service=management_service,
+    )
+    job = _job(_scene(1))
+
+    entry = service.generate_one(job, 1)
+
+    assert entry.status == SceneCompletenessStatus.READY
+    assert provider.check_profile_health_calls == ["flow.primary"]
+    assert management_service.set_health_status_calls == [
+        ("flow.primary", ProviderHealthStatus.HEALTHY)
+    ]
+
+
+def test_generate_one_skips_the_real_health_check_when_already_healthy() -> None:
+    """The self-heal check must be cheap in the common case - never
+    make a real (slow) check against a profile that's already usable."""
+
+    registry = ProviderRegistry(profiles=[_flow_profile()])  # already HEALTHY
+
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            GoogleFlowGenerationState.GENERATING,
+            GoogleFlowGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    management_service = _FakeProfileManagementService(registry)
+    service = _service(
+        provider,
+        registry=registry,
+        self_heal_provider=provider,
+        profile_management_service=management_service,
+    )
+    job = _job(_scene(1))
+
+    service.generate_one(job, 1)
+
+    assert provider.check_profile_health_calls == []
+    assert management_service.set_health_status_calls == []
+
+
+def test_generate_one_leaves_a_still_unhealthy_profile_alone() -> None:
+    """
+    A real health check that genuinely fails must not be papered
+    over - the account stays unhealthy, and the real, informative
+    router error ("No usable Google Flow account is configured")
+    still surfaces rather than being silently swallowed.
+    """
+
+    unhealthy_profile = _flow_profile().model_copy(
+        update={"health_status": ProviderHealthStatus.UNHEALTHY}
+    )
+    registry = ProviderRegistry(profiles=[unhealthy_profile])
+
+    provider = _ScriptedProvider(observe_sequence=[], profile_health=False)
+    management_service = _FakeProfileManagementService(registry)
+    service = _service(
+        provider,
+        registry=registry,
+        self_heal_provider=provider,
+        profile_management_service=management_service,
+    )
+    job = _job(_scene(1))
+
+    with pytest.raises(NoEligibleGoogleFlowAccountError):
+        service.generate_one(job, 1)
+
+    assert provider.check_profile_health_calls == ["flow.primary"]
+    assert management_service.set_health_status_calls == []

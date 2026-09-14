@@ -12,19 +12,23 @@ from src.models.google_flow_generation import (
     GoogleFlowQCOutcome,
     GoogleFlowQCResult,
 )
-from src.models.provider_profile import ProviderCategory
+from src.models.provider_profile import ProviderCategory, ProviderHealthStatus
 from src.models.scene import Scene
 from src.models.scene_completeness import (
     SceneCompletenessEntry,
     SceneCompletenessReport,
 )
 from src.models.video_job import VideoJob
+from src.providers.external_ui_generation_provider import ExternalUIGenerationProvider
 from src.providers.google_flow.locators import VERIFIED_DURATIONS_SECONDS
 from src.services.google_flow_generation_ledger_service import (
     GoogleFlowGenerationLedgerService,
 )
 from src.services.google_flow_generation_orchestrator_service import (
     GoogleFlowGenerationOrchestratorService,
+)
+from src.services.provider_profile_management_service import (
+    ProviderProfileManagementService,
 )
 from src.services.registry.provider_registry import ProviderRegistry
 from src.services.scene_asset_video_clip_builder_service import (
@@ -38,6 +42,17 @@ _POLLABLE_STATES = frozenset(
     {
         GoogleFlowGenerationState.SUBMITTED,
         GoogleFlowGenerationState.GENERATING,
+        # Real-world finding, 2026-09-14: SUBMISSION_UNCERTAIN used to
+        # stop here outright, requiring a human to notice and manually
+        # reconcile it - twice, live, the real generation had actually
+        # succeeded despite this. GoogleFlowRealUIAdapter.observe() now
+        # reconciles an uncertain attempt using real evidence (a
+        # matching, completed tile) when it can find it; keep polling
+        # it here the same as a confirmed one, bounded by the same
+        # max_poll_attempts budget as always - a genuinely failed
+        # submission still just times out to "needs operator
+        # attention" after that budget, unchanged from before.
+        GoogleFlowGenerationState.SUBMISSION_UNCERTAIN,
     }
 )
 
@@ -57,11 +72,24 @@ class SceneVideoGenerationService:
     proven Google Flow flakiness: false SUBMISSION_UNCERTAIN negatives
     (a real generation succeeding despite the code reporting failure),
     silent download failures, and duration values Flow silently
-    rejects. A scene sitting at SUBMISSION_UNCERTAIN or any other
-    interrupt state is never auto-retried here - that state means
-    "call the operator," not "resubmit automatically" (GF-7's own real
-    reconciliation needs the live adapter to check, which this service
-    does not attempt).
+    rejects.
+
+    A scene sitting at any interrupt state EXCEPT SUBMISSION_UNCERTAIN
+    (AUTH_REQUIRED/HUMAN_ACTION_REQUIRED/UI_CHANGED/FAILED) is never
+    auto-retried here - that state means "call the operator," not
+    "resubmit automatically". SUBMISSION_UNCERTAIN is the one
+    exception (real-world finding, 2026-09-14): it now gets polled the
+    same as a confirmed SUBMITTED/GENERATING attempt, and
+    GoogleFlowRealUIAdapter.observe() reconciles it forward using real
+    evidence (a tile matching this attempt's own prompt with a
+    completed thumbnail) when that evidence exists - this is GF-7's
+    own disclosed "real reconciliation needs the live adapter to
+    check" gap, now built, because the false-negative rate on this
+    specific heuristic turned out too high in practice (confirmed
+    live, twice) to leave every occurrence for a human to notice and
+    manually correct. A genuinely failed/never-started submission
+    still just times out to "needs operator attention" after the same
+    poll budget as always - nothing here blindly resubmits.
 
     No semantic/multimodal QC exists in this codebase (a disclosed
     gap, not fabricated) - per explicit instruction, a downloaded clip
@@ -77,6 +105,8 @@ class SceneVideoGenerationService:
         orchestrator: GoogleFlowGenerationOrchestratorService,
         asset_workflow_service: SceneAssetWorkflowService,
         registry: ProviderRegistry | None = None,
+        provider: ExternalUIGenerationProvider | None = None,
+        profile_management_service: ProviderProfileManagementService | None = None,
         video_clip_builder_service: SceneAssetVideoClipBuilderService | None = None,
         poll_interval_seconds: float = 15.0,
         max_poll_attempts: int = 40,
@@ -92,6 +122,8 @@ class SceneVideoGenerationService:
         self._orchestrator = orchestrator
         self._asset_workflow_service = asset_workflow_service
         self._registry = registry
+        self._provider = provider
+        self._profile_management_service = profile_management_service
         self._video_clip_builder_service = (
             video_clip_builder_service or SceneAssetVideoClipBuilderService()
         )
@@ -188,6 +220,8 @@ class SceneVideoGenerationService:
         )
 
     def _submit(self, job: VideoJob, scene: Scene) -> GoogleFlowGenerationAttempt:
+        self._self_heal_flow_account_health()
+
         prompt = ScenePromptExportService._resolve_prompt_text(
             scene, job.cinematic_prompt_package
         )
@@ -315,14 +349,75 @@ class SceneVideoGenerationService:
 
         return model_family.strip() if model_family and model_family.strip() else None
 
+    def _self_heal_flow_account_health(self) -> None:
+        """
+        Real-world finding, 2026-09-14: this account's health_status
+        kept reverting to UNHEALTHY between runs for reasons outside
+        this service's own control - grepping the whole codebase,
+        the only real code that ever changes it is two GUI buttons
+        (Provider Manager's "Test configuration", which is documented
+        as always misreporting an EXTERNAL_UI_VIDEO profile unhealthy
+        since it checks for an API-key secret Flow profiles never
+        have; and the Google Flow panel's own "Check Connection").
+        Nothing in the generation path itself ever touches it. The
+        practical effect was still the same either way: every batch
+        of scenes needed a manually-run health check first, or every
+        submission failed outright with "No usable Google Flow
+        account is configured" - unacceptable for anything meant to
+        run unattended. Verify and self-correct with the SAME real
+        check "Check Connection" runs, right before submitting,
+        instead of requiring that as a separate manual step.
+
+        Deliberately narrow and cheap: only makes a real (slow)
+        browser check when the one configured profile is NOT already
+        usable - a healthy profile costs nothing here. Only acts when
+        exactly one EXTERNAL_UI_VIDEO profile is enabled (same
+        ambiguity guard as _configured_model_family) and never
+        downgrades a profile - only ever promotes an actually-healthy
+        one back to usable, matching what "Check Connection" itself
+        would report. Silently gives up on any error (missing deps,
+        no provider/profile_management_service wired, the real check
+        itself raising) - a real submission attempt right after will
+        surface the actual problem clearly, which is strictly more
+        informative than a best-effort health probe failing first.
+        """
+
+        if (
+            self._registry is None
+            or self._provider is None
+            or self._profile_management_service is None
+        ):
+            return
+
+        candidates = self._registry.list_by_category(
+            category=ProviderCategory.EXTERNAL_UI_VIDEO,
+            enabled_only=True,
+        )
+
+        if len(candidates) != 1 or candidates[0].usable:
+            return
+
+        try:
+            healthy = self._provider.check_profile_health(candidates[0].profile_id)
+
+            if healthy:
+                self._profile_management_service.set_health_status(
+                    candidates[0].profile_id, ProviderHealthStatus.HEALTHY
+                )
+        except (
+            Exception
+        ):  # noqa: BLE001 - best-effort; a real submit surfaces the real error
+            return
+
     @staticmethod
     def _clamp_to_verified_duration(requested_seconds: int) -> int:
         """
         Real-world finding this session: Google Flow only accepts a
-        fixed set of durations (4/6/8/10s) - requesting anything else
-        (e.g. 12s) fails with FLOW_SETTINGS_UNAVAILABLE. Clamp to the
-        closest verified value rather than passing the raw estimate
-        straight through and letting the submission fail.
+        fixed set of durations (see VERIFIED_DURATIONS_SECONDS' own
+        docstring for exactly which, and for which model) - requesting
+        anything else (e.g. 12s) fails with FLOW_SETTINGS_UNAVAILABLE.
+        Clamp to the closest verified value rather than passing the
+        raw estimate straight through and letting the submission fail.
         """
 
         return min(

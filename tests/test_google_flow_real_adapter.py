@@ -917,6 +917,56 @@ def test_observe_is_read_only_before_completion() -> None:
     assert observed.state == GoogleFlowGenerationState.GENERATING
 
 
+def test_observe_reconciles_submission_uncertain_with_real_matching_evidence() -> None:
+    """
+    Real-world finding, 2026-09-14: the "did it start" heuristic
+    (Start generation button becoming disabled) reported
+    SUBMISSION_UNCERTAIN on two separate real submissions this
+    session, despite the account owner directly confirming both had
+    actually completed in Flow's own "All media" tab - GF-7's own
+    disclosed "real reconciliation needs the live adapter to check"
+    gap. observe() now checks the real evidence (a tile matching this
+    attempt's own prompt with a completed thumbnail) even from
+    SUBMISSION_UNCERTAIN, not just SUBMITTED/GENERATING.
+    """
+
+    page = _authenticated_page()
+    adapter = _adapter(page)
+    request = _request()
+    submitted = adapter.submit(request, _attempt(request))
+    uncertain = submitted.with_transition(
+        GoogleFlowGenerationState.SUBMISSION_UNCERTAIN, detail="test setup"
+    )
+
+    tile = _FakeVideoTile(caption=request.prompt, thumbnail=_FakeLocator(count=1))
+    page.register_css("flow-video-tile", _FakeVideoTileSet([tile]))  # type: ignore[arg-type]
+
+    observed = adapter.observe(uncertain)
+
+    assert observed.state == GoogleFlowGenerationState.READY_TO_DOWNLOAD
+
+
+def test_observe_leaves_submission_uncertain_alone_without_matching_evidence() -> None:
+    """
+    The reconciliation above must never invent evidence that isn't
+    there - no matching tile (or one still a placeholder) must leave
+    a SUBMISSION_UNCERTAIN attempt exactly as it was, still requiring
+    an operator's own judgment, not silently promoted.
+    """
+
+    page = _authenticated_page()
+    adapter = _adapter(page)
+    request = _request()
+    submitted = adapter.submit(request, _attempt(request))
+    uncertain = submitted.with_transition(
+        GoogleFlowGenerationState.SUBMISSION_UNCERTAIN, detail="test setup"
+    )
+
+    observed = adapter.observe(uncertain)
+
+    assert observed.state == GoogleFlowGenerationState.SUBMISSION_UNCERTAIN
+
+
 def test_observe_without_an_open_page_is_ui_changed() -> None:
     page = _authenticated_page()
     adapter = _adapter(page)

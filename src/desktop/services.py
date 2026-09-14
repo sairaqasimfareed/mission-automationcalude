@@ -708,6 +708,8 @@ def get_scene_video_generation_service() -> SceneVideoGenerationService:
         orchestrator=get_google_flow_generation_orchestrator_service(),
         asset_workflow_service=get_asset_workflow_service(),
         registry=get_infrastructure().provider_registry,
+        provider=get_google_flow_real_ui_adapter(),
+        profile_management_service=get_provider_profile_management_service(),
     )
 
 

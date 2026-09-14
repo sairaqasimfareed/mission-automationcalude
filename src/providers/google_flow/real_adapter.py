@@ -444,9 +444,21 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
                     ),
                 )
 
+            # Real-world finding, 2026-09-14: SUBMISSION_UNCERTAIN
+            # ("did it start" heuristic never fired) turned out, live,
+            # to mean "actually did start" far more often than not -
+            # confirmed directly, twice, by the account owner watching
+            # real generations complete that this code had already
+            # given up on. This class's own docstring always disclosed
+            # that real reconciliation ("GF-7") needed the live
+            # adapter to check but was never built - it is now: an
+            # uncertain attempt is observed the same way a confirmed
+            # one is, using the real evidence (a matching, completed
+            # tile) this heuristic never had access to.
             if attempt.state not in {
                 GoogleFlowGenerationState.SUBMITTED,
                 GoogleFlowGenerationState.GENERATING,
+                GoogleFlowGenerationState.SUBMISSION_UNCERTAIN,
             }:
                 return attempt
 
@@ -482,7 +494,25 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
                 # section 5) - read-only, correctly reports unchanged.
                 return attempt
 
-            return attempt.with_transition(
+            current = attempt
+
+            if current.state == GoogleFlowGenerationState.SUBMISSION_UNCERTAIN:
+                # SUBMISSION_UNCERTAIN has no legal forward transition
+                # in the state machine by design (GF-1's own state
+                # machine module deliberately never lets organic code
+                # decide on its own that an uncertain submission
+                # actually succeeded) - with_transition() would raise.
+                # This bypass is the one place that is correct: it is
+                # never reached without the positive, content-matched
+                # evidence just above (a tile matching this exact
+                # attempt's own prompt, with a real completed
+                # thumbnail) - not a guess, the same standard a human
+                # operator checking Flow's own "All media" tab uses.
+                current = current.model_copy(
+                    update={"state": GoogleFlowGenerationState.GENERATING}
+                )
+
+            return current.with_transition(
                 GoogleFlowGenerationState.READY_TO_DOWNLOAD,
                 detail="Flow shows a completed thumbnail on this attempt's own matched tile.",
             )
