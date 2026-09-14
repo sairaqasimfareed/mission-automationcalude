@@ -21,7 +21,6 @@ from src.providers.external_ui_generation_provider import (
     ExternalUIOperation,
 )
 from src.providers.google_flow.locators import GoogleFlowRealAccessibleNames
-from src.shared.logger import logger
 
 # Matches GoogleFlowUIAdapter's own local-storage convention
 # (src/providers/google_flow/adapter.py's DEFAULT_FLOW_DOWNLOAD_ROOT) -
@@ -245,11 +244,6 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
 
     def check_profile_health(self, profile_id: str) -> bool:
         def _run() -> bool:
-            logger.info(
-                "google_flow.check_profile_health | profile=%s | starting",
-                profile_id,
-            )
-
             # Real-world finding: is_closed() is a CLIENT-SIDE flag
             # that only flips once Playwright's own connection
             # notices the browser process is gone - a real operator
@@ -394,11 +388,6 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
         self.ensure_supported(ExternalUIOperation.SUBMIT)
 
         def _run() -> GoogleFlowGenerationAttempt:
-            logger.info(
-                "google_flow.submit | scene=%s | starting (navigating to project)",
-                attempt.request.scene_number,
-            )
-
             page = self._get_or_open_page(attempt.profile_id)
             page.goto(
                 self._base_url_resolver(attempt.profile_id),
@@ -461,12 +450,6 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
         self.ensure_supported(ExternalUIOperation.OBSERVE)
 
         def _run() -> GoogleFlowGenerationAttempt:
-            logger.info(
-                "google_flow.observe | scene=%s state=%s | starting",
-                attempt.request.scene_number,
-                attempt.state.value,
-            )
-
             page = self._pages.get(attempt.profile_id)
 
             if page is None:
@@ -532,22 +515,11 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
             # correct here, not a guess.
             batches = self._completed_batches(page)
             batch_count = batches.count()
-            logger.info(
-                "google_flow.observe | scene=%s | %d completed batch(es)",
-                attempt.request.scene_number,
-                batch_count,
-            )
 
             if batch_count == 0:
                 # Not rendered yet - keep polling rather than falsely
                 # reporting ready.
                 return attempt
-
-            logger.info(
-                "google_flow.observe | scene=%s | completed batch found - "
-                "promoting to READY_TO_DOWNLOAD",
-                attempt.request.scene_number,
-            )
 
             current = attempt
 
@@ -589,11 +561,6 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
         self.ensure_supported(ExternalUIOperation.DOWNLOAD)
 
         def _run() -> GoogleFlowGenerationAttempt:
-            logger.info(
-                "google_flow.download | scene=%s | starting",
-                attempt.request.scene_number,
-            )
-
             page = self._pages.get(attempt.profile_id)
 
             if page is None:
@@ -644,12 +611,6 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
                 "button", name=self._names.download_batch_button
             )
 
-            logger.info(
-                "google_flow.download | scene=%s | clicking 'Download batch' "
-                "and waiting for the real download to fire",
-                attempt.request.scene_number,
-            )
-
             with page.expect_download(
                 timeout=self._operation_timeout_seconds * 1000
             ) as download_info:
@@ -658,11 +619,6 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
             download = download_info.value
             saved_path = destination_dir / download.suggested_filename
             download.save_as(str(saved_path))
-            logger.info(
-                "google_flow.download | scene=%s | saved to %s",
-                attempt.request.scene_number,
-                saved_path,
-            )
 
             # Real-world finding, 2026-09-11: real Flow's download can
             # be EITHER a raw video file directly (confirmed directly -
@@ -732,10 +688,6 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
             GoogleFlowGenerationState.SETTINGS_VERIFIED,
             detail="Requested settings applied via the real settings popover.",
         )
-        logger.info(
-            "google_flow.submit | scene=%s | settings verified, typing prompt",
-            request.scene_number,
-        )
 
         prompt_box = page.locator(self._names.prompt_input_css)
         prompt_box.click(timeout=self._action_timeout_ms)
@@ -785,12 +737,6 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
             detail="Crossing the credit-sensitive submission boundary.",
         )
 
-        logger.info(
-            "google_flow.submit | scene=%s | clicking Start generation, then "
-            "waiting (up to %.0fs) for confirmation it actually began",
-            request.scene_number,
-            self._operation_timeout_seconds * 4,
-        )
         start_button.click(timeout=self._action_timeout_ms)
 
         if self._wait_for_new_tiles_or_confirmation(page):

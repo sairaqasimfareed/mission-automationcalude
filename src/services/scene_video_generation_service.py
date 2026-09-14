@@ -3,7 +3,10 @@ from __future__ import annotations
 import time
 import uuid
 from collections.abc import Callable
+from functools import partial
+from typing import TypeVar
 
+from src.browser.flow_browser_worker import FlowOperationTimedOut
 from src.models.asset_state import AssetUserDecision, SceneAssetState
 from src.models.google_flow_generation import (
     GoogleFlowExecutionSettings,
@@ -37,6 +40,9 @@ from src.services.scene_asset_video_clip_builder_service import (
 from src.services.scene_asset_workflow_service import SceneAssetWorkflowService
 from src.services.scene_completeness_service import SceneCompletenessService
 from src.services.scene_prompt_export_service import ScenePromptExportService
+from src.shared.logger import logger
+
+_T = TypeVar("_T")
 
 _POLLABLE_STATES = frozenset(
     {
@@ -157,7 +163,12 @@ class SceneVideoGenerationService:
             attempt = self._poll_until_settled(job, attempt)
 
         if attempt.state == GoogleFlowGenerationState.READY_TO_DOWNLOAD:
-            attempt = self._orchestrator.download_attempt(job, attempt)
+            attempt_to_download = attempt
+            attempt = self._timed(
+                "download",
+                scene_number,
+                lambda: self._orchestrator.download_attempt(job, attempt_to_download),
+            )
 
         if attempt.state == GoogleFlowGenerationState.DOWNLOADED:
             attempt = self._orchestrator.validate_downloaded_attempt(job, attempt)
@@ -229,22 +240,26 @@ class SceneVideoGenerationService:
             scene.estimated_duration_seconds
         )
 
-        attempt = self._orchestrator.submit_new_attempt(
-            job,
-            scene_number=scene.scene_number,
-            prompt=prompt,
-            prompt_version=_PROMPT_VERSION,
-            idempotency_key=str(uuid.uuid4()),
-            execution_settings=GoogleFlowExecutionSettings(
-                model_family=self._configured_model_family(),
-                duration_seconds=float(duration_seconds),
+        attempt = self._timed(
+            "submit",
+            scene.scene_number,
+            lambda: self._orchestrator.submit_new_attempt(
+                job,
+                scene_number=scene.scene_number,
+                prompt=prompt,
+                prompt_version=_PROMPT_VERSION,
+                idempotency_key=str(uuid.uuid4()),
+                execution_settings=GoogleFlowExecutionSettings(
+                    model_family=self._configured_model_family(),
+                    duration_seconds=float(duration_seconds),
+                ),
+                locked_script_hash=(
+                    job.script_lock.script_content_hash
+                    if job.script_lock is not None
+                    else None
+                ),
+                estimated_cost_usd=self._estimated_cost_usd_per_scene,
             ),
-            locked_script_hash=(
-                job.script_lock.script_content_hash
-                if job.script_lock is not None
-                else None
-            ),
-            estimated_cost_usd=self._estimated_cost_usd_per_scene,
         )
 
         if attempt.state in _POLLABLE_STATES:
@@ -259,10 +274,64 @@ class SceneVideoGenerationService:
 
         while attempt.state in _POLLABLE_STATES and remaining > 0:
             self._sleep_fn(self._poll_interval_seconds)
-            attempt = self._orchestrator.observe_attempt(job, attempt)
+            attempt = self._timed(
+                "observe",
+                attempt.request.scene_number,
+                partial(self._orchestrator.observe_attempt, job, attempt),
+            )
             remaining -= 1
 
         return attempt
+
+    def _timed(self, label: str, scene_number: int | str, fn: Callable[[], _T]) -> _T:
+        """
+        GF-15 (tests/test_google_flow_security.py) forbids logging
+        anywhere inside the Google Flow provider/browser layer itself,
+        since a log call there could too easily end up interpolating
+        real page content, a Playwright exception, or profile metadata
+        into a stream this module doesn't control. This service sits
+        outside that forbidden-file list and is already the boundary
+        every submit/observe/download/health-check call passes through
+        on its way in - the correct, sanctioned place to log that an
+        operation started, how long it took, and whether it timed out,
+        without ever touching what happens inside the browser layer.
+        Only ever logs label/scene_number/elapsed/exception TYPE -
+        never an exception's own message, which could still originate
+        from inside the browser layer.
+        """
+
+        started_at = time.monotonic()
+
+        try:
+            result = fn()
+        except FlowOperationTimedOut as error:
+            logger.error(
+                "google_flow.%s | scene=%s | TIMED OUT after %.1fs (budget %.1fs)",
+                label,
+                scene_number,
+                error.elapsed_seconds,
+                error.timeout_seconds,
+            )
+            raise
+        except Exception as error:
+            elapsed = time.monotonic() - started_at
+            logger.error(
+                "google_flow.%s | scene=%s | failed after %.1fs | %s",
+                label,
+                scene_number,
+                elapsed,
+                type(error).__name__,
+            )
+            raise
+
+        elapsed = time.monotonic() - started_at
+        logger.info(
+            "google_flow.%s | scene=%s | completed in %.1fs",
+            label,
+            scene_number,
+            elapsed,
+        )
+        return result
 
     def _attach(
         self,
@@ -397,8 +466,14 @@ class SceneVideoGenerationService:
         if len(candidates) != 1 or candidates[0].usable:
             return
 
+        provider = self._provider
+
         try:
-            healthy = self._provider.check_profile_health(candidates[0].profile_id)
+            healthy = self._timed(
+                "check_profile_health",
+                "-",
+                lambda: provider.check_profile_health(candidates[0].profile_id),
+            )
 
             if healthy:
                 self._profile_management_service.set_health_status(

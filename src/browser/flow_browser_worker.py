@@ -17,9 +17,36 @@ from playwright.sync_api import (
 )
 
 from src.browser.chromium_bootstrap import ensure_chromium_and_retry
-from src.shared.logger import logger
 
 T = TypeVar("T")
+
+
+class FlowOperationTimedOut(TimeoutError):
+    """
+    Raised by submit_with_recovery() in place of the bare
+    concurrent.futures.TimeoutError, carrying `label`/`elapsed_seconds`/
+    `timeout_seconds` as real attributes rather than only a formatted
+    message - GF-15 forbids this module (and every other Google Flow
+    source file - see tests/test_google_flow_security.py) from logging
+    anything itself, since a log call here could too easily end up
+    interpolating page content or profile metadata into an uncontrolled
+    stream. The caller (src/services/scene_video_generation_service.py,
+    outside that file list, already the boundary that invokes
+    submit/observe/download) is where this timing data actually gets
+    logged - this exception is how it gets there without a logging call
+    inside this module.
+    """
+
+    def __init__(
+        self, label: str, elapsed_seconds: float, timeout_seconds: float
+    ) -> None:
+        self.label = label
+        self.elapsed_seconds = elapsed_seconds
+        self.timeout_seconds = timeout_seconds
+        super().__init__(
+            f"{label} timed out after {elapsed_seconds:.1f}s "
+            f"(budget was {timeout_seconds:.1f}s)"
+        )
 
 
 def _primary_screen_size() -> tuple[int, int] | None:
@@ -116,54 +143,26 @@ class FlowBrowserWorker:
         Real-world finding, 2026-09-14: every one of this session's
         real "browser open but doing nothing for minutes" incidents
         required killing the process and guessing where it was stuck,
-        because nothing here ever logged that a call had even started.
-        `label` (the calling method's own name - "submit"/"observe"/
-        "download"/"check_profile_health") plus a start/outcome/
-        duration log line around every call makes a stuck operation
-        immediately diagnosable from logs/mission.log instead: which
-        operation, how long it had been running, and whether it timed
-        out or genuinely raised.
+        because nothing here ever recorded that a call had even
+        started. `label` (the calling method's own name - "submit"/
+        "observe"/"download"/"check_profile_health") plus elapsed time
+        makes a stuck operation diagnosable - but GF-15 forbids this
+        module from logging that itself (see FlowOperationTimedOut's
+        own docstring), so a timeout is re-raised as that exception
+        (label + elapsed + budget as real attributes) and left to the
+        caller outside this file's forbidden-file list to log.
         """
 
         started_at = time.monotonic()
-        logger.info(
-            "flow_browser_worker | %s | started | timeout_seconds=%.1f",
-            label,
-            timeout,
-        )
-
         future = self.submit(fn)
 
         try:
             result = future.result(timeout=timeout)
         except FutureTimeoutError:
             elapsed = time.monotonic() - started_at
-            logger.error(
-                "flow_browser_worker | %s | TIMED OUT after %.1fs "
-                "(budget was %.1fs) - recovering worker for the next call",
-                label,
-                elapsed,
-                timeout,
-            )
             self._recover_from_stuck_worker()
-            raise
-        except Exception as error:
-            elapsed = time.monotonic() - started_at
-            logger.error(
-                "flow_browser_worker | %s | failed after %.1fs | %s: %s",
-                label,
-                elapsed,
-                type(error).__name__,
-                error,
-            )
-            raise
+            raise FlowOperationTimedOut(label, elapsed, timeout) from None
 
-        elapsed = time.monotonic() - started_at
-        logger.info(
-            "flow_browser_worker | %s | completed in %.1fs",
-            label,
-            elapsed,
-        )
         return result
 
     def _recover_from_stuck_worker(self) -> None:
