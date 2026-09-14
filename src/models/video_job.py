@@ -76,6 +76,20 @@ class VideoJob(MissionBaseModel):
     target_country: str = "United States"
     production_mode: ProductionMode = ProductionMode.PREMIUM
 
+    # Real-world finding, 2026-09-14: nothing anywhere let a user
+    # choose this - project_render_runtime_factory.py/
+    # render_workflow_stage_factory.py/TimelinePipelineStage all
+    # defaulted output_resolution to "1920x1080" at every layer, with
+    # no caller ever overriding it, so every render silently upscaled
+    # from whatever a scene's real source actually was (Google Flow's
+    # own clips render at 720p). A plain WIDTHxHEIGHT string, matching
+    # VideoTimeline.output_resolution's own convention exactly (that
+    # field is the resolved OUTPUT of building the timeline; this one
+    # is the upstream, user-facing choice that drives it) - the GUI
+    # constrains the picker to a fixed preset list rather than free
+    # text, so no format validator is needed here.
+    output_resolution: str = "1920x1080"
+
     # Distinct from production_mode above (render quality/cost
     # tradeoff) - this controls how much human review each content
     # decision point requires. Defaults to the conservative

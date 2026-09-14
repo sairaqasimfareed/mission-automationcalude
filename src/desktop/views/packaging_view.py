@@ -806,7 +806,7 @@ class PackagingView(QWidget):
             result = self._final_export_service.build(
                 render_result,
                 project_id=job.project_name,
-                resolution="1920x1080",
+                resolution=job.output_resolution,
                 frame_rate=30,
                 seo_package=seo_package,
                 thumbnail_artifact=thumbnail,

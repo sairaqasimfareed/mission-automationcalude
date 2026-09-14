@@ -5,6 +5,7 @@ from uuid import UUID
 
 from PySide6.QtCore import QObject, Qt, QThread, Signal
 from PySide6.QtWidgets import (
+    QComboBox,
     QFileDialog,
     QFrame,
     QLineEdit,
@@ -36,6 +37,20 @@ from src.services.render_orchestrator_service import RenderOrchestratorService
 from src.services.scene_asset_workflow_service import SceneAssetWorkflowService
 
 _LEFT = Qt.AlignmentFlag.AlignLeft
+
+# Real-world finding, 2026-09-14: Google Flow's own real clips render
+# at 720p (VERIFIED_RESOLUTIONS in google_flow/locators.py) - a 1080p
+# default upscales every one of them, spending real file size (a
+# CRF-based encode spends more bits at more pixels) for no real detail
+# gain. Fixed presets, not free text - a WIDTHxHEIGHT typo would fail
+# deep inside the render pipeline with a far less clear error than a
+# picker refusing to offer it in the first place.
+_OUTPUT_RESOLUTION_PRESETS: list[tuple[str, str]] = [
+    ("720p (1280x720)", "1280x720"),
+    ("1080p (1920x1080)", "1920x1080"),
+    ("1440p (2560x1440)", "2560x1440"),
+    ("4K (3840x2160)", "3840x2160"),
+]
 
 
 class _RenderWorker(QObject):
@@ -203,6 +218,8 @@ class RenderWorkspaceView(QWidget):
 
             return
 
+        self._build_output_resolution_choice(layout, job)
+
         waiting_scene_numbers = [
             state.scene_number
             for state in job.scene_asset_states
@@ -282,6 +299,37 @@ class RenderWorkspaceView(QWidget):
             layout.addWidget(small_muted("Requires planned scenes."))
 
         self._layout.addWidget(frame)
+
+    def _build_output_resolution_choice(
+        self, layout: QVBoxLayout, job: VideoJob
+    ) -> None:
+        layout.addWidget(small_muted("Output resolution"))
+
+        combo = QComboBox()
+
+        for label, value in _OUTPUT_RESOLUTION_PRESETS:
+            combo.addItem(label, userData=value)
+
+        index = combo.findData(job.output_resolution)
+        combo.setCurrentIndex(index if index >= 0 else 1)  # default 1080p
+        combo.currentIndexChanged.connect(
+            lambda _index, box=combo: self._handle_output_resolution_changed(box)
+        )
+        layout.addWidget(combo)
+
+    def _handle_output_resolution_changed(self, combo: QComboBox) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        resolution = combo.currentData()
+
+        if not isinstance(resolution, str) or resolution == job.output_resolution:
+            return
+
+        job.output_resolution = resolution
+        self._on_change()
 
     def _build_render_progress_state(self, layout: QVBoxLayout) -> None:
         layout.addWidget(subheading("Rendering..."))
@@ -529,6 +577,7 @@ class RenderWorkspaceView(QWidget):
                 job=job,
                 genre_id=job.genre_id,
                 overrides_by_scene=job.scene_editing_overrides or None,
+                output_resolution=job.output_resolution,
             )
         except (RuntimeError, ValueError) as error:
             self._record_error(
