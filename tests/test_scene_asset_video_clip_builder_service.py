@@ -67,13 +67,27 @@ def test_builds_one_clip_per_ready_state() -> None:
     assert clips_by_scene[2].scene_id == "scene-2"
 
 
-def test_clip_duration_matches_scene_estimate_not_candidate() -> None:
-    scenes = [_scene(1, duration_seconds=45)]
+def test_clip_duration_prefers_the_candidates_real_duration_over_the_scene_plan() -> (
+    None
+):
+    """
+    Real-world finding, 2026-09-14: a Google Flow scene planned at 18s
+    whose actual generated (and technically-validated) clip was really
+    only 8s still recorded duration_seconds=18 before this fix - the
+    render timeline (TimelineBuilderService) then laid an 8s file into
+    an 18s slot. The candidate's own duration_seconds is set from real
+    probed/technically-validated data at every construction site
+    (ManualUploadService, LocalAssetSearchService, stock search,
+    SceneVideoGenerationService's AI-generate path) - it must win over
+    the scene's own pre-generation estimate whenever it's known.
+    """
+
+    scenes = [_scene(1, duration_seconds=18)]
 
     state = _ready_state(1, file_path="/uploads/one.mp4")
     assert state.selected_candidate is not None
     state.selected_candidate = state.selected_candidate.model_copy(
-        update={"duration_seconds": 9999.0},
+        update={"duration_seconds": 8.0},
     )
 
     clips = SceneAssetVideoClipBuilderService().build_clips(
@@ -81,7 +95,27 @@ def test_clip_duration_matches_scene_estimate_not_candidate() -> None:
         states=[state],
     )
 
-    assert clips[0].duration_seconds == 45
+    assert clips[0].duration_seconds == 8
+
+
+def test_clip_duration_falls_back_to_the_scene_plan_when_the_candidate_has_none() -> (
+    None
+):
+    scenes = [_scene(1, duration_seconds=12)]
+
+    state = _ready_state(1, file_path="/uploads/one.mp4")
+    assert state.selected_candidate is not None
+    # duration_seconds defaults to 0.0 - "not yet known" (e.g. a
+    # manual upload path that skipped probing) - falls back to the
+    # scene's own planned estimate rather than recording 0.
+    assert state.selected_candidate.duration_seconds == 0.0
+
+    clips = SceneAssetVideoClipBuilderService().build_clips(
+        scenes=scenes,
+        states=[state],
+    )
+
+    assert clips[0].duration_seconds == 12
 
 
 def test_non_ready_states_produce_no_clip() -> None:

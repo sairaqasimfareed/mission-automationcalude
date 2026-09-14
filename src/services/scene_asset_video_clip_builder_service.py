@@ -23,6 +23,28 @@ class SceneAssetVideoClipBuilderService:
     GenreTimelinePipelineService's own "video clips are missing for
     scenes: ..." validation surfaces that gap explicitly rather than
     this service inventing a placeholder.
+
+    Real-world finding, 2026-09-14: this used to record every clip's
+    duration_seconds as the SCENE's own planned estimate
+    (Scene.estimated_duration_seconds), falling back to the
+    candidate's real duration only when a scene number couldn't be
+    found at all - which never happens, since `scenes` is always the
+    full list. Confirmed directly against a real Google Flow
+    generation: a scene planned at 18s whose actual clamped clip was
+    really only 8s still recorded duration_seconds=18 here, so
+    TimelineBuilderService (`end_time = current_time +
+    clip.duration_seconds`) laid the clip into an 18s timeline slot
+    for an 8s file. It also silently defeated
+    DurationMismatchPolicyService, whose own docstring assumes this
+    field already holds the clip's real duration by the time it runs -
+    with planned and "actual" forced equal here, it could never detect
+    a mismatch at all. Now prefers the candidate's own real duration
+    (set from real probed/technically-validated data at every
+    construction site - ManualUploadService, LocalAssetSearchService,
+    stock search, and SceneAssetWorkflowService's own AI-generate
+    path) whenever it's known (> 0), falling back to the scene's
+    planned estimate only when no real duration was ever recorded
+    (the field's own documented 0.0 default for "not yet known").
     """
 
     def build_clips(
@@ -31,7 +53,7 @@ class SceneAssetVideoClipBuilderService:
         scenes: list[Scene],
         states: list[SceneAssetState],
     ) -> list[VideoClip]:
-        duration_by_scene_number = {
+        planned_duration_by_scene_number = {
             scene.scene_number: scene.estimated_duration_seconds for scene in scenes
         }
 
@@ -51,15 +73,18 @@ class SceneAssetVideoClipBuilderService:
             if not file_path:
                 continue
 
+            duration_seconds = (
+                round(candidate.duration_seconds)
+                if candidate.duration_seconds > 0
+                else planned_duration_by_scene_number.get(state.scene_number, 0)
+            )
+
             clips.append(
                 VideoClip(
                     scene_number=state.scene_number,
                     scene_id=state.scene_id,
                     source_type=(state.selected_source or candidate.source_type),
-                    duration_seconds=duration_by_scene_number.get(
-                        state.scene_number,
-                        int(candidate.duration_seconds),
-                    ),
+                    duration_seconds=duration_seconds,
                     provider=candidate.provider,
                     source_url=candidate.source_url,
                     local_file=file_path,

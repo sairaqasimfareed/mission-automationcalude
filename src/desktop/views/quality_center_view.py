@@ -16,10 +16,12 @@ from src.desktop.job_store import JobStore
 from src.desktop.recovery_dialog import show_recoverable_error
 from src.desktop.widgets import badge, button, card, small_muted, status_label
 from src.models.blocker import BlockerSeverity
+from src.models.duration_mismatch_policy import DurationMismatchAction
 from src.models.final_preview import FinalPreviewAction, FinalPreviewStatus
 from src.models.policy import PolicyComplianceReport, RiskLevel
 from src.models.production_readiness import ReadinessState
 from src.models.video_job import VideoJob
+from src.services.duration_mismatch_policy_service import DurationMismatchPolicyService
 from src.services.final_preview_service import FinalPreviewService
 from src.services.policy_service import PolicyService
 from src.services.production_readiness_service import ProductionReadinessService
@@ -50,6 +52,20 @@ _FINAL_PREVIEW_STATUS_ROLE = {
     FinalPreviewStatus.PENDING: "warning",
     FinalPreviewStatus.APPROVED: "success",
     FinalPreviewStatus.RETURNED_TO_EDITING: "warning",
+}
+
+_DURATION_MISMATCH_ACTION_ROLE = {
+    DurationMismatchAction.TRIM: "warning",
+    DurationMismatchAction.HOLD_LAST_FRAME: "warning",
+    DurationMismatchAction.APPROVED_WORKAROUND: "success",
+    DurationMismatchAction.BLOCK: "error",
+}
+
+_DURATION_MISMATCH_ACTION_LABELS = {
+    DurationMismatchAction.TRIM: "Trim narration to match the clip",
+    DurationMismatchAction.HOLD_LAST_FRAME: "Hold last frame to fill the gap",
+    DurationMismatchAction.APPROVED_WORKAROUND: "Approved workaround",
+    DurationMismatchAction.BLOCK: "Blocked - review before proceeding",
 }
 
 _FINAL_PREVIEW_ACTION_LABELS = {
@@ -86,6 +102,7 @@ class QualityCenterView(QWidget):
         self._policy_service = PolicyService()
         self._readiness_service = ProductionReadinessService()
         self._final_preview_service = FinalPreviewService()
+        self._duration_mismatch_policy_service = DurationMismatchPolicyService()
 
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -119,6 +136,7 @@ class QualityCenterView(QWidget):
 
         self._build_readiness_card(job)
         self._build_checklist_card(job)
+        self._build_duration_mismatches_card(job)
         self._build_final_preview_card(job)
         self._build_policy_card(job)
 
@@ -157,6 +175,50 @@ class QualityCenterView(QWidget):
 
             if blocker.recovery_action:
                 layout.addWidget(small_muted(blocker.recovery_action))
+
+        self._layout.addWidget(frame)
+
+    def _build_duration_mismatches_card(self, job: VideoJob) -> None:
+        """
+        DurationMismatchPolicyService is deliberately advisory-only and
+        never mutates a clip or timeline (see its own docstring) - this
+        card is that advisory surfaced for a human to act on, matching
+        this whole workspace's "evaluated fresh from current job state,
+        never a stale stored verdict" pattern (ProductionReadinessService
+        above is evaluated the same way, not cached on the job).
+        """
+
+        frame, layout = card("Duration mismatches", icon_name="alert-triangle")
+
+        mismatches = self._duration_mismatch_policy_service.evaluate(
+            scenes=job.scenes, clips=job.video_clips
+        )
+
+        if not mismatches:
+            layout.addWidget(small_muted("No duration mismatches."))
+            self._layout.addWidget(frame)
+
+            return
+
+        for mismatch in mismatches:
+            sign = "+" if mismatch.mismatch_seconds >= 0 else ""
+            layout.addWidget(badge(f"Scene {mismatch.scene_number}"))
+            layout.addWidget(
+                status_label(
+                    f"Planned {mismatch.planned_duration_seconds:g}s, "
+                    f"actual {mismatch.actual_duration_seconds:g}s "
+                    f"({sign}{mismatch.mismatch_seconds:g}s)",
+                    role=_DURATION_MISMATCH_ACTION_ROLE[mismatch.recommended_action],
+                )
+            )
+            layout.addWidget(
+                small_muted(
+                    _DURATION_MISMATCH_ACTION_LABELS[mismatch.recommended_action]
+                )
+            )
+
+            if mismatch.note:
+                layout.addWidget(small_muted(mismatch.note))
 
         self._layout.addWidget(frame)
 
