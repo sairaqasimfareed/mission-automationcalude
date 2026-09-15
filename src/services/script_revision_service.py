@@ -7,6 +7,7 @@ from src.models.editorial_critique import CriticFinding, EditorialCritique
 from src.models.generated_script import GeneratedScript, ScriptSegment
 from src.services.llm.labeled_block_parser import extract_labeled_field, split_blocks
 from src.services.llm.llm_service import LLMService
+from src.services.narration_timing_service import WORDS_PER_SECOND
 from src.shared.llm.models import LLMProvider
 from src.shared.llm.request import LLMRequest
 
@@ -81,7 +82,14 @@ class ScriptRevisionService:
                 "to its exact segment number, or a general finding "
                 "that genuinely requires a change there. Leave every "
                 "other segment's narration completely unchanged. Do "
-                "not restructure, reorder, merge, or split segments."
+                "not restructure, reorder, merge, or split segments. "
+                "Each segment lists its own word count next to its "
+                "narration - a revision must stay close to that same "
+                "count (within about 20%) even when addressing a "
+                "finding, since the segment's spoken runtime does not "
+                "change just because its narration does; fixing a "
+                "finding by making a segment substantially longer is "
+                "not an acceptable revision."
             ),
             prompt_version="script_revision_prompt_v1.0.0",
             dry_run_response="\n---\n".join(
@@ -160,9 +168,14 @@ class ScriptRevisionService:
                 else "no findings"
             )
 
+            word_budget = max(
+                round((segment.end_seconds - segment.start_seconds) * WORDS_PER_SECOND),
+                1,
+            )
+
             segment_lines.append(
-                f"SEGMENT {segment.segment_number} (findings: {findings_text}): "
-                f"{segment.narration}"
+                f"SEGMENT {segment.segment_number} (~{word_budget} words, "
+                f"findings: {findings_text}): {segment.narration}"
             )
 
         general_findings = findings_by_segment.get(None, [])

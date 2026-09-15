@@ -139,6 +139,32 @@ def test_revise_preserves_timing_and_structure() -> None:
     assert revised.topic == original.topic
 
 
+def test_revise_prompt_includes_per_segment_word_budget() -> None:
+    """
+    Real-world finding: revising a script to address a real editorial
+    critique finding grew a segment's narration well past its own
+    time budget (193 words -> 348 words for an 85s-target script, a
+    revision meant to fix a quality issue nearly doubling total
+    runtime) because the prompt showed each segment's narration and
+    findings but never its own word budget - same class of gap
+    ScriptGenerationService had, same WORDS_PER_SECOND-derived fix.
+    """
+
+    stub = _StubLLMService(content=_REVISED_RESPONSE)
+
+    service = ScriptRevisionService(llm_service=stub)  # type: ignore[arg-type]
+
+    service.revise(script=_script(), critique=_critique())
+
+    assert stub.last_request is not None
+    # Both segments in _script() span exactly 15s (0-15s, 15-30s) ->
+    # 15 * 2.3 = 34.5 -> round() to 34.
+    assert stub.last_request.prompt.count("~34 words") == 2
+
+    assert stub.last_request.system_prompt is not None
+    assert "word count" in stub.last_request.system_prompt
+
+
 def test_revise_leaves_a_segment_unchanged_when_not_returned() -> None:
     content = "SEGMENT: 2\nNARRATION: A waterspout scare best explains the mystery."
 
