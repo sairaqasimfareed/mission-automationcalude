@@ -4,6 +4,10 @@ import re
 
 from src.models.seo import TitleCandidate
 from src.services.llm.llm_service import LLMService
+from src.services.seo.platform_style_guidance import (
+    platform_display_name,
+    platform_style_guidance,
+)
 from src.services.seo.seo_context_builder import SEOContext
 from src.shared.llm.models import LLMProvider
 from src.shared.llm.request import LLMRequest
@@ -48,18 +52,22 @@ class SEOTitleGenerationService:
         if candidate_count < 1:
             raise ValueError("Candidate count must be at least 1.")
 
+        platform_name = platform_display_name(context.platform)
+
         request = LLMRequest(
             provider=LLMProvider.OPENAI,
             model="provider-default-model",
             prompt=self._build_prompt(
                 context,
                 candidate_count=candidate_count,
+                platform_name=platform_name,
             ),
             system_prompt=(
-                "You are an expert YouTube title writer. Write titles "
-                "that accurately reflect the supplied script content. "
-                "Do not invent claims the script does not support. "
-                "Avoid misleading or clickbait phrasing."
+                f"You are an expert {platform_name} title writer. "
+                f"{platform_style_guidance(context.platform)} Write "
+                "titles that accurately reflect the supplied script "
+                "content. Do not invent claims the script does not "
+                "support. Avoid misleading or clickbait phrasing."
             ),
             prompt_version="seo_title_prompt_v1.0.0",
             metadata={
@@ -103,10 +111,11 @@ class SEOTitleGenerationService:
         context: SEOContext,
         *,
         candidate_count: int,
+        platform_name: str,
     ) -> str:
         return (
-            f"Write {candidate_count} distinct candidate YouTube titles "
-            "for the following video.\n\n"
+            f"Write {candidate_count} distinct candidate {platform_name} "
+            "titles for the following video.\n\n"
             f"Topic: {context.topic}\n"
             f"Niche: {context.niche}\n"
             f"Target audience: {context.target_audience}\n"

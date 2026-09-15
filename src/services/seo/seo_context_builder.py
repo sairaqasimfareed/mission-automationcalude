@@ -107,6 +107,7 @@ class SEOContextBuilder:
         genre_id: str,
         target_audience: str | None = None,
         language_code: str = "en",
+        platform: Platform | None = None,
     ) -> SEOContext:
         """
         Build one SEO generation context from an approved script.
@@ -121,6 +122,16 @@ class SEOContextBuilder:
         authority" - the canonical value is the default, not the only
         option, and a caller that wants a specific value keeps that
         control.
+
+        platform is likewise optional, same precedence pattern as
+        target_audience - omitting it resolves the job's own primary
+        platform (job.platform), but an explicit override lets a
+        caller request SEO content genuinely written for a DIFFERENT
+        platform than the job's default (e.g. the post-render export-
+        variant step generating a TikTok-styled package for a project
+        whose primary platform is YouTube) without ever mutating the
+        job's own platform field, which stays the project's real
+        default regardless of what one-off variant was generated.
         """
 
         # MRA-PRE-3 (Pre-Installer Master Audit) finding: this builder
@@ -196,7 +207,7 @@ class SEOContextBuilder:
             target_country=job.target_country,
             language=job.language,
             language_code=language_code,
-            platform=job.platform,
+            platform=platform or job.platform,
             script_title=script_title,
             script_content=script_content,
             research_summary=job.research.research_summary,

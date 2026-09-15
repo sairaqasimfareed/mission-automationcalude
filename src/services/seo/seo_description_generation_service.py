@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from src.services.llm.llm_service import LLMService
+from src.services.seo.platform_style_guidance import (
+    platform_display_name,
+    platform_style_guidance,
+)
 from src.services.seo.seo_context_builder import SEOContext
 from src.shared.llm.models import LLMProvider
 from src.shared.llm.request import LLMRequest
@@ -43,15 +47,22 @@ class SEODescriptionGenerationService:
         if not normalized_title:
             raise ValueError("A selected title is required to generate a description.")
 
+        platform_name = platform_display_name(context.platform)
+
         request = LLMRequest(
             provider=LLMProvider.OPENAI,
             model="provider-default-model",
-            prompt=self._build_prompt(context, selected_title=normalized_title),
+            prompt=self._build_prompt(
+                context,
+                selected_title=normalized_title,
+                platform_name=platform_name,
+            ),
             system_prompt=(
-                "You are an expert YouTube description writer. Write "
-                "a description that accurately reflects only the "
-                "supplied script content and selected title. Do not "
-                "invent facts, statistics, or promises the script "
+                f"You are an expert {platform_name} description "
+                f"writer. {platform_style_guidance(context.platform)} "
+                "Write a description that accurately reflects only "
+                "the supplied script content and selected title. Do "
+                "not invent facts, statistics, or promises the script "
                 "does not support."
             ),
             prompt_version="seo_description_prompt_v1.0.0",
@@ -89,10 +100,11 @@ class SEODescriptionGenerationService:
         context: SEOContext,
         *,
         selected_title: str,
+        platform_name: str,
     ) -> str:
         return (
-            "Write a publish-ready YouTube video description for the "
-            "following video.\n\n"
+            f"Write a publish-ready {platform_name} video description "
+            "for the following video.\n\n"
             f"Selected title: {selected_title}\n"
             f"Topic: {context.topic}\n"
             f"Niche: {context.niche}\n"

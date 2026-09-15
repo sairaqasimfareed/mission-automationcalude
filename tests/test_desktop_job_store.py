@@ -491,6 +491,67 @@ def test_json_store_export_variants_round_trip(tmp_path: Path) -> None:
     assert store.get_export_variants(job.id) == variants
 
 
+def test_json_store_export_variant_with_platform_packaging_round_trips(
+    tmp_path: Path,
+) -> None:
+    """
+    Phase 3 (post-render export variants): a variant generated for a
+    real platform carries its own SEOPackage/ThumbnailArtifact - these
+    nested models must survive the exact same JSON
+    model_dump_json()/model_validate_json() round trip every other
+    JobStore artifact already relies on, not just a bare ExportVariant
+    with no packaging attached (see test_json_store_export_variants_
+    round_trip above).
+    """
+
+    store = JsonJobStore(storage_root=tmp_path)
+    job = _job()
+
+    seo_package = SEOPackage(
+        video_job_id=job.id,
+        title_candidates=[TitleCandidate(text="Giant Squid: Follow Along")],
+        selected_title="Giant Squid: Follow Along",
+        description="A short, share-friendly description.",
+        platform_metadata=SEOPlatformMetadata(platform=Platform.TIKTOK),
+        prompt_version="seo_prompt_v1.0.0",
+    )
+
+    thumbnail = ThumbnailArtifact(
+        video_job_id=job.id,
+        concept=ThumbnailConcept(
+            concept_summary="A summary.",
+            hook_text="HOOK",
+            visual_prompt="A prompt.",
+        ),
+        layout=ThumbnailLayout(width=1080, height=1920),
+        image_source_type=ThumbnailImageSourceType.AI_GENERATED,
+        provider_name="dry_run",
+        file_path="dry-run://thumbnail/1080x1920.png",
+        file_size_bytes=0,
+    )
+
+    variants = ExportVariantCollection(
+        variants=[
+            ExportVariant(
+                orientation=AspectRatio.PORTRAIT,
+                platform=Platform.TIKTOK,
+                output_file="data/renders/test/output_portrait_tiktok.mp4",
+                seo_package=seo_package,
+                thumbnail_artifact=thumbnail,
+            ),
+        ]
+    )
+
+    store.set_export_variants(job.id, variants)
+
+    reloaded = store.get_export_variants(job.id)
+
+    assert reloaded == variants
+    assert reloaded is not None
+    assert reloaded.variants[0].seo_package == seo_package
+    assert reloaded.variants[0].thumbnail_artifact == thumbnail
+
+
 def test_json_store_corrupt_job_file_raises(tmp_path: Path) -> None:
     store = JsonJobStore(storage_root=tmp_path)
     job = _job()

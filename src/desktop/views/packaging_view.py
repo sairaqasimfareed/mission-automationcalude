@@ -529,6 +529,23 @@ class PackagingView(QWidget):
                         f"{variant.output_file}"
                     )
                 )
+
+                if variant.seo_package is not None:
+                    layout.addWidget(
+                        small_muted(
+                            f"  SEO title: {variant.seo_package.selected_title}"
+                        )
+                    )
+
+                if variant.thumbnail_artifact is not None:
+                    layout.addWidget(
+                        small_muted(
+                            f"  Thumbnail: {variant.thumbnail_artifact.file_path}"
+                        )
+                    )
+
+                self._build_variant_packaging_buttons(layout, variant)
+
                 reveal_button = button(
                     f"Open output folder "
                     f"({variant.orientation.name.title()} - {platform_label})",
@@ -575,6 +592,85 @@ class PackagingView(QWidget):
         layout.addWidget(generate_button, alignment=_LEFT)
 
         self._layout.addWidget(frame)
+
+    def _build_variant_packaging_buttons(
+        self,
+        layout: QVBoxLayout,
+        variant: ExportVariant,
+    ) -> None:
+        """
+        Per-variant SEO/thumbnail packaging is optional and per-item,
+        never a bundled hard requirement (see
+        _handle_generate_variant_packaging's own docstring) - a
+        variant with no platform has nothing platform-specific to
+        generate at all; one with a platform shows a button for
+        whichever piece(s) are still missing, and a person can click
+        any combination of them, or none, and leave the variant as a
+        plain branded/reformatted video with no packaging attached.
+        """
+
+        if variant.platform is None:
+            return
+
+        missing_seo = variant.seo_package is None
+        missing_thumbnail = variant.thumbnail_artifact is None
+
+        if not missing_seo and not missing_thumbnail:
+            return
+
+        # Deliberately distinct from the job-level SEO/Thumbnail cards'
+        # own "Generate SEO package"/"Generate thumbnail" buttons (real
+        # bug found live: identical text made a naive find-by-text
+        # click land on the wrong button, silently updating the job's
+        # own shared package instead of this variant's) - also
+        # disambiguates between multiple variants' own buttons, same
+        # "(orientation - platform)" convention this card's own reveal
+        # button already uses.
+        variant_label = (
+            f"{variant.orientation.name.title()} - {variant.platform.name.title()}"
+        )
+
+        if missing_seo and missing_thumbnail:
+            generate_all_button = button(
+                f"Generate all packaging ({variant_label})",
+                icon_name="tag",
+            )
+            generate_all_button.clicked.connect(
+                lambda _checked=False, v=variant: (
+                    self._handle_generate_variant_packaging(
+                        v, generate_seo=True, generate_thumbnail=True
+                    )
+                )
+            )
+            layout.addWidget(generate_all_button, alignment=_LEFT)
+
+        if missing_seo:
+            generate_seo_button = button(
+                f"Generate SEO package ({variant_label})",
+                icon_name="tag",
+            )
+            generate_seo_button.clicked.connect(
+                lambda _checked=False, v=variant: (
+                    self._handle_generate_variant_packaging(
+                        v, generate_seo=True, generate_thumbnail=False
+                    )
+                )
+            )
+            layout.addWidget(generate_seo_button, alignment=_LEFT)
+
+        if missing_thumbnail:
+            generate_thumbnail_button = button(
+                f"Generate thumbnail ({variant_label})",
+                icon_name="image",
+            )
+            generate_thumbnail_button.clicked.connect(
+                lambda _checked=False, v=variant: (
+                    self._handle_generate_variant_packaging(
+                        v, generate_seo=False, generate_thumbnail=True
+                    )
+                )
+            )
+            layout.addWidget(generate_thumbnail_button, alignment=_LEFT)
 
     def _build_final_export_card(self, job: VideoJob) -> None:
         frame, layout = card("Final export", icon_name="export")
@@ -797,6 +893,87 @@ class PackagingView(QWidget):
         existing = self._job_store.get_export_variants(self._job_id)
         variants = list(existing.variants) if existing is not None else []
         variants.append(variant)
+
+        self._job_store.set_export_variants(
+            self._job_id, ExportVariantCollection(variants=variants)
+        )
+
+        self._on_change()
+
+    def _handle_generate_variant_packaging(
+        self,
+        variant: ExportVariant,
+        *,
+        generate_seo: bool,
+        generate_thumbnail: bool,
+    ) -> None:
+        """
+        Post-render export variant packaging (SEO package, thumbnail)
+        is optional and per-item, never a bundled hard requirement - a
+        variant with a real platform can be left with no packaging at
+        all, get only one piece, or get both, driven entirely by which
+        of this card's own "Generate all packaging" / "Generate SEO
+        package" / "Generate thumbnail" buttons a person clicks. Never
+        called for a platform=None variant (there is nothing
+        platform-specific to generate).
+
+        Builds a fresh SEOPackage/ThumbnailArtifact with the variant's
+        own platform as an explicit override - never the job's single
+        shared SEOPackage/ThumbnailArtifact (see SEOContextBuilder.
+        build()'s own docstring for why this never mutates the job's
+        own primary platform). Mirrors _handle_generate_seo/
+        _handle_generate_thumbnail's own call shape exactly, just keyed
+        to the variant's platform instead of the job's default one.
+        """
+
+        job = self._current_job()
+
+        if job is None or self._job_id is None or variant.platform is None:
+            return
+
+        platform = variant.platform
+        updated = variant
+
+        try:
+            if generate_seo:
+                seo_result = self._seo_package_service.build(
+                    job,
+                    genre_id=_resolved_genre_id(job),
+                    platform=platform,
+                )
+                updated = updated.model_copy(
+                    update={"seo_package": seo_result.package},
+                )
+
+            if generate_thumbnail:
+                context = SEOContextBuilder().build(
+                    job,
+                    genre_id=_resolved_genre_id(job),
+                    platform=platform,
+                )
+                thumbnail_result = self._thumbnail_package_service.build(
+                    context,
+                    project_id=job.project_name,
+                )
+                updated = updated.model_copy(
+                    update={"thumbnail_artifact": thumbnail_result.artifact},
+                )
+        except (RuntimeError, ValueError) as error:
+            self._record_error(
+                job,
+                f"Export variant packaging failed: {error}",
+                on_retry=lambda: self._handle_generate_variant_packaging(
+                    variant,
+                    generate_seo=generate_seo,
+                    generate_thumbnail=generate_thumbnail,
+                ),
+            )
+
+            return
+
+        existing = self._job_store.get_export_variants(self._job_id)
+        variants = list(existing.variants) if existing is not None else []
+        variants = [updated if v.id == variant.id else v for v in variants]
 
         self._job_store.set_export_variants(
             self._job_id, ExportVariantCollection(variants=variants)

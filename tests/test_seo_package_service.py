@@ -286,6 +286,33 @@ def test_build_carries_script_lock_identity_when_locked() -> None:
     assert result.package.source_script_version_number == 3
 
 
+def test_build_defaults_platform_to_the_jobs_own_platform() -> None:
+    job = _approved_job()
+
+    result = _service().build(
+        job,
+        genre_id="genre.documentary",
+        target_audience="Ocean enthusiasts",
+    )
+
+    assert result.package.platform_metadata.platform == Platform.YOUTUBE
+
+
+def test_build_explicit_platform_overrides_the_jobs_own_platform() -> None:
+    job = _approved_job()
+    assert job.platform == Platform.YOUTUBE
+
+    result = _service().build(
+        job,
+        genre_id="genre.documentary",
+        target_audience="Ocean enthusiasts",
+        platform=Platform.TIKTOK,
+    )
+
+    assert result.package.platform_metadata.platform == Platform.TIKTOK
+    assert job.platform == Platform.YOUTUBE
+
+
 def test_build_defaults_target_audience_from_audience_promise() -> None:
     job = _approved_job()
     job.audience_promise = AudiencePromise(

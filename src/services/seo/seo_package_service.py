@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from src.models.enums import Platform
 from src.models.seo import SEOPackage, SEOStatus
 from src.models.seo_validation import SEOValidationResult
 from src.models.video_job import VideoJob
@@ -99,6 +100,7 @@ class SEOPackageService:
         genre_id: str,
         target_audience: str | None = None,
         language_code: str = "en",
+        platform: Platform | None = None,
         title_candidate_count: int = 5,
         max_tags: int = 15,
         max_hashtags: int = 8,
@@ -118,6 +120,11 @@ class SEOPackageService:
         requiring a caller to supply a guess; see
         SEOContextBuilder.build()'s own docstring for the exact
         precedence.
+
+        platform is optional, same precedence as target_audience - see
+        SEOContextBuilder.build()'s own docstring for why an explicit
+        override exists (a post-render export variant for a platform
+        other than the job's own default).
         """
 
         context = self.context_builder.build(
@@ -125,6 +132,7 @@ class SEOPackageService:
             genre_id=genre_id,
             target_audience=target_audience,
             language_code=language_code,
+            platform=platform,
         )
 
         candidates = self.title_generation_service.generate(

@@ -4,6 +4,10 @@ import re
 
 from src.models.thumbnail import ThumbnailConcept
 from src.services.llm.llm_service import LLMService
+from src.services.seo.platform_style_guidance import (
+    platform_display_name,
+    platform_style_guidance,
+)
 from src.services.seo.seo_context_builder import SEOContext
 from src.shared.llm.models import LLMProvider
 from src.shared.llm.request import LLMRequest
@@ -68,6 +72,8 @@ class ThumbnailConceptGenerationService:
         if concept_count < 1:
             raise ValueError("Concept count must be at least 1.")
 
+        platform_name = platform_display_name(context.platform)
+
         request = LLMRequest(
             provider=LLMProvider.OPENAI,
             model="provider-default-model",
@@ -75,12 +81,14 @@ class ThumbnailConceptGenerationService:
                 context,
                 concept_count=concept_count,
                 selected_seo_title=selected_seo_title,
+                platform_name=platform_name,
             ),
             system_prompt=(
-                "You are an expert YouTube thumbnail designer. Propose "
-                "thumbnail concepts that accurately reflect the "
-                "supplied script content. Do not invent claims the "
-                "script does not support. Hook text must be short "
+                f"You are an expert {platform_name} thumbnail "
+                f"designer. {platform_style_guidance(context.platform)} "
+                "Propose thumbnail concepts that accurately reflect "
+                "the supplied script content. Do not invent claims "
+                "the script does not support. Hook text must be short "
                 "enough to read at a glance."
             ),
             prompt_version="thumbnail_concept_prompt_v1.0.0",
@@ -127,6 +135,7 @@ class ThumbnailConceptGenerationService:
         *,
         concept_count: int,
         selected_seo_title: str | None,
+        platform_name: str,
     ) -> str:
         title_line = (
             f"Selected video title: {selected_seo_title}\n"
@@ -151,8 +160,8 @@ class ThumbnailConceptGenerationService:
         )
 
         return (
-            f"Propose {concept_count} distinct thumbnail concepts for "
-            "the following video.\n\n"
+            f"Propose {concept_count} distinct {platform_name} thumbnail "
+            "concepts for the following video.\n\n"
             f"Topic: {context.topic}\n"
             f"Niche: {context.niche}\n"
             f"Target audience: {context.target_audience}\n"

@@ -52,6 +52,7 @@ from src.models.thumbnail import (  # noqa: E402
     ThumbnailImageSourceType,
     ThumbnailLayout,
 )
+from src.models.thumbnail_validation import ThumbnailValidationResult  # noqa: E402
 from src.models.video_job import VideoJob  # noqa: E402
 from src.services.final_export.final_export_service import (  # noqa: E402
     FinalExportService,
@@ -63,6 +64,9 @@ from src.services.seo.seo_description_generation_service import (  # noqa: E402
 from src.services.seo.seo_package_service import SEOPackageService  # noqa: E402
 from src.services.seo.seo_title_generation_service import (  # noqa: E402
     SEOTitleGenerationService,
+)
+from src.services.thumbnail.thumbnail_package_service import (  # noqa: E402
+    ThumbnailPackageBuildResult,
 )
 from src.shared.llm.models import (  # noqa: E402
     LLMCallResult,
@@ -1005,6 +1009,34 @@ class _FakeExportVariantRenderService:
         )
 
 
+class _FakeThumbnailPackageService:
+    """
+    Records the platform each build() call used and returns a canned
+    artifact - skips real image generation (no ThumbnailImageProvider
+    is wired in these tests), which is irrelevant to what this file
+    actually verifies: that _handle_generate_variant_packaging calls
+    through with the variant's own platform, not the job's default
+    one.
+    """
+
+    def __init__(self) -> None:
+        self.build_calls: list[Platform] = []
+
+    def build(
+        self,
+        context: object,
+        *,
+        project_id: str,
+        **_kwargs: object,
+    ) -> ThumbnailPackageBuildResult:
+        self.build_calls.append(context.platform)  # type: ignore[attr-defined]
+
+        return ThumbnailPackageBuildResult(
+            artifact=_thumbnail_artifact(),
+            validation=ThumbnailValidationResult(is_valid=True),
+        )
+
+
 def test_export_variants_card_requires_a_successful_render(
     qapp: QApplication, tmp_path: Path
 ) -> None:
@@ -1206,8 +1238,30 @@ def test_choosing_facebook_leaves_orientation_untouched(
 def test_generate_export_variant_passes_the_chosen_platform_through(
     qapp: QApplication, tmp_path: Path
 ) -> None:
+    """
+    Generating a variant is purely the FFmpeg reformat/watermark/CTA
+    pass - picking a platform no longer forces SEO/thumbnail
+    generation as a bundled side effect (that is now a separate,
+    opt-in step - see test_generate_all_packaging_button_builds_seo_
+    and_thumbnail_for_the_variant below). seo_package_service=None is
+    deliberately passed here to prove this path never touches it.
+    """
+
     fake_service = _FakeExportVariantRenderService()
-    view, job = _view_with_render_result(tmp_path, fake_service)
+    view = PackagingView(
+        job_store=InMemoryJobStore(),
+        seo_package_service=None,  # type: ignore[arg-type]
+        thumbnail_package_service=None,  # type: ignore[arg-type]
+        final_export_service=FinalExportService(export_root=tmp_path / "exports"),
+        on_change=lambda: None,
+        export_variant_render_service=fake_service,  # type: ignore[arg-type]
+    )
+    job = _bare_job()
+
+    view._job_store.add(job)
+    view.set_job(job.id)
+    view._job_store.set_render_result(job.id, _render_orchestration_result(job))
+    view.refresh(job)
 
     combos = view.findChildren(QComboBox)
     orientation_combo, platform_combo = combos[0], combos[1]
@@ -1226,6 +1280,185 @@ def test_generate_export_variant_passes_the_chosen_platform_through(
     stored = view._job_store.get_export_variants(job.id)
     assert stored is not None
     assert stored.variants[0].platform == Platform.FACEBOOK
+    assert stored.variants[0].seo_package is None
+    assert stored.variants[0].thumbnail_artifact is None
+
+
+def _view_with_facebook_variant(
+    tmp_path: Path,
+    *,
+    seo_package_service: SEOPackageService | None,
+    thumbnail_package_service: object,
+) -> tuple[PackagingView, VideoJob]:
+    view = PackagingView(
+        job_store=InMemoryJobStore(),
+        seo_package_service=seo_package_service,  # type: ignore[arg-type]
+        thumbnail_package_service=thumbnail_package_service,  # type: ignore[arg-type]
+        final_export_service=FinalExportService(export_root=tmp_path / "exports"),
+        on_change=lambda: None,
+        export_variant_render_service=(
+            _FakeExportVariantRenderService()  # type: ignore[arg-type]
+        ),
+    )
+    job = _job_with_approved_script()
+    job.research = ResearchResult(
+        topic="Giant squid",
+        research_summary="An overview of giant squid encounters.",
+        key_facts=["Fact one."],
+        prompt_version="research_prompt_v1.0.0",
+        status=ResearchStatus.APPROVED,
+    )
+    # SEOContextBuilder.build() requires a resolvable target audience
+    # (from the job's own audience promise, or an explicit override
+    # this handler never supplies - see _handle_generate_variant_
+    # packaging) - without one it raises ValueError, which
+    # _record_error() routes to a real QMessageBox.exec() that blocks
+    # forever under headless Qt (confirmed live: a first version of
+    # this helper omitted audience_promise and hung every test that
+    # clicked a packaging button).
+    job.audience_promise = AudiencePromise(
+        topic="Giant squid",
+        target_audience="Deep sea documentary fans",
+        platform="facebook",
+        genre_id="genre.documentary",
+        target_duration_seconds=300,
+        intended_emotion="wonder",
+        central_curiosity="What is down there?",
+        primary_question="What is down there?",
+        viewer_benefit="A close look at a giant squid.",
+        expected_payoff="Understanding giant squid behavior.",
+        promise_strength=PromiseStrength.STRONG,
+        prompt_version="audience_promise_prompt_v1.0.0",
+    )
+
+    view._job_store.add(job)
+    view.set_job(job.id)
+    view._job_store.set_render_result(job.id, _render_orchestration_result(job))
+    view._job_store.set_export_variants(
+        job.id,
+        ExportVariantCollection(
+            variants=[
+                ExportVariant(
+                    orientation=AspectRatio.LANDSCAPE,
+                    platform=Platform.FACEBOOK,
+                    output_file="F:/renders/job1/output_facebook.mp4",
+                ),
+            ]
+        ),
+    )
+    view.refresh(job)
+
+    return view, job
+
+
+def test_variant_list_offers_generate_all_packaging_when_both_pieces_are_missing(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    view, _job = _view_with_facebook_variant(
+        tmp_path,
+        seo_package_service=_real_seo_package_service(),
+        thumbnail_package_service=_FakeThumbnailPackageService(),
+    )
+
+    button_labels = [widget.text() for widget in view.findChildren(QPushButton)]
+
+    assert "Generate all packaging (Landscape - Facebook)" in button_labels
+    assert "Generate SEO package (Landscape - Facebook)" in button_labels
+    assert "Generate thumbnail (Landscape - Facebook)" in button_labels
+
+
+def test_generate_all_packaging_button_builds_seo_and_thumbnail_for_the_variant(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    fake_thumbnail_service = _FakeThumbnailPackageService()
+    view, job = _view_with_facebook_variant(
+        tmp_path,
+        seo_package_service=_real_seo_package_service(),
+        thumbnail_package_service=fake_thumbnail_service,
+    )
+
+    generate_all_button = next(
+        widget
+        for widget in view.findChildren(QPushButton)
+        if widget.text() == "Generate all packaging (Landscape - Facebook)"
+    )
+    generate_all_button.click()
+
+    assert fake_thumbnail_service.build_calls == [Platform.FACEBOOK]
+
+    stored = view._job_store.get_export_variants(job.id)
+    assert stored is not None
+    assert stored.variants[0].seo_package is not None
+    assert stored.variants[0].seo_package.platform_metadata.platform == (
+        Platform.FACEBOOK
+    )
+    assert stored.variants[0].thumbnail_artifact is not None
+
+
+def test_generate_seo_package_button_leaves_thumbnail_untouched(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    fake_thumbnail_service = _FakeThumbnailPackageService()
+    view, job = _view_with_facebook_variant(
+        tmp_path,
+        seo_package_service=_real_seo_package_service(),
+        thumbnail_package_service=fake_thumbnail_service,
+    )
+
+    generate_seo_button = next(
+        widget
+        for widget in view.findChildren(QPushButton)
+        if widget.text() == "Generate SEO package (Landscape - Facebook)"
+    )
+    generate_seo_button.click()
+
+    assert fake_thumbnail_service.build_calls == []
+
+    stored = view._job_store.get_export_variants(job.id)
+    assert stored is not None
+    assert stored.variants[0].seo_package is not None
+    assert stored.variants[0].thumbnail_artifact is None
+
+
+def test_variant_with_full_packaging_offers_no_packaging_buttons(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    view = PackagingView(
+        job_store=InMemoryJobStore(),
+        seo_package_service=None,  # type: ignore[arg-type]
+        thumbnail_package_service=None,  # type: ignore[arg-type]
+        final_export_service=FinalExportService(export_root=tmp_path / "exports"),
+        on_change=lambda: None,
+        export_variant_render_service=(
+            _FakeExportVariantRenderService()  # type: ignore[arg-type]
+        ),
+    )
+    job = _bare_job()
+
+    view._job_store.add(job)
+    view.set_job(job.id)
+    view._job_store.set_render_result(job.id, _render_orchestration_result(job))
+    view._job_store.set_export_variants(
+        job.id,
+        ExportVariantCollection(
+            variants=[
+                ExportVariant(
+                    orientation=AspectRatio.LANDSCAPE,
+                    platform=Platform.FACEBOOK,
+                    output_file="F:/renders/job1/output_facebook.mp4",
+                    seo_package=_seo_package(),
+                    thumbnail_artifact=_thumbnail_artifact(),
+                ),
+            ]
+        ),
+    )
+    view.refresh(job)
+
+    button_labels = [widget.text() for widget in view.findChildren(QPushButton)]
+
+    assert not any("Generate all packaging" in label for label in button_labels)
+    assert not any("Generate SEO package" in label for label in button_labels)
+    assert not any("Generate thumbnail" in label for label in button_labels)
 
 
 def test_variant_list_shows_no_cta_for_a_platformless_variant(

@@ -171,6 +171,29 @@ def test_generate_includes_genre_thumbnail_guidance_in_prompt() -> None:
     assert "under 3 words" in stub.last_request.prompt
 
 
+def test_generate_writes_in_the_targeted_platforms_voice() -> None:
+    for platform, expected_system_fragment, expected_prompt_fragment in (
+        (Platform.YOUTUBE, "expert YouTube thumbnail", "distinct YouTube thumbnail"),
+        (
+            Platform.FACEBOOK,
+            "expert Facebook thumbnail",
+            "distinct Facebook thumbnail",
+        ),
+        (Platform.TIKTOK, "expert TikTok thumbnail", "distinct TikTok thumbnail"),
+    ):
+        stub = _StubLLMService(content=_TWO_CONCEPT_BLOCK)
+        service = ThumbnailConceptGenerationService(
+            llm_service=stub,  # type: ignore[arg-type]
+        )
+
+        service.generate(_context(platform=platform))
+
+        assert stub.last_request is not None
+        assert stub.last_request.system_prompt is not None
+        assert expected_system_fragment in stub.last_request.system_prompt
+        assert expected_prompt_fragment in stub.last_request.prompt
+
+
 def test_generate_raises_when_provider_fails() -> None:
     stub = _StubLLMService(content="", success=False)
 

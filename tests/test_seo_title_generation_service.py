@@ -159,6 +159,37 @@ def test_generate_includes_genre_title_tone_in_prompt() -> None:
     assert "suspenseful" in stub.last_request.prompt
 
 
+def test_generate_writes_in_the_targeted_platforms_voice() -> None:
+    """
+    Real-world finding, 2026-09-14: SEOContext.platform already
+    carried a real Platform value into this service, but it was never
+    read - the system prompt was hardcoded to "You are an expert
+    YouTube title writer" regardless, so a TikTok-targeted context
+    still got a title written in YouTube's voice. Asserts the actual
+    generated CONTENT differs by platform, not just that a platform
+    value exists on the context.
+    """
+
+    for platform, expected_system_fragment, expected_prompt_fragment in (
+        (Platform.YOUTUBE, "expert YouTube title writer", "candidate YouTube titles"),
+        (
+            Platform.FACEBOOK,
+            "expert Facebook title writer",
+            "candidate Facebook titles",
+        ),
+        (Platform.TIKTOK, "expert TikTok title writer", "candidate TikTok titles"),
+    ):
+        stub = _StubLLMService(content="Title A")
+        service = SEOTitleGenerationService(llm_service=stub)  # type: ignore[arg-type]
+
+        service.generate(_context(platform=platform), candidate_count=1)
+
+        assert stub.last_request is not None
+        assert stub.last_request.system_prompt is not None
+        assert expected_system_fragment in stub.last_request.system_prompt
+        assert expected_prompt_fragment in stub.last_request.prompt
+
+
 def test_generate_raises_when_provider_fails() -> None:
     stub = _StubLLMService(content="", success=False)
 

@@ -4,7 +4,9 @@ from pydantic import Field, field_validator
 
 from src.models.base import MissionBaseModel
 from src.models.enums import Platform
+from src.models.seo import SEOPackage
 from src.models.specification_enums import AspectRatio
+from src.models.thumbnail import ThumbnailArtifact
 
 
 class ExportVariant(MissionBaseModel):
@@ -20,12 +22,23 @@ class ExportVariant(MissionBaseModel):
     by whichever one actually determines it). platform=None is a
     valid, real choice: a plain reformatted export with no watermark
     and no end-card CTA.
+
+    seo_package and thumbnail_artifact are this variant's own
+    platform-tailored packaging (Phase 3) - deliberately separate from
+    the job's single primary SEOPackage/ThumbnailArtifact (stored via
+    JobStore.set_seo_package/set_thumbnail) so generating a TikTok-
+    styled package for one export variant never overwrites or is
+    confused with the job's own default YouTube packaging. Both stay
+    None for platform=None (no packaging to generate).
     """
 
     orientation: AspectRatio
     platform: Platform | None = None
 
     output_file: str = Field(min_length=1)
+
+    seo_package: SEOPackage | None = None
+    thumbnail_artifact: ThumbnailArtifact | None = None
 
     @field_validator("output_file")
     @classmethod

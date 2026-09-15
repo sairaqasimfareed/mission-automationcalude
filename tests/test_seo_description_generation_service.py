@@ -127,6 +127,39 @@ def test_generate_raises_on_empty_selected_title() -> None:
         service.generate(_context(), selected_title="   ")
 
 
+def test_generate_writes_in_the_targeted_platforms_voice() -> None:
+    for platform, expected_system_fragment, expected_prompt_fragment in (
+        (
+            Platform.YOUTUBE,
+            "expert YouTube description writer",
+            "publish-ready YouTube video description",
+        ),
+        (
+            Platform.FACEBOOK,
+            "expert Facebook description writer",
+            "publish-ready Facebook video description",
+        ),
+        (
+            Platform.TIKTOK,
+            "expert TikTok description writer",
+            "publish-ready TikTok video description",
+        ),
+    ):
+        stub = _StubLLMService(content="A great description.")
+        service = SEODescriptionGenerationService(
+            llm_service=stub,  # type: ignore[arg-type]
+        )
+
+        service.generate(
+            _context(platform=platform), selected_title="Great Video"
+        )
+
+        assert stub.last_request is not None
+        assert stub.last_request.system_prompt is not None
+        assert expected_system_fragment in stub.last_request.system_prompt
+        assert expected_prompt_fragment in stub.last_request.prompt
+
+
 def test_generate_raises_when_provider_fails() -> None:
     stub = _StubLLMService(content="", success=False)
 

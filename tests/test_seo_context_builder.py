@@ -234,6 +234,42 @@ def test_build_returns_seo_context_with_expected_fields() -> None:
     assert context.script_lock_version_number is None
 
 
+def test_build_defaults_platform_to_the_jobs_own_platform() -> None:
+    job = _job_with_approved_script(scene_count=1)
+
+    context = SEOContextBuilder().build(
+        job,
+        genre_id="genre.documentary",
+        target_audience="Ocean enthusiasts",
+    )
+
+    assert context.platform == Platform.YOUTUBE
+
+
+def test_build_explicit_platform_overrides_the_jobs_own_platform() -> None:
+    """
+    Same precedence pattern as target_audience - an explicit override
+    lets a caller request SEO content genuinely written for a
+    DIFFERENT platform than the job's own default (e.g. the
+    post-render export-variant step generating a TikTok-styled
+    package for a project whose primary platform is YouTube), without
+    ever mutating job.platform itself.
+    """
+
+    job = _job_with_approved_script(scene_count=1)
+    assert job.platform == Platform.YOUTUBE
+
+    context = SEOContextBuilder().build(
+        job,
+        genre_id="genre.documentary",
+        target_audience="Ocean enthusiasts",
+        platform=Platform.TIKTOK,
+    )
+
+    assert context.platform == Platform.TIKTOK
+    assert job.platform == Platform.YOUTUBE
+
+
 def test_build_carries_script_lock_identity_when_locked() -> None:
     job = _job_with_approved_script(scene_count=1)
     job.script_lock = ScriptLock(
