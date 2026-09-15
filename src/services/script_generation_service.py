@@ -12,9 +12,14 @@ from src.models.story_blueprint import StoryBeat, StoryBeatType, StoryBlueprint
 from src.models.writing_directives import WritingDirectiveSet
 from src.services.llm.labeled_block_parser import extract_labeled_field, split_blocks
 from src.services.llm.llm_service import LLMService
-from src.services.narration_timing_service import WORDS_PER_SECOND
+from src.services.narration_timing_service import (
+    MAXIMUM_SINGLE_SCENE_SECONDS,
+    WORDS_PER_SECOND,
+)
 from src.shared.llm.models import LLMProvider
 from src.shared.llm.request import LLMRequest
+
+_MAXIMUM_SINGLE_SENTENCE_WORDS = round(MAXIMUM_SINGLE_SCENE_SECONDS * WORDS_PER_SECOND)
 
 
 def _dry_run_block(segment_number: int) -> str:
@@ -115,9 +120,17 @@ class ScriptGenerationService:
                 "to it (within about 20%) even if that means covering "
                 "less ground than you'd like, since a script that runs "
                 "far longer than its stated runtime cannot actually be "
-                "produced. Evidence, quotations, proper nouns, "
-                "and factual claims are never slang-transformed, "
-                "regardless of the genre's slang intensity."
+                "produced. Additionally, no single sentence should ever "
+                f"need more than about {_MAXIMUM_SINGLE_SENTENCE_WORDS} "
+                f"words (~{MAXIMUM_SINGLE_SCENE_SECONDS}s spoken): each "
+                "sentence becomes its own single visual clip, which "
+                "cannot be split mid-sentence and cannot run longer "
+                "than that. Break a long compound sentence (e.g. one "
+                "joined by 'and' or 'but') into two shorter sentences "
+                "instead of writing one long one. Evidence, quotations, "
+                "proper nouns, and factual claims are never "
+                "slang-transformed, regardless of the genre's slang "
+                "intensity."
             ),
             prompt_version="script_generation_prompt_v1.0.0",
             dry_run_response="\n---\n".join(

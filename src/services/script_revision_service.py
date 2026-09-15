@@ -7,9 +7,14 @@ from src.models.editorial_critique import CriticFinding, EditorialCritique
 from src.models.generated_script import GeneratedScript, ScriptSegment
 from src.services.llm.labeled_block_parser import extract_labeled_field, split_blocks
 from src.services.llm.llm_service import LLMService
-from src.services.narration_timing_service import WORDS_PER_SECOND
+from src.services.narration_timing_service import (
+    MAXIMUM_SINGLE_SCENE_SECONDS,
+    WORDS_PER_SECOND,
+)
 from src.shared.llm.models import LLMProvider
 from src.shared.llm.request import LLMRequest
+
+_MAXIMUM_SINGLE_SENTENCE_WORDS = round(MAXIMUM_SINGLE_SCENE_SECONDS * WORDS_PER_SECOND)
 
 
 class ScriptRevisionService:
@@ -89,7 +94,14 @@ class ScriptRevisionService:
                 "finding, since the segment's spoken runtime does not "
                 "change just because its narration does; fixing a "
                 "finding by making a segment substantially longer is "
-                "not an acceptable revision."
+                "not an acceptable revision. Additionally, no single "
+                "sentence should ever need more than about "
+                f"{_MAXIMUM_SINGLE_SENTENCE_WORDS} words "
+                f"(~{MAXIMUM_SINGLE_SCENE_SECONDS}s spoken): each "
+                "sentence becomes its own single visual clip, which "
+                "cannot be split mid-sentence and cannot run longer "
+                "than that - if a revised sentence would exceed this, "
+                "break it into two shorter sentences instead."
             ),
             prompt_version="script_revision_prompt_v1.0.0",
             dry_run_response="\n---\n".join(

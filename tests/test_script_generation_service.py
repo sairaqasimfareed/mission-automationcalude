@@ -316,6 +316,38 @@ def test_generate_prompt_includes_per_segment_word_budget() -> None:
     assert "word count" in stub.last_request.system_prompt
 
 
+def test_generate_system_prompt_caps_single_sentence_length() -> None:
+    """
+    Real-world finding: a scene planner correctly refuses to split a
+    single sentence mid-sentence, so a long compound sentence (~29
+    words) became its own 12s scene - Google Flow then silently
+    clamped the actual generated clip to 8s, a real 4s voiceover/
+    subtitle-vs-visual mismatch. The system prompt now tells the model
+    directly to keep every sentence short enough to fit one clip.
+    """
+
+    stub = _StubLLMService(content=_THREE_SEGMENT_RESPONSE)
+
+    _generate(stub).generate(
+        topic="The Mary Celeste",
+        editorial_profile=_editorial_profile(),
+        research=_research(),
+        audience_promise=_promise(),
+        story_angle=_angle(),
+        blueprint=_blueprint(),
+        reveal_map=_reveal_map(),
+        winning_hook=_winning_hook(),
+        re_hook_plan=_re_hook_plan(),
+    )
+
+    assert stub.last_request is not None
+    assert stub.last_request.system_prompt is not None
+    # 8s (MAXIMUM_SINGLE_SCENE_SECONDS) * 2.3 (WORDS_PER_SECOND) = 18.4
+    # -> round() to 18.
+    assert "18 words" in stub.last_request.system_prompt
+    assert "split mid-sentence" in stub.last_request.system_prompt
+
+
 def test_generate_prompt_reflects_genre_style() -> None:
     stub = _StubLLMService(content=_THREE_SEGMENT_RESPONSE)
 

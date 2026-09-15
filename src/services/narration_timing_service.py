@@ -12,6 +12,28 @@ WORDS_PER_SECOND = 2.3
 
 DEFAULT_TOLERANCE_PERCENT = 15.0
 
+# Real-world finding, 2026-09-15: a real end-to-end script had three
+# scenes (10-12s each) that a locked script's own scene planner
+# (src/agents/scene_planner/agent.py's _subdivide_segment()) correctly
+# left intact rather than breaking mid-sentence - each was a single
+# compound sentence whose own narration alone already exceeded that
+# module's _MAXIMUM_SCENE_DURATION_SECONDS ceiling (8s, disclosed in
+# that method's own docstring as a "rare, disclosed exception"). Google
+# Flow then silently clamps the actual generated clip to its nearest
+# verified duration (<=8s) regardless, so the narration/subtitles for
+# that scene run 2-4s longer than the visual actually generated for
+# it - a real audio/video mismatch. Fixing this upstream, at script
+# generation time, is more reliable than trying to algorithmically
+# re-split an already-written long sentence after the fact (which
+# would risk breaking grammar). Manually synced with that module's own
+# _MAXIMUM_SCENE_DURATION_SECONDS (currently also 8) rather than
+# cross-imported - same GF-48 "a provider's specific limits must never
+# leak into a different layer's business logic" precedent that
+# constant's own docstring already establishes for scene planning
+# itself; script generation has no business importing from the scene
+# planner or a Google Flow provider module either.
+MAXIMUM_SINGLE_SCENE_SECONDS = 8
+
 
 class DurationValidationResult(MissionBaseModel):
     """Result of comparing a script's estimated narration length to its target."""

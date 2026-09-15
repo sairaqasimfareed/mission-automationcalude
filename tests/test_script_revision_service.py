@@ -165,6 +165,28 @@ def test_revise_prompt_includes_per_segment_word_budget() -> None:
     assert "word count" in stub.last_request.system_prompt
 
 
+def test_revise_system_prompt_caps_single_sentence_length() -> None:
+    """
+    Same real-world finding as ScriptGenerationService's own
+    test_generate_system_prompt_caps_single_sentence_length: a revised
+    sentence must stay short enough to remain one Google Flow clip
+    (<=8s), since a revision that "fixes" a finding by writing one
+    long compound sentence recreates the exact voiceover/visual
+    mismatch this session found live.
+    """
+
+    stub = _StubLLMService(content=_REVISED_RESPONSE)
+
+    service = ScriptRevisionService(llm_service=stub)  # type: ignore[arg-type]
+
+    service.revise(script=_script(), critique=_critique())
+
+    assert stub.last_request is not None
+    assert stub.last_request.system_prompt is not None
+    assert "18 words" in stub.last_request.system_prompt
+    assert "split mid-sentence" in stub.last_request.system_prompt
+
+
 def test_revise_leaves_a_segment_unchanged_when_not_returned() -> None:
     content = "SEGMENT: 2\nNARRATION: A waterspout scare best explains the mystery."
 
