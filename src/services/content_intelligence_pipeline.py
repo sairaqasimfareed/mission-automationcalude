@@ -584,12 +584,33 @@ class ContentIntelligencePipeline:
         )
 
         if has_re_hook_beats:
-            job.re_hook_plan = self.re_hook_planning_service.plan(
-                topic=job.topic,
-                blueprint=job.story_blueprint,
-                story_angle=job.selected_story_angle,
-                editorial_profile=editorial_profile,
-            )
+            # Advisory, like the retention audit above - never blocking.
+            # Real-world finding: a re-hook is a minor mid-video pacing
+            # enhancement, but re_hook_planning_service.plan() raising
+            # (e.g. the LLM's response didn't parse into any usable
+            # re-hook) used to propagate straight out of run_hooks() and
+            # abort the whole run_all() call, discarding every stage
+            # already completed upstream in the same call (research,
+            # story angle, blueprint, retention audit) since none of
+            # that had been persisted yet. ScriptGenerationService
+            # already treats job.re_hook_plan is None as a normal,
+            # fully-supported case (it just writes the hook beats
+            # without pre-planned re-hook text) - there is nothing
+            # unsafe about proceeding without one.
+            try:
+                job.re_hook_plan = self.re_hook_planning_service.plan(
+                    topic=job.topic,
+                    blueprint=job.story_blueprint,
+                    story_angle=job.selected_story_angle,
+                    editorial_profile=editorial_profile,
+                )
+            except RuntimeError as error:
+                self.approval_gate_service.record_event(
+                    job=job,
+                    stage="hooks",
+                    summary=f"Re-hook planning skipped (advisory): {error}",
+                    category=DecisionCategory.GENERATION,
+                )
 
         self.approval_gate_service.gate(
             job=job,

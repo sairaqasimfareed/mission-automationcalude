@@ -12,6 +12,7 @@ from src.models.story_blueprint import StoryBeat, StoryBeatType, StoryBlueprint
 from src.models.writing_directives import WritingDirectiveSet
 from src.services.llm.labeled_block_parser import extract_labeled_field, split_blocks
 from src.services.llm.llm_service import LLMService
+from src.services.narration_timing_service import WORDS_PER_SECOND
 from src.shared.llm.models import LLMProvider
 from src.shared.llm.request import LLMRequest
 
@@ -99,14 +100,22 @@ class ScriptGenerationService:
                 writing_directives=writing_directives,
             ),
             system_prompt=(
-                "You are an expert scriptwriter for long-form video, "
+                "You are an expert scriptwriter for short-form and "
+                "long-form video alike, "
                 f"writing for the {editorial_profile.genre_id} genre. "
                 f"{self._style_directions(editorial_profile)} Write "
                 "narration only - no camera directions, no visual "
                 "descriptions, no editing notes. Never state a claim "
                 "the research does not support. Follow the supplied "
                 "structure exactly: do not add, remove, reorder, or "
-                "retime segments. Evidence, quotations, proper nouns, "
+                "retime segments. Each segment lists an approximate "
+                "word count next to its time span - that count is the "
+                "real number of words that will be spoken in that "
+                "segment's own runtime, not a suggestion; stay close "
+                "to it (within about 20%) even if that means covering "
+                "less ground than you'd like, since a script that runs "
+                "far longer than its stated runtime cannot actually be "
+                "produced. Evidence, quotations, proper nouns, "
                 "and factual claims are never slang-transformed, "
                 "regardless of the genre's slang intensity."
             ),
@@ -208,10 +217,15 @@ class ScriptGenerationService:
                 if matched_re_hook is not None:
                     hint = f" Re-hook to build on: '{matched_re_hook.text}'."
 
+            word_budget = max(
+                round((beat.end_seconds - beat.start_seconds) * WORDS_PER_SECOND), 1
+            )
+
             beat_lines.append(
                 f"SEGMENT {index} [{beat.beat_type.value}, "
                 f"{beat.start_seconds}s-{beat.end_seconds}s, "
-                f"tension {beat.tension_level}]: {beat.purpose}.{hint}"
+                f"tension {beat.tension_level}, ~{word_budget} words]: "
+                f"{beat.purpose}.{hint}"
             )
 
         beats_block = "\n".join(beat_lines)

@@ -276,6 +276,46 @@ def test_generate_includes_hook_and_re_hook_text_in_prompt() -> None:
     assert "But the logbook raised a bigger question." in stub.last_request.prompt
 
 
+def test_generate_prompt_includes_per_segment_word_budget() -> None:
+    """
+    Real-world finding: an 85s target video's blueprint correctly
+    budgeted 85.0s across its beats, but the generated script came
+    back with 773 words of narration (~309s spoken) because the
+    prompt only ever told the model each segment's TIME span, never
+    an actual word count - the model had no length signal at all.
+    Each segment now carries an explicit word budget derived from its
+    own beat span via the same WORDS_PER_SECOND (2.3) constant
+    NarrationTimingService already uses elsewhere, so it's not a
+    second, inconsistent rate.
+    """
+
+    stub = _StubLLMService(content=_THREE_SEGMENT_RESPONSE)
+
+    _generate(stub).generate(
+        topic="The Mary Celeste",
+        editorial_profile=_editorial_profile(),
+        research=_research(),
+        audience_promise=_promise(),
+        story_angle=_angle(),
+        blueprint=_blueprint(),
+        reveal_map=_reveal_map(),
+        winning_hook=_winning_hook(),
+        re_hook_plan=_re_hook_plan(),
+    )
+
+    assert stub.last_request is not None
+    prompt = stub.last_request.prompt
+
+    # HOOK: 0s-7s (7 * 2.3 = 16.1 -> 16); RE_HOOK: 7s-10s (3 * 2.3 =
+    # 6.9 -> 7); PAYOFF: 10s-30s (20 * 2.3 = 46.0 -> 46).
+    assert "~16 words" in prompt
+    assert "~7 words" in prompt
+    assert "~46 words" in prompt
+
+    assert stub.last_request.system_prompt is not None
+    assert "word count" in stub.last_request.system_prompt
+
+
 def test_generate_prompt_reflects_genre_style() -> None:
     stub = _StubLLMService(content=_THREE_SEGMENT_RESPONSE)
 

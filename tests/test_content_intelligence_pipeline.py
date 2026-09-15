@@ -393,6 +393,79 @@ def test_run_hooks_accepts_additional_instructions() -> None:
     assert job.selected_hook is not None
 
 
+def test_run_hooks_treats_re_hook_planning_failure_as_advisory() -> None:
+    """
+    Real-world finding: re_hook_planning_service.plan() raising a
+    RuntimeError (its response didn't parse into any usable re-hook)
+    used to propagate straight out of run_hooks() and abort the whole
+    run_all() call - discarding every stage already completed
+    upstream in the same call, since none of it had been persisted
+    yet. A re-hook is a minor mid-video pacing enhancement (like the
+    retention audit, advisory) - job.re_hook_plan is None is already
+    a fully-supported state ScriptGenerationService handles directly,
+    so a failed re-hook plan must never block getting a script.
+    """
+
+    class _FailingReHookStubLLMService(_EchoStubLLMService):
+        def generate(
+            self,
+            request: LLMRequest,
+            *,
+            estimated_cost_usd: float = 0.0,
+            profile_ids: list[str] | None = None,
+        ) -> LLMServiceResult:
+            if request.metadata.get("agent") == "ReHookPlanningService":
+                return LLMServiceResult(
+                    result=LLMCallResult(
+                        status=LLMCallStatus.SUCCESS,
+                        provider=LLMProvider.OPENAI,
+                        model="test-model",
+                        content="This response has no labeled re-hook blocks at all.",
+                    ),
+                    selected_profile_id="test-profile",
+                    all_providers_failed=False,
+                )
+
+            return super().generate(
+                request,
+                estimated_cost_usd=estimated_cost_usd,
+                profile_ids=profile_ids,
+            )
+
+    from src.models.story_blueprint import StoryBeat, StoryBeatType
+
+    stub = _FailingReHookStubLLMService()
+    pipeline = ContentIntelligencePipeline(llm_service=stub)  # type: ignore[arg-type]
+
+    job = pipeline.run_audience_promise(_job())
+    job = pipeline.run_research(job)
+    job = pipeline.run_story_angles(job)
+    job = pipeline.run_narrative_architecture(job)
+
+    # Force a RE_HOOK beat into the blueprint regardless of what the
+    # dry-run/stub blueprint generator happened to produce - this
+    # test is about run_hooks()'s own handling of a failed re-hook
+    # plan, not about whether a real blueprint ever schedules one.
+    job.story_blueprint.beats.append(
+        StoryBeat(
+            beat_type=StoryBeatType.RE_HOOK,
+            start_seconds=30,
+            end_seconds=35,
+            purpose="Re-engage mid-video.",
+            tension_level=70,
+        )
+    )
+
+    job = pipeline.run_hooks(job)
+
+    assert job.selected_hook is not None
+    assert job.re_hook_plan is None
+    assert any(
+        record.stage == "hooks" and "Re-hook planning skipped" in record.summary
+        for record in job.content_decisions
+    )
+
+
 def test_run_writing_directives_requires_a_selected_hook() -> None:
     pipeline, _ = _pipeline()
 
