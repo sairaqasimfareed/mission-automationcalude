@@ -25,6 +25,18 @@ from src.services.video_filter_translation_service import (
     VideoFilterTranslationService,
 )
 
+# Real-world finding: a non-looped audio track's real file (voiceover,
+# a sound effect) played to its own natural end regardless of its
+# configured duration_seconds - only a looped track ever got trimmed
+# (see the loop_enabled branch below). A real narration file that
+# genuinely runs longer than its declared duration (real TTS pacing
+# does not always match a pre-generation estimate) would silently
+# bleed into whatever comes next. This fade softens the cut only when
+# one is actually happening; applied to a track already ending
+# naturally at or before this point, it fades an already-silent tail
+# and is inaudible.
+_TRIM_SAFETY_FADE_SECONDS = 0.1
+
 
 class FilterGraphBuilderService:
     """
@@ -792,6 +804,52 @@ class FilterGraphBuilderService:
                 )
 
                 asetpts_input_label = trimmed_label
+
+            elif node.duration_seconds > 0:
+                # A non-looped track's real file can still be longer
+                # than its declared duration_seconds (see
+                # _TRIM_SAFETY_FADE_SECONDS above) - atrim caps real
+                # playback to it; the short afade right after softens
+                # the cut on the rare track this actually shortens,
+                # and is inaudible on every other track (it just fades
+                # an already-silent or already-ended tail).
+                trimmed_label = f"audio_{audio_offset}_trimmed"
+                faded_label = f"audio_{audio_offset}_trim_faded"
+
+                chain_nodes.append(
+                    FilterNode(
+                        media_type=(FilterMediaType.AUDIO),
+                        filter_name="atrim",
+                        input_labels=[source_label],
+                        output_labels=[trimmed_label],
+                        raw_arguments=[
+                            f"duration={self._format_number(node.duration_seconds)}"
+                        ],
+                        source_render_node_id=str(node.id),
+                    )
+                )
+
+                fade_start = max(
+                    0.0,
+                    node.duration_seconds - _TRIM_SAFETY_FADE_SECONDS,
+                )
+
+                chain_nodes.append(
+                    FilterNode(
+                        media_type=(FilterMediaType.AUDIO),
+                        filter_name="afade",
+                        input_labels=[trimmed_label],
+                        output_labels=[faded_label],
+                        options={
+                            "t": "out",
+                            "st": self._format_number(fade_start),
+                            "d": self._format_number(_TRIM_SAFETY_FADE_SECONDS),
+                        },
+                        source_render_node_id=str(node.id),
+                    )
+                )
+
+                asetpts_input_label = faded_label
 
             chain_nodes.append(
                 FilterNode(

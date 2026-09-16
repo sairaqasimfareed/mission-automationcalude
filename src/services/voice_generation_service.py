@@ -237,14 +237,47 @@ class VoiceGenerationService:
         if measured_duration_seconds is not None and measured_duration_seconds > 0.0:
             resolved_duration_seconds = measured_duration_seconds
 
+            # Real-world finding: real TTS pacing does not always match
+            # the pre-generation word-count estimate closely enough to
+            # fit the scene's own video slot (confirmed on a real
+            # render: one scene planned for 6s of video came back as
+            # 8.3s of real narration) - MasterEditPlanService's own
+            # audio-vs-video duration check then refuses to render at
+            # all, correctly, since nothing downstream previously
+            # constrained playback to duration_seconds (see
+            # FilterGraphBuilderService._build_audio_chains' new atrim
+            # step, which is what actually makes this clamp take real
+            # effect rather than just relabeling a track that still
+            # plays its full length). Clamping here - not deeper in
+            # the pipeline - is what keeps this scene-local: no other
+            # scene's timing, and nothing about the video, ever moves.
+            available_seconds = blueprint.available_scene_duration_seconds
+
+            if (
+                available_seconds is not None
+                and resolved_duration_seconds > available_seconds
+            ):
+                overshoot = resolved_duration_seconds - available_seconds
+
+                job.warnings.append(
+                    f"Real narration for scene {blueprint.scene_number} "
+                    f"({resolved_duration_seconds:.2f}s) ran "
+                    f"{overshoot:.2f}s longer than its {available_seconds:.2f}s "
+                    "video slot; trimmed to fit. Consider shortening this "
+                    "scene's narration if the trim is noticeable."
+                )
+
+                resolved_duration_seconds = available_seconds
+
             # Subtitle timing (SubtitleExecutionService.build_scene_subtitles)
             # reads this same blueprint's estimated_speech_duration_seconds
             # directly, not the audio track - updating it here in place is
             # what actually closes the loop for subtitle sync, since this
             # is the exact same blueprint object the render pipeline later
             # hands to the subtitle stage. "Estimated" now means "the best
-            # known duration" - a real measurement after generation, the
-            # pre-generation guess only until then.
+            # known duration" - a real measurement (clamped to the scene's
+            # real available slot when it overshoots) after generation,
+            # the pre-generation guess only until then.
             blueprint.estimated_speech_duration_seconds = resolved_duration_seconds
         else:
             resolved_duration_seconds = blueprint.estimated_speech_duration_seconds

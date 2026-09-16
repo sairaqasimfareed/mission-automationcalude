@@ -202,6 +202,59 @@ def test_generate_leaves_the_blueprint_estimate_alone_when_measurement_fails() -
     assert blueprint.estimated_speech_duration_seconds == original_estimate
 
 
+def test_generate_clamps_duration_when_real_narration_overshoots_the_scene_slot() -> (
+    None
+):
+    """
+    Real-world finding: real TTS pacing does not always match the
+    pre-generation word-count estimate closely enough to fit the
+    scene's own video slot (confirmed on a real render: a scene
+    planned for 6s of video came back as 8.3s of real narration) -
+    MasterEditPlanService's audio-vs-video duration check then
+    refuses to render at all. Clamping to the scene's real available
+    duration (blueprint.available_scene_duration_seconds) keeps this
+    scene-local: no other scene's timing, and nothing about the
+    video, ever moves - FilterGraphBuilderService's own always-on
+    trim-safety atrim is what makes the clamp take real effect on the
+    actual rendered audio, not just the declared metadata.
+    """
+
+    blueprint = _blueprint(scene_duration_seconds=6.0)
+
+    assert blueprint.available_scene_duration_seconds == 6.0
+
+    service = VoiceGenerationService(
+        providers=[_DummyProvider()],
+        ffprobe_runner=lambda command: "8.3\n",
+    )
+
+    result = service.generate(blueprint, start_time_seconds=0.0)
+
+    assert result.success is True
+    assert result.audio_track is not None
+    assert result.audio_track.duration_seconds == 6.0
+    assert blueprint.estimated_speech_duration_seconds == 6.0
+    assert any(
+        "ran" in warning and "longer than its" in warning for warning in result.warnings
+    )
+
+
+def test_generate_does_not_clamp_when_real_narration_fits_the_scene_slot() -> None:
+    blueprint = _blueprint(scene_duration_seconds=15.0)
+
+    service = VoiceGenerationService(
+        providers=[_DummyProvider()],
+        ffprobe_runner=lambda command: "10.0\n",
+    )
+
+    result = service.generate(blueprint, start_time_seconds=0.0)
+
+    assert result.audio_track is not None
+    assert result.audio_track.duration_seconds == 10.0
+    assert blueprint.estimated_speech_duration_seconds == 10.0
+    assert not any("longer than its" in warning for warning in result.warnings)
+
+
 def test_generate_track_type_and_status_are_unaffected() -> None:
     blueprint = _blueprint()
 

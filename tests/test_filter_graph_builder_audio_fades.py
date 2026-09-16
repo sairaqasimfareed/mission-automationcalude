@@ -133,41 +133,55 @@ def _music_node(
     )
 
 
-def test_no_fade_configured_produces_no_afade_filter() -> None:
+def test_no_fade_configured_produces_only_the_trim_safety_afade() -> None:
+    """
+    A track with no configured fade_in/fade_out still gets exactly
+    one afade - the always-on trim-safety fade (see
+    _TRIM_SAFETY_FADE_SECONDS) that softens atrim's cut. It is
+    inaudible here (there is nothing to actually trim), but the
+    filter itself is unconditional.
+    """
+
     graph = _build_graph(audio_nodes=[_music_node()])
     filter_complex = graph.render_filter_complex()
 
-    assert "afade" not in filter_complex
+    assert filter_complex.count("afade") == 1
+    assert "d=0.1" in filter_complex
 
 
-def test_fade_in_only_produces_one_afade_in_filter() -> None:
+def test_fade_in_only_produces_the_configured_fade_plus_trim_safety_fade() -> None:
     graph = _build_graph(audio_nodes=[_music_node(fade_in_seconds=2.0)])
     filter_complex = graph.render_filter_complex()
 
-    assert filter_complex.count("afade") == 1
+    assert filter_complex.count("afade") == 2
     assert "t=in" in filter_complex
     assert "st=0" in filter_complex
     assert "d=2" in filter_complex
+    # The always-on trim-safety fade is still present alongside it.
+    assert "d=0.1" in filter_complex
 
 
-def test_fade_out_only_produces_one_afade_out_filter() -> None:
+def test_fade_out_only_produces_the_configured_fade_plus_trim_safety_fade() -> None:
     graph = _build_graph(audio_nodes=[_music_node(fade_out_seconds=1.5)])
     filter_complex = graph.render_filter_complex()
 
-    assert filter_complex.count("afade") == 1
+    assert filter_complex.count("afade") == 2
     assert "t=out" in filter_complex
     # 8s track duration minus 1.5s fade-out = start at 6.5s.
     assert "st=6.5" in filter_complex
     assert "d=1.5" in filter_complex
+    assert "d=0.1" in filter_complex
 
 
-def test_fade_in_and_fade_out_both_produce_two_chained_afade_filters() -> None:
+def test_fade_in_and_fade_out_both_produce_three_afade_filters() -> None:
+    """Two configured fades plus the always-on trim-safety fade."""
+
     graph = _build_graph(
         audio_nodes=[_music_node(fade_in_seconds=1.0, fade_out_seconds=1.0)]
     )
     filter_complex = graph.render_filter_complex()
 
-    assert filter_complex.count("afade") == 2
+    assert filter_complex.count("afade") == 3
     assert graph.is_valid is True
 
 
@@ -191,5 +205,5 @@ def test_fade_is_still_applied_alongside_a_positive_start_delay() -> None:
     graph = _build_graph(audio_nodes=[node])
     filter_complex = graph.render_filter_complex()
 
-    assert filter_complex.count("afade") == 1
+    assert filter_complex.count("afade") == 2
     assert "adelay" in filter_complex

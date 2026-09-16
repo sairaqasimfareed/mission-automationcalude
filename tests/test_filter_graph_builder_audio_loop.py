@@ -132,12 +132,20 @@ def _music_node(*, loop_enabled: bool, duration_seconds: float = 40.0) -> Render
     )
 
 
-def test_loop_disabled_produces_no_aloop_filter() -> None:
+def test_loop_disabled_produces_no_aloop_filter_but_still_gets_a_safety_atrim() -> None:
+    """
+    No aloop without loop_enabled, as before - but a non-looped
+    track's real file can still outrun its declared duration_seconds
+    (real TTS pacing, a provider-returned clip longer than expected),
+    so it still gets the same always-on trim-safety atrim any other
+    non-looped track gets, capping real playback to what was declared.
+    """
+
     graph = _build_graph(audio_nodes=[_music_node(loop_enabled=False)])
     filter_complex = graph.render_filter_complex()
 
     assert "aloop" not in filter_complex
-    assert "atrim" not in filter_complex
+    assert "atrim" in filter_complex
 
 
 def test_loop_enabled_produces_aloop_then_atrim_to_track_duration() -> None:
