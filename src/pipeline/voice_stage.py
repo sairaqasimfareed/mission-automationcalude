@@ -112,6 +112,37 @@ class VoicePipelineStage(BasePipelineStage):
                 error_message=(coverage_error),
             )
 
+        audio_timeline = context.job.audio_timeline or AudioTimeline()
+
+        # Real-world finding, same root cause MusicPipelineStage was
+        # already fixed for: a full pipeline re-run
+        # (resume_previous_pipeline=True + skip_completed_stages=False,
+        # a real, reachable AdvancedSettings combination - also hit
+        # directly retrying a render after voice already generated)
+        # re-executes this stage even though voice already completed.
+        # This used to unconditionally regenerate every scene (real,
+        # billed provider calls) and then hard-fail at attach_many()
+        # on the tracks it had JUST regenerated, because they were
+        # already present from the earlier successful run. "Already
+        # handled" is exactly "every expected scene already has a
+        # voiceover track" - unlike music, this does not silently
+        # skip when generation would be genuinely needed (missing or
+        # partial coverage still runs the real generation loop below,
+        # and a real failure there still fails the stage).
+        expected_scene_numbers = [
+            blueprint.scene_number for blueprint in self._blueprints
+        ]
+
+        if not self._timeline_service.missing_voice_scenes(
+            audio_timeline,
+            expected_scene_numbers=expected_scene_numbers,
+        ):
+            return self._reused_result(
+                started_at=started_at,
+                context=context,
+                audio_timeline=audio_timeline,
+            )
+
         results: list[VoiceGenerationResult] = []
 
         warnings: list[str] = []
@@ -190,12 +221,17 @@ class VoicePipelineStage(BasePipelineStage):
                 + result.audio_track.duration_seconds
             )
 
-        audio_timeline = context.job.audio_timeline or AudioTimeline()
-
+        # replace=True: this branch only runs when coverage is missing
+        # or partial (full coverage already returned above), so some
+        # of the scenes being regenerated here may still have a stale
+        # track attached from an earlier, incomplete run - replacing
+        # it is correct (these results are the freshly regenerated,
+        # authoritative ones), hard-failing on it is not. Harmless
+        # no-op for the common case of a genuinely empty timeline.
         self._timeline_service.attach_many(
             audio_timeline,
             results=results,
-            replace=False,
+            replace=True,
         )
 
         context.job.audio_timeline = audio_timeline
@@ -225,6 +261,66 @@ class VoicePipelineStage(BasePipelineStage):
                 "timeline_duration_seconds": (audio_timeline.calculate_duration()),
                 "voice_file": (first_result.output_file),
                 "last_output_file": (last_result.output_file),
+            },
+        )
+
+    def _reused_result(
+        self,
+        *,
+        started_at: float,
+        context: StageContext,
+        audio_timeline: AudioTimeline,
+    ) -> StageResult:
+        """
+        Build the COMPLETED result for reusing already-attached voice
+        tracks instead of regenerating them.
+
+        Mirrors VoicePipelineStage's normal success path's job-state
+        updates (voice_file, voice_provider, voice_status) from the
+        existing tracks rather than fresh generation results, since
+        none were generated this run.
+        """
+
+        ordered_scene_numbers = sorted(
+            blueprint.scene_number for blueprint in self._blueprints
+        )
+
+        existing_tracks = [
+            self._timeline_service.get_scene_voice(
+                audio_timeline,
+                scene_number=scene_number,
+            )
+            for scene_number in ordered_scene_numbers
+        ]
+
+        providers = sorted(
+            {track.provider for track in existing_tracks if track.provider is not None}
+        )
+
+        context.job.audio_timeline = audio_timeline
+
+        context.job.voice_file = existing_tracks[0].source_file
+
+        context.job.voice_provider = providers[0] if len(providers) == 1 else None
+
+        context.job.voice_status = VoiceStatus.READY
+
+        return StageResult(
+            stage=self.stage_name,
+            status=(PipelineStageStatus.COMPLETED),
+            duration_seconds=(time.perf_counter() - started_at),
+            progress_percent=100,
+            warnings=[],
+            errors=[],
+            metadata={
+                "result_count": 0,
+                "successful_count": 0,
+                "failed_count": 0,
+                "providers": providers,
+                "timeline_attached": True,
+                "reused_existing": True,
+                "timeline_duration_seconds": (audio_timeline.calculate_duration()),
+                "voice_file": (existing_tracks[0].source_file),
             },
         )
 

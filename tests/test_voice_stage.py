@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from src.models.audio_timeline import AudioTimeline
 from src.models.audio_track import (
     AudioTrack,
     AudioTrackStatus,
@@ -302,6 +303,26 @@ def build_success_service(
                 )
             ),
         },
+    )
+
+
+def build_existing_voice_track(
+    scene_number: int,
+    *,
+    start_time_seconds: float = 0.0,
+    duration_seconds: float = 5.0,
+    provider: str = "synthetic-voice",
+) -> AudioTrack:
+    """Build one already-attached voiceover track, as if from a prior run."""
+
+    return AudioTrack(
+        track_type=AudioTrackType.VOICEOVER,
+        source_file=(f"outputs/audio/scene_{scene_number:03d}.wav"),
+        start_time_seconds=start_time_seconds,
+        duration_seconds=duration_seconds,
+        provider=provider,
+        status=AudioTrackStatus.READY,
+        metadata={"scene_number": scene_number},
     )
 
 
@@ -688,6 +709,111 @@ def test_single_provider_is_recorded() -> None:
     assert job.voice_provider == "provider-a"
 
 
+def test_reuses_existing_voice_tracks_without_regenerating() -> None:
+    """
+    Real-world finding: retrying a render (or a full pipeline re-run)
+    after voice already generated used to unconditionally regenerate
+    every scene - a real, billed provider call - then hard-fail
+    attaching results for scenes that already had tracks. Full
+    coverage must instead skip generation entirely and reuse what is
+    already there, matching MusicPipelineStage's own fix for the same
+    root cause.
+    """
+
+    job = build_job()
+
+    # A cross-field validator requires voice_file whenever
+    # audio_timeline is set - a real job that already generated voice
+    # once would already have both set together.
+    job.voice_file = "outputs/audio/scene_001.wav"
+
+    job.audio_timeline = AudioTimeline(
+        tracks=[
+            build_existing_voice_track(1, duration_seconds=4.0),
+            build_existing_voice_track(2, start_time_seconds=4.0, duration_seconds=6.0),
+        ]
+    )
+
+    service = build_success_service()
+
+    stage = VoicePipelineStage(
+        blueprints=build_blueprints(),
+        generation_service=service,
+        timeline_service=(VoiceTimelineService()),
+    )
+
+    result = stage.execute(build_context(job))
+
+    assert result.status == PipelineStageStatus.COMPLETED
+
+    assert result.successful is True
+
+    assert service.generated_scene_numbers == []
+
+    assert result.metadata["reused_existing"] is True
+
+    assert result.metadata["result_count"] == 0
+
+    assert result.metadata["timeline_attached"] is True
+
+    assert job.voice_status == VoiceStatus.READY
+
+    assert job.voice_file == "outputs/audio/scene_001.wav"
+
+    assert job.voice_provider == "synthetic-voice"
+
+    assert len(job.audio_timeline.tracks) == 2
+
+
+def test_partial_existing_coverage_regenerates_and_replaces_stale_track() -> None:
+    """
+    Partial coverage (some but not all expected scenes already have a
+    track) must still regenerate everything - matching the original,
+    always-regenerate behavior for genuinely incomplete state - but
+    now replaces the stale scene-1 track it finds instead of
+    hard-failing on it.
+    """
+
+    job = build_job()
+
+    job.voice_file = "outputs/audio/scene_001.wav"
+
+    job.audio_timeline = AudioTimeline(
+        tracks=[
+            build_existing_voice_track(1, duration_seconds=999.0),
+        ]
+    )
+
+    service = build_success_service()
+
+    stage = VoicePipelineStage(
+        blueprints=build_blueprints(),
+        generation_service=service,
+        timeline_service=(VoiceTimelineService()),
+    )
+
+    result = stage.execute(build_context(job))
+
+    assert result.status == PipelineStageStatus.COMPLETED
+
+    assert service.generated_scene_numbers == [1, 2]
+
+    assert job.audio_timeline is not None
+
+    assert len(job.audio_timeline.tracks) == 2
+
+    scene_1_tracks = [
+        track
+        for track in job.audio_timeline.tracks
+        if track.metadata.get("scene_number") == 1
+    ]
+
+    assert len(scene_1_tracks) == 1
+
+    # The freshly regenerated 4.0s track replaced the stale 999.0s one.
+    assert scene_1_tracks[0].duration_seconds == 4.0
+
+
 def test_generation_service_exception_propagates() -> None:
     job = build_job()
 
@@ -754,6 +880,8 @@ def main() -> None:
     test_failed_generation_stops_pipeline()
     test_mixed_providers_do_not_claim_single_provider()
     test_single_provider_is_recorded()
+    test_reuses_existing_voice_tracks_without_regenerating()
+    test_partial_existing_coverage_regenerates_and_replaces_stale_track()
     test_generation_service_exception_propagates()
     test_timeline_service_exception_propagates()
 
