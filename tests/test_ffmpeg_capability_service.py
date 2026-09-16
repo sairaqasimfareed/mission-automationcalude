@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -117,6 +118,132 @@ def test_has_hardware_accelerator_is_case_insensitive() -> None:
 
     assert capabilities.has_hardware_accelerator("CUDA") is True
     assert capabilities.has_hardware_accelerator("vaapi") is False
+
+
+# --- Real-world finding: -encoders/-hwaccels claim NVENC works when
+# it does not (confirmed directly on a real machine: both listed
+# h264_nvenc/cuda, but a real trial encode failed with "Cannot load
+# nvcuda.dll") - a real trial encode is the only way to know. ---
+
+
+def test_verify_hardware_encoder_returns_true_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args=args, returncode=0),
+    )
+
+    verified = FFmpegCapabilityService()._verify_hardware_encoder(
+        ffmpeg_path="ffmpeg",
+        encoder="h264_nvenc",
+    )
+
+    assert verified is True
+
+
+def test_verify_hardware_encoder_returns_false_on_nonzero_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args=args, returncode=1),
+    )
+
+    verified = FFmpegCapabilityService()._verify_hardware_encoder(
+        ffmpeg_path="ffmpeg",
+        encoder="h264_nvenc",
+    )
+
+    assert verified is False
+
+
+def test_verify_hardware_encoder_returns_false_on_oserror(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _raise(*args: object, **kwargs: object) -> None:
+        raise OSError("simulated launch failure")
+
+    monkeypatch.setattr(subprocess, "run", _raise)
+
+    verified = FFmpegCapabilityService()._verify_hardware_encoder(
+        ffmpeg_path="ffmpeg",
+        encoder="h264_nvenc",
+    )
+
+    assert verified is False
+
+
+def test_verify_hardware_encoder_returns_false_on_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _raise(*args: object, **kwargs: object) -> None:
+        raise subprocess.TimeoutExpired(cmd="ffmpeg", timeout=30.0)
+
+    monkeypatch.setattr(subprocess, "run", _raise)
+
+    verified = FFmpegCapabilityService()._verify_hardware_encoder(
+        ffmpeg_path="ffmpeg",
+        encoder="h264_nvenc",
+    )
+
+    assert verified is False
+
+
+def test_detect_strips_nvenc_when_the_real_trial_encode_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _fake_run(self: FFmpegCapabilityService, command: list[str]) -> str:
+        if "-encoders" in command:
+            return " V..... h264_nvenc  NVENC H.264\n V..... libx264  libx264\n"
+
+        if "-hwaccels" in command:
+            return "Hardware acceleration methods:\ncuda\ndxva2\n"
+
+        return ""
+
+    monkeypatch.setattr(FFmpegCapabilityService, "_run", _fake_run)
+    monkeypatch.setattr(
+        FFmpegCapabilityService,
+        "_verify_hardware_encoder",
+        lambda self, **kwargs: False,
+    )
+    monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}")
+
+    capabilities = FFmpegCapabilityService().detect(FFmpegConfig())
+
+    assert "h264_nvenc" not in capabilities.encoders
+    assert "cuda" not in capabilities.hardware_accelerators
+    assert "libx264" in capabilities.encoders
+    assert "dxva2" in capabilities.hardware_accelerators
+
+
+def test_detect_keeps_nvenc_when_the_real_trial_encode_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _fake_run(self: FFmpegCapabilityService, command: list[str]) -> str:
+        if "-encoders" in command:
+            return " V..... h264_nvenc  NVENC H.264\n V..... libx264  libx264\n"
+
+        if "-hwaccels" in command:
+            return "Hardware acceleration methods:\ncuda\n"
+
+        return ""
+
+    monkeypatch.setattr(FFmpegCapabilityService, "_run", _fake_run)
+    monkeypatch.setattr(
+        FFmpegCapabilityService,
+        "_verify_hardware_encoder",
+        lambda self, **kwargs: True,
+    )
+    monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}")
+
+    capabilities = FFmpegCapabilityService().detect(FFmpegConfig())
+
+    assert "h264_nvenc" in capabilities.encoders
+    assert "cuda" in capabilities.hardware_accelerators
 
 
 # --- Installer packaging: bundled ffmpeg/ffprobe resolution ---

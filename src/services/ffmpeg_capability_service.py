@@ -86,6 +86,30 @@ class FFmpegCapabilityService:
                 )
             )
 
+            # Real-world finding: -encoders/-hwaccels list what this
+            # FFmpeg BUILD was compiled with, not what actually works
+            # on this machine - h264_nvenc and "cuda" both showed up
+            # in those lists on a real machine with no working NVIDIA
+            # driver, and only failed at actual encode time ("Cannot
+            # load nvcuda.dll"), after already having been selected
+            # for a real render. A tiny real trial encode is the only
+            # way to know NVENC genuinely works, so one is attempted
+            # whenever the static lists claim it does, correcting
+            # both sets together if it does not.
+            h264_nvenc = str(FFmpegVideoCodec.H264_NVENC.value)
+
+            if h264_nvenc in encoders and not self._verify_hardware_encoder(
+                ffmpeg_path=ffmpeg_path,
+                encoder=h264_nvenc,
+            ):
+                encoders = encoders - {
+                    h264_nvenc,
+                    str(FFmpegVideoCodec.HEVC_NVENC.value),
+                    "av1_nvenc",
+                }
+
+                hardware_accelerators = hardware_accelerators - {"cuda"}
+
         if ffprobe_path is not None:
             ffprobe_version = self._detect_version(ffprobe_path)
 
@@ -284,6 +308,53 @@ class FFmpegCapabilityService:
             raise RuntimeError(message)
 
         return combined
+
+    def _verify_hardware_encoder(
+        self,
+        *,
+        ffmpeg_path: str,
+        encoder: str,
+    ) -> bool:
+        """
+        Attempt one real, tiny trial encode to confirm a hardware
+        encoder genuinely works, rather than trusting that it merely
+        appears in -encoders' static, compiled-in list.
+
+        A real failure here (missing driver, no compatible GPU) fails
+        fast - the same real trial that surfaced "Cannot load
+        nvcuda.dll" returned in well under a second - so this adds
+        negligible overhead to a real render's one-time capability
+        resolution.
+        """
+
+        try:
+            completed = subprocess.run(
+                [
+                    ffmpeg_path,
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=c=black:s=64x64:d=1",
+                    "-frames:v",
+                    "1",
+                    "-c:v",
+                    encoder,
+                    "-f",
+                    "null",
+                    "-",
+                ],
+                capture_output=True,
+                timeout=self.COMMAND_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+
+        return completed.returncode == 0
 
     @staticmethod
     def _parse_component_names(
