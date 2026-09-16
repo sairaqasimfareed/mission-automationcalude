@@ -62,10 +62,28 @@ class _SceneVideoGenerationWorker(QObject):
     documented on that class - a lambda slot has no owning QObject for
     Qt's AutoConnection to detect, and silently runs on the wrong
     thread instead of being queued back to the GUI thread.
+
+    Real-world finding: a multi-scene "Generate All" run genuinely can
+    fail or be interrupted partway through (a browser crash on a later
+    scene, an unrelated exception, the app closing) - losing every
+    already-completed scene's real progress in that case, because
+    nothing persisted it until the whole batch finished. scene_completed
+    fires after every individual scene (via
+    SceneVideoGenerationService.generate_all()'s on_scene_complete
+    hook), carrying a deep-copied snapshot rather than the live job
+    object - the worker thread keeps mutating the live job for the
+    next scene immediately after emitting, so a listener reading the
+    live object off the GUI thread could observe a torn, half-mutated
+    state; a snapshot taken at a known-consistent instant has no such
+    race. The `except Exception` below (not just RuntimeError/ValueError)
+    exists for the same reason: a failure type this module hasn't seen
+    before should still reach failed.emit() and get a chance to persist,
+    not silently kill this thread with no signal at all.
     """
 
     finished = Signal()
     failed = Signal(str)
+    scene_completed = Signal(object)
 
     def __init__(
         self,
@@ -78,21 +96,28 @@ class _SceneVideoGenerationWorker(QObject):
 
         self._service = service
         self._job = job
+        self.job = job
         self.job_id = job.id
         self.scene_number = scene_number
 
     def run(self) -> None:
         try:
             if self.scene_number is None:
-                self._service.generate_all(self._job)
+                self._service.generate_all(
+                    self._job,
+                    on_scene_complete=self._handle_scene_complete,
+                )
             else:
                 self._service.generate_one(self._job, self.scene_number)
-        except (RuntimeError, ValueError) as error:
+        except Exception as error:  # noqa: BLE001 - reported to the UI thread
             self.failed.emit(str(error))
 
             return
 
         self.finished.emit()
+
+    def _handle_scene_complete(self, job: VideoJob, scene_number: int) -> None:
+        self.scene_completed.emit(job.model_copy(deep=True))
 
 
 class ClipWorkspaceView(QWidget):
@@ -365,6 +390,7 @@ class ClipWorkspaceView(QWidget):
         # for Qt's AutoConnection to detect, and silently runs
         # cross-thread instead of being queued back to the GUI thread.
         thread.started.connect(worker.run)
+        worker.scene_completed.connect(self._handle_scene_generation_progress)
         worker.finished.connect(self._handle_scene_generation_finished)
         worker.failed.connect(self._handle_scene_generation_failed)
         worker.finished.connect(thread.quit)
@@ -387,16 +413,37 @@ class ClipWorkspaceView(QWidget):
 
         thread.start()
 
+    def _handle_scene_generation_progress(self, job: VideoJob) -> None:
+        """
+        Checkpoint one scene's real progress the moment it completes.
+
+        Persisting here - not just once the whole batch finishes or
+        fails - is what actually protects an already-completed
+        scene's work against a later scene's failure, an unrelated
+        crash, or the app closing mid-batch. Deliberately unconditional
+        on which job is currently selected: only the UI refresh below
+        depends on that, persistence must not.
+        """
+
+        self._job_store.add(job)
+
+        if job.id == self._job_id:
+            self._on_change()
+
     def _handle_scene_generation_finished(self) -> None:
         worker = self.sender()
-        job_id = (
-            worker.job_id if isinstance(worker, _SceneVideoGenerationWorker) else None
-        )
 
-        if job_id is None:
+        if not isinstance(worker, _SceneVideoGenerationWorker):
             return
 
+        job_id = worker.job_id
         self._generating_job_ids.discard(job_id)
+
+        # Unconditional for the same reason as
+        # _handle_scene_generation_progress - the worker's job holds
+        # this run's real final state regardless of which job the
+        # user happens to be looking at right now.
+        self._job_store.add(worker.job)
 
         if job_id == self._job_id:
             self._on_change()
@@ -411,17 +458,20 @@ class ClipWorkspaceView(QWidget):
         scene_number = worker.scene_number
         self._generating_job_ids.discard(job_id)
 
-        job = self._job_store.get(job_id)
+        job = worker.job
+        job.errors.append(f"Scene video generation failed: {message}")
 
-        if job is not None:
-            job.errors.append(f"Scene video generation failed: {message}")
+        # Unconditional: this persists every scene the worker actually
+        # completed before the failure, not just when the failed job
+        # happens to still be the one on screen - see
+        # _handle_scene_generation_progress.
+        self._job_store.add(job)
 
         if job_id == self._job_id:
-            on_retry = (
-                (lambda: self._execute_scene_generation(job, scene_number=scene_number))
-                if job is not None
-                else None
-            )
+
+            def on_retry() -> None:
+                self._execute_scene_generation(job, scene_number=scene_number)
+
             show_recoverable_error(
                 self, "Scene generation failed", message, on_retry=on_retry
             )

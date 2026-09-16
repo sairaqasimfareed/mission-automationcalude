@@ -138,9 +138,35 @@ class SceneVideoGenerationService:
         self._sleep_fn = sleep_fn
         self._estimated_cost_usd_per_scene = estimated_cost_usd_per_scene
 
-    def generate_all(self, job: VideoJob) -> SceneCompletenessReport:
+    def generate_all(
+        self,
+        job: VideoJob,
+        *,
+        on_scene_complete: Callable[[VideoJob, int], None] | None = None,
+    ) -> SceneCompletenessReport:
+        """
+        Generate every planned scene's video, in scene-number order.
+
+        on_scene_complete, when given, is called with the job and the
+        scene number that was just generated, immediately after each
+        individual generate_one() call returns - before the next
+        scene starts. This exists so a caller can checkpoint progress
+        (e.g. persist the job) after every scene rather than only
+        once the whole batch finishes, since a real, multi-minute,
+        one-scene-at-a-time generation run genuinely can fail or be
+        interrupted partway through (a real-world finding: losing
+        every already-completed scene's progress to an unrelated
+        failure on a later scene, because nothing was saved until the
+        end). This method still does not persist anything itself -
+        that responsibility stays with the caller, matching every
+        other generation service in this codebase.
+        """
+
         for scene in sorted(job.scenes, key=lambda scene: scene.scene_number):
             self.generate_one(job, scene.scene_number)
+
+            if on_scene_complete is not None:
+                on_scene_complete(job, scene.scene_number)
 
         return SceneCompletenessService().check(job)
 

@@ -4,7 +4,8 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from collections.abc import Iterator  # noqa: E402
+from collections.abc import Callable, Iterator  # noqa: E402
+from unittest.mock import patch  # noqa: E402
 from uuid import UUID  # noqa: E402
 
 import pytest  # noqa: E402
@@ -59,9 +60,13 @@ def _job(*scene_numbers: int) -> VideoJob:
 class _FakeJobStore:
     def __init__(self, job: VideoJob) -> None:
         self._job = job
+        self.added: list[VideoJob] = []
 
     def get(self, job_id: UUID) -> VideoJob | None:
         return self._job if job_id == self._job.id else None
+
+    def add(self, job: VideoJob) -> None:
+        self.added.append(job)
 
 
 class _FakeSceneVideoGenerationService:
@@ -72,11 +77,16 @@ class _FakeSceneVideoGenerationService:
     without a real Google Flow provider or any real waiting.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, fail_on_scene: int | None = None) -> None:
         self.generate_one_calls: list[int] = []
         self.generate_all_calls = 0
+        self._fail_on_scene = fail_on_scene
 
     def generate_one(self, job: VideoJob, scene_number: int) -> None:
+        if scene_number == self._fail_on_scene:
+            self.generate_one_calls.append(scene_number)
+            raise RuntimeError(f"Simulated failure on scene {scene_number}.")
+
         self.generate_one_calls.append(scene_number)
         job.video_clips = [
             clip for clip in job.video_clips if clip.scene_number != scene_number
@@ -91,11 +101,19 @@ class _FakeSceneVideoGenerationService:
             )
         ]
 
-    def generate_all(self, job: VideoJob) -> None:
+    def generate_all(
+        self,
+        job: VideoJob,
+        *,
+        on_scene_complete: Callable[[VideoJob, int], None] | None = None,
+    ) -> None:
         self.generate_all_calls += 1
 
         for scene in job.scenes:
             self.generate_one(job, scene.scene_number)
+
+            if on_scene_complete is not None:
+                on_scene_complete(job, scene.scene_number)
 
 
 def _asset_workflow_service() -> SceneAssetWorkflowService:
@@ -109,10 +127,13 @@ def _asset_workflow_service() -> SceneAssetWorkflowService:
 
 
 def _build_view(
-    job: VideoJob, *, service: _FakeSceneVideoGenerationService | None
+    job: VideoJob,
+    *,
+    service: _FakeSceneVideoGenerationService | None,
+    job_store: _FakeJobStore | None = None,
 ) -> ClipWorkspaceView:
     view = ClipWorkspaceView(
-        job_store=_FakeJobStore(job),  # type: ignore[arg-type]
+        job_store=job_store or _FakeJobStore(job),  # type: ignore[arg-type]
         asset_workflow_service=_asset_workflow_service(),
         on_change=lambda: None,
         scene_video_generation_service=service,  # type: ignore[arg-type]
@@ -191,3 +212,78 @@ def test_clicking_generate_all_processes_every_scene(qapp: QApplication) -> None
 
     assert service.generate_all_calls == 1
     assert len(job.video_clips) == 2
+
+
+def test_generate_all_persists_progress_after_every_scene(
+    qapp: QApplication,
+) -> None:
+    """
+    Each completed scene must reach the job store as it finishes, not
+    only once the whole batch is done - otherwise a crash partway
+    through a real, multi-minute batch loses every already-completed
+    scene's work (the real bug this checkpointing fixes).
+    """
+
+    job = _job(1, 2, 3)
+    service = _FakeSceneVideoGenerationService()
+    store = _FakeJobStore(job)
+    view = _build_view(job, service=service, job_store=store)
+
+    all_button = next(
+        b for b in _find_buttons(view) if b.text() == "Generate all scenes"
+    )
+    all_button.click()
+
+    thread, _worker = next(iter(view._generation_threads.values()))
+    thread.wait(2000)
+    for _ in range(20):
+        qapp.processEvents()
+
+    assert service.generate_all_calls == 1
+    # One add() per completed scene, plus the final "batch finished" save.
+    assert len(store.added) >= 3
+    assert len(store.added[0].video_clips) == 1
+    assert len(store.added[-1].video_clips) == 3
+
+
+def test_generate_all_keeps_earlier_scene_progress_when_a_later_scene_fails(
+    qapp: QApplication,
+) -> None:
+    """
+    Reproduces the real-world failure this fix targets: scene 3 fails
+    partway through a 3-scene "Generate All" run. Scenes 1 and 2's
+    real work must still have reached the job store, not be silently
+    lost because nothing persisted until the batch finished.
+    """
+
+    job = _job(1, 2, 3)
+    service = _FakeSceneVideoGenerationService(fail_on_scene=3)
+    store = _FakeJobStore(job)
+    view = _build_view(job, service=service, job_store=store)
+
+    all_button = next(
+        b for b in _find_buttons(view) if b.text() == "Generate all scenes"
+    )
+
+    # A real failure here routes into show_recoverable_error(), a real
+    # QMessageBox.exec() that blocks forever under headless
+    # (offscreen) Qt with no button click ever arriving - not slow,
+    # a genuine permanent hang. Monkeypatched out so this test
+    # exercises the persistence fix, not a real dialog.
+    with patch("src.desktop.views.clip_workspace_view.show_recoverable_error"):
+        all_button.click()
+
+        thread, _worker = next(iter(view._generation_threads.values()))
+        thread.wait(2000)
+        for _ in range(20):
+            qapp.processEvents()
+
+    assert service.generate_one_calls == [1, 2, 3]
+    assert store.added, "scenes 1 and 2 must have been checkpointed"
+
+    scene_numbers_seen = {
+        clip.scene_number for snapshot in store.added for clip in snapshot.video_clips
+    }
+    assert scene_numbers_seen == {1, 2}
+
+    assert any("Simulated failure on scene 3" in error for error in job.errors)
