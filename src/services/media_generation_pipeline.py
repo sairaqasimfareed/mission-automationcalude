@@ -215,9 +215,25 @@ class MediaGenerationPipeline:
         try:
             duration_seconds = job.video_timeline.calculate_duration()
 
+            # Real-world finding: ElevenLabs's sound-generation endpoint
+            # rejects a single request anywhere near a whole video's
+            # length (confirmed live: HTTP 400, "expected to be...
+            # less or equal to 30" for a 100s request) - the same gap
+            # generate_single_music_segment() already closes below.
+            # Request only a short clip and let AudioTrack.loop_enabled
+            # (set from the resolved instruction's own "loop" flag)
+            # repeat it to fill the real track_duration_seconds at
+            # render time, instead of asking the provider for the
+            # whole video's length in one call.
+            requested_duration_seconds = min(
+                duration_seconds,
+                MAX_SINGLE_MUSIC_CLIP_REQUEST_SECONDS,
+            )
+
             result = self.music_generation_service.generate(
                 instruction_item.editing_blueprint.music,
-                duration_seconds=duration_seconds,
+                duration_seconds=requested_duration_seconds,
+                track_duration_seconds=duration_seconds,
             )
 
             if not result.success or result.audio_track is None:

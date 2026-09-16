@@ -237,6 +237,52 @@ def test_run_music_attaches_one_background_track() -> None:
     assert len(music_tracks) == 1
 
 
+def test_run_music_caps_the_requested_clip_and_loops_to_fill_the_track() -> None:
+    """
+    Real-world finding: ElevenLabs's sound-generation endpoint rejects
+    a single request anywhere near a whole video's length - confirmed
+    live, HTTP 400: "Invalid setting for duration_seconds... expected
+    to be... less or equal to 30", for a real 100s request. run_music()
+    used to request the job's full timeline duration in one call;
+    generate_single_music_segment() already closed this exact gap
+    (MAX_SINGLE_MUSIC_CLIP_REQUEST_SECONDS + track_duration_seconds),
+    this proves run_music() now does too.
+    """
+
+    class _RecordingMusicProvider(DryRunMusicProvider):
+        def __init__(self) -> None:
+            self.requested_durations: list[float] = []
+
+        def generate_music(self, *, library_query: str, duration_seconds: float) -> str:
+            self.requested_durations.append(duration_seconds)
+
+            return super().generate_music(
+                library_query=library_query, duration_seconds=duration_seconds
+            )
+
+    provider = _RecordingMusicProvider()
+    job = _job(_scene(1), _scene(2), _scene(3))
+    job.video_clips = [_clip(1), _clip(2), _clip(3)]
+    pipeline = _pipeline()
+    pipeline.music_generation_service = MusicGenerationService(providers=[provider])
+    pipeline.run_timeline(job)
+
+    full_duration = job.video_timeline.calculate_duration()
+    assert full_duration > 18.0  # exceeds MAX_SINGLE_MUSIC_CLIP_REQUEST_SECONDS
+
+    result = pipeline.run_music(job)
+
+    assert provider.requested_durations == [18.0]
+
+    music_track = next(
+        track
+        for track in result.audio_timeline.tracks
+        if track.track_type == AudioTrackType.BACKGROUND_MUSIC
+    )
+    assert music_track.duration_seconds == full_duration
+    assert music_track.loop_enabled is True
+
+
 def test_run_sound_effects_requires_a_configured_provider() -> None:
     job = _job(_scene(1))
     job.video_clips = [_clip(1)]
