@@ -4,6 +4,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from src.models.audio_timeline import AudioTimeline
 from src.models.audio_track import (
     AudioTrack,
@@ -433,6 +435,283 @@ def _probe_output(
     )
 
     return completed.stdout
+
+
+def _multi_scene_video_timeline(
+    *,
+    source_files: list[Path],
+) -> VideoTimeline:
+    """Build a real multi-scene explicit production video timeline."""
+
+    clips: list[VideoClip] = []
+
+    items: list[VideoTimelineItem] = []
+
+    start_time_seconds = 0.0
+
+    for index, source_file in enumerate(source_files, start=1):
+        clip = VideoClip(
+            scene_number=index,
+            source_type=(SceneSourceType.MANUAL_UPLOAD),
+            duration_seconds=(SMOKE_DURATION_SECONDS),
+            prompt=(f"Chunked render smoke scene {index}."),
+            provider="F.4E synthetic fixture",
+            local_file=source_file.as_posix(),
+            resolution=(f"{SMOKE_WIDTH}x{SMOKE_HEIGHT}"),
+            aspect_ratio="16:9",
+            source_status=(SceneSourceStatus.READY),
+            status=VideoClipStatus.READY,
+        )
+
+        end_time_seconds = start_time_seconds + SMOKE_DURATION_SECONDS
+
+        item = VideoTimelineItem(
+            clip=clip,
+            scene_number=index,
+            start_time_seconds=start_time_seconds,
+            end_time_seconds=end_time_seconds,
+            track_index=0,
+            layer_index=0,
+            enabled=True,
+            editing_blueprint=(
+                _editing_blueprint(
+                    scene_number=index,
+                )
+            ),
+        )
+
+        clips.append(clip)
+
+        items.append(item)
+
+        start_time_seconds = end_time_seconds
+
+    timeline = VideoTimeline(
+        clips=clips,
+        items=items,
+        output_resolution=(f"{SMOKE_WIDTH}x{SMOKE_HEIGHT}"),
+        frame_rate=SMOKE_FRAME_RATE,
+    )
+
+    assert timeline.calculate_duration() == float(
+        len(source_files) * SMOKE_DURATION_SECONDS
+    )
+
+    return timeline
+
+
+def _multi_scene_audio_timeline(
+    *,
+    voice_files: list[Path],
+    music_file: Path,
+) -> AudioTimeline:
+    """Build a real multi-scene voiceover + background music timeline."""
+
+    tracks: list[AudioTrack] = []
+
+    start_time_seconds = 0.0
+
+    for index, voice_file in enumerate(voice_files, start=1):
+        tracks.append(
+            AudioTrack(
+                track_type=AudioTrackType.VOICEOVER,
+                source_file=voice_file.as_posix(),
+                start_time_seconds=start_time_seconds,
+                duration_seconds=float(SMOKE_DURATION_SECONDS),
+                volume=1.0,
+                provider="F.4E synthetic fixture",
+                status=AudioTrackStatus.READY,
+                metadata={
+                    "scene_number": index,
+                },
+            )
+        )
+
+        start_time_seconds += SMOKE_DURATION_SECONDS
+
+    total_duration_seconds = float(len(voice_files) * SMOKE_DURATION_SECONDS)
+
+    tracks.append(
+        AudioTrack(
+            track_type=AudioTrackType.BACKGROUND_MUSIC,
+            source_file=music_file.as_posix(),
+            start_time_seconds=0.0,
+            duration_seconds=total_duration_seconds,
+            volume=0.2,
+            loop_enabled=True,
+            provider="F.4E synthetic fixture",
+            status=AudioTrackStatus.READY,
+        )
+    )
+
+    timeline = AudioTimeline(
+        tracks=tracks,
+        sample_rate=48000,
+        channels=2,
+    )
+
+    assert timeline.calculate_duration() == total_duration_seconds
+
+    return timeline
+
+
+def _multi_scene_voice_blueprints(
+    scene_count: int,
+) -> list[ResolvedVoiceBlueprint]:
+    """Build one resolved voice blueprint per scene."""
+
+    return [
+        ResolvedVoiceBlueprint(
+            scene_number=scene_number,
+            status=(VoiceBlueprintResolutionStatus.RESOLVED),
+            profile=ResolvedVoiceProfileReference(
+                requested_profile_id=("voice.ffmpeg_smoke"),
+                resolved_profile_id=("voice.ffmpeg_smoke"),
+                display_name=("FFmpeg Smoke Voice"),
+                found_exact_match=True,
+                used_fallback=False,
+            ),
+            narration_text=(f"This is chunked render smoke scene {scene_number}."),
+        )
+        for scene_number in range(1, scene_count + 1)
+    ]
+
+
+def test_real_production_render_service_chunks_oversized_commands(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Verify the chunked-render fallback end to end with real FFmpeg.
+
+    Forces the chunked path deterministically (rather than depending
+    on building a genuinely huge multi-scene render) by shrinking
+    _SAFE_COMMAND_LINE_LENGTH so even this smoke's small real command
+    counts as oversized, then verifies a real, complete, correctly
+    ordered MP4 comes out the other end - proving the chunk/concat
+    machinery itself, independent of how large a real command needs
+    to be to trigger it.
+    """
+
+    (
+        ffmpeg,
+        ffprobe,
+    ) = _require_ffmpeg()
+
+    scene_count = 4
+
+    source_videos: list[Path] = []
+
+    source_audios: list[Path] = []
+
+    for index in range(1, scene_count + 1):
+        video_file = tmp_path / "inputs" / f"scene_{index:03d}.mp4"
+
+        audio_file = tmp_path / "inputs" / f"voice_{index:03d}.wav"
+
+        _create_source_video(
+            ffmpeg=ffmpeg,
+            output_file=video_file,
+        )
+
+        _create_source_audio(
+            ffmpeg=ffmpeg,
+            output_file=audio_file,
+        )
+
+        source_videos.append(video_file)
+
+        source_audios.append(audio_file)
+
+    music_file = tmp_path / "inputs" / "music.wav"
+
+    _create_source_audio(
+        ffmpeg=ffmpeg,
+        output_file=music_file,
+    )
+
+    output_file = tmp_path / "outputs" / "chunked_render_smoke.mp4"
+
+    output_file.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    video_timeline = _multi_scene_video_timeline(
+        source_files=source_videos,
+    )
+
+    audio_timeline = _multi_scene_audio_timeline(
+        voice_files=source_audios,
+        music_file=music_file,
+    )
+
+    voice_blueprints = _multi_scene_voice_blueprints(scene_count)
+
+    monkeypatch.setattr(
+        ProductionRenderService,
+        "_SAFE_COMMAND_LINE_LENGTH",
+        10,
+    )
+
+    service = ProductionRenderService(
+        ffmpeg_config=FFmpegConfig(
+            ffmpeg_path=ffmpeg,
+            ffprobe_path=ffprobe,
+            video_codec=(FFmpegVideoCodec.LIBX264),
+            hardware_acceleration=(FFmpegHardwareAcceleration.NONE),
+            timeout_seconds=60.0,
+        ),
+        output_file=output_file.as_posix(),
+    )
+
+    result = service.render(
+        video_timeline=video_timeline,
+        audio_timeline=audio_timeline,
+        voice_blueprints=voice_blueprints,
+    )
+
+    assert result.success is True
+
+    assert result.status == RenderStatus.COMPLETED
+
+    assert any("split into" in warning for warning in result.warnings)
+
+    assert result.output_file is not None
+
+    rendered_file = Path(result.output_file)
+
+    assert rendered_file == output_file
+
+    assert rendered_file.is_file()
+
+    assert rendered_file.stat().st_size > 0
+
+    for index in range(scene_count):
+        chunk_file = output_file.with_name(
+            f"{output_file.stem}.chunk{index:03d}{output_file.suffix}"
+        )
+
+        assert not chunk_file.exists()
+
+    probe_output = _probe_output(
+        ffprobe=ffprobe,
+        output_file=rendered_file,
+    )
+
+    assert "codec_type=video" in probe_output
+
+    assert "codec_type=audio" in probe_output
+
+    duration_line = next(
+        line for line in probe_output.splitlines() if line.startswith("duration=")
+    )
+
+    total_duration_seconds = float(duration_line.split("=", 1)[1])
+
+    expected_duration_seconds = float(scene_count * SMOKE_DURATION_SECONDS)
+
+    assert abs(total_duration_seconds - expected_duration_seconds) < 1.0
 
 
 def test_real_production_render_service_executes_ffmpeg(
