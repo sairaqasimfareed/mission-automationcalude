@@ -186,6 +186,50 @@ class MusicPipelineStage(BasePipelineStage):
         attached_count = 0
         skipped_existing_count = 0
 
+        # Real-world finding, same root cause already fixed for SFX
+        # (SoundEffectPipelineStage): a job whose music was first
+        # generated via the legacy single-whole-video-track path (the
+        # else branch below) and only later acquired a real
+        # sound_design_plan keeps that old track forever - nothing
+        # ever reconciled it against the newer content-aware mood
+        # segments. A real render ended up with a continuous, un-
+        # faded legacy track (volume 0.2, no fade-in, running the
+        # entire video) layered underneath 8 real, narration-aware
+        # segments (volume 0.25, each with its own fade-in) - roughly
+        # doubling the music energy for the whole video and burying
+        # the start of narration under an immediate, un-faded music
+        # entrance. Once a job has a real sound_design_plan, only its
+        # own segments should exist; anything else is a stale leftover
+        # from before that plan existed, identified by not matching
+        # any segment's own audio_track_id (the one, authoritative
+        # link between a content-aware segment and the track it
+        # produced).
+        content_aware_track_ids = {
+            segment.audio_track_id
+            for segment in music_segments
+            if segment.audio_track_id is not None
+        }
+
+        stale_tracks = [
+            track
+            for track in audio_timeline.tracks
+            if track.track_type == AudioTrackType.BACKGROUND_MUSIC
+            and str(track.id) not in content_aware_track_ids
+        ]
+
+        if stale_tracks:
+            stale_ids = {track.id for track in stale_tracks}
+
+            audio_timeline.tracks = [
+                track for track in audio_timeline.tracks if track.id not in stale_ids
+            ]
+
+            warnings.append(
+                f"Removed {len(stale_tracks)} background-music track(s) "
+                "left over from a legacy (non-content-aware) "
+                "sound-design pass."
+            )
+
         for segment in music_segments:
             if segment.status == SoundDesignItemStatus.GENERATED:
                 skipped_existing_count += 1

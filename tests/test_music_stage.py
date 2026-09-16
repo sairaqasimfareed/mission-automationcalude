@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from src.models.audio_timeline import AudioTimeline
+from src.models.audio_track import AudioTrack, AudioTrackStatus, AudioTrackType
 from src.models.editing_directives import DirectiveIntensity
 from src.models.media_strategy import SceneSourceType
 from src.models.research import ResearchResult, ResearchStatus
@@ -284,6 +286,93 @@ def test_execute_prefers_content_aware_plan_over_genre_blueprint() -> None:
     for segment in job.sound_design_plan.music_segments:
         assert segment.status == SoundDesignItemStatus.GENERATED
         assert segment.audio_track_id is not None
+
+
+def test_execute_removes_stale_legacy_music_once_a_content_aware_plan_exists() -> None:
+    """
+    Real-world finding: a job whose music was first generated via the
+    legacy single-whole-video-track path, then later acquired a real
+    sound_design_plan (e.g. re-rendered after content-aware sound
+    design ran), kept the old track forever - nothing ever reconciled
+    it. A real render ended up with a continuous, un-faded legacy
+    track layered underneath real, narration-aware segments -
+    doubling the music energy and burying the start of narration.
+    Once a content-aware plan exists, only its own segments should
+    remain.
+    """
+
+    stage = MusicPipelineStage(
+        generation_service=MusicGenerationService(providers=[FakeMusicProvider()]),
+    )
+    job = _job_with_timeline(scene_count=3, music_enabled=True)
+
+    stale_track = AudioTrack(
+        track_type=AudioTrackType.BACKGROUND_MUSIC,
+        source_file="assets/legacy_whole_video_music.mp3",
+        start_time_seconds=0.0,
+        duration_seconds=24.0,
+        volume=0.2,
+        loop_enabled=True,
+        provider="fake",
+        status=AudioTrackStatus.READY,
+    )
+
+    job.audio_timeline = AudioTimeline(tracks=[stale_track])
+
+    job.sound_design_plan = SoundDesignPlan(
+        music_segments=[
+            MusicMoodSegment(
+                start_scene_number=1,
+                end_scene_number=2,
+                mood_description="sparse, quiet unease",
+                rationale="Opening setup.",
+            ),
+        ]
+    )
+
+    result = stage.execute(_context(job))
+
+    assert job.audio_timeline is not None
+    assert len(job.audio_timeline.tracks) == 1
+    assert (
+        job.audio_timeline.tracks[0].source_file
+        != "assets/legacy_whole_video_music.mp3"
+    )
+    assert any("left over from a legacy" in warning for warning in result.warnings)
+
+
+def test_execute_keeps_content_aware_music_across_a_second_run() -> None:
+    """The cleanup must never remove a content-aware segment's own real track."""
+
+    stage = MusicPipelineStage(
+        generation_service=MusicGenerationService(providers=[FakeMusicProvider()]),
+    )
+    job = _job_with_timeline(scene_count=3, music_enabled=True)
+    job.sound_design_plan = SoundDesignPlan(
+        music_segments=[
+            MusicMoodSegment(
+                start_scene_number=1,
+                end_scene_number=2,
+                mood_description="sparse, quiet unease",
+                rationale="Opening setup.",
+            ),
+        ]
+    )
+
+    first_result = stage.execute(_context(job))
+
+    assert first_result.metadata["attached_count"] == 1
+    assert job.audio_timeline is not None
+    assert len(job.audio_timeline.tracks) == 1
+
+    second_result = stage.execute(_context(job))
+
+    assert second_result.metadata["attached_count"] == 0
+    assert second_result.metadata["skipped_existing_count"] == 1
+    assert len(job.audio_timeline.tracks) == 1
+    assert not any(
+        "left over from a legacy" in warning for warning in second_result.warnings
+    )
 
 
 def test_execute_caps_requested_duration_but_track_spans_full_segment() -> None:
