@@ -393,6 +393,7 @@ with TemporaryDirectory() as temp_dir:
     assert sent.json_body["text"] == "[worried] Something moved in the dark."
     assert "previous_text" not in sent.json_body
     assert "next_text" not in sent.json_body
+    assert "language_code" not in sent.json_body
 
 print("ElevenLabsVoiceProvider emotion-tags delivery case passed.")
 
@@ -436,6 +437,13 @@ with TemporaryDirectory() as temp_dir:
         sent.json_body["next_text"]
         == "Theories about their fate still circulate today."
     )
+    # Real-world finding: eleven_multilingual_v2 was never told the
+    # narration's real language, leaving it to auto-detect from raw
+    # text alone - confirmed as the likely cause of a real render
+    # producing audio in the wrong language with repetition
+    # artifacts. language_code pins it instead, whenever the
+    # blueprint resolves one (default "en").
+    assert sent.json_body["language_code"] == "en"
 
 print("ElevenLabsVoiceProvider continuity-stitching delivery case passed.")
 

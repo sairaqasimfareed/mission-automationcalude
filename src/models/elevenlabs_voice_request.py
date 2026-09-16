@@ -53,4 +53,15 @@ class ElevenLabsVoiceRequest(MissionBaseModel):
     # ElevenLabs does not support stitching on eleven_v3.
     previous_text: str | None = None
     next_text: str | None = None
+    # Real-world finding: this was never sent at all, on any model -
+    # eleven_multilingual_v2 has to auto-detect language from the raw
+    # text alone, and a real production narration (proper nouns,
+    # dates, historical terms) can make it misdetect, producing
+    # audio in the wrong language or language-confusion artifacts
+    # like repeated phrases. ElevenLabs' documented `language_code`
+    # request field (ISO 639-1) lets the caller pin this instead of
+    # leaving it to guesswork - same non-v3-only condition as
+    # previous_text/next_text above, since eleven_v3 does not accept
+    # it either.
+    language_code: str | None = None
     unsupported_controls: list[str] = Field(default_factory=list)

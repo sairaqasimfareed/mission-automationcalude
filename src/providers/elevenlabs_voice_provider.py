@@ -318,6 +318,9 @@ class ElevenLabsVoiceProvider(VoiceProvider):
         if request.next_text:
             json_body["next_text"] = request.next_text
 
+        if request.language_code:
+            json_body["language_code"] = request.language_code
+
         return request, json_body
 
     @staticmethod

@@ -165,6 +165,7 @@ class ElevenLabsVoiceTranslationService:
         resolved_model_id = model_id
         previous_text: str | None = None
         next_text: str | None = None
+        language_code: str | None = None
         emotion_tag_applied = False
 
         if blueprint.voice_delivery_mode == VoiceDeliveryMode.EMOTION_TAGS:
@@ -178,6 +179,7 @@ class ElevenLabsVoiceTranslationService:
         else:
             previous_text = blueprint.previous_scene_narration_text
             next_text = blueprint.next_scene_narration_text
+            language_code = blueprint.language_code.strip() or None
 
         resolved_locators = pronunciation_dictionary_locators or []
 
@@ -189,6 +191,7 @@ class ElevenLabsVoiceTranslationService:
             pronunciation_dictionary_locators=resolved_locators,
             previous_text=previous_text,
             next_text=next_text,
+            language_code=language_code,
             unsupported_controls=[
                 *self._unsupported_controls(
                     blueprint,

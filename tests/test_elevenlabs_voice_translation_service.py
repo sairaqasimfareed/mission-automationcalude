@@ -293,3 +293,42 @@ def test_translate_emotion_tags_mode_ignores_stitching_context() -> None:
 
     assert request.previous_text is None
     assert request.next_text is None
+
+
+def test_translate_forwards_language_code_for_a_non_v3_model() -> None:
+    """
+    Real-world finding: eleven_multilingual_v2 was never told the
+    narration's real language, leaving it to auto-detect from raw
+    text alone - a real production narration (proper nouns, dates,
+    historical terms) can make that misdetect, producing audio in
+    the wrong language or repetition artifacts. language_code pins
+    it instead.
+    """
+
+    service = ElevenLabsVoiceTranslationService()
+
+    request = service.translate(
+        _blueprint(
+            voice_delivery_mode=VoiceDeliveryMode.CONTINUITY_STITCHING,
+            language_code="en",
+        ),
+        voice_id="voice-abc",
+    )
+
+    assert request.language_code == "en"
+
+
+def test_translate_omits_language_code_for_the_emotion_tags_v3_model() -> None:
+    """eleven_v3 does not accept language_code, same as previous_text/next_text."""
+
+    service = ElevenLabsVoiceTranslationService()
+
+    request = service.translate(
+        _blueprint(
+            voice_delivery_mode=VoiceDeliveryMode.EMOTION_TAGS,
+            language_code="en",
+        ),
+        voice_id="voice-abc",
+    )
+
+    assert request.language_code is None
