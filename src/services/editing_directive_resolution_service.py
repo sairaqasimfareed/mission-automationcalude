@@ -151,6 +151,7 @@ class EditingDirectiveResolutionService:
                 volume_percent=(sound_effect.volume_percent),
                 intensity=sound_effect.intensity,
                 enabled=sound_effect.enabled,
+                duck_under_voice=(sound_effect.duck_under_voice),
             )
             for index, sound_effect in enumerate(directives.sound_effects)
             if sound_effect.enabled

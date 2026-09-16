@@ -278,6 +278,13 @@ class SoundEffectPipelineStage(BasePipelineStage):
             volume_percent=cue.volume_percent,
             intensity=cue.intensity,
             enabled=True,
+            # Content-aware cues have no per-cue directive for this
+            # (unlike the genre-preset path's SoundEffectDirective) -
+            # real-world finding: SFX never ducking under voice at all
+            # buried narration under a scene with several cues, so
+            # this defaults on here too rather than silently opting
+            # every content-aware cue out of it.
+            duck_under_voice=True,
         )
 
     @staticmethod

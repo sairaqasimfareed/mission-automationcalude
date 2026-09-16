@@ -141,3 +141,81 @@ def test_generate_fails_on_unsupported_output_format() -> None:
     assert not result.success
     assert result.failure is not None
     assert result.failure.reason == "unsupported_output_format"
+
+
+def test_generate_defaults_duck_under_voice_to_true() -> None:
+    """
+    Real-world finding: this was hardcoded False unconditionally, with
+    no way for any directive to override it - unlike background music,
+    which already ducks correctly. A real render with several SFX cues
+    per scene buried the narration under them.
+    """
+
+    provider = FakeSoundEffectProvider()
+    service = SoundEffectGenerationService(providers=[provider])
+
+    result = service.generate(_instruction(), scene_number=1, start_time_seconds=0.0)
+
+    assert result.audio_track is not None
+    assert result.audio_track.duck_under_voice is True
+
+
+def test_generate_respects_an_explicit_duck_under_voice_override() -> None:
+    provider = FakeSoundEffectProvider()
+    service = SoundEffectGenerationService(providers=[provider])
+
+    instruction = ResolvedSoundEffectInstruction(
+        preset=_preset(),
+        timing_mode=DirectiveTimingMode.ABSOLUTE_SECONDS,
+        start_offset_seconds=2.0,
+        volume_percent=70.0,
+        intensity=DirectiveIntensity.MEDIUM,
+        enabled=True,
+        duck_under_voice=False,
+    )
+
+    result = service.generate(instruction, scene_number=1, start_time_seconds=0.0)
+
+    assert result.audio_track is not None
+    assert result.audio_track.duck_under_voice is False
+
+
+def test_generate_uses_the_real_measured_duration_when_available() -> None:
+    """
+    Real-world finding: generate_sound_effect() has no way to request
+    a specific duration, so the fixed 2.0s label was always just
+    assumed regardless of what the provider actually produced - a real
+    mismatch that can make a cue feel out of sync with whatever it was
+    meant to accompany.
+    """
+
+    provider = FakeSoundEffectProvider()
+    service = SoundEffectGenerationService(
+        providers=[provider],
+        ffprobe_runner=lambda command: "3.417\n",
+    )
+
+    result = service.generate(_instruction(), scene_number=1, start_time_seconds=0.0)
+
+    assert result.audio_track is not None
+    assert result.audio_track.duration_seconds == 3.417
+    assert result.audio_track.metadata["measured_duration_seconds"] == 3.417
+    assert result.warnings == []
+
+
+def test_generate_falls_back_to_the_fixed_duration_when_measurement_fails() -> None:
+    def _raise(command: list[str]) -> str:
+        raise RuntimeError("simulated ffprobe failure")
+
+    provider = FakeSoundEffectProvider()
+    service = SoundEffectGenerationService(
+        providers=[provider],
+        ffprobe_runner=_raise,
+    )
+
+    result = service.generate(_instruction(), scene_number=1, start_time_seconds=0.0)
+
+    assert result.audio_track is not None
+    assert result.audio_track.duration_seconds == DEFAULT_CUE_DURATION_SECONDS
+    assert result.audio_track.metadata["measured_duration_seconds"] is None
+    assert any("fixed 2.0s fallback" in warning for warning in result.warnings)

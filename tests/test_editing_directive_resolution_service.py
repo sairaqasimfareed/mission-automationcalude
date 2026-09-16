@@ -106,6 +106,13 @@ assert len(blueprint.visual_effects) == 2
 assert len(blueprint.animations) == 1
 assert len(blueprint.sound_effects) == 1
 
+# Real-world finding: duck_under_voice used to be hardcoded False at
+# generation time with no directive able to override it, burying
+# narration under a scene with several SFX cues. Confirms the real
+# directive field (default True) now actually reaches the resolved
+# instruction.
+assert blueprint.sound_effects[0].duck_under_voice is True
+
 assert blueprint.music.preset.resolved_preset_id == "music.horror_low_drone"
 
 assert blueprint.subtitles.animation_preset is not None

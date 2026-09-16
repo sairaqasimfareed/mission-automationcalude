@@ -298,6 +298,17 @@ class SoundEffectDirective(MissionBaseModel):
 
     enabled: bool = True
 
+    # Real-world finding: sound effects never ducked under voice at
+    # all (hardcoded False at generation time, with no directive
+    # field to override it) - unlike background music, which already
+    # has this real, configurable field. A real render with several
+    # SFX cues per scene buried the narration under them. Defaults to
+    # True, matching music's own default; sidechaincompress only ever
+    # reduces volume during real overlap with active narration, so
+    # this is a no-op for any cue that never actually plays over
+    # speech.
+    duck_under_voice: bool = True
+
     metadata: dict[str, Any] = Field(
         default_factory=dict,
     )

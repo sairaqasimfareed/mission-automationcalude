@@ -127,6 +127,8 @@ class ResolvedSoundEffectInstruction(MissionBaseModel):
 
     enabled: bool = True
 
+    duck_under_voice: bool = True
+
 
 class ResolvedSubtitleInstruction(MissionBaseModel):
     """Resolved subtitle styling instruction."""
