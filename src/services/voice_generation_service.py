@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import subprocess
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +22,31 @@ from src.models.voice_generation import (
     VoiceGenerationStatus,
 )
 from src.providers.voice_provider import VoiceProvider
+
+_PROBE_COMMAND_TIMEOUT_SECONDS = 30.0
+
+
+def _run_ffprobe(command: list[str]) -> str:
+    """Real ffprobe invocation - the default `ffprobe_runner` implementation."""
+
+    completed = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=_PROBE_COMMAND_TIMEOUT_SECONDS,
+        check=False,
+    )
+
+    if completed.returncode != 0:
+        raise RuntimeError(
+            "ffprobe command failed: "
+            + " ".join(command)
+            + (f"\n{completed.stderr.strip()}" if completed.stderr else "")
+        )
+
+    return completed.stdout
 
 
 class VoiceGenerationService:
@@ -43,8 +70,12 @@ class VoiceGenerationService:
         self,
         *,
         providers: list[VoiceProvider],
+        ffprobe_path: str = "ffprobe",
+        ffprobe_runner: Callable[[list[str]], str] | None = None,
     ) -> None:
         self.providers = providers
+        self.ffprobe_path = ffprobe_path
+        self._ffprobe_runner = ffprobe_runner or _run_ffprobe
 
     def generate(
         self,
@@ -186,11 +217,50 @@ class VoiceGenerationService:
                 },
             )
 
+        # Real-world finding: this always used the pre-generation
+        # ESTIMATE, never the real generated file's own duration -
+        # every later scene's voice start_time_seconds is computed by
+        # accumulating this value (see the caller's loop), and
+        # subtitle timing keys off this same estimate, so any real
+        # difference between estimated and actual TTS speech length
+        # compounds across every remaining scene, drifting voice,
+        # subtitles, and the real audio further out of sync as the
+        # video goes on. Measuring the real file directly removes the
+        # estimate from the loop entirely; a measurement failure
+        # (ffprobe unavailable, unreadable file) falls back to the
+        # old estimate-based behavior with a warning, never hard-
+        # failing voice generation over it.
+        measured_duration_seconds = self._detect_duration_seconds(
+            Path(normalized_output_file)
+        )
+
+        if measured_duration_seconds is not None and measured_duration_seconds > 0.0:
+            resolved_duration_seconds = measured_duration_seconds
+
+            # Subtitle timing (SubtitleExecutionService.build_scene_subtitles)
+            # reads this same blueprint's estimated_speech_duration_seconds
+            # directly, not the audio track - updating it here in place is
+            # what actually closes the loop for subtitle sync, since this
+            # is the exact same blueprint object the render pipeline later
+            # hands to the subtitle stage. "Estimated" now means "the best
+            # known duration" - a real measurement after generation, the
+            # pre-generation guess only until then.
+            blueprint.estimated_speech_duration_seconds = resolved_duration_seconds
+        else:
+            resolved_duration_seconds = blueprint.estimated_speech_duration_seconds
+
+            job.warnings.append(
+                "Could not measure the real generated audio duration; "
+                "used the pre-generation estimate instead, which can "
+                "drift voice/subtitle timing out of sync with the "
+                "actual audio."
+            )
+
         audio_track = AudioTrack(
             track_type=AudioTrackType.VOICEOVER,
             source_file=normalized_output_file,
             start_time_seconds=(start_time_seconds),
-            duration_seconds=(blueprint.estimated_speech_duration_seconds),
+            duration_seconds=resolved_duration_seconds,
             volume=self._gain_db_to_linear(blueprint.volume_gain_db),
             fade_in_seconds=(blueprint.pause_before_seconds),
             fade_out_seconds=(blueprint.pause_after_seconds),
@@ -215,6 +285,7 @@ class VoiceGenerationService:
                 "style_strength": (blueprint.style_strength),
                 "speaker_boost": (blueprint.speaker_boost),
                 "explicit_instruction_count": (blueprint.explicit_instruction_count),
+                "measured_duration_seconds": measured_duration_seconds,
             },
         )
 
@@ -424,6 +495,38 @@ class VoiceGenerationService:
                 4.0,
             ),
         )
+
+    def _detect_duration_seconds(
+        self,
+        file_path: Path,
+    ) -> float | None:
+        """Return the real, measured duration of a generated audio file."""
+
+        try:
+            raw_output = self._ffprobe_runner(
+                [
+                    self.ffprobe_path,
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "format=duration",
+                    "-of",
+                    "csv=p=0",
+                    str(file_path),
+                ]
+            )
+        except (OSError, RuntimeError, subprocess.TimeoutExpired):
+            return None
+
+        cleaned = raw_output.strip()
+
+        if not cleaned:
+            return None
+
+        try:
+            return float(cleaned.splitlines()[0].strip())
+        except (ValueError, IndexError):
+            return None
 
     @staticmethod
     def _fail(
