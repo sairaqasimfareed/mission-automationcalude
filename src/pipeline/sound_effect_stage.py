@@ -118,6 +118,51 @@ class SoundEffectPipelineStage(BasePipelineStage):
         )
 
         if content_aware_cues is not None:
+            # Real-world finding: a job whose SFX were first generated
+            # via the legacy genre-preset path (the else branch below)
+            # and only later acquired a real sound_design_plan (e.g. a
+            # job rendered before content-aware sound design ran, then
+            # re-rendered afterward) keeps those old genre-preset
+            # tracks forever - nothing ever reconciled them against
+            # the newer content-aware plan. A real render ended up
+            # with the SAME generic "impact hit" cue on every single
+            # scene (genre-preset, from an early run) stacked on top
+            # of real, narration-grounded cues (content-aware, from a
+            # later run) - exactly the "SFX everywhere" a listener
+            # would notice. Once a job has a real sound_design_plan,
+            # only content-aware cues should exist; anything else on
+            # the timeline is a stale leftover from before that plan
+            # existed, identified by not matching any cue's own
+            # audio_track_id (the one, authoritative link between a
+            # content-aware cue and the track it produced).
+            content_aware_track_ids = {
+                cue.audio_track_id
+                for cue in content_aware_cues
+                if cue.audio_track_id is not None
+            }
+
+            stale_tracks = [
+                track
+                for track in audio_timeline.tracks
+                if track.track_type == AudioTrackType.SOUND_EFFECT
+                and str(track.id) not in content_aware_track_ids
+            ]
+
+            if stale_tracks:
+                stale_ids = {track.id for track in stale_tracks}
+
+                audio_timeline.tracks = [
+                    track
+                    for track in audio_timeline.tracks
+                    if track.id not in stale_ids
+                ]
+
+                warnings.append(
+                    f"Removed {len(stale_tracks)} sound-effect track(s) "
+                    "left over from a legacy (non-content-aware) "
+                    "sound-design pass."
+                )
+
             # Content-aware cues carry their own PENDING/GENERATED/
             # FAILED status (set by SceneSoundDesignService, or reset
             # by an operator asking to regenerate one), so a rerun of

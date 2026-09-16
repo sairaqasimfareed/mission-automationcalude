@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from src.models.audio_timeline import AudioTimeline
+from src.models.audio_track import AudioTrack, AudioTrackStatus, AudioTrackType
 from src.models.editing_directives import DirectiveIntensity, DirectiveTimingMode
 from src.models.media_strategy import SceneSourceType
 from src.models.research import ResearchResult, ResearchStatus
@@ -464,6 +466,103 @@ def test_execute_prefers_content_aware_plan_over_genre_blueprint() -> None:
     )
     assert job.sound_design_plan.sfx_cues[0].status == SoundDesignItemStatus.GENERATED
     assert job.sound_design_plan.sfx_cues[0].audio_track_id is not None
+
+
+def test_execute_removes_stale_genre_preset_cues_once_content_aware_plan_exists() -> (
+    None
+):
+    """
+    Real-world finding: a job whose SFX were first generated via the
+    legacy genre-preset path, then later acquired a real
+    sound_design_plan (e.g. re-rendered after content-aware sound
+    design ran), kept the old genre-preset tracks forever - nothing
+    ever reconciled them. A real render ended up with the SAME
+    generic "impact hit" cue on every scene stacked on top of real,
+    narration-grounded cues - exactly the "SFX everywhere" a listener
+    would notice. Once a content-aware plan exists, only its own
+    cues should remain.
+    """
+
+    stage = SoundEffectPipelineStage(
+        generation_service=SoundEffectGenerationService(
+            providers=[FakeSoundEffectProvider()]
+        ),
+    )
+
+    job = _job_with_timeline(scene_duration=8.0, sound_effects=[])
+
+    stale_track = AudioTrack(
+        track_type=AudioTrackType.SOUND_EFFECT,
+        source_file="assets/legacy_riser.mp3",
+        start_time_seconds=104.0,
+        duration_seconds=2.0,
+        provider="fake",
+        status=AudioTrackStatus.READY,
+        metadata={
+            "scene_number": 1,
+            "resolved_preset_id": "sfx.riser_impact",
+            "library_query": "cinematic riser impact hit",
+        },
+    )
+
+    job.audio_timeline = AudioTimeline(tracks=[stale_track])
+
+    job.sound_design_plan = SoundDesignPlan(
+        sfx_cues=[
+            SoundEffectCueDirective(
+                scene_number=1,
+                generation_prompt="three slow deliberate wooden knocks",
+                rationale="Narration mentions knocks.",
+            )
+        ]
+    )
+
+    result = stage.execute(_context(job))
+
+    assert job.audio_timeline is not None
+    track_queries = [
+        track.metadata.get("library_query") for track in job.audio_timeline.tracks
+    ]
+    assert "cinematic riser impact hit" not in track_queries
+    assert "three slow deliberate wooden knocks" in track_queries
+    assert len(job.audio_timeline.tracks) == 1
+    assert any("left over from a legacy" in warning for warning in result.warnings)
+
+
+def test_execute_keeps_content_aware_tracks_across_a_second_run() -> None:
+    """The cleanup must never remove a content-aware cue's own real track."""
+
+    stage = SoundEffectPipelineStage(
+        generation_service=SoundEffectGenerationService(
+            providers=[FakeSoundEffectProvider()]
+        ),
+    )
+
+    job = _job_with_timeline(scene_duration=8.0, sound_effects=[])
+    job.sound_design_plan = SoundDesignPlan(
+        sfx_cues=[
+            SoundEffectCueDirective(
+                scene_number=1,
+                generation_prompt="three slow deliberate wooden knocks",
+                rationale="Narration mentions knocks.",
+            )
+        ]
+    )
+
+    first_result = stage.execute(_context(job))
+
+    assert first_result.metadata["attached_count"] == 1
+    assert job.audio_timeline is not None
+    assert len(job.audio_timeline.tracks) == 1
+
+    second_result = stage.execute(_context(job))
+
+    assert second_result.metadata["attached_count"] == 0
+    assert second_result.metadata["skipped_existing_count"] == 1
+    assert len(job.audio_timeline.tracks) == 1
+    assert not any(
+        "left over from a legacy" in warning for warning in second_result.warnings
+    )
 
 
 def test_execute_skips_already_generated_content_aware_cue() -> None:
