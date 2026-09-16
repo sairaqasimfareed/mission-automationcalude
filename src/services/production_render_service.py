@@ -804,8 +804,17 @@ class ProductionRenderService:
             for start in range(0, len(scene_numbers), group_size)
         ]
 
-    @staticmethod
+    # Heuristic tolerance for recognizing a background-music track
+    # that spans the entire original timeline (a single continuous
+    # track) rather than one positioned scene-range segment among
+    # several - see _slice_for_scenes. Deliberately looser than the
+    # tight tolerances used for real timing validation elsewhere,
+    # since this only classifies which slicing rule to apply.
+    _WHOLE_TIMELINE_MUSIC_TOLERANCE_SECONDS = 1.0
+
+    @classmethod
     def _slice_for_scenes(
+        cls,
         *,
         video_timeline: VideoTimeline,
         audio_timeline: AudioTimeline,
@@ -816,13 +825,21 @@ class ProductionRenderService:
         Return a self-contained, zero-based timeline slice covering
         only the given scene numbers.
 
-        Video items and voiceover/sound-effect tracks partition
-        cleanly by their original scene-aligned time window, re-based
-        to start at zero. Background music has no natural per-scene
-        boundary, so each chunk instead gets its own copy re-based to
-        fill exactly that chunk's duration, relying on the same
-        loop/atrim mechanism that already fills a track shorter than
-        its timeline.
+        Every audio track partitions by its real overlap with this
+        chunk's time range, rebased to start at zero and clipped to
+        the chunk's own bounds - a track spanning a chunk boundary
+        (voiceover, sound effect, or a content-aware, per-scene-range
+        background-music segment - genre sound design can produce
+        several of the latter, each positioned at its own scene
+        range, not one continuous track) is split, each side keeping
+        only its own real content. The one exception is a
+        background-music track that spans the *entire original
+        timeline* (the single-continuous-track path, rather than a
+        positioned segment): pure overlap slicing would leave every
+        chunk after the first with no music at all, so that one case
+        instead gets its own per-chunk copy, looped to fill the
+        chunk, relying on the same loop/atrim mechanism that already
+        fills a track shorter than its timeline.
         """
 
         selected_items: list[VideoTimelineItem] = sorted(
@@ -861,49 +878,58 @@ class ProductionRenderService:
 
         chunk_video_timeline.calculate_duration()
 
+        total_video_duration = video_timeline.calculate_duration()
+
+        tolerance = cls._WHOLE_TIMELINE_MUSIC_TOLERANCE_SECONDS
+
         chunk_tracks: list[AudioTrack] = []
 
         for track in audio_timeline.tracks:
-            if track.track_type == AudioTrackType.BACKGROUND_MUSIC:
-                continue
+            track_end = track.start_time_seconds + track.duration_seconds
 
-            if chunk_start <= track.start_time_seconds < chunk_end:
-                rebased_start = track.start_time_seconds - chunk_start
+            spans_entire_timeline = (
+                track.track_type == AudioTrackType.BACKGROUND_MUSIC
+                and track.start_time_seconds <= tolerance
+                and track_end >= total_video_duration - tolerance
+            )
 
-                # A track is allowed to run slightly past its own
-                # scene's boundary in the full timeline (e.g. a
-                # sound-effect tail, or a voiceover's trailing pause) -
-                # harmless there since it just bleeds into whatever
-                # comes next. Inside a chunk there is nothing after the
-                # chunk's own last scene to bleed into, so a track
-                # belonging to that last scene must be clipped to the
-                # chunk's own duration or it fails the same
-                # audio-vs-video duration tolerance check the full
-                # timeline already passed.
-                clipped_duration = min(
-                    track.duration_seconds,
-                    max(chunk_duration - rebased_start, 0.0),
-                )
-
+            if spans_entire_timeline:
                 chunk_tracks.append(
                     track.model_copy(
                         update={
-                            "start_time_seconds": rebased_start,
-                            "duration_seconds": clipped_duration,
+                            "start_time_seconds": 0.0,
+                            "duration_seconds": chunk_duration,
+                            "loop_enabled": True,
                         }
                     )
                 )
 
-        for track in audio_timeline.tracks:
-            if track.track_type != AudioTrackType.BACKGROUND_MUSIC:
+                continue
+
+            # A track is allowed to run slightly past its own scene's
+            # boundary in the full timeline (e.g. a sound-effect
+            # tail, a voiceover's trailing pause, or a music segment
+            # whose own real content needs to loop past its nominal
+            # span) - harmless there since it just bleeds into
+            # whatever comes next. Inside a chunk there is nothing
+            # past the chunk's own last scene to bleed into, so only
+            # the portion of the track that actually overlaps this
+            # chunk is kept; a track straddling a chunk boundary is
+            # split, each side independently clipped to its own
+            # chunk (the same disclosed loop-restart trade-off as the
+            # whole-timeline case above, just at a finer grain).
+            overlap_start = max(track.start_time_seconds, chunk_start)
+
+            overlap_end = min(track_end, chunk_end)
+
+            if overlap_end <= overlap_start:
                 continue
 
             chunk_tracks.append(
                 track.model_copy(
                     update={
-                        "start_time_seconds": 0.0,
-                        "duration_seconds": chunk_duration,
-                        "loop_enabled": True,
+                        "start_time_seconds": (overlap_start - chunk_start),
+                        "duration_seconds": (overlap_end - overlap_start),
                     }
                 )
             )

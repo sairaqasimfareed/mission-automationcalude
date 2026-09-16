@@ -504,8 +504,19 @@ def _multi_scene_audio_timeline(
     *,
     voice_files: list[Path],
     music_file: Path,
+    segmented_music: bool = False,
 ) -> AudioTimeline:
-    """Build a real multi-scene voiceover + background music timeline."""
+    """
+    Build a real multi-scene voiceover + background music timeline.
+
+    segmented_music mirrors real content-aware sound design (see
+    MusicPipelineStage._execute_content_aware): several
+    BACKGROUND_MUSIC tracks, each positioned at its own scene-range
+    span, rather than one track continuous across the whole video -
+    the shape a real job with several music mood segments actually
+    has, and the one ProductionRenderService's chunk slicing must
+    split/position correctly rather than treat as one loopable track.
+    """
 
     tracks: list[AudioTrack] = []
 
@@ -531,18 +542,46 @@ def _multi_scene_audio_timeline(
 
     total_duration_seconds = float(len(voice_files) * SMOKE_DURATION_SECONDS)
 
-    tracks.append(
-        AudioTrack(
-            track_type=AudioTrackType.BACKGROUND_MUSIC,
-            source_file=music_file.as_posix(),
-            start_time_seconds=0.0,
-            duration_seconds=total_duration_seconds,
-            volume=0.2,
-            loop_enabled=True,
-            provider="F.4E synthetic fixture",
-            status=AudioTrackStatus.READY,
+    if segmented_music:
+        half_scene_count = len(voice_files) // 2
+
+        segment_bounds = [
+            (0.0, float(half_scene_count * SMOKE_DURATION_SECONDS)),
+            (
+                float(half_scene_count * SMOKE_DURATION_SECONDS),
+                total_duration_seconds,
+            ),
+        ]
+
+        for segment_start, segment_end in segment_bounds:
+            if segment_end <= segment_start:
+                continue
+
+            tracks.append(
+                AudioTrack(
+                    track_type=AudioTrackType.BACKGROUND_MUSIC,
+                    source_file=music_file.as_posix(),
+                    start_time_seconds=segment_start,
+                    duration_seconds=(segment_end - segment_start),
+                    volume=0.2,
+                    loop_enabled=True,
+                    provider="F.4E synthetic fixture",
+                    status=AudioTrackStatus.READY,
+                )
+            )
+    else:
+        tracks.append(
+            AudioTrack(
+                track_type=AudioTrackType.BACKGROUND_MUSIC,
+                source_file=music_file.as_posix(),
+                start_time_seconds=0.0,
+                duration_seconds=total_duration_seconds,
+                volume=0.2,
+                loop_enabled=True,
+                provider="F.4E synthetic fixture",
+                status=AudioTrackStatus.READY,
+            )
         )
-    )
 
     timeline = AudioTimeline(
         tracks=tracks,
@@ -702,6 +741,138 @@ def test_real_production_render_service_chunks_oversized_commands(
     assert "codec_type=video" in probe_output
 
     assert "codec_type=audio" in probe_output
+
+    duration_line = next(
+        line for line in probe_output.splitlines() if line.startswith("duration=")
+    )
+
+    total_duration_seconds = float(duration_line.split("=", 1)[1])
+
+    expected_duration_seconds = float(scene_count * SMOKE_DURATION_SECONDS)
+
+    assert abs(total_duration_seconds - expected_duration_seconds) < 1.0
+
+
+def test_real_production_render_service_chunks_with_segmented_background_music(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Real-world finding, verified against the actual Emu War job before
+    ever re-attempting its render: content-aware sound design
+    produces several BACKGROUND_MUSIC tracks, each positioned at its
+    own scene-range span (that job had 9), not one track spanning the
+    whole video. The original chunk-slicing logic assumed a single
+    continuous track and would have force-looped every one of those
+    segments across each chunk's *entire* duration - massively
+    overlapping, wrong audio. This proves the fixed, overlap-based
+    slicing against a real two-segment timeline with real FFmpeg: no
+    crash, and a real, correctly-timed output.
+    """
+
+    (
+        ffmpeg,
+        ffprobe,
+    ) = _require_ffmpeg()
+
+    scene_count = 4
+
+    source_videos: list[Path] = []
+
+    source_audios: list[Path] = []
+
+    for index in range(1, scene_count + 1):
+        video_file = tmp_path / "inputs" / f"scene_{index:03d}.mp4"
+
+        audio_file = tmp_path / "inputs" / f"voice_{index:03d}.wav"
+
+        _create_source_video(
+            ffmpeg=ffmpeg,
+            output_file=video_file,
+        )
+
+        _create_source_audio(
+            ffmpeg=ffmpeg,
+            output_file=audio_file,
+        )
+
+        source_videos.append(video_file)
+
+        source_audios.append(audio_file)
+
+    music_file = tmp_path / "inputs" / "music.wav"
+
+    _create_source_audio(
+        ffmpeg=ffmpeg,
+        output_file=music_file,
+    )
+
+    output_file = tmp_path / "outputs" / "segmented_music_chunk_smoke.mp4"
+
+    output_file.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    video_timeline = _multi_scene_video_timeline(
+        source_files=source_videos,
+    )
+
+    audio_timeline = _multi_scene_audio_timeline(
+        voice_files=source_audios,
+        music_file=music_file,
+        segmented_music=True,
+    )
+
+    background_music_tracks = [
+        track
+        for track in audio_timeline.tracks
+        if track.track_type.value == "background_music"
+    ]
+
+    assert len(background_music_tracks) == 2
+
+    voice_blueprints = _multi_scene_voice_blueprints(scene_count)
+
+    monkeypatch.setattr(
+        ProductionRenderService,
+        "_SAFE_COMMAND_LINE_LENGTH",
+        10,
+    )
+
+    service = ProductionRenderService(
+        ffmpeg_config=FFmpegConfig(
+            ffmpeg_path=ffmpeg,
+            ffprobe_path=ffprobe,
+            video_codec=(FFmpegVideoCodec.LIBX264),
+            hardware_acceleration=(FFmpegHardwareAcceleration.NONE),
+            timeout_seconds=60.0,
+        ),
+        output_file=output_file.as_posix(),
+    )
+
+    result = service.render(
+        video_timeline=video_timeline,
+        audio_timeline=audio_timeline,
+        voice_blueprints=voice_blueprints,
+    )
+
+    assert result.success is True
+
+    assert result.status == RenderStatus.COMPLETED
+
+    assert any("split into" in warning for warning in result.warnings)
+
+    rendered_file = Path(result.output_file or "")
+
+    assert rendered_file.is_file()
+
+    assert rendered_file.stat().st_size > 0
+
+    probe_output = _probe_output(
+        ffprobe=ffprobe,
+        output_file=rendered_file,
+    )
 
     duration_line = next(
         line for line in probe_output.splitlines() if line.startswith("duration=")
