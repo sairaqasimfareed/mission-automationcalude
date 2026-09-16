@@ -42,6 +42,57 @@ def test_find_real_chrome_executable_returns_none_when_not_found() -> None:
         assert find_real_chrome_executable() is None
 
 
+def test_find_real_chrome_executable_falls_back_to_macos_common_path() -> None:
+    with (
+        patch("src.browser.manual_signin_bootstrap.sys.platform", "darwin"),
+        patch("src.browser.manual_signin_bootstrap.shutil.which", return_value=None),
+        patch(
+            "src.browser.manual_signin_bootstrap.Path.is_file",
+            return_value=True,
+        ),
+    ):
+        found = find_real_chrome_executable()
+
+    assert found is not None
+    # Path normalizes separators to the real host OS's own convention
+    # regardless of the patched sys.platform value (pathlib picks its
+    # concrete class from the real OS, not from sys.platform), so
+    # this compares on a normalized form rather than the host's
+    # separator style.
+    assert found.replace("\\", "/").endswith(
+        "Google Chrome.app/Contents/MacOS/Google Chrome"
+    )
+
+
+def test_find_real_chrome_executable_falls_back_to_linux_common_path() -> None:
+    with (
+        patch("src.browser.manual_signin_bootstrap.sys.platform", "linux"),
+        patch("src.browser.manual_signin_bootstrap.shutil.which", return_value=None),
+        patch(
+            "src.browser.manual_signin_bootstrap.Path.is_file",
+            return_value=True,
+        ),
+    ):
+        found = find_real_chrome_executable()
+
+    assert found is not None
+    assert found.replace("\\", "/") == "/usr/bin/google-chrome"
+
+
+def test_find_real_chrome_executable_tries_google_chrome_on_path() -> None:
+    def fake_which(name: str) -> str | None:
+        return "/usr/bin/google-chrome" if name == "google-chrome" else None
+
+    with (
+        patch("src.browser.manual_signin_bootstrap.sys.platform", "linux"),
+        patch(
+            "src.browser.manual_signin_bootstrap.shutil.which",
+            side_effect=fake_which,
+        ),
+    ):
+        assert find_real_chrome_executable() == "/usr/bin/google-chrome"
+
+
 def test_manual_sign_in_command_includes_profile_dir_and_url() -> None:
     command = manual_sign_in_command(
         r"C:\Program Files\Google\Chrome\Application\chrome.exe",

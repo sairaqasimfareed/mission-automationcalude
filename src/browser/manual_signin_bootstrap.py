@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import sys
 from pathlib import Path
 
 # GF-13/GF-17, real-world finding (2026-09-07): a human actually
@@ -48,6 +49,40 @@ _COMMON_WINDOWS_CHROME_PATHS = (
     r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
 )
 
+_COMMON_MACOS_CHROME_PATHS = (
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+)
+
+_COMMON_LINUX_CHROME_PATHS = (
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/opt/google/chrome/google-chrome",
+)
+
+# Chrome's own on-PATH binary name differs per platform - Windows
+# installs never put a bare "chrome"/"chrome.exe" on PATH either
+# (both checked anyway, harmlessly, in case an operator added one
+# themselves), but a real Linux "google-chrome" install commonly does.
+_ON_PATH_EXECUTABLE_NAMES = (
+    "chrome",
+    "chrome.exe",
+    "google-chrome",
+    "google-chrome-stable",
+)
+
+
+def _common_chrome_paths() -> tuple[str, ...]:
+    """Return this platform's real, common Chrome install locations."""
+
+    if sys.platform.startswith("win"):
+        return _COMMON_WINDOWS_CHROME_PATHS
+
+    if sys.platform == "darwin":
+        return _COMMON_MACOS_CHROME_PATHS
+
+    return _COMMON_LINUX_CHROME_PATHS
+
 
 def find_real_chrome_executable() -> str | None:
     """
@@ -61,14 +96,17 @@ def find_real_chrome_executable() -> str | None:
     silently launching something wrong.
     """
 
-    on_path = shutil.which("chrome") or shutil.which("chrome.exe")
+    for name in _ON_PATH_EXECUTABLE_NAMES:
+        on_path = shutil.which(name)
 
-    if on_path is not None:
-        return on_path
+        if on_path is not None:
+            return on_path
 
-    for candidate in _COMMON_WINDOWS_CHROME_PATHS:
-        if Path(candidate).is_file():
-            return candidate
+    for candidate in _common_chrome_paths():
+        expanded = Path(candidate).expanduser()
+
+        if expanded.is_file():
+            return str(expanded)
 
     return None
 
