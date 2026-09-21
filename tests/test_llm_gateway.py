@@ -102,6 +102,68 @@ malformed_result = gateway.call(
 print("Malformed status:", malformed_result.status)
 print("Malformed error:", malformed_result.error_message)
 
+
+# Real-world finding, 2026-09-18: see text_encoding_repair.py's own
+# module docstring - the gateway must repair mojibake-corrupted
+# provider content before any caller ever sees it, plain text or JSON.
+_corrupted_em_dash = b"cunning \xc3\xa2\xe2\x82\xac\xe2\x80\x9d but".decode("utf-8")
+
+mojibake_plain_result = gateway.call(
+    provider=LLMProvider.ANTHROPIC,
+    model="test-model",
+    operation=lambda: LLMProviderResponse(
+        content=_corrupted_em_dash,
+        usage=LLMUsage(input_tokens=5, output_tokens=5, total_tokens=10),
+        provider_request_id="request-mojibake-plain-001",
+    ),
+)
+
+print("Mojibake-repaired plain content:", mojibake_plain_result.content)
+
+assert mojibake_plain_result.content == "cunning — but"
+
+
+mojibake_json_result = gateway.call(
+    provider=LLMProvider.ANTHROPIC,
+    model="test-model",
+    operation=lambda: LLMProviderResponse(
+        # ensure_ascii=False - a real provider's own JSON response
+        # carries non-ASCII characters as raw UTF-8, not \uXXXX
+        # escapes, so the fake response here must match that.
+        content=json.dumps({"narration": _corrupted_em_dash}, ensure_ascii=False),
+        usage=LLMUsage(input_tokens=5, output_tokens=5, total_tokens=10),
+        provider_request_id="request-mojibake-json-001",
+    ),
+    expect_json=True,
+)
+
+print("Mojibake-repaired parsed data:", mojibake_json_result.parsed_data)
+
+assert mojibake_json_result.parsed_data == {"narration": "cunning — but"}
+
+
+# ensure_ascii=True (json.dumps' own default) escapes the corruption
+# as literal \uXXXX text instead of raw UTF-8 bytes - only becomes a
+# literal character once json.loads unescapes it, which is exactly
+# why the post-parse repair pass (not just the pre-parse one) matters.
+mojibake_escaped_json_result = gateway.call(
+    provider=LLMProvider.ANTHROPIC,
+    model="test-model",
+    operation=lambda: LLMProviderResponse(
+        content=json.dumps({"narration": _corrupted_em_dash}),
+        usage=LLMUsage(input_tokens=5, output_tokens=5, total_tokens=10),
+        provider_request_id="request-mojibake-escaped-json-001",
+    ),
+    expect_json=True,
+)
+
+print(
+    "Mojibake-repaired (escaped) parsed data:",
+    mojibake_escaped_json_result.parsed_data,
+)
+
+assert mojibake_escaped_json_result.parsed_data == {"narration": "cunning — but"}
+
 assert malformed_result.status == LLMCallStatus.MALFORMED_RESPONSE
 assert malformed_result.is_success is False
 assert malformed_result.content == "This is not valid JSON"

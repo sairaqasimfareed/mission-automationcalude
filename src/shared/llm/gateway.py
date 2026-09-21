@@ -18,6 +18,7 @@ from src.shared.llm.retry import (
     execute_with_retry,
 )
 from src.shared.logger import logger
+from src.shared.text_encoding_repair import repair_mojibake, repair_mojibake_deep
 
 
 class LLMGateway:
@@ -108,7 +109,14 @@ class LLMGateway:
             self._log_result(result)
             return result
 
-        content = provider_response.content
+        # Real-world finding, 2026-09-18: see text_encoding_repair.py's
+        # own module docstring for the full story - repairing here,
+        # once, right after content leaves the provider adapter, means
+        # every downstream pipeline stage (research, script, content
+        # intelligence, sound design) sees only correctly-encoded text
+        # regardless of which provider or code path introduced the
+        # corruption upstream.
+        content = repair_mojibake(provider_response.content)
         parsed_data: dict[str, Any] | None = None
 
         if expect_json:
@@ -153,7 +161,13 @@ class LLMGateway:
                 self._log_result(result)
                 return result
 
-            parsed_data = parsed_value
+            # A \uXXXX escape sequence inside the raw JSON text only
+            # becomes a literal character once json.loads unescapes
+            # it - the repair above (on the raw, pre-parse content)
+            # cannot see corruption that only exists in that escaped
+            # form, so every nested string value gets a second pass
+            # here too.
+            parsed_data = repair_mojibake_deep(parsed_value)
 
         breaker.record_success()
 
