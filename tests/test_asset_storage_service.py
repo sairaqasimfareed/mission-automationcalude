@@ -91,4 +91,70 @@ with TemporaryDirectory() as temporary_directory:
     assert len(asset_index.assets) == 1
 
 
+with TemporaryDirectory() as temporary_directory:
+    root = Path(temporary_directory)
+
+    source_directory = root / "extracted"
+    storage_directory = root / "projects"
+
+    source_directory.mkdir(parents=True)
+
+    frame_file = source_directory / "scene_002_last_frame.jpg"
+
+    frame_file.write_bytes(b"fake-frame-bytes")
+
+    asset_index = AssetIndex()
+
+    service = AssetStorageService(
+        storage_root=storage_directory,
+        asset_index=asset_index,
+    )
+
+    frame_result = service.store_extracted_frame(
+        source_path=frame_file,
+        project_id="continuity-project",
+        scene_number=2,
+    )
+
+    print("Extracted frame stored:", frame_result.success)
+
+    assert frame_result.success is True
+    assert frame_result.asset is not None
+    assert frame_result.copied_new_file is True
+    assert frame_result.reused_existing is False
+
+    extracted_asset = frame_result.asset
+
+    # The real distinction from a manual upload: source is GENERATED,
+    # not MANUAL_UPLOAD - this is code-produced, not a user action.
+    assert extracted_asset.source == IndexedAssetSource.GENERATED
+    assert extracted_asset.asset_type == IndexedAssetType.IMAGE
+    assert extracted_asset.provider == "Self-Extracted Frame"
+    assert extracted_asset.license_type == "derived"
+    assert extracted_asset.content_hash is not None
+
+    stored_path = Path(extracted_asset.file_path).resolve()
+
+    assert stored_path.exists()
+    assert storage_directory.resolve() in stored_path.parents
+
+    assert len(asset_index.assets) == 1
+
+    # An identical extracted frame (e.g. two scenes ending on a
+    # visually identical last frame) is reused by content hash, same
+    # dedup behavior as store_manual_upload.
+    duplicate_frame_result = service.store_extracted_frame(
+        source_path=frame_file,
+        project_id="continuity-project",
+        scene_number=5,
+    )
+
+    assert duplicate_frame_result.success is True
+    assert duplicate_frame_result.reused_existing is True
+    assert duplicate_frame_result.copied_new_file is False
+    assert duplicate_frame_result.asset is extracted_asset
+
+    assert len(asset_index.assets) == 1
+
+
 print("Asset Storage Service tests " "completed successfully.")

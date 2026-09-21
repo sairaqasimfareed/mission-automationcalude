@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
+from uuid import UUID
 
 from pydantic import Field
 
@@ -56,6 +57,23 @@ class AssetIndex(MissionBaseModel):
 
     def add(self, asset: IndexedAsset) -> None:
         self.assets.append(asset)
+
+    def get(self, asset_id: UUID | str) -> IndexedAsset | None:
+        """
+        Resolve one asset by its own id - the id-keyed counterpart to
+        search()'s query-based lookup. Accepts either a real UUID or
+        its string form, since callers holding an opaque, provider-
+        neutral reference id (e.g. CanonicalEntityIdentity.reference_asset_ids)
+        typically have it as a string.
+        """
+
+        normalized_id = asset_id if isinstance(asset_id, UUID) else UUID(str(asset_id))
+
+        for asset in self.assets:
+            if asset.id == normalized_id:
+                return asset
+
+        return None
 
     def search(
         self,

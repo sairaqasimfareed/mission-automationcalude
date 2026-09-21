@@ -220,6 +220,157 @@ class AssetStorageService:
             },
         )
 
+    def store_extracted_frame(
+        self,
+        *,
+        source_path: str | Path,
+        project_id: str,
+        scene_number: int,
+        title: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> AssetStorageResult:
+        """
+        Store or reuse one real frame this codebase extracted itself
+        from an already-generated clip (visual-continuity self-
+        consistency references - see FrameExtractionService) - not a
+        user action, so source=IndexedAssetSource.GENERATED rather
+        than MANUAL_UPLOAD, everything else (hashing, dedup, project-
+        scoped storage, AssetIndex registration) reuses the exact same
+        primitives store_manual_upload() already established.
+        """
+
+        normalized_project_id = self._sanitize_identifier(project_id)
+
+        if scene_number < 1:
+            raise ValueError("Scene number must be at least 1.")
+
+        source = Path(source_path).expanduser().resolve()
+
+        if not source.exists():
+            return AssetStorageResult(
+                success=False,
+                message=("Extracted frame source file " "does not exist."),
+                metadata={
+                    "source_path": str(source),
+                },
+            )
+
+        if not source.is_file():
+            return AssetStorageResult(
+                success=False,
+                message=("Extracted frame source path " "is not a file."),
+                metadata={
+                    "source_path": str(source),
+                },
+            )
+
+        try:
+            content_hash = self._calculate_hash(source)
+        except OSError as error:
+            return AssetStorageResult(
+                success=False,
+                message=("Extracted frame hash could not " "be calculated."),
+                metadata={
+                    "source_path": str(source),
+                    "error_type": type(error).__name__,
+                },
+            )
+
+        existing_asset = self._find_by_hash(content_hash)
+
+        if existing_asset is not None:
+            return AssetStorageResult(
+                success=True,
+                asset=existing_asset,
+                reused_existing=True,
+                copied_new_file=False,
+                message=(
+                    "An identical extracted frame already " "exists and was reused."
+                ),
+                metadata={
+                    "content_hash": content_hash,
+                },
+            )
+
+        project_directory = (
+            self.storage_root / normalized_project_id / "extracted_frames"
+        )
+
+        project_directory.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        safe_stem = self._sanitize_filename(source.stem)
+
+        destination_name = (
+            f"scene_{scene_number:03}_"
+            f"{content_hash[:12]}_"
+            f"{safe_stem}"
+            f"{source.suffix.lower()}"
+        )
+
+        destination = project_directory / destination_name
+
+        try:
+            shutil.copy2(
+                source,
+                destination,
+            )
+        except OSError as error:
+            return AssetStorageResult(
+                success=False,
+                message=("Extracted frame could not be copied " "to project storage."),
+                metadata={
+                    "source_path": str(source),
+                    "destination_path": str(destination),
+                    "error_type": type(error).__name__,
+                },
+            )
+
+        file_size_bytes = destination.stat().st_size
+
+        cleaned_title = (
+            title.strip()
+            if title is not None and title.strip()
+            else self._build_title(source)
+        )
+
+        asset_metadata: dict[str, Any] = {
+            "original_source_path": str(source),
+            "project_id": normalized_project_id,
+            "scene_number": scene_number,
+            "extension": source.suffix.lower(),
+        }
+
+        asset_metadata.update(metadata or {})
+
+        asset = IndexedAsset(
+            asset_type=IndexedAssetType.IMAGE,
+            source=IndexedAssetSource.GENERATED,
+            file_path=str(destination.resolve()),
+            title=cleaned_title,
+            provider="Self-Extracted Frame",
+            license_type="derived",
+            file_size_bytes=file_size_bytes,
+            content_hash=content_hash,
+            metadata=asset_metadata,
+        )
+
+        self.asset_index.add(asset)
+
+        return AssetStorageResult(
+            success=True,
+            asset=asset,
+            reused_existing=False,
+            copied_new_file=True,
+            message=("Extracted frame was stored successfully."),
+            metadata={
+                "content_hash": content_hash,
+                "destination_path": str(destination.resolve()),
+            },
+        )
+
     def _find_by_hash(
         self,
         content_hash: str,

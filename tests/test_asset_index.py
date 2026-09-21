@@ -68,4 +68,17 @@ assert len(music_results) == 1
 assert video_results[0].title == "Ancient Underground Tunnel"
 assert music_results[0].title == "Dark Mystery Theme"
 
+# get() - the id-keyed counterpart to search()'s query-based lookup.
+found_by_uuid = index.get(video_asset.id)
+found_by_string = index.get(str(music_asset.id))
+missing = index.get("00000000-0000-0000-0000-000000000000")
+
+assert found_by_uuid is video_asset
+assert found_by_string is music_asset
+assert missing is None
+
+print("get() by real UUID:", found_by_uuid.title)
+print("get() by string id:", found_by_string.title)
+print("get() for an unknown id:", missing)
+
 print("Asset Index tests completed successfully.")
