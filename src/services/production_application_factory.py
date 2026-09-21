@@ -33,6 +33,9 @@ from src.services.mission_application_service import (
     MissionApplicationService,
 )
 from src.services.music_generation_service import MusicGenerationService
+from src.services.narration_condensation_service import (
+    NarrationCondensationService,
+)
 from src.services.pipeline_checkpoint_service import (
     PipelineCheckpointService,
 )
@@ -421,6 +424,9 @@ class ProductionApplicationFactory:
 
         voice_generation_service = VoiceGenerationService(
             providers=list(self._voice_providers),
+            narration_condensation_service=NarrationCondensationService(
+                llm_service=(infrastructure.llm_service),
+            ),
         )
 
         voice_timeline_service = VoiceTimelineService()
@@ -451,6 +457,7 @@ class ProductionApplicationFactory:
             voice_timeline_service=(voice_timeline_service),
             asset_workflow_service=(self._asset_workflow_service),
             genre_timeline_service=(self._genre_timeline_service),
+            genre_profile_registry_service=(self._genre_registry),
             music_generation_service=music_generation_service,
             sound_effect_generation_service=(sound_effect_generation_service),
             **(
