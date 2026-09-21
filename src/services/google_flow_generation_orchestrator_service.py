@@ -119,6 +119,7 @@ class GoogleFlowGenerationOrchestratorService:
         job: VideoJob,
         *,
         scene_number: int,
+        clip_sequence_index: int = 0,
         prompt: str,
         prompt_version: str,
         idempotency_key: str,
@@ -167,6 +168,7 @@ class GoogleFlowGenerationOrchestratorService:
 
         request = GoogleFlowGenerationRequest(
             scene_number=scene_number,
+            clip_sequence_index=clip_sequence_index,
             locked_script_hash=locked_script_hash,
             prompt=prompt,
             prompt_version=prompt_version,

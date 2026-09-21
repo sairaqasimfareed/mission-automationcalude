@@ -400,6 +400,14 @@ class GoogleFlowGenerationRequest(MissionBaseModel):
 
     scene_number: int = Field(ge=1)
 
+    # Phase 5 (multi-clip scene splitting): mirrors VideoClip's own
+    # field of the same name - default 0 means "the only request for
+    # this scene", identical to every request that existed before this
+    # field. Identity for ledger/asset-state uniqueness purposes
+    # becomes the composite (scene_number, clip_sequence_index)
+    # everywhere a scene-number-only check existed before this field.
+    clip_sequence_index: int = Field(default=0, ge=0)
+
     # Binds this request to the exact locked script it was planned
     # against (Scene.locked_script_hash's own convention) - None only
     # for a project that never locked, matching every other

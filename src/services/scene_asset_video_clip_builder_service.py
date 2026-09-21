@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from src.models.asset_state import SceneAssetState
+from src.models.asset_state import AssetCandidate, SceneAssetState
 from src.models.media_strategy import SceneSourceStatus
 from src.models.scene import Scene
 from src.models.video_clip import VideoClip, VideoClipStatus
@@ -68,33 +68,73 @@ class SceneAssetVideoClipBuilderService:
             if candidate is None:
                 continue
 
-            file_path = candidate.file_path or state.manual_upload_path
+            primary_clip = self._build_one_clip(
+                state=state,
+                candidate=candidate,
+                clip_sequence_index=0,
+                fallback_file_path=state.manual_upload_path,
+                planned_duration_by_scene_number=planned_duration_by_scene_number,
+            )
 
-            if not file_path:
+            if primary_clip is None:
                 continue
 
-            duration_seconds = (
-                round(candidate.duration_seconds)
-                if candidate.duration_seconds > 0
-                else planned_duration_by_scene_number.get(state.scene_number, 0)
-            )
+            clips.append(primary_clip)
 
-            clips.append(
-                VideoClip(
-                    scene_number=state.scene_number,
-                    scene_id=state.scene_id,
-                    source_type=(state.selected_source or candidate.source_type),
-                    duration_seconds=duration_seconds,
-                    provider=candidate.provider,
-                    source_url=candidate.source_url,
-                    local_file=file_path,
-                    license_type=candidate.license_type,
-                    resolution=candidate.resolution or "1920x1080",
-                    aspect_ratio=candidate.aspect_ratio or "16:9",
-                    source_status=SceneSourceStatus.READY,
-                    status=VideoClipStatus.READY,
-                    metadata=dict(candidate.metadata),
+            # Phase 5 (multi-clip scene splitting): sub-clips 1..N,
+            # each its own VideoClip with an incrementing
+            # clip_sequence_index - empty for every scene that was
+            # never split, which is every clip that existed before
+            # this field, so this loop is a pure no-op for them.
+            for offset, sub_candidate in enumerate(
+                state.additional_ai_generated_sub_clips, start=1
+            ):
+                sub_clip = self._build_one_clip(
+                    state=state,
+                    candidate=sub_candidate,
+                    clip_sequence_index=offset,
+                    fallback_file_path=None,
+                    planned_duration_by_scene_number=planned_duration_by_scene_number,
                 )
-            )
+
+                if sub_clip is not None:
+                    clips.append(sub_clip)
 
         return clips
+
+    @staticmethod
+    def _build_one_clip(
+        *,
+        state: SceneAssetState,
+        candidate: AssetCandidate,
+        clip_sequence_index: int,
+        fallback_file_path: str | None,
+        planned_duration_by_scene_number: dict[int, int],
+    ) -> VideoClip | None:
+        file_path = candidate.file_path or fallback_file_path
+
+        if not file_path:
+            return None
+
+        duration_seconds: int = (
+            round(candidate.duration_seconds)
+            if candidate.duration_seconds > 0
+            else planned_duration_by_scene_number.get(state.scene_number, 0)
+        )
+
+        return VideoClip(
+            scene_number=state.scene_number,
+            clip_sequence_index=clip_sequence_index,
+            scene_id=state.scene_id,
+            source_type=(state.selected_source or candidate.source_type),
+            duration_seconds=duration_seconds,
+            provider=candidate.provider,
+            source_url=candidate.source_url,
+            local_file=file_path,
+            license_type=candidate.license_type,
+            resolution=candidate.resolution or "1920x1080",
+            aspect_ratio=candidate.aspect_ratio or "16:9",
+            source_status=SceneSourceStatus.READY,
+            status=VideoClipStatus.READY,
+            metadata=dict(candidate.metadata),
+        )

@@ -23,6 +23,18 @@ class VideoClip(MissionBaseModel):
     """Standard visual clip returned by every visual source provider."""
 
     scene_number: int
+
+    # Phase 5 (multi-clip scene splitting): which sub-clip within
+    # scene_number this is, when a scene's real narration exceeded
+    # Google Flow's 8s single-clip max and had to be split into
+    # multiple consecutive same-prompt clips. Default 0 means "the
+    # only clip for this scene" - identical to every clip that existed
+    # before this field, fully backward-compatible. Identity for
+    # uniqueness/ordering purposes becomes the composite
+    # (scene_number, clip_sequence_index) everywhere a scene-number-
+    # only uniqueness check existed before this field.
+    clip_sequence_index: int = Field(default=0, ge=0)
+
     source_type: SceneSourceType
 
     duration_seconds: int

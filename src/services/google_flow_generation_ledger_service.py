@@ -52,10 +52,15 @@ class GoogleFlowGenerationLedgerService:
         caller discipline alone.
         """
 
+        # Phase 5 (multi-clip scene splitting): identity is the
+        # composite (scene_number, clip_sequence_index) - two sub-clips
+        # of one split scene each get their own independent attempt
+        # lifecycle, distinguished only by clip_sequence_index.
         existing_for_scene = [
             attempt
             for attempt in job.flow_generation_attempts
-            if attempt.request.scene_number == request.scene_number
+            if (attempt.request.scene_number, attempt.request.clip_sequence_index)
+            == (request.scene_number, request.clip_sequence_index)
         ]
 
         in_flight = [
@@ -180,14 +185,23 @@ class GoogleFlowGenerationLedgerService:
     def attempts_for_scene(
         job: VideoJob,
         scene_number: int,
+        *,
+        clip_sequence_index: int = 0,
     ) -> list[GoogleFlowGenerationAttempt]:
-        """Every attempt ever made for one scene, oldest first."""
+        """
+        Every attempt ever made for one (scene_number,
+        clip_sequence_index) sub-clip, oldest first. clip_sequence_index
+        defaults to 0 - every caller that predates Phase 5 (multi-clip
+        scene splitting) means exactly the same thing it always did:
+        the one and only clip for that scene.
+        """
 
         return sorted(
             (
                 attempt
                 for attempt in job.flow_generation_attempts
-                if attempt.request.scene_number == scene_number
+                if (attempt.request.scene_number, attempt.request.clip_sequence_index)
+                == (scene_number, clip_sequence_index)
             ),
             key=lambda attempt: attempt.attempt_number,
         )
@@ -196,11 +210,13 @@ class GoogleFlowGenerationLedgerService:
     def latest_attempt_for_scene(
         job: VideoJob,
         scene_number: int,
+        *,
+        clip_sequence_index: int = 0,
     ) -> GoogleFlowGenerationAttempt | None:
-        """The most recent attempt for one scene, or None if it never had one."""
+        """The most recent attempt for one sub-clip, or None if it never had one."""
 
         attempts = GoogleFlowGenerationLedgerService.attempts_for_scene(
-            job, scene_number
+            job, scene_number, clip_sequence_index=clip_sequence_index
         )
 
         return attempts[-1] if attempts else None
@@ -209,18 +225,23 @@ class GoogleFlowGenerationLedgerService:
     def ready_attempt_for_scene(
         job: VideoJob,
         scene_number: int,
+        *,
+        clip_sequence_index: int = 0,
     ) -> GoogleFlowGenerationAttempt | None:
         """
-        The accepted (READY) attempt for one scene, if any - what a
+        The accepted (READY) attempt for one sub-clip, if any - what a
         future bulk-resume pass (GF-12) uses to decide "skip, already
         done" rather than starting a redundant regeneration.
         """
 
         for attempt in job.flow_generation_attempts:
             if (
-                attempt.request.scene_number == scene_number
-                and attempt.state == GoogleFlowGenerationState.READY
-            ):
+                attempt.request.scene_number,
+                attempt.request.clip_sequence_index,
+            ) == (
+                scene_number,
+                clip_sequence_index,
+            ) and attempt.state == GoogleFlowGenerationState.READY:
                 return attempt
 
         return None

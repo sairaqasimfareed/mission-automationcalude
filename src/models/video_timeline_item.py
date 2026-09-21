@@ -28,6 +28,14 @@ class VideoTimelineItem(MissionBaseModel):
         ge=1,
     )
 
+    # Phase 5 (multi-clip scene splitting): mirrors VideoClip's own
+    # field of the same name - default 0 means "the only item for this
+    # scene", identical to every timeline item that existed before
+    # this field. Identity for uniqueness/self-transition purposes
+    # becomes the composite (scene_number, clip_sequence_index)
+    # everywhere a scene-number-only check existed before this field.
+    clip_sequence_index: int = Field(default=0, ge=0)
+
     start_time_seconds: float = Field(
         default=0.0,
         ge=0.0,

@@ -152,3 +152,99 @@ def test_ready_state_without_candidate_produces_no_clip() -> None:
     )
 
     assert clips == []
+
+
+def test_additional_sub_clips_produce_their_own_clips_with_incrementing_sequence_index() -> (
+    None
+):
+    """Phase 5 (multi-clip scene splitting): a scene whose real
+    narration exceeded Flow's single-clip max produces several
+    consecutive VideoClips sharing one scene_number, distinguished by
+    clip_sequence_index - the primary candidate is always index 0,
+    each additional_ai_generated_sub_clips entry gets the next index
+    in order."""
+
+    scenes = [_scene(1, duration_seconds=16)]
+
+    state = _ready_state(
+        1, file_path="/flow/sub_0.mp4", source_type=SceneSourceType.AI_GENERATE
+    )
+    state.additional_ai_generated_sub_clips = [
+        AssetCandidate(
+            title="Scene 1 sub-clip 1",
+            source_type=SceneSourceType.AI_GENERATE,
+            file_path="/flow/sub_1.mp4",
+            duration_seconds=8.0,
+            approved=True,
+        ),
+        AssetCandidate(
+            title="Scene 1 sub-clip 2",
+            source_type=SceneSourceType.AI_GENERATE,
+            file_path="/flow/sub_2.mp4",
+            duration_seconds=8.0,
+            approved=True,
+        ),
+    ]
+
+    clips = SceneAssetVideoClipBuilderService().build_clips(
+        scenes=scenes,
+        states=[state],
+    )
+
+    assert len(clips) == 3
+
+    ordered = sorted(clips, key=lambda clip: clip.clip_sequence_index)
+
+    assert [clip.clip_sequence_index for clip in ordered] == [0, 1, 2]
+    assert [clip.local_file for clip in ordered] == [
+        "/flow/sub_0.mp4",
+        "/flow/sub_1.mp4",
+        "/flow/sub_2.mp4",
+    ]
+    assert all(clip.scene_number == 1 for clip in ordered)
+
+
+def test_no_additional_sub_clips_produces_exactly_one_clip_at_index_zero() -> None:
+    """Every scene that was never split - the default, and the only
+    case that existed before this field - must produce exactly one
+    clip, at clip_sequence_index 0, identical to prior behavior."""
+
+    scenes = [_scene(1)]
+    state = _ready_state(1, file_path="/uploads/one.mp4")
+
+    assert state.additional_ai_generated_sub_clips == []
+
+    clips = SceneAssetVideoClipBuilderService().build_clips(
+        scenes=scenes,
+        states=[state],
+    )
+
+    assert len(clips) == 1
+    assert clips[0].clip_sequence_index == 0
+
+
+def test_a_sub_clip_without_a_real_file_path_is_skipped() -> None:
+    """An additional sub-clip candidate with no real file_path (and no
+    manual-upload fallback, which only ever applies to the primary
+    candidate) must be skipped rather than producing a clip with no
+    real source - matching the primary candidate's own established
+    "no file path, no clip" rule."""
+
+    scenes = [_scene(1)]
+    state = _ready_state(1, file_path="/uploads/one.mp4")
+    state.additional_ai_generated_sub_clips = [
+        AssetCandidate(
+            title="Broken sub-clip",
+            source_type=SceneSourceType.AI_GENERATE,
+            file_path="",
+            approved=True,
+        )
+    ]
+
+    clips = SceneAssetVideoClipBuilderService().build_clips(
+        scenes=scenes,
+        states=[state],
+    )
+
+    assert len(clips) == 1
+    assert clips[0].clip_sequence_index == 0

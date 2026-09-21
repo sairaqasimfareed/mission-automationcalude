@@ -254,6 +254,20 @@ class SceneAssetState(MissionBaseModel):
     selected_source: SceneSourceType | None = None
     selected_candidate: AssetCandidate | None = None
 
+    # Phase 5 (multi-clip scene splitting): sub-clips 2..N of a scene
+    # whose real narration exceeded Google Flow's single-clip max and
+    # had to be split into several consecutive same-prompt clips.
+    # selected_candidate continues to represent sub-clip 0 exactly as
+    # it always has - this list is additive and empty for every scene
+    # that was never split, which is every scene manual-upload/stock
+    # sourcing ever produces and every AI-generated scene before this
+    # field existed. SceneAssetVideoClipBuilderService.build_clips
+    # turns each entry here into its own VideoClip with an incrementing
+    # clip_sequence_index, alongside selected_candidate's own clip 0.
+    additional_ai_generated_sub_clips: list[AssetCandidate] = Field(
+        default_factory=list,
+    )
+
     manual_upload_requested: bool = False
     manual_upload_declined: bool = False
     manual_upload_path: str | None = None
