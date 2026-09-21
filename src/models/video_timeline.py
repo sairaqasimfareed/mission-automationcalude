@@ -68,6 +68,7 @@ class VideoTimeline(MissionBaseModel):
                 item.track_index,
                 item.layer_index,
                 item.scene_number,
+                item.clip_sequence_index,
             ),
         )
 

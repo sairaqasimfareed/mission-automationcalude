@@ -38,7 +38,6 @@ capabilities = FFmpegCapabilities(
         "adelay",
         "anull",
         "amix",
-        "sidechaincompress",
     },
 )
 
@@ -138,10 +137,20 @@ def _chain_with_operation(filter_graph: FilterGraph, operation: str) -> FilterCh
     )
 
 
+# Real-world finding, 2026-09-17: sidechaincompress reused as the shared
+# sidechain key across several simultaneous consumers was confirmed (via
+# direct, isolated FFmpeg reproduction against the real production graph)
+# to silently truncate the ENTIRE final audio mix to a fraction of its real
+# length - worsening as more duckable tracks shared the same sidechain
+# key. Ducking now uses a flat volume multiplier gated by `enable` to the
+# union of voice-active time windows instead, computed directly from each
+# voice track's own start_time_seconds/duration_seconds - no dynamic
+# sidechain analysis, no multi-consumer defect.
+
 # A duckable track (background_music, duck_under_voice=True) alongside a
-# voiceover track must be routed through sidechaincompress, with the
-# voiceover as the sidechain trigger, and the final amix must pick up the
-# ducked output rather than the raw normalized label.
+# voiceover track must get a `volume` filter gated to the voice's own
+# active window, and the final amix must pick up the ducked output rather
+# than the raw normalized label.
 voice = RenderNode(
     node_type=RenderNodeType.AUDIO_TRACK,
     status=RenderNodeStatus.READY,
@@ -190,10 +199,11 @@ filter_complex = filter_graph.render_filter_complex()
 print("Ducking filter complex:", filter_complex)
 
 assert filter_graph.is_valid is True
-assert "sidechaincompress" in filter_complex
+assert "sidechaincompress" not in filter_complex
 
-# Exactly one duckable track (music) -> exactly one sidechaincompress node.
-assert filter_complex.count("sidechaincompress") == 1
+# Exactly one duckable track (music) -> exactly one gated volume node,
+# carrying the real voice-active window (voice spans the whole 0-8s clip).
+assert "between(t,0,8)" in filter_complex
 
 voice_labels = _labels_for_track_type(filter_graph, "voiceover")
 music_labels = _labels_for_track_type(filter_graph, "background_music")
@@ -203,9 +213,14 @@ assert len(music_labels) == 1
 assert len(sfx_labels) == 1
 
 duck_chain = _chain_with_operation(filter_graph, "duck_under_voice")
-assert duck_chain.input_labels == [music_labels[0], voice_labels[0]]
+assert duck_chain.input_labels == [music_labels[0]]
 ducked_label = duck_chain.output_label
 assert ducked_label is not None
+
+duck_node = duck_chain.nodes[0]
+assert duck_node.filter_name == "volume"
+assert duck_node.options is not None
+assert duck_node.options.get("enable") == "'between(t,0,8)'"
 
 # The ducked output, not the raw normalized music label, must reach the
 # final mix - and the raw music label must not appear there directly.
@@ -217,7 +232,7 @@ assert sfx_labels[0] in final_mix_chain.input_labels
 assert len(final_mix_chain.input_labels) == 3
 
 
-# No duck_under_voice tracks at all -> sidechaincompress must not appear,
+# No duck_under_voice tracks at all -> no ducking-related nodes at all,
 # and the flat amix behavior from before this feature must be unchanged.
 plain_voice = RenderNode(
     node_type=RenderNodeType.AUDIO_TRACK,
@@ -250,6 +265,10 @@ no_duck_graph = _build_graph(audio_nodes=[plain_voice, plain_sfx])
 no_duck_complex = no_duck_graph.render_filter_complex()
 
 assert "sidechaincompress" not in no_duck_complex
+assert not any(
+    chain.metadata.get("operation") == "duck_under_voice"
+    for chain in no_duck_graph.audio_chains
+)
 
 no_duck_mix_chain = _chain_with_operation(no_duck_graph, "audio_mix")
 assert len(no_duck_mix_chain.input_labels) == 2
@@ -260,9 +279,9 @@ assert set(no_duck_mix_chain.input_labels) == {
 }
 
 
-# Multiple voiceover tracks alongside a duckable track must be mixed into
-# one voice bus first, and the sidechaincompress must use that bus rather
-# than either voiceover track directly.
+# Multiple voiceover tracks alongside a duckable track must gate the
+# duckable track's volume to the UNION of both voices' own windows - no
+# voice bus, no sidechain, just the two real time ranges OR'd together.
 voice_a = RenderNode(
     node_type=RenderNodeType.AUDIO_TRACK,
     status=RenderNodeStatus.READY,
@@ -308,23 +327,28 @@ multi_voice_complex = multi_voice_graph.render_filter_complex()
 
 print("Multi-voice ducking filter complex:", multi_voice_complex)
 
-# One amix to build the voice bus, one amix for the final mix.
-assert multi_voice_complex.count("amix") == 2
-assert "sidechaincompress" in multi_voice_complex
+# No amix at all is needed anymore for ducking purposes - only the final
+# mix (one amix) remains, since ducking no longer builds a voice bus.
+assert multi_voice_complex.count("amix") == 1
+assert "sidechaincompress" not in multi_voice_complex
 
 multi_voice_labels = _labels_for_track_type(multi_voice_graph, "voiceover")
 multi_music_labels = _labels_for_track_type(multi_voice_graph, "background_music")
 assert len(multi_voice_labels) == 2
 assert len(multi_music_labels) == 1
 
-voice_bus_chain = _chain_with_operation(multi_voice_graph, "voice_bus_mix")
-assert set(voice_bus_chain.input_labels) == set(multi_voice_labels)
-voice_bus_label = voice_bus_chain.output_label
-assert voice_bus_label is not None
-assert f"[{voice_bus_label}]" in multi_voice_complex
+assert not any(
+    chain.metadata.get("operation") == "voice_bus_mix"
+    for chain in multi_voice_graph.audio_chains
+)
 
 multi_duck_chain = _chain_with_operation(multi_voice_graph, "duck_under_voice")
-assert multi_duck_chain.input_labels == [multi_music_labels[0], voice_bus_label]
+assert multi_duck_chain.input_labels == [multi_music_labels[0]]
+
+multi_duck_node = multi_duck_chain.nodes[0]
+assert multi_duck_node.filter_name == "volume"
+assert multi_duck_node.options is not None
+assert multi_duck_node.options.get("enable") == "'between(t,0,4)+between(t,4,8)'"
 
 multi_final_mix_chain = _chain_with_operation(multi_voice_graph, "audio_mix")
 assert multi_duck_chain.output_label in multi_final_mix_chain.input_labels

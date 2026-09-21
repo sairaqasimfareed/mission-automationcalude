@@ -232,8 +232,17 @@ class TransitionExecutionService:
                 "Between-scene transitions require " "items on the same video track."
             )
 
-        if source_item.scene_number == target_item.scene_number:
-            raise ValueError("A transition cannot connect a scene " "to itself.")
+        # Phase 5 (multi-clip scene splitting): identity is the
+        # composite (scene_number, clip_sequence_index) - two
+        # consecutive sub-clips of one split scene legitimately share
+        # a scene_number (this is exactly their own intra-scene seam
+        # transition), distinguished only by clip_sequence_index. Only
+        # a genuinely identical pair connecting to itself is invalid.
+        if (source_item.scene_number, source_item.clip_sequence_index) == (
+            target_item.scene_number,
+            target_item.clip_sequence_index,
+        ):
+            raise ValueError("A transition cannot connect a clip to itself.")
 
         boundary_difference = (
             target_item.start_time_seconds - source_item.end_time_seconds
@@ -311,6 +320,8 @@ class TransitionExecutionService:
             transition_type=transition_type,
             source_scene_number=(source_item.scene_number),
             target_scene_number=(target_item.scene_number),
+            source_clip_sequence_index=(source_item.clip_sequence_index),
+            target_clip_sequence_index=(target_item.clip_sequence_index),
             source_track_index=(source_item.track_index),
             target_track_index=(target_item.track_index),
             start_time_seconds=start_time,
@@ -689,6 +700,7 @@ class TransitionExecutionService:
                 item.end_time_seconds,
                 item.layer_index,
                 item.scene_number,
+                item.clip_sequence_index,
             ),
         )
 
@@ -698,15 +710,22 @@ class TransitionExecutionService:
     ) -> None:
         """Validate timeline-item transition prerequisites."""
 
-        scene_numbers: set[int] = set()
+        # Phase 5 (multi-clip scene splitting): identity is the
+        # composite (scene_number, clip_sequence_index) - see
+        # build_between_scenes' own comment for why scene_number alone
+        # is no longer a valid uniqueness key.
+        seen_keys: set[tuple[int, int]] = set()
 
         for item in items:
-            if item.scene_number in scene_numbers:
+            key = (item.scene_number, item.clip_sequence_index)
+
+            if key in seen_keys:
                 raise ValueError(
-                    "Transition planning does not " "allow duplicate scene numbers."
+                    "Transition planning does not allow duplicate "
+                    "(scene_number, clip_sequence_index) pairs."
                 )
 
-            scene_numbers.add(item.scene_number)
+            seen_keys.add(key)
 
             if item.editing_blueprint is None:
                 raise ValueError(

@@ -67,6 +67,17 @@ class TransitionExecution(MissionBaseModel):
         ge=1,
     )
 
+    # Phase 5 (multi-clip scene splitting): default 0 means "the only
+    # clip for this scene", identical to every transition execution
+    # that existed before this field. A split scene's own intra-scene
+    # seam transition legitimately has source_scene_number ==
+    # target_scene_number (both point at the same split scene) -
+    # these two fields are what let the self-connection check below
+    # tell that apart from a genuine same-clip loop.
+    source_clip_sequence_index: int = Field(default=0, ge=0)
+
+    target_clip_sequence_index: int = Field(default=0, ge=0)
+
     source_track_index: int | None = Field(
         default=None,
         ge=0,
@@ -216,8 +227,11 @@ class TransitionExecution(MissionBaseModel):
             if self.target_scene_number is None:
                 raise ValueError("Between-scene transitions require " "a target scene.")
 
-            if self.source_scene_number == self.target_scene_number:
-                raise ValueError("A transition cannot connect a scene " "to itself.")
+            if (self.source_scene_number, self.source_clip_sequence_index) == (
+                self.target_scene_number,
+                self.target_clip_sequence_index,
+            ):
+                raise ValueError("A transition cannot connect a clip " "to itself.")
 
         if self.requires_overlap:
             if self.overlap_start_seconds is None or self.overlap_end_seconds is None:

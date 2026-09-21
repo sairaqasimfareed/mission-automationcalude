@@ -74,19 +74,30 @@ class RenderGraphBuilderService:
 
         nodes: list[RenderNode] = []
 
-        video_node_by_scene: dict[int, str] = {}
+        # Phase 5 (multi-clip scene splitting), real-world finding,
+        # 2026-09-21: keyed on scene_number alone, this raised for
+        # every real split scene outright (its own sub-clips always
+        # share one scene_number) - the very first check this whole
+        # method runs, before anything else can proceed. Keyed on the
+        # composite (scene_number, clip_sequence_index) instead, the
+        # same identity every other Phase 5 fix in this codebase
+        # already uses.
+        video_node_by_scene: dict[tuple[int, int], str] = {}
 
         for item in master_plan.video_timeline.ordered_items():
             node = self._video_node(item)
 
             nodes.append(node)
 
-            if item.scene_number in video_node_by_scene:
+            key = (item.scene_number, item.clip_sequence_index)
+
+            if key in video_node_by_scene:
                 raise ValueError(
-                    "Render graph does not allow " "duplicate enabled scene numbers."
+                    "Render graph does not allow duplicate "
+                    "(scene_number, clip_sequence_index) pairs."
                 )
 
-            video_node_by_scene[item.scene_number] = str(node.id)
+            video_node_by_scene[key] = str(node.id)
 
         audio_nodes = [
             self._audio_node(track) for track in master_plan.audio_timeline.tracks
@@ -554,6 +565,7 @@ class RenderGraphBuilderService:
         return RenderNode(
             node_type=(RenderNodeType.VIDEO_CLIP),
             scene_number=(item.scene_number),
+            clip_sequence_index=(item.clip_sequence_index),
             track_index=(item.track_index),
             layer_index=(item.layer_index),
             start_time_seconds=(item.start_time_seconds),
@@ -616,7 +628,7 @@ class RenderGraphBuilderService:
         *,
         execution: Any,
         video_node_by_scene: dict[
-            int,
+            tuple[int, int],
             str,
         ],
     ) -> RenderNode:
@@ -645,7 +657,7 @@ class RenderGraphBuilderService:
         *,
         execution: Any,
         video_node_by_scene: dict[
-            int,
+            tuple[int, int],
             str,
         ],
     ) -> RenderNode:
@@ -657,6 +669,7 @@ class RenderGraphBuilderService:
             dependencies.append(
                 RenderGraphBuilderService._scene_dependency(
                     scene_number=(execution.source_scene_number),
+                    clip_sequence_index=(execution.source_clip_sequence_index),
                     video_node_by_scene=(video_node_by_scene),
                 )
             )
@@ -664,6 +677,7 @@ class RenderGraphBuilderService:
         if execution.target_scene_number is not None:
             target_dependency = RenderGraphBuilderService._scene_dependency(
                 scene_number=(execution.target_scene_number),
+                clip_sequence_index=(execution.target_clip_sequence_index),
                 video_node_by_scene=(video_node_by_scene),
             )
 
@@ -676,13 +690,16 @@ class RenderGraphBuilderService:
             track_index = execution.target_track_index
 
         scene_number = execution.source_scene_number
+        clip_sequence_index = execution.source_clip_sequence_index
 
         if scene_number is None:
             scene_number = execution.target_scene_number
+            clip_sequence_index = execution.target_clip_sequence_index
 
         return RenderNode(
             node_type=(RenderNodeType.TRANSITION),
             scene_number=scene_number,
+            clip_sequence_index=clip_sequence_index,
             track_index=track_index,
             start_time_seconds=(execution.start_time_seconds),
             end_time_seconds=(execution.end_time_seconds),
@@ -697,7 +714,7 @@ class RenderGraphBuilderService:
         *,
         execution: Any,
         video_node_by_scene: dict[
-            int,
+            tuple[int, int],
             str,
         ],
     ) -> RenderNode:
@@ -714,7 +731,7 @@ class RenderGraphBuilderService:
         *,
         execution: Any,
         video_node_by_scene: dict[
-            int,
+            tuple[int, int],
             str,
         ],
     ) -> RenderNode:
@@ -731,7 +748,7 @@ class RenderGraphBuilderService:
         *,
         execution: Any,
         video_node_by_scene: dict[
-            int,
+            tuple[int, int],
             str,
         ],
     ) -> RenderNode:
@@ -749,7 +766,7 @@ class RenderGraphBuilderService:
         node_type: RenderNodeType,
         execution: Any,
         video_node_by_scene: dict[
-            int,
+            tuple[int, int],
             str,
         ],
     ) -> RenderNode:
@@ -906,14 +923,25 @@ class RenderGraphBuilderService:
     def _scene_dependency(
         *,
         scene_number: int,
+        clip_sequence_index: int = 0,
         video_node_by_scene: dict[
-            int,
+            tuple[int, int],
             str,
         ],
     ) -> str:
-        """Resolve video-node dependency for one scene."""
+        """
+        Resolve video-node dependency for one scene (sub-clip).
 
-        dependency = video_node_by_scene.get(scene_number)
+        clip_sequence_index defaults to 0 - every caller whose own
+        execution model predates Phase 5 (camera/effect/animation/
+        subtitle executions do not yet carry a clip_sequence_index of
+        their own) resolves to that scene's first/primary sub-clip,
+        identical to what it always meant before a scene could have
+        more than one. Only TransitionExecution (Phase 5's own
+        composite-key fix) passes a real, non-default value here.
+        """
+
+        dependency = video_node_by_scene.get((scene_number, clip_sequence_index))
 
         if dependency is None:
             raise ValueError(

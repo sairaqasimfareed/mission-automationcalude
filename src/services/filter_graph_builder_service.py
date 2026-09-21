@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from src.models.ffmpeg_config import (
@@ -37,6 +38,25 @@ from src.services.video_filter_translation_service import (
 # and is inaudible.
 _TRIM_SAFETY_FADE_SECONDS = 0.1
 
+# Real-world finding, 2026-09-17: two visual effects on the same scene
+# (e.g. genre.history's grayscale + sepia_tone pairing) are not
+# commutative - desaturating AFTER a color tint erases the tint,
+# leaving flat grayscale instead of the intended sepia look. Every
+# other component of the scene-operation sort key ties for same-type,
+# same-time, same-track, same-layer effects, so without this the final
+# tiebreaker was the node's own random UUID - effectively a coin flip
+# per scene between "sepia survives" and "sepia is erased",
+# confirmed directly against a real render's own filter_complex
+# (adjacent scenes showing opposite orderings). Each resolved
+# instruction's own directive_path already encodes its real, intended
+# position in the source list (e.g. "visual_effects[1].preset_id"),
+# copied straight through into the execution's own metadata - this
+# recovers that index so ties break by original resolution order
+# instead of arbitrarily.
+_DIRECTIVE_LIST_INDEX_PATTERN = re.compile(r"\[(\d+)\]")
+
+_UNORDERED_DIRECTIVE_SORT_INDEX = 2**31
+
 
 class FilterGraphBuilderService:
     """
@@ -60,12 +80,20 @@ class FilterGraphBuilderService:
         RenderNodeType.SUBTITLE: 40,
     }
 
-    _DUCK_SIDECHAIN_OPTIONS: dict[str, str] = {
-        "threshold": "0.05",
-        "ratio": "8",
-        "attack": "5",
-        "release": "250",
-    }
+    # Real-world finding, 2026-09-17: FFmpeg's sidechaincompress,
+    # reused as the shared sidechain key across several simultaneous
+    # consumers (this filter graph ducks every music/SFX track
+    # against the same voice mix), was confirmed via direct, isolated
+    # FFmpeg reproduction to silently truncate the ENTIRE final audio
+    # mix to a small fraction of its real length - worsening as more
+    # tracks reused the same sidechain key (0 consumers: correct
+    # output; 1: correct; 2: already short; 4, this graph's real
+    # count: truncated to under a fifth of the real duration). Ducking
+    # is now done with a flat volume multiplier gated to the already-
+    # known union of voice-active time windows instead (see
+    # _build_ducking_chains) - same creative effect, no dynamic
+    # sidechain analysis, no multi-consumer defect.
+    _DUCK_VOLUME_MULTIPLIER = "0.3"
 
     def __init__(
         self,
@@ -212,13 +240,21 @@ class FilterGraphBuilderService:
 
         warnings: list[str] = []
 
+        # Phase 5 (multi-clip scene splitting), real-world finding,
+        # 2026-09-21: keyed on bare scene_number, this raised for
+        # every real split scene outright - its own sub-clips always
+        # share one scene_number, and this is the very first place a
+        # real render for one would reach after RenderGraphBuilderService's
+        # own (already-fixed) composite-key check. Keyed on the same
+        # (scene_number, clip_sequence_index) identity every other
+        # Phase 5 fix in this codebase already uses.
         scene_final_labels: dict[
-            int,
+            tuple[int, int],
             str,
         ] = {}
 
         scene_durations: dict[
-            int,
+            tuple[int, int],
             float,
         ] = {}
 
@@ -227,22 +263,34 @@ class FilterGraphBuilderService:
         for input_index, video_node in enumerate(video_nodes):
             scene_number = self._required_scene_number(video_node)
 
-            if scene_number in scene_final_labels:
+            clip_sequence_index = video_node.clip_sequence_index
+
+            scene_key = (scene_number, clip_sequence_index)
+
+            if scene_key in scene_final_labels:
                 raise ValueError(
-                    "FFmpeg filter graph does not "
-                    "support duplicate video scenes: "
-                    f"{scene_number}."
+                    "FFmpeg filter graph does not support duplicate "
+                    "(scene_number, clip_sequence_index) pairs: "
+                    f"{scene_key}."
                 )
 
             source_label = f"{input_index}:v"
 
-            scale_label = f"scene_{scene_number}_scaled"
+            # Real-world finding, 2026-09-21: these labels only ever
+            # needed to be unique per scene before Phase 5 - now
+            # embedding clip_sequence_index too so a split scene's own
+            # sub-clips (which always share one scene_number) get
+            # genuinely distinct FFmpeg filter labels rather than
+            # silently colliding. Harmless rename for every existing
+            # single-clip scene (clip_sequence_index is always 0), and
+            # no test in this codebase asserts these exact strings.
+            scale_label = f"scene_{scene_number}_{clip_sequence_index}_scaled"
 
-            fps_label = f"scene_{scene_number}_fps"
+            fps_label = f"scene_{scene_number}_{clip_sequence_index}_fps"
 
-            format_label = f"scene_{scene_number}_format"
+            format_label = f"scene_{scene_number}_{clip_sequence_index}_format"
 
-            normalized_label = f"scene_{scene_number}_normalized"
+            normalized_label = f"scene_{scene_number}_{clip_sequence_index}_normalized"
 
             normalization_nodes = [
                 FilterNode(
@@ -301,6 +349,7 @@ class FilterGraphBuilderService:
             operations = self._operations_for_scene(
                 scene_operation_nodes,
                 scene_number=scene_number,
+                clip_sequence_index=clip_sequence_index,
             )
 
             for operation_index, operation in enumerate(operations):
@@ -344,9 +393,9 @@ class FilterGraphBuilderService:
 
                 translated_operation_count += 1
 
-            scene_final_labels[scene_number] = current_label
+            scene_final_labels[scene_key] = current_label
 
-            scene_durations[scene_number] = video_node.duration_seconds
+            scene_durations[scene_key] = video_node.duration_seconds
 
         (
             composition_chain,
@@ -375,8 +424,8 @@ class FilterGraphBuilderService:
         self,
         *,
         video_nodes: list[RenderNode],
-        scene_final_labels: dict[int, str],
-        scene_durations: dict[int, float],
+        scene_final_labels: dict[tuple[int, int], str],
+        scene_durations: dict[tuple[int, int], float],
         transition_nodes: list[RenderNode],
         capabilities: FFmpegCapabilities,
     ) -> tuple[
@@ -385,10 +434,14 @@ class FilterGraphBuilderService:
         int,
     ]:
         """
-        Compose scene streams in playback order.
+        Compose scene (sub-clip) streams in playback order.
 
         Between-scene transitions are resolved explicitly. Missing
-        transition nodes become deterministic hard cuts.
+        transition nodes become deterministic hard cuts. A split
+        scene's own consecutive sub-clips compose exactly like any
+        other consecutive pair - the composite (scene_number,
+        clip_sequence_index) key is what lets two entries share one
+        scene_number without colliding.
         """
 
         if not video_nodes:
@@ -398,15 +451,16 @@ class FilterGraphBuilderService:
 
         composition_filters: list[FilterNode] = []
 
-        ordered_scene_numbers = [
-            self._required_scene_number(node) for node in video_nodes
+        ordered_scene_keys = [
+            (self._required_scene_number(node), node.clip_sequence_index)
+            for node in video_nodes
         ]
 
-        first_scene = ordered_scene_numbers[0]
+        first_scene_key = ordered_scene_keys[0]
 
-        composed_label = scene_final_labels[first_scene]
+        composed_label = scene_final_labels[first_scene_key]
 
-        composed_duration = scene_durations[first_scene]
+        composed_duration = scene_durations[first_scene_key]
 
         consumed_transition_ids: set[str] = set()
 
@@ -430,7 +484,7 @@ class FilterGraphBuilderService:
         if timeline_in_filters:
             translated_transition_count += 1
 
-        if len(ordered_scene_numbers) == 1:
+        if len(ordered_scene_keys) == 1:
             (
                 final_filters,
                 final_warnings,
@@ -466,20 +520,20 @@ class FilterGraphBuilderService:
 
         for scene_index in range(
             1,
-            len(ordered_scene_numbers),
+            len(ordered_scene_keys),
         ):
-            source_scene = ordered_scene_numbers[scene_index - 1]
+            source_scene_key = ordered_scene_keys[scene_index - 1]
 
-            target_scene = ordered_scene_numbers[scene_index]
+            target_scene_key = ordered_scene_keys[scene_index]
 
-            target_label = scene_final_labels[target_scene]
+            target_label = scene_final_labels[target_scene_key]
 
             output_label = f"video_composed_" f"{scene_index}"
 
             transition_node = self._transition_between_scenes(
                 transition_nodes,
-                source_scene=(source_scene),
-                target_scene=(target_scene),
+                source_scene_key=(source_scene_key),
+                target_scene_key=(target_scene_key),
             )
 
             if transition_node is None:
@@ -491,7 +545,7 @@ class FilterGraphBuilderService:
 
                 composition_filters.append(cut_filter)
 
-                composed_duration += scene_durations[target_scene]
+                composed_duration += scene_durations[target_scene_key]
 
                 composed_label = output_label
 
@@ -541,10 +595,10 @@ class FilterGraphBuilderService:
             translated_transition_count += 1
 
             if transition_execution.is_cut:
-                composed_duration += scene_durations[target_scene]
+                composed_duration += scene_durations[target_scene_key]
             else:
                 composed_duration += (
-                    scene_durations[target_scene]
+                    scene_durations[target_scene_key]
                     - transition_execution.duration_seconds
                 )
 
@@ -578,13 +632,12 @@ class FilterGraphBuilderService:
                 media_type=(FilterMediaType.VIDEO),
                 nodes=composition_filters,
                 input_labels=[
-                    scene_final_labels[scene_number]
-                    for scene_number in ordered_scene_numbers
+                    scene_final_labels[scene_key] for scene_key in ordered_scene_keys
                 ],
                 output_label="video_final",
                 metadata={
                     "operation": ("video_composition"),
-                    "scene_count": len(ordered_scene_numbers),
+                    "scene_count": len(ordered_scene_keys),
                     "translated_transition_count": (translated_transition_count),
                     "composed_duration_seconds": (composed_duration),
                 },
@@ -738,7 +791,7 @@ class FilterGraphBuilderService:
 
         normalized_labels: list[str] = []
 
-        voice_labels: list[str] = []
+        voice_windows: list[tuple[float, float]] = []
 
         duckable_offsets: list[int] = []
 
@@ -930,17 +983,22 @@ class FilterGraphBuilderService:
             track_type = node.payload.get("track_type")
 
             if track_type == "voiceover":
-                voice_labels.append(normalized_label)
+                voice_windows.append(
+                    (
+                        node.start_time_seconds,
+                        node.start_time_seconds + node.duration_seconds,
+                    )
+                )
             elif bool(node.payload.get("duck_under_voice")):
                 duckable_offsets.append(audio_offset)
 
         final_mix_labels = list(normalized_labels)
 
-        if voice_labels and duckable_offsets:
+        if voice_windows and duckable_offsets:
             chains.extend(
                 self._build_ducking_chains(
                     normalized_labels=(normalized_labels),
-                    voice_labels=voice_labels,
+                    voice_windows=voice_windows,
                     duckable_offsets=(duckable_offsets),
                     final_mix_labels=(final_mix_labels),
                 )
@@ -1005,50 +1063,32 @@ class FilterGraphBuilderService:
         self,
         *,
         normalized_labels: list[str],
-        voice_labels: list[str],
+        voice_windows: list[tuple[float, float]],
         duckable_offsets: list[int],
         final_mix_labels: list[str],
     ) -> list[FilterChain]:
         """
-        Route duck_under_voice tracks through sidechaincompress.
+        Duck each duck_under_voice track during voice-active windows.
 
-        The voiceover track (or a mix of them, if several) drives the
-        compressor as the sidechain input, so background music and
-        sound effects duck automatically whenever narration is
-        present instead of playing at a constant flat level under it.
-        final_mix_labels is mutated in place, replacing each ducked
-        track's plain normalized label with its compressed output so
-        the caller's final amix picks up the ducked version.
+        Every voice track's own timing is already known deterministically
+        (the same start_time_seconds/duration_seconds the caller uses to
+        position it on the timeline), so ducking does not need dynamic
+        sidechain analysis at all: a flat volume multiplier, gated with
+        `enable` to the union of voice-active windows, produces the same
+        creative effect - quieter background audio while narration plays -
+        without sidechaincompress's confirmed multi-consumer defect (see
+        _DUCK_VOLUME_MULTIPLIER). final_mix_labels is mutated in place,
+        replacing each ducked track's plain normalized label with its
+        ducked output so the caller's final amix picks up the ducked
+        version.
         """
 
         chains: list[FilterChain] = []
 
-        if len(voice_labels) == 1:
-            voice_bus_label = voice_labels[0]
-        else:
-            voice_bus_label = "audio_voice_bus"
-
-            voice_bus_node = FilterNode(
-                media_type=FilterMediaType.AUDIO,
-                filter_name="amix",
-                input_labels=voice_labels,
-                output_labels=[voice_bus_label],
-                options={
-                    "inputs": str(len(voice_labels)),
-                    "duration": "longest",
-                    "normalize": "0",
-                },
-            )
-
-            chains.append(
-                FilterChain(
-                    media_type=FilterMediaType.AUDIO,
-                    nodes=[voice_bus_node],
-                    input_labels=list(voice_labels),
-                    output_label=voice_bus_label,
-                    metadata={"operation": "voice_bus_mix"},
-                )
-            )
+        voice_active_expression = "+".join(
+            f"between(t,{self._format_number(start)},{self._format_number(end)})"
+            for start, end in voice_windows
+        )
 
         for audio_offset in duckable_offsets:
             source_label = normalized_labels[audio_offset]
@@ -1056,17 +1096,20 @@ class FilterGraphBuilderService:
 
             duck_node = FilterNode(
                 media_type=FilterMediaType.AUDIO,
-                filter_name="sidechaincompress",
-                input_labels=[source_label, voice_bus_label],
+                filter_name="volume",
+                input_labels=[source_label],
                 output_labels=[ducked_label],
-                options=dict(self._DUCK_SIDECHAIN_OPTIONS),
+                options={
+                    "volume": self._DUCK_VOLUME_MULTIPLIER,
+                    "enable": f"'{voice_active_expression}'",
+                },
             )
 
             chains.append(
                 FilterChain(
                     media_type=FilterMediaType.AUDIO,
                     nodes=[duck_node],
-                    input_labels=[source_label, voice_bus_label],
+                    input_labels=[source_label],
                     output_label=ducked_label,
                     metadata={
                         "operation": "duck_under_voice",
@@ -1116,11 +1159,28 @@ class FilterGraphBuilderService:
         operation_nodes: list[RenderNode],
         *,
         scene_number: int,
+        clip_sequence_index: int = 0,
     ) -> list[RenderNode]:
-        """Return translated operations belonging to one scene."""
+        """
+        Return translated operations belonging to one scene (sub-clip).
+
+        Camera/visual-effect/animation/subtitle execution nodes have
+        no clip_sequence_index of their own yet (see RenderNode's own
+        docstring) - they always default to 0, so they only ever
+        match a scene's primary sub-clip. Matching on the composite
+        key here (rather than scene_number alone) is what stops a
+        split scene's SECOND sub-clip from also picking up - and
+        re-applying - the exact same operations already applied to
+        its first.
+        """
 
         return sorted(
-            (node for node in operation_nodes if (node.scene_number == scene_number)),
+            (
+                node
+                for node in operation_nodes
+                if node.scene_number == scene_number
+                and node.clip_sequence_index == clip_sequence_index
+            ),
             key=self._scene_operation_sort_key,
         )
 
@@ -1130,6 +1190,7 @@ class FilterGraphBuilderService:
     ) -> tuple[
         int,
         float,
+        int,
         int,
         int,
         str,
@@ -1146,8 +1207,30 @@ class FilterGraphBuilderService:
             node.start_time_seconds,
             (node.track_index if node.track_index is not None else 0),
             (node.layer_index if node.layer_index is not None else 0),
+            self._directive_list_index(node),
             str(node.id),
         )
+
+    @staticmethod
+    def _directive_list_index(node: RenderNode) -> int:
+        """
+        Return an effect's real position in its resolved source list.
+
+        See _DIRECTIVE_LIST_INDEX_PATTERN above for why this matters.
+        Falls back to a large sentinel (sorts last, before the id
+        tiebreaker) for any node without a parseable directive_path -
+        harmless for node types that never had this problem.
+        """
+
+        metadata = node.payload.get("metadata")
+
+        directive_path = (
+            metadata.get("directive_path", "") if isinstance(metadata, dict) else ""
+        )
+
+        match = _DIRECTIVE_LIST_INDEX_PATTERN.search(str(directive_path))
+
+        return int(match.group(1)) if match else _UNORDERED_DIRECTIVE_SORT_INDEX
 
     @staticmethod
     def _scene_operation_label(
@@ -1169,10 +1252,18 @@ class FilterGraphBuilderService:
     def _transition_between_scenes(
         transition_nodes: list[RenderNode],
         *,
-        source_scene: int,
-        target_scene: int,
+        source_scene_key: tuple[int, int],
+        target_scene_key: tuple[int, int],
     ) -> RenderNode | None:
-        """Resolve a unique transition joining two scenes."""
+        """
+        Resolve a unique transition joining two scenes (sub-clips).
+
+        Matches on the composite (scene_number, clip_sequence_index)
+        key on both sides - a split scene's own intra-scene seam
+        transition has source_scene_number == target_scene_number
+        (both point at the same split scene), so scene_number alone
+        could never distinguish it from a same-scene-to-itself loop.
+        """
 
         matches: list[RenderNode] = []
 
@@ -1182,17 +1273,23 @@ class FilterGraphBuilderService:
             if execution.placement != TransitionPlacement.BETWEEN_SCENES:
                 continue
 
-            if (
-                execution.source_scene_number == source_scene
-                and execution.target_scene_number == target_scene
-            ):
+            source_key = (
+                execution.source_scene_number,
+                execution.source_clip_sequence_index,
+            )
+            target_key = (
+                execution.target_scene_number,
+                execution.target_clip_sequence_index,
+            )
+
+            if source_key == source_scene_key and target_key == target_scene_key:
                 matches.append(node)
 
         if len(matches) > 1:
             raise ValueError(
                 "Multiple transitions connect "
-                f"scene {source_scene} to "
-                f"scene {target_scene}."
+                f"scene {source_scene_key} to "
+                f"scene {target_scene_key}."
             )
 
         if not matches:

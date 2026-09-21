@@ -427,7 +427,10 @@ def _probe_output(
             "-v",
             "error",
             "-show_entries",
-            ("format=duration:" "stream=index,codec_type," "codec_name,width,height"),
+            (
+                "format=duration:"
+                "stream=index,codec_type,codec_name,width,height,duration"
+            ),
             "-of",
             "default=noprint_wrappers=1",
             output_file.as_posix(),
@@ -435,6 +438,42 @@ def _probe_output(
     )
 
     return completed.stdout
+
+
+def _stream_duration_seconds(
+    *,
+    ffprobe: str,
+    output_file: Path,
+    codec_type: str,
+) -> float:
+    """
+    Return one stream's own duration, not the container's overall
+    duration.
+
+    Real-world finding, 2026-09-16: a container's format=duration is
+    the LONGEST of its streams - a real chunked render was found where
+    video played the full intended duration but audio silently
+    stopped at roughly the first chunk's own length, with
+    format=duration still reporting the full (video) length. Only a
+    per-stream duration check can catch that class of defect.
+    """
+
+    completed = _run_command(
+        [
+            ffprobe,
+            "-v",
+            "error",
+            "-select_streams",
+            codec_type[0],
+            "-show_entries",
+            "stream=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            output_file.as_posix(),
+        ]
+    )
+
+    return float(completed.stdout.strip())
 
 
 def _multi_scene_video_timeline(
@@ -752,6 +791,14 @@ def test_real_production_render_service_chunks_oversized_commands(
 
     assert abs(total_duration_seconds - expected_duration_seconds) < 1.0
 
+    audio_duration_seconds = _stream_duration_seconds(
+        ffprobe=ffprobe,
+        output_file=rendered_file,
+        codec_type="audio",
+    )
+
+    assert abs(audio_duration_seconds - expected_duration_seconds) < 1.0
+
 
 def test_real_production_render_service_chunks_with_segmented_background_music(
     tmp_path: Path,
@@ -883,6 +930,14 @@ def test_real_production_render_service_chunks_with_segmented_background_music(
     expected_duration_seconds = float(scene_count * SMOKE_DURATION_SECONDS)
 
     assert abs(total_duration_seconds - expected_duration_seconds) < 1.0
+
+    audio_duration_seconds = _stream_duration_seconds(
+        ffprobe=ffprobe,
+        output_file=rendered_file,
+        codec_type="audio",
+    )
+
+    assert abs(audio_duration_seconds - expected_duration_seconds) < 1.0
 
 
 def test_real_production_render_service_executes_ffmpeg(

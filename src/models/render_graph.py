@@ -72,6 +72,20 @@ class RenderNode(MissionBaseModel):
         ge=1,
     )
 
+    # Phase 5 (multi-clip scene splitting): mirrors VideoClip's own
+    # field of the same name - default 0 means "the only clip for this
+    # scene", identical to every render node that existed before this
+    # field. Only a VIDEO_CLIP node (built straight from a
+    # VideoTimelineItem, which always carries a real value) and a
+    # TRANSITION node connecting two sub-clips of one split scene ever
+    # have a non-zero value - every other node type (camera, visual
+    # effect, animation, subtitle) has no per-sub-clip concept of its
+    # own yet and always resolves against a scene's primary (index 0)
+    # sub-clip, a real, disclosed scope boundary rather than a silent
+    # one (see RenderGraphBuilderService._scene_dependency's own
+    # docstring).
+    clip_sequence_index: int = Field(default=0, ge=0)
+
     track_index: int | None = Field(
         default=None,
         ge=0,

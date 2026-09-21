@@ -26,42 +26,60 @@ class TimelineDirectiveService:
         blueprint: ResolvedSceneEditingBlueprint,
         replace: bool = False,
     ) -> VideoTimelineItem:
-        """Attach one resolved blueprint to its timeline scene."""
+        """
+        Attach one resolved blueprint to its timeline scene.
+
+        Phase 5 (multi-clip scene splitting), real-world finding,
+        2026-09-21: a split scene contributes several timeline items
+        sharing one scene_number (one per sub-clip) - a blueprint is a
+        per-SCENE creative decision (color grade, transitions, etc.),
+        so it is attached to every one of that scene's items, not just
+        one. _find_item used to raise outright the moment more than
+        one item shared a scene_number ("Multiple timeline items use
+        the same scene number") - confirmed this would have hard-
+        failed transition/render planning for every real split scene,
+        since TransitionExecutionService requires every item to carry
+        a blueprint. Returns the PRIMARY item (clip_sequence_index 0)
+        for callers that only need one representative item back -
+        identical to this method's own return value before this field
+        existed, since every scene had exactly one item then.
+        """
 
         if not blueprint.is_resolved:
             raise ValueError(
                 "Only resolved editing blueprints may " "be attached to a timeline."
             )
 
-        item = self._find_item(
+        items = self._find_items(
             timeline=timeline,
             scene_number=blueprint.scene_number,
         )
 
-        if item.editing_blueprint is not None and not replace:
+        if any(item.editing_blueprint is not None for item in items) and not replace:
             raise ValueError(
                 "The timeline scene already contains " "an editing blueprint."
             )
 
-        item.editing_blueprint = blueprint
+        for item in items:
+            item.editing_blueprint = blueprint
 
-        item.transition_in = blueprint.transition_in.preset.resolved_preset_id
+            item.transition_in = blueprint.transition_in.preset.resolved_preset_id
 
-        item.transition_out = blueprint.transition_out.preset.resolved_preset_id
+            item.transition_out = blueprint.transition_out.preset.resolved_preset_id
 
-        item.metadata["editing_blueprint_attached"] = True
+            item.metadata["editing_blueprint_attached"] = True
 
-        item.metadata["editing_blueprint_status"] = blueprint.status.value
+            item.metadata["editing_blueprint_status"] = blueprint.status.value
 
-        item.metadata["editing_blueprint_fallback_count"] = blueprint.fallback_count
+            item.metadata["editing_blueprint_fallback_count"] = blueprint.fallback_count
 
-        item.metadata["editing_blueprint_exact_match_count"] = (
-            blueprint.exact_match_count
-        )
+            item.metadata["editing_blueprint_exact_match_count"] = (
+                blueprint.exact_match_count
+            )
 
-        item.metadata["editing_blueprint_schema_version"] = blueprint.schema_version
+            item.metadata["editing_blueprint_schema_version"] = blueprint.schema_version
 
-        return item
+        return min(items, key=lambda item: item.clip_sequence_index)
 
     def attach_many(
         self,
@@ -136,35 +154,40 @@ class TimelineDirectiveService:
         scene_number: int,
         clear_transition_fields: bool = True,
     ) -> ResolvedSceneEditingBlueprint:
-        """Remove and return one attached blueprint."""
+        """
+        Remove and return one attached blueprint - from every timeline
+        item sharing this scene_number (Phase 5: a split scene's
+        several sub-clip items), not just one.
+        """
 
-        item = self._find_item(
+        items = self._find_items(
             timeline=timeline,
             scene_number=scene_number,
         )
 
-        blueprint = item.editing_blueprint
+        blueprint = items[0].editing_blueprint
 
         if blueprint is None:
             raise ValueError(
                 "The timeline scene does not contain " "an editing blueprint."
             )
 
-        item.editing_blueprint = None
+        for item in items:
+            item.editing_blueprint = None
 
-        if clear_transition_fields:
-            item.transition_in = None
-            item.transition_out = None
+            if clear_transition_fields:
+                item.transition_in = None
+                item.transition_out = None
 
-        metadata_keys = [
-            key for key in item.metadata if key.startswith("editing_blueprint_")
-        ]
+            metadata_keys = [
+                key for key in item.metadata if key.startswith("editing_blueprint_")
+            ]
 
-        for key in metadata_keys:
-            item.metadata.pop(
-                key,
-                None,
-            )
+            for key in metadata_keys:
+                item.metadata.pop(
+                    key,
+                    None,
+                )
 
         return blueprint
 
@@ -175,18 +198,20 @@ class TimelineDirectiveService:
         scene_number: int,
     ) -> VideoTimelineItem:
         """
-        Mark a scene blueprint as applied by an editing engine.
+        Mark a scene blueprint as applied by an editing engine, on
+        every timeline item sharing this scene_number (Phase 5: a
+        split scene's several sub-clip items).
 
         Actual FFmpeg or renderer execution will be implemented
         in a later module.
         """
 
-        item = self._find_item(
+        items = self._find_items(
             timeline=timeline,
             scene_number=scene_number,
         )
 
-        blueprint = item.editing_blueprint
+        blueprint = items[0].editing_blueprint
 
         if blueprint is None:
             raise ValueError(
@@ -195,9 +220,10 @@ class TimelineDirectiveService:
 
         blueprint.status = BlueprintResolutionStatus.APPLIED
 
-        item.metadata["editing_blueprint_status"] = blueprint.status.value
+        for item in items:
+            item.metadata["editing_blueprint_status"] = blueprint.status.value
 
-        return item
+        return min(items, key=lambda item: item.clip_sequence_index)
 
     def scenes_without_blueprints(
         self,
@@ -207,11 +233,11 @@ class TimelineDirectiveService:
     ) -> list[int]:
         """Return scene numbers lacking editing blueprints."""
 
-        scene_numbers = [
+        scene_numbers = {
             item.scene_number
             for item in timeline.items
             if (item.editing_blueprint is None and (item.enabled or not enabled_only))
-        ]
+        }
 
         return sorted(scene_numbers)
 
@@ -224,21 +250,29 @@ class TimelineDirectiveService:
         return [item for item in timeline.ordered_items() if item.is_render_ready]
 
     @staticmethod
-    def _find_item(
+    def _find_items(
         *,
         timeline: VideoTimeline,
         scene_number: int,
-    ) -> VideoTimelineItem:
-        """Return one timeline item by scene number."""
+    ) -> list[VideoTimelineItem]:
+        """
+        Return every timeline item sharing one scene number, ordered
+        by clip_sequence_index.
 
-        matches = [item for item in timeline.items if item.scene_number == scene_number]
+        Phase 5 (multi-clip scene splitting): more than one match is
+        no longer an error - a split scene legitimately contributes
+        several sub-clip items sharing one scene_number, distinguished
+        only by clip_sequence_index. Every caller here treats a
+        blueprint as a per-scene decision applied uniformly across all
+        of a scene's own items, never as a reason to pick just one.
+        """
+
+        matches = sorted(
+            (item for item in timeline.items if item.scene_number == scene_number),
+            key=lambda item: item.clip_sequence_index,
+        )
 
         if not matches:
             raise KeyError("Timeline scene was not found: " f"{scene_number}")
 
-        if len(matches) > 1:
-            raise ValueError(
-                "Multiple timeline items use the same " f"scene number: {scene_number}"
-            )
-
-        return matches[0]
+        return matches

@@ -4,6 +4,7 @@ import math
 import subprocess
 import sys
 from pathlib import Path
+from uuid import UUID
 
 from src.models.audio_timeline import AudioTimeline
 from src.models.audio_track import AudioTrack, AudioTrackType
@@ -102,6 +103,19 @@ class ProductionRenderService:
     # against a pathological scene count (e.g. a planning bug).
     _MAXIMUM_RENDER_CHUNKS = 40
 
+    # Real-world finding, 2026-09-16: with no explicit keyframe
+    # interval, libx264/libx265 fall back to adaptive scenecut-based
+    # keyframe placement - inspecting a real render found only 2
+    # keyframes in the first 12 seconds (an 8.3s gap) on a scene with
+    # little motion. A long GOP forces a decoder to reconstruct many
+    # frames from a single distant keyframe, which is a well-known
+    # real cause of stutter/hitching during ordinary playback on
+    # constrained hardware or software decoders - independent of
+    # anything about the video/audio content itself. Capping the
+    # keyframe interval at a conservative, industry-standard 2 seconds
+    # bounds this regardless of scene content.
+    _MAX_KEYFRAME_INTERVAL_SECONDS = 2.0
+
     def __init__(
         self,
         *,
@@ -193,6 +207,7 @@ class ProductionRenderService:
         output_file: str | None = None,
         progress_callback: ProgressCallback | None = None,
         cancellation_check: CancellationCheck | None = None,
+        transition_duration_seconds: float = 0.0,
     ) -> RenderResult:
         """
         Execute a prepared production timeline through FFmpeg.
@@ -212,6 +227,18 @@ class ProductionRenderService:
         never leaves a partial or corrupt file at the requested output
         path (Phase 14: "write staged output then safely promote to
         final path").
+
+        transition_duration_seconds should be the same value the
+        caller resolved and gave to VoicePipelineStage for this same
+        job (see RenderWorkflowStageFactory.build()) - it exists here
+        only to undo, at chunk-boundary time, the exact over-correction
+        VoicePipelineStage's crossfade-aware voice positioning applies
+        at a scene boundary that turns out to become a chunk split (a
+        hard cut, not a real crossfade) rather than a real transition;
+        see _slice_for_scenes for the full real-world finding. Omitting
+        it (the default, 0.0) reproduces this method's exact prior
+        behavior and is correct whenever the render never needs
+        chunking, or the genre has no configured transition duration.
         """
 
         duration_seconds = video_timeline.calculate_duration()
@@ -228,7 +255,14 @@ class ProductionRenderService:
 
         target_output_file = self._resolve_output_file(output_file)
 
-        resolved_config = self._ffmpeg_capability_service.resolve(self._ffmpeg_config)
+        effective_ffmpeg_config = self._with_bounded_keyframe_interval(
+            self._ffmpeg_config,
+            frame_rate=video_timeline.frame_rate,
+        )
+
+        resolved_config = self._ffmpeg_capability_service.resolve(
+            effective_ffmpeg_config
+        )
 
         command_plan, master_plan, warnings, staging_output_file = (
             self._build_command_plan(
@@ -237,6 +271,7 @@ class ProductionRenderService:
                 voice_blueprints=voice_blueprints,
                 target_output_file=target_output_file,
                 resolved_config=resolved_config,
+                transition_duration_seconds=transition_duration_seconds,
             )
         )
 
@@ -245,6 +280,59 @@ class ProductionRenderService:
         if full_command_length is None or full_command_length <= (
             self._SAFE_COMMAND_LINE_LENGTH
         ):
+            # Real-world finding, 2026-09-18: this single-command path
+            # never ran the real-boundary audio correction
+            # _slice_for_scenes already applies per-chunk - confirmed
+            # on a real, single-chunk (never touched the chunked code
+            # path at all) render: its video stream measured 66.27s
+            # while its audio measured 67.92s, a ~1.66s tail of
+            # trailing music/SFX past the real, crossfade-shortened
+            # end of the video - the exact same class of bug the
+            # chunked path's real_chunk_start/real_chunk_end already
+            # fixes, just never applied here because chunking never
+            # happens for a short enough video. Treating the whole
+            # video as a single chunk (chunk_index=0, every scene
+            # mapped to that one chunk) and running it through the
+            # same, already-proven _slice_for_scenes reuses that fix
+            # instead of duplicating it - every real audio track gets
+            # clipped to the video's real length regardless of
+            # whether chunking ever happens. Known limitation: this
+            # assumes one uniform transition_duration_seconds across
+            # every scene boundary, same as every other fix that
+            # relies on this parameter - a per-scene transition
+            # override that changes an individual boundary's own
+            # duration or type is not accounted for.
+            if transition_duration_seconds > 0.0:
+                scene_numbers = {
+                    item.scene_number for item in video_timeline.items if item.enabled
+                }
+
+                if scene_numbers:
+                    video_timeline, audio_timeline, voice_blueprints = (
+                        self._slice_for_scenes(
+                            video_timeline=video_timeline,
+                            audio_timeline=audio_timeline,
+                            voice_blueprints=voice_blueprints,
+                            scene_numbers=scene_numbers,
+                            chunk_index=0,
+                            transition_duration_seconds=(transition_duration_seconds),
+                            scene_chunk_indices=dict.fromkeys(scene_numbers, 0),
+                        )
+                    )
+
+                    duration_seconds = video_timeline.calculate_duration()
+
+                    command_plan, master_plan, warnings, staging_output_file = (
+                        self._build_command_plan(
+                            video_timeline=video_timeline,
+                            audio_timeline=audio_timeline,
+                            voice_blueprints=voice_blueprints,
+                            target_output_file=target_output_file,
+                            resolved_config=resolved_config,
+                            transition_duration_seconds=(transition_duration_seconds),
+                        )
+                    )
+
             return self._execute_command_plan(
                 command_plan=command_plan,
                 master_plan=master_plan,
@@ -266,6 +354,41 @@ class ProductionRenderService:
             full_command_length=full_command_length,
             progress_callback=progress_callback,
             cancellation_check=cancellation_check,
+            transition_duration_seconds=transition_duration_seconds,
+        )
+
+    @classmethod
+    def _with_bounded_keyframe_interval(
+        cls,
+        config: FFmpegConfig,
+        *,
+        frame_rate: int,
+    ) -> FFmpegConfig:
+        """
+        Return config with a hard keyframe-interval cap appended,
+        unless the caller already customized -g/-keyint_min
+        themselves (an explicit override always wins).
+        """
+
+        already_customized = any(
+            arg in {"-g", "-keyint_min"} for arg in config.extra_video_args
+        )
+
+        if already_customized or not isinstance(frame_rate, int) or frame_rate <= 0:
+            return config
+
+        interval_frames = max(1, round(frame_rate * cls._MAX_KEYFRAME_INTERVAL_SECONDS))
+
+        return config.model_copy(
+            update={
+                "extra_video_args": [
+                    *config.extra_video_args,
+                    "-g",
+                    str(interval_frames),
+                    "-keyint_min",
+                    str(interval_frames),
+                ],
+            }
         )
 
     def _build_command_plan(
@@ -278,6 +401,7 @@ class ProductionRenderService:
         resolved_config: FFmpegResolvedConfig,
         include_timeline_in: bool = True,
         include_timeline_out: bool = True,
+        transition_duration_seconds: float = 0.0,
     ) -> tuple[FFmpegCommandPlan, MasterEditPlan, list[str], str]:
         """
         Build the deterministic FFmpeg command for one timeline pair
@@ -288,6 +412,13 @@ class ProductionRenderService:
         transition/effect/subtitle/camera/animation plans, render
         graph, filter graph, command plan) exists in exactly one
         place.
+
+        transition_duration_seconds is forwarded to
+        SubtitleExecutionService.build_plan() - see that method's own
+        docstring for why subtitle timing needs it too, not just
+        audio: a real crossfade blends two scenes' full frames
+        (subtitles already burned in) together for that many seconds
+        at every internal boundary.
         """
 
         staging_output_file = self._staging_output_file(target_output_file)
@@ -322,6 +453,7 @@ class ProductionRenderService:
             video_timeline,
             voice_blueprints=voice_blueprints,
             mark_ready=True,
+            transition_duration_seconds=transition_duration_seconds,
         )
 
         camera_plan = self._camera_execution_service.build_plan(
@@ -562,6 +694,7 @@ class ProductionRenderService:
         full_command_length: int,
         progress_callback: ProgressCallback | None,
         cancellation_check: CancellationCheck | None,
+        transition_duration_seconds: float = 0.0,
     ) -> RenderResult:
         """
         Render a timeline too large for one FFmpeg command line as
@@ -588,6 +721,7 @@ class ProductionRenderService:
                     voice_blueprints=voice_blueprints,
                     target_output_file=target_output_file,
                     resolved_config=resolved_config,
+                    transition_duration_seconds=transition_duration_seconds,
                 )
             )
 
@@ -610,9 +744,12 @@ class ProductionRenderService:
             scene_numbers=scene_numbers,
             resolved_config=resolved_config,
             full_command_length=full_command_length,
+            transition_duration_seconds=transition_duration_seconds,
         )
 
         scene_groups = self._split_scene_numbers(scene_numbers, chunk_count)
+
+        scene_chunk_indices = self._scene_chunk_indices(scene_groups)
 
         target_path = Path(target_output_file)
 
@@ -627,6 +764,9 @@ class ProductionRenderService:
                     audio_timeline=audio_timeline,
                     voice_blueprints=voice_blueprints,
                     scene_numbers=group,
+                    chunk_index=index,
+                    transition_duration_seconds=transition_duration_seconds,
+                    scene_chunk_indices=scene_chunk_indices,
                 )
             )
 
@@ -645,6 +785,7 @@ class ProductionRenderService:
                     resolved_config=resolved_config,
                     include_timeline_in=(index == 0),
                     include_timeline_out=(index == len(scene_groups) - 1),
+                    transition_duration_seconds=transition_duration_seconds,
                 )
             )
 
@@ -715,6 +856,7 @@ class ProductionRenderService:
         scene_numbers: list[int],
         resolved_config: FFmpegResolvedConfig,
         full_command_length: int,
+        transition_duration_seconds: float = 0.0,
     ) -> int:
         """
         Return the smallest chunk count whose every chunk's own
@@ -744,6 +886,8 @@ class ProductionRenderService:
         for chunk_count in range(starting_chunk_count, maximum_chunks + 1):
             groups = self._split_scene_numbers(scene_numbers, chunk_count)
 
+            scene_chunk_indices = self._scene_chunk_indices(groups)
+
             if all(
                 self._chunk_command_fits(
                     video_timeline=video_timeline,
@@ -751,8 +895,11 @@ class ProductionRenderService:
                     voice_blueprints=voice_blueprints,
                     scene_numbers=group,
                     resolved_config=resolved_config,
+                    chunk_index=group_index,
+                    transition_duration_seconds=transition_duration_seconds,
+                    scene_chunk_indices=scene_chunk_indices,
                 )
-                for group in groups
+                for group_index, group in enumerate(groups)
             ):
                 return chunk_count
 
@@ -766,6 +913,9 @@ class ProductionRenderService:
         voice_blueprints: list[ResolvedVoiceBlueprint],
         scene_numbers: set[int],
         resolved_config: FFmpegResolvedConfig,
+        chunk_index: int = 0,
+        transition_duration_seconds: float = 0.0,
+        scene_chunk_indices: dict[int, int] | None = None,
     ) -> bool:
         """Build one candidate chunk's command plan just to measure it."""
 
@@ -775,6 +925,9 @@ class ProductionRenderService:
                 audio_timeline=audio_timeline,
                 voice_blueprints=voice_blueprints,
                 scene_numbers=scene_numbers,
+                chunk_index=chunk_index,
+                transition_duration_seconds=transition_duration_seconds,
+                scene_chunk_indices=scene_chunk_indices,
             )
         )
 
@@ -785,6 +938,7 @@ class ProductionRenderService:
                 voice_blueprints=chunk_voice_blueprints,
                 target_output_file=self.DEFAULT_OUTPUT_FILE,
                 resolved_config=resolved_config,
+                transition_duration_seconds=transition_duration_seconds,
             )
         )
 
@@ -804,6 +958,26 @@ class ProductionRenderService:
             for start in range(0, len(scene_numbers), group_size)
         ]
 
+    @staticmethod
+    def _scene_chunk_indices(
+        scene_groups: list[set[int]],
+    ) -> dict[int, int]:
+        """
+        Map every scene number to the index of the chunk it falls in.
+
+        See _slice_for_scenes for why this must be built once across
+        the *whole* candidate grouping and reused for every chunk's
+        own slice call - a track's correction depends on its own
+        scene's chunk membership, not on which chunk is currently
+        being sliced.
+        """
+
+        return {
+            scene_number: chunk_index
+            for chunk_index, group in enumerate(scene_groups)
+            for scene_number in group
+        }
+
     # Heuristic tolerance for recognizing a background-music track
     # that spans the entire original timeline (a single continuous
     # track) rather than one positioned scene-range segment among
@@ -811,6 +985,74 @@ class ProductionRenderService:
     # tight tolerances used for real timing validation elsewhere,
     # since this only classifies which slicing rule to apply.
     _WHOLE_TIMELINE_MUSIC_TOLERANCE_SECONDS = 1.0
+
+    # Real-world finding, 2026-09-17: the voiceover chunk-boundary
+    # correction in _slice_for_scenes chains several float additions
+    # and subtractions (VoicePipelineStage's own cumulative sum, then
+    # this method's own correction), which can leave a track that
+    # truly ends exactly at its chunk's own boundary a few
+    # femtoseconds on the wrong side of an exact equality check -
+    # confirmed on the real job: scene 10's real stored position was
+    # 50.599999999999994, not the clean 50.6 the math implies, and
+    # after correction landed 4e-15s short of chunk 0's own boundary,
+    # producing a technically nonzero but meaningless sliver instead
+    # of being cleanly excluded. A track shorter than this tolerance
+    # carries no real audio content at any sample rate (even 48kHz's
+    # own sample period is ~2e-5s, many orders of magnitude larger)
+    # and is dropped rather than handed to FFmpeg as an input.
+    _MINIMUM_TRACK_OVERLAP_SECONDS = 1e-6
+
+    @staticmethod
+    def _cumulative_real_crossfade_counts(
+        *,
+        video_timeline: VideoTimeline,
+        scene_chunk_indices: dict[int, int],
+    ) -> dict[UUID, int]:
+        """
+        For every enabled video timeline item, the number of REAL
+        crossfades (never a chunk-boundary hard cut) that occur
+        strictly before that item's own start, keyed by the item's own
+        id.
+
+        Walks the whole, unchunked timeline once, in playback order.
+        The boundary between two consecutive items counts as a real
+        crossfade unless the two items fall in different chunks per
+        scene_chunk_indices (a genuine hard cut, decided once across
+        the whole job by _scene_chunk_indices - chunking only ever
+        groups whole scene numbers, so two consecutive items sharing
+        one scene_number - Phase 5's own split sub-clips - always fall
+        in the same chunk and always count as a real crossfade).
+
+        Replaces the old (scene_number - 1) - chunk_index arithmetic
+        _slice_for_scenes used to compute this - see that method's own
+        real-world-finding comment for why counting whole scene-number
+        increments broke the moment one scene could contribute more
+        than one timeline item.
+        """
+
+        ordered_items = sorted(
+            (item for item in video_timeline.items if item.enabled),
+            key=lambda item: item.start_time_seconds,
+        )
+
+        counts: dict[UUID, int] = {}
+        running_count = 0
+
+        for index, item in enumerate(ordered_items):
+            counts[item.id] = running_count
+
+            if index + 1 >= len(ordered_items):
+                continue
+
+            next_item = ordered_items[index + 1]
+
+            this_chunk = scene_chunk_indices.get(item.scene_number, 0)
+            next_chunk = scene_chunk_indices.get(next_item.scene_number, 0)
+
+            if this_chunk == next_chunk:
+                running_count += 1
+
+        return counts
 
     @classmethod
     def _slice_for_scenes(
@@ -820,6 +1062,9 @@ class ProductionRenderService:
         audio_timeline: AudioTimeline,
         voice_blueprints: list[ResolvedVoiceBlueprint],
         scene_numbers: set[int],
+        chunk_index: int = 0,
+        transition_duration_seconds: float = 0.0,
+        scene_chunk_indices: dict[int, int] | None = None,
     ) -> tuple[VideoTimeline, AudioTimeline, list[ResolvedVoiceBlueprint]]:
         """
         Return a self-contained, zero-based timeline slice covering
@@ -840,7 +1085,81 @@ class ProductionRenderService:
         instead gets its own per-chunk copy, looped to fill the
         chunk, relying on the same loop/atrim mechanism that already
         fills a track shorter than its timeline.
+
+        Real-world finding, 2026-09-17: VoicePipelineStage positions
+        every voiceover track assuming a real crossfade "eats"
+        transition_duration_seconds at EVERY scene boundary - true for
+        every boundary except the one(s) that end up as a chunk split,
+        which become hard cuts in the final concatenated video (no
+        crossfade actually happens there, since chunking is a decision
+        VoicePipelineStage cannot see - it runs long before command
+        length, and therefore chunking, is known at all). Every scene
+        after a chunk boundary is therefore positioned
+        transition_duration_seconds too early per boundary already
+        crossed.
+
+        Fixing only the voiceover-position side of this (below) turned
+        out to be necessary but not sufficient - confirmed directly on
+        a real render, twice. The first pass fixed voiceover
+        positioning but the freeze persisted; rendering chunk 0 alone
+        and probing its own two streams directly showed why: its real
+        video stream measured 51.2s (matching this method's own
+        real_chunk_end math exactly) while its audio stream measured
+        56.0s - the *chunk's own nominal end*, coming entirely from
+        music/SFX tracks still being tested against the nominal
+        window. A chunk's own video is genuinely only ever as long as
+        real_chunk_end - real_chunk_start (below), full stop,
+        regardless of which track type is playing there - the
+        distinction between track types is about how a track's own
+        *position* needs interpreting, never about which coordinate
+        space the *window* being tested against uses - that window is
+        a property of the chunk's own real video, the same for every
+        track type.
+
+        Real-world finding, 2026-09-18: this method originally assumed
+        only voiceover positions needed correction ("music/SFX
+        positions come straight from each scene's own nominal
+        VideoTimelineItem and are already correct as-is") - confirmed
+        WRONG directly against a real job. SoundEffectPipelineStage and
+        MusicPipelineStage both now compute their own real,
+        crossfade-corrected position upstream (the same way
+        VoicePipelineStage always has, for the same reason), so they
+        share voice's exact same remaining chunk-boundary blind spot -
+        see each stage's own docstring for the full story.
+
+        Two corrections, applied together:
+
+        1. Per-track position (VOICEOVER, SOUND_EFFECT, and
+           BACKGROUND_MUSIC - every track type whose position is
+           computed upstream in real, crossfade-corrected time): add
+           back transition_duration_seconds once for every chunk
+           boundary that precedes the *track's own scene* (via
+           scene_chunk_indices, built once across the whole job - see
+           _scene_chunk_indices), regardless of which chunk is
+           currently being sliced. This recovers each track's true,
+           boundary-corrected position. A track with no scene_number
+           in its metadata (the legacy whole-timeline music track) is
+           left uncorrected - it has no single owning scene, and its
+           own start_time_seconds is always 0.0 regardless.
+
+        2. Per-chunk window (every track type): this chunk's own
+           [start, end) overlap test window must be expressed in the
+           same real, crossfade-corrected coordinate space real
+           voiceover positions use, not the nominal one a plain
+           VideoTimelineItem boundary gives - chunk N's own video
+           actually starts/ends transition_duration_seconds earlier
+           per *real* crossfade that precedes it, which is every
+           preceding scene boundary except the N chunk-boundaries
+           themselves (those are hard cuts, not crossfades - see
+           crossfades_before_start/crossfades_before_end below).
+           Testing any track's position against the wrong coordinate
+           space silently drops, duplicates, or - for a track that
+           only exceeds the real boundary, never the nominal one -
+           lets it overshoot the chunk's own real video length
+           exactly the way this whole method exists to prevent.
         """
+
+        scene_chunk_indices = scene_chunk_indices or {}
 
         selected_items: list[VideoTimelineItem] = sorted(
             (
@@ -858,7 +1177,39 @@ class ProductionRenderService:
 
         chunk_end = max(item.end_time_seconds for item in selected_items)
 
-        chunk_duration = chunk_end - chunk_start
+        # Phase 5 (multi-clip scene splitting), real-world finding,
+        # 2026-09-21: the old (first_scene_number - 1) - chunk_index /
+        # (last_scene_number - 1) - chunk_index arithmetic assumed
+        # exactly one crossfade per scene-number increment - true only
+        # while every scene contributes exactly one VideoTimelineItem.
+        # A split scene contributes several consecutive items sharing
+        # one scene_number, each boundary between them a REAL
+        # intra-scene seam crossfade the old formula had no way to
+        # count (it only ever counted whole scene-number increments).
+        # Replaced (not patched) with a precomputed, walked-once count
+        # of every real crossfade preceding each item, keyed by the
+        # item's own id - correct regardless of how many items one
+        # scene number contributes. chunk_index itself is no longer
+        # needed for this - kept as a parameter only for existing call-
+        # site compatibility.
+        crossfade_counts = cls._cumulative_real_crossfade_counts(
+            video_timeline=video_timeline,
+            scene_chunk_indices=scene_chunk_indices,
+        )
+
+        crossfades_before_start = crossfade_counts.get(selected_items[0].id, 0)
+
+        crossfades_before_end = crossfade_counts.get(selected_items[-1].id, 0)
+
+        real_chunk_start = chunk_start - (
+            transition_duration_seconds * crossfades_before_start
+        )
+
+        real_chunk_end = chunk_end - (
+            transition_duration_seconds * crossfades_before_end
+        )
+
+        real_chunk_duration = real_chunk_end - real_chunk_start
 
         rebased_items = [
             item.model_copy(
@@ -884,12 +1235,57 @@ class ProductionRenderService:
 
         chunk_tracks: list[AudioTrack] = []
 
+        # See this method's docstring: the overlap window is always
+        # the chunk's own REAL (crossfade-corrected) boundary,
+        # regardless of track type.
+        #
+        # Real-world finding, 2026-09-18: the per-track position
+        # correction below used to be voiceover-only, on the
+        # assumption that music/SFX positions came straight from each
+        # scene's nominal VideoTimelineItem and needed no correction -
+        # confirmed WRONG directly against a real job (SoundEffectPipelineStage
+        # and MusicPipelineStage were still using item.start_time_seconds,
+        # never crossfade-corrected). Both stages now compute their own
+        # real, crossfade-corrected position upstream (assuming every
+        # scene boundary is a real crossfade), the same way
+        # VoicePipelineStage always has - which means they now share
+        # voice's exact same remaining blind spot: whichever boundary
+        # ends up as a chunk split is actually a hard cut, not a real
+        # crossfade, so a track positioned across one is too early by
+        # transition_duration_seconds per chunk boundary crossed. Every
+        # stage that does this upstream real-position math needs this
+        # same chunk-boundary correction, not just voice.
+        window_start = real_chunk_start
+
+        window_end = real_chunk_end
+
+        _CHUNK_CORRECTED_TRACK_TYPES = (
+            AudioTrackType.VOICEOVER,
+            AudioTrackType.SOUND_EFFECT,
+            AudioTrackType.BACKGROUND_MUSIC,
+        )
+
         for track in audio_timeline.tracks:
-            track_end = track.start_time_seconds + track.duration_seconds
+            if track.track_type in _CHUNK_CORRECTED_TRACK_TYPES:
+                track_scene_number = track.metadata.get("scene_number")
+
+                track_chunk_index = (
+                    scene_chunk_indices.get(track_scene_number, 0)
+                    if track_scene_number is not None
+                    else 0
+                )
+
+                effective_start = track.start_time_seconds + (
+                    transition_duration_seconds * track_chunk_index
+                )
+            else:
+                effective_start = track.start_time_seconds
+
+            track_end = effective_start + track.duration_seconds
 
             spans_entire_timeline = (
                 track.track_type == AudioTrackType.BACKGROUND_MUSIC
-                and track.start_time_seconds <= tolerance
+                and effective_start <= tolerance
                 and track_end >= total_video_duration - tolerance
             )
 
@@ -898,7 +1294,7 @@ class ProductionRenderService:
                     track.model_copy(
                         update={
                             "start_time_seconds": 0.0,
-                            "duration_seconds": chunk_duration,
+                            "duration_seconds": real_chunk_duration,
                             "loop_enabled": True,
                         }
                     )
@@ -918,17 +1314,17 @@ class ProductionRenderService:
             # split, each side independently clipped to its own
             # chunk (the same disclosed loop-restart trade-off as the
             # whole-timeline case above, just at a finer grain).
-            overlap_start = max(track.start_time_seconds, chunk_start)
+            overlap_start = max(effective_start, window_start)
 
-            overlap_end = min(track_end, chunk_end)
+            overlap_end = min(track_end, window_end)
 
-            if overlap_end <= overlap_start:
+            if overlap_end - overlap_start <= cls._MINIMUM_TRACK_OVERLAP_SECONDS:
                 continue
 
             chunk_tracks.append(
                 track.model_copy(
                     update={
-                        "start_time_seconds": (overlap_start - chunk_start),
+                        "start_time_seconds": (overlap_start - window_start),
                         "duration_seconds": (overlap_end - overlap_start),
                     }
                 )
@@ -960,19 +1356,101 @@ class ProductionRenderService:
         progress_callback: ProgressCallback | None,
         cancellation_check: CancellationCheck | None,
     ) -> RenderResult:
-        """Losslessly concatenate already-rendered chunk files via FFmpeg."""
+        """
+        Combine already-rendered chunk files into one final output.
+
+        Real-world finding, 2026-09-16: the previous approach used
+        FFmpeg's concat DEMUXER with `-c copy` (stream copy, no
+        re-encoding), which requires every segment's streams to be
+        byte-identical - each chunk is produced by its own, fully
+        independent FFmpeg invocation, and even nominally-matching
+        encoder settings can leave small real differences (AAC
+        encoder priming/padding, internal timestamp state) that the
+        demuxer does not tolerate. Confirmed directly on a real render:
+        the concatenated file's video played for the full intended
+        duration, but its audio silently stopped at almost exactly the
+        first chunk's own duration - no error reported, no warning
+        surfaced, audio for every later chunk simply gone. The concat
+        FILTER instead genuinely re-decodes and re-encodes every
+        segment into one continuous, correct stream - slower (one more
+        encode pass) but correct regardless of any encoder-state
+        mismatch between chunks. This command only ever references the
+        small, fixed number of already-rendered chunk files (never the
+        original per-scene filter graph that required chunking in the
+        first place), so it stays trivially within the command-length
+        limit regardless of how many scenes or audio tracks the source
+        video has.
+        """
 
         staging_output_file = self._staging_output_file(target_output_file)
 
-        concat_list_file = f"{staging_output_file}.concat_list.txt"
-
         Path(staging_output_file).parent.mkdir(parents=True, exist_ok=True)
 
-        Path(concat_list_file).write_text(
-            "\n".join(self._concat_file_line(chunk_file) for chunk_file in chunk_files)
-            + "\n",
-            encoding="utf-8",
+        arguments: list[str] = ["-y"]
+
+        for chunk_file in chunk_files:
+            arguments.extend(
+                [
+                    "-i",
+                    Path(chunk_file).resolve().as_posix(),
+                ]
+            )
+
+        concat_stream_labels = "".join(
+            f"[{index}:v:0][{index}:a:0]" for index in range(len(chunk_files))
         )
+
+        filter_complex = (
+            f"{concat_stream_labels}concat="
+            f"n={len(chunk_files)}:v=1:a=1[concat_v][concat_a]"
+        )
+
+        config = resolved_config.config
+
+        arguments.extend(
+            [
+                "-filter_complex",
+                filter_complex,
+                "-map",
+                "[concat_v]",
+                "-map",
+                "[concat_a]",
+                "-c:v",
+                resolved_config.selected_video_codec,
+            ]
+        )
+
+        if resolved_config.selected_video_codec in {"libx264", "libx265"}:
+            arguments.extend(
+                [
+                    "-preset",
+                    config.preset,
+                    "-crf",
+                    str(config.crf),
+                ]
+            )
+
+        arguments.extend(
+            [
+                "-pix_fmt",
+                str(config.pixel_format.value),
+            ]
+        )
+
+        arguments.extend(config.extra_video_args)
+
+        arguments.extend(
+            [
+                "-c:a",
+                resolved_config.selected_audio_codec,
+                "-b:a",
+                config.audio_bitrate,
+            ]
+        )
+
+        arguments.extend(config.extra_audio_args)
+
+        arguments.append(staging_output_file)
 
         command_plan = FFmpegCommandPlan(
             executable=(
@@ -980,22 +1458,11 @@ class ProductionRenderService:
                 or self._ffmpeg_config.ffmpeg_path
             ),
             input_plan=FFmpegInputPlan(),
-            filter_complex="concat_demuxer_passthrough",
-            video_output_label="v",
-            audio_output_label="a",
+            filter_complex=filter_complex,
+            video_output_label="concat_v",
+            audio_output_label="concat_a",
             output_file=staging_output_file,
-            arguments=[
-                "-y",
-                "-f",
-                "concat",
-                "-safe",
-                "0",
-                "-i",
-                concat_list_file,
-                "-c",
-                "copy",
-                staging_output_file,
-            ],
+            arguments=arguments,
         )
 
         try:
@@ -1009,8 +1476,6 @@ class ProductionRenderService:
         except Exception as error:
             self._cleanup_staging_file(staging_output_file)
 
-            Path(concat_list_file).unlink(missing_ok=True)
-
             return RenderResult(
                 success=False,
                 output_file=None,
@@ -1021,8 +1486,6 @@ class ProductionRenderService:
                 error_message=("Failed to concatenate rendered chunks: " f"{error}"),
                 ffmpeg_command=list(command_plan.command),
             )
-
-        Path(concat_list_file).unlink(missing_ok=True)
 
         ffmpeg_command = (
             list(execution_result.ffmpeg_command)
@@ -1071,18 +1534,6 @@ class ProductionRenderService:
             ffmpeg_command=ffmpeg_command,
             exit_code=execution_result.exit_code,
         )
-
-    @staticmethod
-    def _concat_file_line(
-        chunk_file: str,
-    ) -> str:
-        """Return one escaped FFmpeg concat-demuxer file-list line."""
-
-        absolute_path = Path(chunk_file).resolve().as_posix()
-
-        escaped_path = absolute_path.replace("'", "'\\''")
-
-        return f"file '{escaped_path}'"
 
     @staticmethod
     def _cleanup_chunk_files(

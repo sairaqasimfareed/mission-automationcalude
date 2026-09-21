@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from src.models.ffmpeg_config import FFmpegConfig
 from src.models.ffmpeg_execution_result import (
     FFmpegExecutionStatus,
 )
@@ -175,6 +176,7 @@ def test_render_executes_real_render_chain() -> None:
         video_timeline,
         voice_blueprints=voice_blueprints,
         mark_ready=True,
+        transition_duration_seconds=0.0,
     )
 
     dependencies["ffmpeg_execution_service"].execute.assert_called_once_with(
@@ -643,3 +645,119 @@ def test_render_cleans_up_staging_file_when_execution_raises(
 
     assert not staging_output_file.exists()
     assert not target_output_file.exists()
+
+
+def test_with_bounded_keyframe_interval_caps_gop_for_a_real_frame_rate() -> None:
+    """
+    Real-world finding: with no explicit keyframe interval, a real
+    render was found (via direct ffprobe inspection of its keyframes)
+    to have only 2 keyframes in its first 12 seconds - an 8.3s gap
+    that is a well-known real cause of playback stutter on ordinary
+    decoders, independent of anything wrong with the actual audio or
+    video content. Capping at a fixed 2-second interval bounds this
+    regardless of scene content or encoder scenecut heuristics.
+    """
+
+    bounded = ProductionRenderService._with_bounded_keyframe_interval(
+        FFmpegConfig(),
+        frame_rate=30,
+    )
+
+    assert bounded.extra_video_args == ["-g", "60", "-keyint_min", "60"]
+
+
+def test_with_bounded_keyframe_interval_scales_with_frame_rate() -> None:
+    bounded = ProductionRenderService._with_bounded_keyframe_interval(
+        FFmpegConfig(),
+        frame_rate=24,
+    )
+
+    assert bounded.extra_video_args == ["-g", "48", "-keyint_min", "48"]
+
+
+def test_with_bounded_keyframe_interval_respects_an_explicit_override() -> None:
+    config = FFmpegConfig(extra_video_args=["-g", "120"])
+
+    bounded = ProductionRenderService._with_bounded_keyframe_interval(
+        config,
+        frame_rate=30,
+    )
+
+    assert bounded.extra_video_args == ["-g", "120"]
+
+
+def test_with_bounded_keyframe_interval_skips_a_non_positive_frame_rate() -> None:
+    config = FFmpegConfig()
+
+    bounded = ProductionRenderService._with_bounded_keyframe_interval(
+        config,
+        frame_rate=0,
+    )
+
+    assert bounded.extra_video_args == []
+
+
+def test_with_bounded_keyframe_interval_skips_a_non_integer_frame_rate() -> None:
+    """
+    Some callers pass a MagicMock() video_timeline in tests, so
+    frame_rate can arrive as something other than a real int - this
+    must degrade gracefully (skip the cap) rather than raise.
+    """
+
+    config = FFmpegConfig()
+
+    bounded = ProductionRenderService._with_bounded_keyframe_interval(
+        config,
+        frame_rate=MagicMock(),
+    )
+
+    assert bounded.extra_video_args == []
+
+
+def test_render_forwards_the_bounded_keyframe_interval_to_capability_resolution(
+    tmp_path: Path,
+) -> None:
+    target_output_file = tmp_path / "render.mp4"
+    staging_output_file = tmp_path / "render.mp4.part"
+
+    staging_output_file.write_bytes(b"fake rendered video bytes")
+
+    dependencies = _real_render_dependencies_for_staging(
+        success=True,
+        staging_file_path=staging_output_file,
+    )
+
+    video_timeline = MagicMock()
+    video_timeline.calculate_duration.return_value = 5.0
+    video_timeline.frame_rate = 24
+
+    voice_blueprints: list[ResolvedVoiceBlueprint] = [
+        MagicMock(spec=ResolvedVoiceBlueprint),
+    ]
+
+    service = ProductionRenderService(
+        master_edit_plan_service=dependencies["master_edit_plan_service"],
+        transition_execution_service=dependencies["transition_execution_service"],
+        effect_execution_service=dependencies["effect_execution_service"],
+        subtitle_execution_service=dependencies["subtitle_execution_service"],
+        camera_execution_service=dependencies["camera_execution_service"],
+        animation_execution_service=dependencies["animation_execution_service"],
+        render_graph_builder_service=dependencies["render_graph_builder_service"],
+        ffmpeg_capability_service=dependencies["ffmpeg_capability_service"],
+        filter_graph_builder_service=dependencies["filter_graph_builder_service"],
+        ffmpeg_command_builder_service=dependencies["ffmpeg_command_builder_service"],
+        ffmpeg_execution_service=dependencies["ffmpeg_execution_service"],
+    )
+
+    result = service.render(
+        video_timeline=video_timeline,
+        audio_timeline=MagicMock(),
+        voice_blueprints=voice_blueprints,
+        output_file=str(target_output_file),
+    )
+
+    assert result.success is True
+
+    resolved_arg = dependencies["ffmpeg_capability_service"].resolve.call_args[0][0]
+
+    assert resolved_arg.extra_video_args == ["-g", "48", "-keyint_min", "48"]

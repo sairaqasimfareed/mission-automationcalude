@@ -32,7 +32,7 @@ class TimelineBuilderService:
 
         ordered_clips = sorted(
             clips,
-            key=lambda clip: clip.scene_number,
+            key=lambda clip: (clip.scene_number, clip.clip_sequence_index),
         )
 
         self._validate_clips(ordered_clips)
@@ -47,6 +47,7 @@ class TimelineBuilderService:
                 VideoTimelineItem(
                     clip=clip,
                     scene_number=clip.scene_number,
+                    clip_sequence_index=clip.clip_sequence_index,
                     start_time_seconds=current_time,
                     end_time_seconds=end_time,
                     track_index=0,
@@ -72,16 +73,23 @@ class TimelineBuilderService:
     ) -> None:
         """Validate clips before timeline placement."""
 
-        scene_numbers: set[int] = set()
+        # Phase 5 (multi-clip scene splitting): identity is the
+        # composite (scene_number, clip_sequence_index), not
+        # scene_number alone - two sub-clips of one split scene
+        # legitimately share a scene_number, distinguished only by
+        # clip_sequence_index.
+        seen_keys: set[tuple[int, int]] = set()
 
         for clip in clips:
-            if clip.scene_number in scene_numbers:
+            key = (clip.scene_number, clip.clip_sequence_index)
+
+            if key in seen_keys:
                 raise ValueError(
-                    "Duplicate scene numbers cannot be "
-                    "added to the primary video track."
+                    "Duplicate (scene_number, clip_sequence_index) pairs "
+                    "cannot be added to the primary video track."
                 )
 
-            scene_numbers.add(clip.scene_number)
+            seen_keys.add(key)
 
             if clip.status != VideoClipStatus.READY:
                 raise ValueError(

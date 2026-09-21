@@ -166,33 +166,48 @@ class TimelineValidationService:
         items: list[VideoTimelineItem],
         result: TimelineValidationResult,
     ) -> None:
-        """Find duplicate scenes on the same video track."""
+        """
+        Find duplicate (scene_number, clip_sequence_index) pairs on
+        the same video track.
+
+        Phase 5 (multi-clip scene splitting), real-world finding,
+        2026-09-21: a split scene legitimately contributes several
+        timeline items sharing one scene_number, distinguished only by
+        clip_sequence_index - flagging that as DUPLICATE_SCENE would
+        reject every real split scene's own timeline outright, before
+        transition planning (TransitionExecutionService.build_plan's
+        own validate_timeline=True step calls this) ever runs. A
+        genuine duplicate is now only the same (scene_number,
+        clip_sequence_index) pair appearing twice.
+        """
 
         scenes_by_track: dict[
             int,
-            set[int],
+            set[tuple[int, int]],
         ] = defaultdict(set)
 
         for item in items:
             track_scenes = scenes_by_track[item.track_index]
+            key = (item.scene_number, item.clip_sequence_index)
 
-            if item.scene_number in track_scenes:
+            if key in track_scenes:
                 result.errors.append(
                     TimelineValidationIssue(
                         code=(TimelineValidationCode.DUPLICATE_SCENE),
                         severity=(TimelineValidationSeverity.ERROR),
                         message=(
-                            "The same scene appears more than "
+                            "The same scene/sub-clip appears more than "
                             "once on the same video track."
                         ),
                         scene_number=item.scene_number,
                         metadata={
                             "track_index": item.track_index,
+                            "clip_sequence_index": item.clip_sequence_index,
                         },
                     )
                 )
             else:
-                track_scenes.add(item.scene_number)
+                track_scenes.add(key)
 
     def _validate_track_placement(
         self,
