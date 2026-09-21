@@ -102,11 +102,25 @@ class _SequentialFakeWorker:
 
 
 class _FakeLocator:
-    def __init__(self, *, count: int = 1, disabled: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        count: int = 1,
+        disabled: bool = False,
+        action_log: list[str] | None = None,
+        label: str | None = None,
+    ) -> None:
         self._count = count
         self.disabled = disabled
         self.click_calls = 0
         self.hover_calls = 0
+        self.wait_for_calls = 0
+        # Optional: when both are given, click() records `label` into
+        # the shared `action_log` - used to verify real ordering
+        # between locators registered on the same fake page (e.g.
+        # reference attachment happening before prompt typing).
+        self._action_log = action_log
+        self._label = label
         # If set, click() flips `disabled` to this value - simulates
         # the real, verified behavior of Start generation becoming
         # disabled again once a submission goes through
@@ -132,11 +146,28 @@ class _FakeLocator:
         if self.disabled_after_click is not None:
             self.disabled = self.disabled_after_click
 
+        if self._action_log is not None and self._label is not None:
+            self._action_log.append(self._label)
+
     def hover(self, timeout: float | None = None) -> None:
         if self._count == 0:
             raise AssertionError("hovered a locator that should not exist")
 
         self.hover_calls += 1
+
+    def wait_for(self, *, state: str = "visible", timeout: float | None = None) -> None:
+        """Fake counterpart of Playwright's real Locator.wait_for() -
+        real Playwright auto-waits and raises a real timeout error
+        when the element never appears; this fake reports the same
+        failure whenever count() is 0 (the element was never
+        registered), matching _attach_reference_assets()'s own use of
+        this to confirm the real attached-indicator actually showed
+        up."""
+
+        self.wait_for_calls += 1
+
+        if self._count == 0:
+            raise PlaywrightError(f"Timeout waiting for element to be {state}")
 
     def filter(
         self,
@@ -152,6 +183,43 @@ class _FakeLocator:
 
 
 _MISSING = _FakeLocator(count=0)
+
+
+class _FakeFileChooser:
+    def __init__(self) -> None:
+        self.set_files_calls: list[str] = []
+
+    def set_files(self, files: str) -> None:
+        self.set_files_calls.append(files)
+
+
+class _FakeFileChooserInfo:
+    def __init__(
+        self,
+        file_chooser: _FakeFileChooser | None = None,
+        *,
+        raise_error: Exception | None = None,
+    ) -> None:
+        self._file_chooser = file_chooser or _FakeFileChooser()
+        self._raise_error = raise_error
+
+    @property
+    def value(self) -> _FakeFileChooser:
+        if self._raise_error is not None:
+            raise self._raise_error
+
+        return self._file_chooser
+
+
+class _FakeFileChooserContext:
+    def __init__(self, info: _FakeFileChooserInfo) -> None:
+        self._info = info
+
+    def __enter__(self) -> _FakeFileChooserInfo:
+        return self._info
+
+    def __exit__(self, *exc_info: object) -> None:
+        return None
 
 
 class _FakeBatch:
@@ -201,12 +269,16 @@ class _FakeBatchSet:
 
 
 class _FakeKeyboard:
-    def __init__(self) -> None:
+    def __init__(self, *, action_log: list[str] | None = None) -> None:
         self.typed: list[str] = []
         self.pressed: list[str] = []
+        self._action_log = action_log
 
     def type(self, text: str, delay: float | None = None) -> None:
         self.typed.append(text)
+
+        if self._action_log is not None:
+            self._action_log.append("typed_prompt")
 
     def press(self, key: str) -> None:
         self.pressed.append(key)
@@ -259,11 +331,13 @@ class _FakeDownloadContext:
 class _FakePage:
     def __init__(self, *, raise_on_goto: bool = False) -> None:
         self.url_history: list[str] = []
-        self.keyboard = _FakeKeyboard()
+        self.action_log: list[str] = []
+        self.keyboard = _FakeKeyboard(action_log=self.action_log)
         self._by_role: dict[tuple[str, str], _FakeLocator] = {}
         self._by_css: dict[str, _FakeLocator] = {}
         self._by_text: dict[str, _FakeLocator] = {}
         self._download = _FakeDownload()
+        self._file_chooser_info = _FakeFileChooserInfo()
         self.closed = False
         self._raise_on_goto = raise_on_goto
 
@@ -293,6 +367,11 @@ class _FakePage:
     def expect_download(self, timeout: float | None = None) -> _FakeDownloadContext:
         return _FakeDownloadContext(self._download)
 
+    def expect_file_chooser(
+        self, timeout: float | None = None
+    ) -> _FakeFileChooserContext:
+        return _FakeFileChooserContext(self._file_chooser_info)
+
     # --- test setup helpers ---
 
     def register_role(self, role: str, name: str, locator: _FakeLocator) -> None:
@@ -303,6 +382,9 @@ class _FakePage:
 
     def register_text(self, text: str, locator: _FakeLocator) -> None:
         self._by_text[text] = locator
+
+    def register_file_chooser(self, info: _FakeFileChooserInfo) -> None:
+        self._file_chooser_info = info
 
 
 def _authenticated_page(
@@ -631,28 +713,250 @@ def test_submit_detects_ui_changed_when_critical_controls_are_missing() -> None:
     assert "prompt_input" in result.state_history[-1].detail  # type: ignore[operator]
 
 
-def test_submit_refuses_reference_assets_rather_than_guess() -> None:
+def _reference_asset(source_path: str) -> Any:
     from src.models.google_flow_generation import (
         GoogleFlowReferenceAsset,
         GoogleFlowReferenceRole,
     )
 
-    page = _authenticated_page()
-    adapter = _adapter(page)
-    request = _request(
-        reference_assets=[
-            GoogleFlowReferenceAsset(
-                source_path="assets/hero.png",
-                checksum="abc123",
-                role=GoogleFlowReferenceRole.CHARACTER,
-            )
-        ]
+    return GoogleFlowReferenceAsset(
+        source_path=source_path,
+        checksum="abc123",
+        role=GoogleFlowReferenceRole.CHARACTER,
     )
+
+
+def _register_ingredients_flow_controls(
+    page: _FakePage, *, file_chooser: _FakeFileChooserInfo | None = None
+) -> None:
+    """
+    Real-world finding, 2026-09-20: confirmed via a real, live
+    walkthrough this session - registers every real control
+    _attach_reference_assets() drives, so a test opts in to this
+    (conditional, reference-only) path explicitly rather than every
+    test using _authenticated_page() paying for it.
+    """
+
+    page.register_role("button", "Add ingredients to the prompt box", _FakeLocator())
+    page.register_role("button", "Upload media", _FakeLocator())
+    page.register_css("button.asset-item", _FakeLocator())
+    page.register_css(".detail-preview-image", _FakeLocator())
+    page.register_css(".detail-add-to-prompt-btn", _FakeLocator())
+    page.register_css(".prompt-ingredient-bar img.chip-image", _FakeLocator())
+    page.register_file_chooser(file_chooser or _FakeFileChooserInfo())
+
+
+def test_submit_attaches_a_reference_asset_via_the_real_ingredients_flow(
+    tmp_path: Path,
+) -> None:
+    """
+    Real-world finding, 2026-09-20: the real "Add ingredients" flow
+    was walked through live this session and is now built - a request
+    with reference assets must actually attach them (click "+",
+    upload the real file, click "Add to prompt", confirm the real
+    attached-indicator) rather than refuse.
+    """
+
+    reference_file = tmp_path / "hero.png"
+    reference_file.write_bytes(b"fake reference image bytes")
+
+    page = _authenticated_page()
+    _register_ingredients_flow_controls(page)
+    adapter = _adapter(page)
+    request = _request(reference_assets=[_reference_asset(str(reference_file))])
+
+    result = adapter.submit(request, _attempt(request))
+
+    assert result.state == GoogleFlowGenerationState.GENERATING
+
+    add_ingredients = page.get_by_role(
+        "button", name="Add ingredients to the prompt box"
+    )
+    upload_media = page.get_by_role("button", name="Upload media")
+    matching_row = page.locator("button.asset-item")
+    preview_image = page.locator(".detail-preview-image")
+    add_to_prompt = page.locator(".detail-add-to-prompt-btn")
+    indicator = page.locator(".prompt-ingredient-bar img.chip-image")
+
+    assert add_ingredients.click_calls == 1
+    assert upload_media.click_calls == 1
+    assert matching_row.wait_for_calls == 1
+    assert matching_row.click_calls == 1
+    assert preview_image.wait_for_calls == 1
+    assert add_to_prompt.click_calls == 1
+    assert indicator.wait_for_calls == 1
+
+    file_chooser = page._file_chooser_info.value  # noqa: SLF001
+    assert file_chooser.set_files_calls == [str(reference_file)]
+
+
+def test_submit_attaches_references_before_typing_the_prompt(
+    tmp_path: Path,
+) -> None:
+    """
+    Real-world finding, 2026-09-20: confirmed via the real, live
+    walkthrough this session - the real "+" button sits on the prompt
+    box BEFORE any text is typed into it. Reference attachment must
+    happen first, matching that real order, not an arbitrary one.
+    """
+
+    reference_file = tmp_path / "hero.png"
+    reference_file.write_bytes(b"fake reference image bytes")
+
+    page = _authenticated_page()
+    _register_ingredients_flow_controls(page)
+
+    add_ingredients = page.get_by_role(
+        "button", name="Add ingredients to the prompt box"
+    )
+    add_ingredients._action_log = page.action_log  # noqa: SLF001
+    add_ingredients._label = "attached_reference"  # noqa: SLF001
+
+    adapter = _adapter(page)
+    request = _request(reference_assets=[_reference_asset(str(reference_file))])
+
+    adapter.submit(request, _attempt(request))
+
+    assert page.action_log == ["attached_reference", "typed_prompt"]
+
+
+def test_submit_reports_ui_changed_when_the_reference_source_file_is_missing() -> None:
+    page = _authenticated_page()
+    _register_ingredients_flow_controls(page)
+    adapter = _adapter(page)
+    request = _request(reference_assets=[_reference_asset("does/not/exist.png")])
 
     result = adapter.submit(request, _attempt(request))
 
     assert result.state == GoogleFlowGenerationState.UI_CHANGED
-    assert "ingredient" in result.state_history[-1].detail.lower()  # type: ignore[union-attr]
+    assert "does not exist" in result.state_history[-1].detail.lower()  # type: ignore[union-attr]
+
+
+def test_submit_reports_ui_changed_when_add_ingredients_button_is_missing(
+    tmp_path: Path,
+) -> None:
+    """GF-17: a critical control this flow depends on going missing
+    (a real Flow redesign this adapter has never seen) must stop
+    before generation, never guess a fallback click sequence."""
+
+    reference_file = tmp_path / "hero.png"
+    reference_file.write_bytes(b"fake reference image bytes")
+
+    page = _authenticated_page()
+    _register_ingredients_flow_controls(page)
+    page.register_role("button", "Add ingredients to the prompt box", _MISSING)
+    adapter = _adapter(page)
+    request = _request(reference_assets=[_reference_asset(str(reference_file))])
+
+    result = adapter.submit(request, _attempt(request))
+
+    assert result.state == GoogleFlowGenerationState.UI_CHANGED
+    assert "GF-17" in result.state_history[-1].detail  # type: ignore[operator]
+
+
+def test_submit_reports_ui_changed_when_the_attached_indicator_never_appears(
+    tmp_path: Path,
+) -> None:
+    """
+    The one piece of this flow that isn't DevTools-confirmed - the
+    attached-indicator's exact selector - must fail safe: if it never
+    appears, this is a dropped reference (GF-17), not a silent
+    success.
+    """
+
+    reference_file = tmp_path / "hero.png"
+    reference_file.write_bytes(b"fake reference image bytes")
+
+    page = _authenticated_page()
+    _register_ingredients_flow_controls(page)
+    page.register_css(".prompt-ingredient-bar img.chip-image", _MISSING)
+    adapter = _adapter(page)
+    request = _request(reference_assets=[_reference_asset(str(reference_file))])
+
+    result = adapter.submit(request, _attempt(request))
+
+    assert result.state == GoogleFlowGenerationState.UI_CHANGED
+    assert "dropped reference" in result.state_history[-1].detail.lower()  # type: ignore[union-attr]
+
+
+def test_submit_reports_ui_changed_when_the_file_chooser_never_opens(
+    tmp_path: Path,
+) -> None:
+    reference_file = tmp_path / "hero.png"
+    reference_file.write_bytes(b"fake reference image bytes")
+
+    page = _authenticated_page()
+    _register_ingredients_flow_controls(
+        page,
+        file_chooser=_FakeFileChooserInfo(
+            raise_error=PlaywrightError("Timeout waiting for file chooser event")
+        ),
+    )
+    adapter = _adapter(page)
+    request = _request(reference_assets=[_reference_asset(str(reference_file))])
+
+    result = adapter.submit(request, _attempt(request))
+
+    assert result.state == GoogleFlowGenerationState.UI_CHANGED
+    assert "GF-17" in result.state_history[-1].detail  # type: ignore[operator]
+
+
+def test_submit_reports_ui_changed_when_no_row_matches_the_uploaded_filename(
+    tmp_path: Path,
+) -> None:
+    """
+    Real-world finding, 2026-09-21: a real upload whose own row never
+    appears in the picker (e.g. it genuinely fails, or the real UI
+    changed) must stop here rather than clicking "Add to prompt"
+    against whatever Flow's own default selection happens to be - the
+    exact class of wrong-asset attachment (Flow defaulting to the most
+    recently generated VIDEO) a real two-scene continuity check
+    surfaced live before this filename-matching fix existed.
+    """
+
+    reference_file = tmp_path / "hero.png"
+    reference_file.write_bytes(b"fake reference image bytes")
+
+    page = _authenticated_page()
+    _register_ingredients_flow_controls(page)
+    page.register_css("button.asset-item", _MISSING)
+    adapter = _adapter(page)
+    request = _request(reference_assets=[_reference_asset(str(reference_file))])
+
+    result = adapter.submit(request, _attempt(request))
+
+    assert result.state == GoogleFlowGenerationState.UI_CHANGED
+    assert "GF-17" in result.state_history[-1].detail  # type: ignore[operator]
+
+
+def test_submit_reports_ui_changed_when_the_preview_never_finishes_rendering(
+    tmp_path: Path,
+) -> None:
+    """
+    Real-world finding, 2026-09-21: confirmed directly by the account
+    owner manually walking through a real, successful attachment - a
+    freshly selected asset shows a real loading spinner in the detail
+    pane while Flow finishes rendering it, and clicking "Add to
+    prompt" before that finishes is what caused every one of three
+    prior live failures. If the real preview image never appears at
+    all (the render genuinely never completes, or the real UI
+    changed), this must stop rather than clicking "Add to prompt"
+    against an unfinished preview.
+    """
+
+    reference_file = tmp_path / "hero.png"
+    reference_file.write_bytes(b"fake reference image bytes")
+
+    page = _authenticated_page()
+    _register_ingredients_flow_controls(page)
+    page.register_css(".detail-preview-image", _MISSING)
+    adapter = _adapter(page)
+    request = _request(reference_assets=[_reference_asset(str(reference_file))])
+
+    result = adapter.submit(request, _attempt(request))
+
+    assert result.state == GoogleFlowGenerationState.UI_CHANGED
+    assert "GF-17" in result.state_history[-1].detail  # type: ignore[operator]
 
 
 def test_submit_reports_failed_when_start_generation_stays_disabled() -> None:

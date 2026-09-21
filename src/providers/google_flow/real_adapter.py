@@ -15,6 +15,7 @@ from src.models.google_flow_generation import (
     GoogleFlowGenerationAttempt,
     GoogleFlowGenerationRequest,
     GoogleFlowGenerationState,
+    GoogleFlowReferenceAsset,
 )
 from src.providers.external_ui_generation_provider import (
     ExternalUIGenerationProvider,
@@ -50,6 +51,18 @@ class GoogleFlowAuthRequiredError(RuntimeError):
     """Raised internally when the real product shows no sign of an
     authenticated session (see _detect_auth_required's own docstring
     for exactly what's checked and why)."""
+
+
+class _ReferenceAssetAttachmentFailedError(RuntimeError):
+    """
+    Raised internally when a reference asset could not be confirmed
+    attached - GoogleFlowReferenceAsset's own GF-17 rule ("missing/
+    dropped reference: STOP before generation"). Caught by
+    _drive_submission and converted to UI_CHANGED, matching how
+    _apply_settings' own _FlowSettingsUnavailableError is handled -
+    never silently proceeding to submit without a reference the
+    request actually asked for.
+    """
 
 
 def _extract_sole_video_from_zip(zip_path: Path, destination_dir: Path) -> Path:
@@ -128,13 +141,30 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
     policy-triggered, and irrelevant to this class, since it never
     enables Agent mode (the "Agent" toggle is never clicked - see
     section 4's own "Operationally important" note on why Agent-off is
-    the real, working path this class drives). What IS still NOT
-    verified and deliberately NOT built here, rather than guessed:
-    the ingredient/reference-attachment flow ("Add ingredients to the
-    prompt box" was seen but never opened) and any error-state
-    screens. A submission that unexpectedly hits either lands on
-    UI_CHANGED/SUBMISSION_UNCERTAIN rather than a fabricated click
-    sequence.
+    the real, working path this class drives).
+
+    Real-world finding, 2026-09-20: the ingredient/reference-
+    attachment flow ("Add ingredients to the prompt box") - previously
+    seen but never opened - was walked through live this session
+    (click "+" -> "Upload media" -> native OS file picker -> the
+    uploaded asset becomes the active row in a real detail pane ->
+    that pane's own "Add to prompt" button -> a small attached-
+    indicator chip appears) and is now built (see
+    _attach_reference_assets()). Both the attached-indicator's exact
+    CSS and the "Add to prompt" control itself were originally best-
+    effort inferences; superseded 2026-09-21 by real DOM dumps (own
+    comments have the full real structure) after two separate live
+    failures - it fails safe regardless: a missing indicator raises
+    rather than silently submitting without a reference the request
+    actually asked for. The same real
+    verification also found Flow refuses image ingredients outright
+    below 8s ("You cannot use image ingredients with the currently
+    selected duration") - a request with reference_assets should use
+    an 8s duration_seconds or the attachment step will correctly, but
+    unhelpfully, report a dropped reference. Any error-state screen
+    this flow doesn't recognize still lands on UI_CHANGED/SUBMISSION_UNCERTAIN
+    rather than a fabricated click sequence, same as every other real
+    control this class drives.
 
     base_url/base_url_resolver must resolve to a SPECIFIC project URL
     (https://flow.google.com/project/<uuid>), not the bare domain -
@@ -439,8 +469,29 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
         # watched it happen). Widened to 9x so navigation(2x) +
         # confirmation-wait(4x) + a real settings/typing buffer all
         # fit with room to spare.
+        #
+        # Real-world finding, 2026-09-20: _attach_reference_assets()
+        # adds up to 4 more action-timeout-budgeted steps PER
+        # reference asset (open ingredients panel, trigger the native
+        # file chooser, click Add to prompt, wait for the attached
+        # indicator) - a real file upload in particular can genuinely
+        # take longer than a simple click. Widened by another 5x to
+        # cover a typical one-or-two-reference request with real
+        # margin, on top of the 9x this budget already needed without
+        # any references at all.
+        #
+        # Real-world finding, 2026-09-21: the detail pane's own real
+        # preview-render wait (detail_preview_image_css) is budgeted
+        # at 6x the ordinary action timeout by itself (widened from an
+        # initial 3x after a real submission still timed out at that
+        # level - this account's real generation times alone were
+        # already observed swinging between 22s and 182s this same
+        # session, so a real preview render genuinely can take a
+        # while under load), on top of every other reference-
+        # attachment step above - widened by another 6x so that wait
+        # has real room inside the outer budget too.
         return self._worker.submit_with_recovery(
-            _run, timeout=self._operation_timeout_seconds * 9, label="submit"
+            _run, timeout=self._operation_timeout_seconds * 20, label="submit"
         )
 
     def observe(
@@ -689,6 +740,28 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
             detail="Requested settings applied via the real settings popover.",
         )
 
+        # Real-world finding, 2026-09-20: confirmed via a real, live
+        # walkthrough this session - the real "+"/Add ingredients
+        # button sits on the prompt box BEFORE any text is typed into
+        # it, and attaching references there first is the real UI's
+        # own natural order, not an arbitrary choice. Attaching after
+        # typing was never verified and risks the compose box's own
+        # state changing underneath an already-typed prompt.
+        if request.reference_assets:
+            # No dedicated GoogleFlowGenerationState value exists for
+            # "references attached" - with_transition() rejects a
+            # same-state transition as illegal (see its own
+            # is_valid_transition check), so this stays folded into
+            # the SETTINGS_VERIFIED state already just entered above
+            # rather than emitting a second, redundant transition.
+            try:
+                self._attach_reference_assets(page, request.reference_assets)
+            except _ReferenceAssetAttachmentFailedError as error:
+                return current.with_transition(
+                    GoogleFlowGenerationState.UI_CHANGED,
+                    detail=str(error),
+                )
+
         prompt_box = page.locator(self._names.prompt_input_css)
         prompt_box.click(timeout=self._action_timeout_ms)
         page.keyboard.type(request.prompt, delay=10)
@@ -696,19 +769,6 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
             GoogleFlowGenerationState.PROMPT_PREPARED,
             detail="Exact persisted prompt typed - never rewritten.",
         )
-
-        if request.reference_assets:
-            # "Add ingredients to the prompt box" was located but its
-            # real upload flow was never opened/verified (see class
-            # docstring) - never guessed here.
-            return current.with_transition(
-                GoogleFlowGenerationState.UI_CHANGED,
-                detail=(
-                    "This request has reference assets, but the real "
-                    "ingredient-attachment flow is not yet verified - "
-                    "refusing to guess rather than risk a silent drop."
-                ),
-            )
 
         start_button = page.get_by_role(
             "button", name=self._names.start_generation_button
@@ -768,6 +828,139 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
                 "never enabled by this class)."
             ),
         )
+
+    def _attach_reference_assets(
+        self,
+        page: Page,
+        reference_assets: list[GoogleFlowReferenceAsset],
+    ) -> None:
+        """
+        Attach each real reference asset via the real "Add
+        ingredients" flow - confirmed this session via a real, live
+        walkthrough (the exact flow the class docstring's own "seen
+        but never opened" gap referred to): click "+" -> click
+        "Upload media" -> pick the real file through the native OS
+        file picker that opens -> select the newly uploaded asset
+        (auto-selected/previewed after upload, per the real
+        walkthrough) -> click "Add to prompt" -> confirm the real,
+        observed attached-indicator is actually present before moving
+        on to the next reference or returning.
+
+        Raises _ReferenceAssetAttachmentFailedError rather than
+        proceeding on any step that doesn't behave as confirmed - a
+        silently dropped reference is worse than a stopped submission
+        (GoogleFlowReferenceAsset's own GF-17 rule). The one piece not
+        directly DevTools-confirmed - the attached-indicator's exact
+        selector - fails safe here: if it never appears, this raises
+        and the caller reports UI_CHANGED instead of submitting
+        without a reference the request actually asked for.
+        """
+
+        for reference_asset in reference_assets:
+            source_path = Path(reference_asset.source_path)
+
+            if not source_path.exists():
+                raise _ReferenceAssetAttachmentFailedError(
+                    f"Reference asset source file does not exist: "
+                    f"{source_path} - refusing to attempt an upload "
+                    "that can only fail (GF-17)."
+                )
+
+            add_ingredients = page.get_by_role(
+                "button", name=self._names.add_ingredients_button
+            )
+
+            if add_ingredients.count() == 0:
+                raise _ReferenceAssetAttachmentFailedError(
+                    f"The 'Add ingredients' control could not be found "
+                    f"while attaching {source_path} - refusing to guess "
+                    "a fallback click sequence (GF-17)."
+                )
+
+            try:
+                add_ingredients.click(timeout=self._action_timeout_ms)
+
+                with page.expect_file_chooser(
+                    timeout=self._action_timeout_ms
+                ) as file_chooser_info:
+                    page.get_by_role(
+                        "button", name=self._names.upload_media_button
+                    ).click(timeout=self._action_timeout_ms)
+
+                file_chooser_info.value.set_files(str(source_path))
+
+                # Real-world finding, 2026-09-21 (Phase 4's own real
+                # two-scene continuity check - FOUR separate real
+                # failure modes observed live by the account owner
+                # before the actual root cause was identified): Flow's
+                # own picker panel defaults its "active"/selected row
+                # to the most recently GENERATED VIDEO, completely
+                # independent of whatever was just uploaded - relying
+                # on "whichever row is active" (this method's own
+                # prior approach) inherits that wrong default whenever
+                # a video was created more recently than this upload,
+                # which is routinely true right after an earlier
+                # scene's own real generation. The only reliable
+                # target is the row matching the uploaded FILE'S OWN
+                # NAME - a name this codebase always generates as a
+                # genuinely unique, hash-suffixed filename (see
+                # FrameExtractionService/AssetStorageService), so a
+                # collision with an unrelated earlier upload sharing
+                # the same name is not a real risk here. Also excludes
+                # any row still mid-upload (no real thumbnail <img>
+                # yet, still showing Flow's own spinner) - a real
+                # upload briefly shows both a "still processing" row
+                # and, once ready, a second, genuinely selectable one
+                # sharing the identical filename.
+                uploaded_filename = Path(source_path).name
+                matching_rows = page.locator("button.asset-item").filter(
+                    has_text=uploaded_filename
+                )
+                ready_row = matching_rows.filter(
+                    has=page.locator("img.asset-thumbnail-image")
+                )
+                ready_row.first.wait_for(
+                    state="visible", timeout=self._action_timeout_ms * 6
+                )
+                ready_row.first.click(timeout=self._action_timeout_ms)
+
+                # Real-world finding, 2026-09-21: confirmed directly by
+                # the account owner manually walking through a real,
+                # successful attachment - the detail pane's own preview
+                # spinner can take a moment to clear even after the
+                # row itself is genuinely ready and clicked. Wait for
+                # the real preview image itself (the final "rendering
+                # finished" signal) before proceeding.
+                page.locator(self._names.detail_preview_image_css).first.wait_for(
+                    state="visible", timeout=self._action_timeout_ms * 3
+                )
+
+                page.locator(self._names.add_to_prompt_button_css).click(
+                    timeout=self._action_timeout_ms
+                )
+            except PlaywrightError as error:
+                raise _ReferenceAssetAttachmentFailedError(
+                    f"The real Add ingredients flow did not behave as "
+                    f"confirmed while attaching {source_path} - "
+                    f"{type(error).__name__}. Refusing to proceed "
+                    "without confirming attachment (GF-17)."
+                ) from error
+
+            attached_indicator = page.locator(
+                self._names.reference_attached_indicator_css
+            )
+
+            try:
+                attached_indicator.first.wait_for(
+                    state="visible", timeout=self._action_timeout_ms
+                )
+            except PlaywrightError as error:
+                raise _ReferenceAssetAttachmentFailedError(
+                    f"No attached-reference indicator appeared after "
+                    f"clicking 'Add to prompt' for {source_path} - "
+                    "treating this as a dropped reference rather than "
+                    "silently continuing (GF-17)."
+                ) from error
 
     def _apply_settings(
         self, page: Page, settings: GoogleFlowExecutionSettings
