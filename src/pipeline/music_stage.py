@@ -48,6 +48,7 @@ class MusicPipelineStage(BasePipelineStage):
         *,
         generation_service: MusicGenerationService,
         provider_name: str | None = None,
+        transition_duration_seconds: float = 0.0,
     ) -> None:
         self._generation_service = generation_service
 
@@ -56,6 +57,8 @@ class MusicPipelineStage(BasePipelineStage):
         )
 
         self._provider_name = normalized_provider or None
+
+        self._transition_duration_seconds = transition_duration_seconds
 
     @property
     def stage_name(self) -> PipelineStageName:
@@ -249,9 +252,29 @@ class MusicPipelineStage(BasePipelineStage):
 
                 continue
 
+            # Real-world finding, 2026-09-18: start_item/end_item's own
+            # start_time_seconds/end_time_seconds are TimelineBuilderService's
+            # nominal, uncorrected positions (a pure sum of each
+            # preceding scene's real clip duration, never subtracting
+            # crossfade overlap) - the same gap already found and
+            # fixed for SFX cues (see SoundEffectPipelineStage.
+            # _resolve_start_time's own docstring) and originally for
+            # voice (VoicePipelineStage._scene_video_start_offsets).
+            # A segment's real span is shorter than its nominal span
+            # by one transition_duration_seconds for every scene
+            # boundary the segment actually crosses - confirmed
+            # against a real job: a segment nominally spanning 52.0s
+            # to 96.0s (44.0s) actually spans only 41.0s of real
+            # screen time across its 10 crossed boundaries.
+            crossed_boundaries = end_item.scene_number - start_item.scene_number
+
+            real_start_time_seconds = start_item.start_time_seconds - (
+                (start_item.scene_number - 1) * self._transition_duration_seconds
+            )
+
             segment_span_seconds = (
                 end_item.end_time_seconds - start_item.start_time_seconds
-            )
+            ) - (crossed_boundaries * self._transition_duration_seconds)
 
             if segment_span_seconds <= 0:
                 warnings.append(
@@ -296,7 +319,23 @@ class MusicPipelineStage(BasePipelineStage):
             assert result.audio_track is not None
 
             audio_track = result.audio_track.model_copy(
-                update={"start_time_seconds": start_item.start_time_seconds}
+                update={
+                    "start_time_seconds": real_start_time_seconds,
+                    # Real-world finding, 2026-09-18: needed by
+                    # ProductionRenderService._slice_for_scenes to
+                    # apply the same chunk-boundary correction voice
+                    # tracks already get - this segment's position was
+                    # computed assuming every scene boundary is a real
+                    # crossfade (see real_start_time_seconds above),
+                    # which is wrong for the specific boundary(ies)
+                    # that end up as a chunk split (a hard cut, not a
+                    # crossfade) - unknowable here since chunking is
+                    # decided later, at render time.
+                    "metadata": {
+                        **result.audio_track.metadata,
+                        "scene_number": start_item.scene_number,
+                    },
+                }
             )
 
             audio_timeline.tracks.append(audio_track)

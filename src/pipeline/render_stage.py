@@ -39,6 +39,7 @@ class RenderPipelineStage(BasePipelineStage):
         render_service: RenderService | None = None,
         production_render_service: ProductionRenderService | None = None,
         voice_blueprints: list[ResolvedVoiceBlueprint] | None = None,
+        transition_duration_seconds: float = 0.0,
     ) -> None:
         if production_render_service is not None and not voice_blueprints:
             raise ValueError(
@@ -50,6 +51,8 @@ class RenderPipelineStage(BasePipelineStage):
         self._production_render_service = production_render_service
 
         self._voice_blueprints = list(voice_blueprints or [])
+
+        self._transition_duration_seconds = transition_duration_seconds
 
     @property
     def stage_name(
@@ -148,6 +151,7 @@ class RenderPipelineStage(BasePipelineStage):
             audio_timeline=audio_timeline,
             voice_blueprints=(self._voice_blueprints),
             progress_callback=progress_callback,
+            transition_duration_seconds=self._transition_duration_seconds,
         )
 
     def _stage_result_from_render(

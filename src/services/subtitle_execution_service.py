@@ -37,8 +37,37 @@ class SubtitleExecutionService:
         minimum_segment_duration_seconds: float = 0.8,
         maximum_segment_duration_seconds: float = 6.0,
         mark_ready: bool = True,
+        transition_duration_seconds: float = 0.0,
     ) -> SubtitleExecutionPlan:
-        """Build subtitle executions for enabled timeline scenes."""
+        """
+        Build subtitle executions for enabled timeline scenes.
+
+        Real-world finding, 2026-09-18: every scene is fully rendered
+        as its own complete clip - subtitles burned in - before a
+        crossfade transition blends it with its neighbor (see
+        FilterGraphBuilderService's own docstring: "Prepared scenes
+        are finally composed with resolved transitions"). Subtitle
+        timing that runs right up to a scene's own start/end, with no
+        awareness that the transition_duration_seconds nearest each
+        internal boundary is actually a blend of two scenes on
+        screen at once, puts two different, real subtitle lines into
+        the same composited frame - confirmed directly on a real
+        render (scene 11's own last subtitle ran to its exact 5.4s
+        scene end, squarely inside the 0.6s crossfade into scene 12,
+        whose own first subtitle starts at its own t=0 - both visible
+        together). transition_duration_seconds reserves a dead zone
+        of that length at the start of every scene but the first, and
+        the end of every scene but the last, within *this call's own*
+        ordered items - which, for a chunked render's own per-chunk
+        slice, correctly reserves nothing at a chunk-boundary scene's
+        outer edge, since that boundary is a real hard cut with no
+        blending at all, not a crossfade (the same distinction
+        _slice_for_scenes already relies on for audio). Known
+        limitation: this assumes one uniform transition duration and
+        type (a real crossfade) across every boundary, same as every
+        other fix that depends on this parameter - a per-scene
+        transition override is not accounted for.
+        """
 
         if minimum_segment_duration_seconds <= 0.0:
             raise ValueError("Minimum subtitle duration must " "be positive.")
@@ -62,7 +91,11 @@ class SubtitleExecutionService:
 
         warnings: list[str] = []
 
-        for item in timeline.ordered_items():
+        ordered_items = timeline.ordered_items()
+
+        last_index = len(ordered_items) - 1
+
+        for index, item in enumerate(ordered_items):
             editing_blueprint = item.editing_blueprint
 
             if editing_blueprint is None:
@@ -85,11 +118,23 @@ class SubtitleExecutionService:
                     f"{item.scene_number}."
                 )
 
+            window_start_seconds = transition_duration_seconds if index > 0 else 0.0
+
+            window_end_seconds = (
+                item.duration_seconds - transition_duration_seconds
+                if index < last_index
+                else item.duration_seconds
+            )
+
+            window_end_seconds = max(window_start_seconds, window_end_seconds)
+
             scene_executions = self.build_scene_subtitles(
                 item=item,
                 voice_blueprint=voice_blueprint,
                 minimum_segment_duration_seconds=(minimum_segment_duration_seconds),
                 maximum_segment_duration_seconds=(maximum_segment_duration_seconds),
+                window_start_seconds=window_start_seconds,
+                window_end_seconds=window_end_seconds,
             )
 
             executions.extend(scene_executions)
@@ -120,8 +165,21 @@ class SubtitleExecutionService:
         voice_blueprint: ResolvedVoiceBlueprint,
         minimum_segment_duration_seconds: float,
         maximum_segment_duration_seconds: float,
+        window_start_seconds: float = 0.0,
+        window_end_seconds: float | None = None,
     ) -> list[SubtitleExecution]:
-        """Build subtitle segments for one timeline scene."""
+        """
+        Build subtitle segments for one timeline scene.
+
+        window_start_seconds/window_end_seconds bound where within
+        this scene's own local time a subtitle may actually be
+        placed - see build_plan's own docstring for why: the default
+        (the scene's full [0, duration] span) is only safe for a
+        scene with no real crossfade transition at either edge.
+        window_end_seconds of None reproduces that default (the
+        scene's own duration), for any caller that does not need the
+        transition-aware reservation (e.g. a direct unit test).
+        """
 
         editing_blueprint = item.editing_blueprint
 
@@ -154,14 +212,20 @@ class SubtitleExecutionService:
         if not chunks:
             return []
 
+        effective_window_end = (
+            item.duration_seconds if window_end_seconds is None else window_end_seconds
+        )
+
+        available_seconds = max(0.0, effective_window_end - window_start_seconds)
+
         timing_duration = voice_blueprint.estimated_speech_duration_seconds
 
         if timing_duration <= 0.0:
-            timing_duration = item.duration_seconds
+            timing_duration = available_seconds
 
         timing_duration = min(
             timing_duration,
-            item.duration_seconds,
+            available_seconds,
         )
 
         durations = self._allocate_durations(
@@ -195,7 +259,7 @@ class SubtitleExecutionService:
         ):
             local_end = min(
                 local_start + duration,
-                item.duration_seconds,
+                available_seconds,
             )
 
             actual_duration = local_end - local_start
@@ -223,13 +287,17 @@ class SubtitleExecutionService:
                 animation_preset_id=(animation_preset_id),
                 burn_into_video=(subtitle_instruction.burn_into_video),
                 timing_source=(SubtitleTimingSource.ESTIMATED),
-                start_time_seconds=(item.start_time_seconds + local_start),
-                end_time_seconds=(item.start_time_seconds + local_end),
+                start_time_seconds=(
+                    item.start_time_seconds + window_start_seconds + local_start
+                ),
+                end_time_seconds=(
+                    item.start_time_seconds + window_start_seconds + local_end
+                ),
                 duration_seconds=(actual_duration),
                 scene_start_time_seconds=(item.start_time_seconds),
                 scene_end_time_seconds=(item.end_time_seconds),
-                local_start_offset_seconds=(local_start),
-                local_end_offset_seconds=(local_end),
+                local_start_offset_seconds=(window_start_seconds + local_start),
+                local_end_offset_seconds=(window_start_seconds + local_end),
                 word_count=len(chunk.split()),
                 metadata={
                     "timeline_item_id": str(item.id),
