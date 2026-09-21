@@ -168,6 +168,7 @@ class VoiceDirectiveResolutionService:
                 profile=profile,
                 emotion=directives.emotion,
                 pitch_style=directives.pitch_style,
+                language_code=directives.language_code,
             )
 
             if dynamic_voice_id:

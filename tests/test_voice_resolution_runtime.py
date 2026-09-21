@@ -353,7 +353,7 @@ def test_voice_provider_mapping_service_overlays_a_real_voice_id() -> None:
 class _StubDynamicVoiceSelectionService:
     def __init__(self, *, voice_id: str | None) -> None:
         self.voice_id = voice_id
-        self.calls: list[tuple[str, str, str]] = []
+        self.calls: list[tuple[str, str, str, str]] = []
 
     def select_voice_id(
         self,
@@ -361,12 +361,14 @@ class _StubDynamicVoiceSelectionService:
         profile: VoiceProfile,
         emotion: object,
         pitch_style: object,
+        language_code: str = "en",
     ) -> str | None:
         self.calls.append(
             (
                 profile.profile_id,
                 getattr(emotion, "value", str(emotion)),
                 getattr(pitch_style, "value", str(pitch_style)),
+                language_code,
             )
         )
 

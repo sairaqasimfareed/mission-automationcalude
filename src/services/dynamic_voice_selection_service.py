@@ -6,6 +6,36 @@ from src.providers.elevenlabs_voice_search_client import ElevenLabsVoiceSearchCl
 from src.services.http.http_provider_executor import HttpProviderExecutionError
 from src.services.voice_search_query_builder import build_voice_search_terms
 
+# Real-world finding, 2026-09-17: suggest() ranks purely by how many
+# style terms ("historic", "deep", "cinematic", ...) matched a voice's
+# name - it never looks at the real `labels` metadata ElevenLabs
+# already returns per voice (confirmed real and documented in this
+# codebase: ElevenLabsVoiceSearchResult.labels, e.g. {"gender": "male",
+# "accent": "american"}). Style terms are language-agnostic, so a
+# real production run for an English history narration resolved a
+# voice whose narration was clearly not English - nothing in the
+# ranking ever considered whether the candidate was an English-
+# speaking voice at all. These are ElevenLabs' own long-standing
+# accent categories for English-language voices; used only to prefer
+# a same-language candidate when one exists among the already-
+# fetched results, never to hard-exclude the rest (an empty
+# "preferred" set degrades to the prior top-hit-count behavior
+# instead of returning nothing).
+_ENGLISH_ACCENTS = frozenset(
+    {
+        "american",
+        "british",
+        "australian",
+        "irish",
+        "scottish",
+        "welsh",
+        "canadian",
+        "south african",
+        "new zealand",
+        "indian",
+    }
+)
+
 
 class DynamicVoiceSelectionService:
     """
@@ -49,7 +79,7 @@ class DynamicVoiceSelectionService:
 
     def __init__(self, *, search_client: ElevenLabsVoiceSearchClient) -> None:
         self._search_client = search_client
-        self._cache: dict[tuple[str, str, str], str | None] = {}
+        self._cache: dict[tuple[str, str, str, str], str | None] = {}
 
     def select_voice_id(
         self,
@@ -57,8 +87,16 @@ class DynamicVoiceSelectionService:
         profile: VoiceProfile,
         emotion: VoiceEmotion,
         pitch_style: VoicePitchStyle,
+        language_code: str = "en",
     ) -> str | None:
-        cache_key = (profile.profile_id, emotion.value, pitch_style.value)
+        normalized_language_code = language_code.strip().lower()
+
+        cache_key = (
+            profile.profile_id,
+            emotion.value,
+            pitch_style.value,
+            normalized_language_code,
+        )
 
         if cache_key in self._cache:
             return self._cache[cache_key]
@@ -67,6 +105,7 @@ class DynamicVoiceSelectionService:
             profile=profile,
             emotion=emotion,
             pitch_style=pitch_style,
+            language_code=normalized_language_code,
         )
 
         self._cache[cache_key] = voice_id
@@ -79,6 +118,7 @@ class DynamicVoiceSelectionService:
         profile: VoiceProfile,
         emotion: VoiceEmotion,
         pitch_style: VoicePitchStyle,
+        language_code: str,
     ) -> str | None:
         terms = build_voice_search_terms(
             profile,
@@ -96,5 +136,19 @@ class DynamicVoiceSelectionService:
 
         if not results:
             return None
+
+        if language_code.startswith("en"):
+            same_language_match = next(
+                (
+                    result
+                    for result in results
+                    if result.labels.get("accent", "").strip().lower()
+                    in _ENGLISH_ACCENTS
+                ),
+                None,
+            )
+
+            if same_language_match is not None:
+                return same_language_match.voice_id
 
         return results[0].voice_id

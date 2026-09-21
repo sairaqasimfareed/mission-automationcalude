@@ -54,8 +54,16 @@ def _profile(**overrides: object) -> VoiceProfile:
     return VoiceProfile(**defaults)  # type: ignore[arg-type]
 
 
-def _result(voice_id: str) -> ElevenLabsVoiceSearchResult:
-    return ElevenLabsVoiceSearchResult(voice_id=voice_id, name=voice_id)
+def _result(
+    voice_id: str,
+    *,
+    accent: str | None = None,
+) -> ElevenLabsVoiceSearchResult:
+    return ElevenLabsVoiceSearchResult(
+        voice_id=voice_id,
+        name=voice_id,
+        labels=({"accent": accent} if accent else {}),
+    )
 
 
 def test_select_voice_id_returns_the_top_real_candidate() -> None:
@@ -154,4 +162,124 @@ def test_select_voice_id_does_not_cache_across_different_styles() -> None:
         pitch_style=VoicePitchStyle.BRIGHT,
     )
 
+    assert len(client.calls) == 2
+
+
+# Real-world finding, 2026-09-17: suggest() ranks purely by how many
+# style terms ("historic", "deep", ...) matched a voice's name - style
+# terms are language-agnostic, so a real production run for English
+# history narration resolved a voice whose narration was clearly not
+# English. ElevenLabs already returns real accent metadata per voice
+# (confirmed and documented in this codebase's own
+# ElevenLabsVoiceSearchResult model); it was just never consulted.
+def test_select_voice_id_prefers_an_english_accented_candidate_for_english() -> None:
+    # voice-a has the most term hits (returned first by the stub, as
+    # suggest() itself would rank it) but no English accent label;
+    # voice-b is a weaker text match yet is the real English-accented
+    # candidate - it must win when the request is English.
+    client = _StubSearchClient(
+        results=[
+            _result("voice-a", accent="french"),
+            _result("voice-b", accent="british"),
+        ]
+    )
+    service = DynamicVoiceSelectionService(search_client=client)  # type: ignore[arg-type]
+
+    voice_id = service.select_voice_id(
+        profile=_profile(),
+        emotion=VoiceEmotion.SUSPENSEFUL,
+        pitch_style=VoicePitchStyle.DEEP,
+        language_code="en",
+    )
+
+    assert voice_id == "voice-b"
+
+
+def test_select_voice_id_falls_back_to_the_top_hit_when_no_candidate_is_english() -> (
+    None
+):
+    client = _StubSearchClient(
+        results=[
+            _result("voice-a", accent="french"),
+            _result("voice-b", accent="german"),
+        ]
+    )
+    service = DynamicVoiceSelectionService(search_client=client)  # type: ignore[arg-type]
+
+    voice_id = service.select_voice_id(
+        profile=_profile(),
+        emotion=VoiceEmotion.SUSPENSEFUL,
+        pitch_style=VoicePitchStyle.DEEP,
+        language_code="en",
+    )
+
+    assert voice_id == "voice-a"
+
+
+def test_select_voice_id_does_not_apply_english_preference_for_other_languages() -> (
+    None
+):
+    # A non-English request must not be steered toward an English
+    # accent just because one happens to be present in the results -
+    # this preference is specifically an English-request behavior.
+    client = _StubSearchClient(
+        results=[
+            _result("voice-a", accent="french"),
+            _result("voice-b", accent="british"),
+        ]
+    )
+    service = DynamicVoiceSelectionService(search_client=client)  # type: ignore[arg-type]
+
+    voice_id = service.select_voice_id(
+        profile=_profile(),
+        emotion=VoiceEmotion.SUSPENSEFUL,
+        pitch_style=VoicePitchStyle.DEEP,
+        language_code="fr",
+    )
+
+    assert voice_id == "voice-a"
+
+
+def test_select_voice_id_defaults_language_code_to_english() -> None:
+    client = _StubSearchClient(
+        results=[
+            _result("voice-a", accent="french"),
+            _result("voice-b", accent="american"),
+        ]
+    )
+    service = DynamicVoiceSelectionService(search_client=client)  # type: ignore[arg-type]
+
+    voice_id = service.select_voice_id(
+        profile=_profile(),
+        emotion=VoiceEmotion.SUSPENSEFUL,
+        pitch_style=VoicePitchStyle.DEEP,
+    )
+
+    assert voice_id == "voice-b"
+
+
+def test_select_voice_id_caches_separately_per_language_code() -> None:
+    client = _StubSearchClient(
+        results=[
+            _result("voice-a", accent="french"),
+            _result("voice-b", accent="british"),
+        ]
+    )
+    service = DynamicVoiceSelectionService(search_client=client)  # type: ignore[arg-type]
+
+    english = service.select_voice_id(
+        profile=_profile(),
+        emotion=VoiceEmotion.SUSPENSEFUL,
+        pitch_style=VoicePitchStyle.DEEP,
+        language_code="en",
+    )
+    french = service.select_voice_id(
+        profile=_profile(),
+        emotion=VoiceEmotion.SUSPENSEFUL,
+        pitch_style=VoicePitchStyle.DEEP,
+        language_code="fr",
+    )
+
+    assert english == "voice-b"
+    assert french == "voice-a"
     assert len(client.calls) == 2
