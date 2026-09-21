@@ -7,6 +7,7 @@ from src.browser.flow_browser_worker import FlowBrowserWorker
 from src.desktop.job_store import JsonJobStore
 from src.desktop.theme_preference_store import ThemePreferenceStore
 from src.entrypoint import build_production_runtime
+from src.models.asset_index import AssetIndex
 from src.models.provider_profile import ProviderCategory, ProviderProfile
 from src.models.voice_profile import VoiceProfile
 from src.providers.dry_run_thumbnail_image_provider import (
@@ -17,12 +18,14 @@ from src.providers.google_flow.real_adapter import GoogleFlowRealUIAdapter
 from src.services.application_infrastructure_factory import (
     ApplicationInfrastructure,
 )
+from src.services.asset_storage_service import AssetStorageService
 from src.services.content_intelligence_pipeline import ContentIntelligencePipeline
 from src.services.content_pipeline import ContentPipeline
 from src.services.dynamic_voice_selection_service import DynamicVoiceSelectionService
 from src.services.fact_check_service import FactCheckService
 from src.services.factory.provider_adapter_factory import ProviderAdapterFactory
 from src.services.final_export.final_export_service import FinalExportService
+from src.services.frame_extraction_service import FrameExtractionService
 from src.services.google_flow_account_router_service import (
     GoogleFlowAccountRouterService,
 )
@@ -92,6 +95,7 @@ PROVIDER_PROFILE_STORAGE_PATH = Path("data/provider_profiles.json")
 PROJECTS_STORAGE_ROOT = Path("data/projects")
 THEME_PREFERENCE_STORAGE_PATH = Path("data/desktop_preferences.json")
 VOICE_PROVIDER_MAPPING_STORAGE_PATH = Path("data/voice_provider_mappings.json")
+EXTRACTED_FRAME_STORAGE_ROOT = Path("data/extracted_frames")
 
 
 @lru_cache
@@ -689,6 +693,44 @@ def get_google_flow_generation_orchestrator_service() -> (
     )
 
 
+@lru_cache
+def get_frame_extraction_service() -> FrameExtractionService:
+    """
+    Shared frame-extraction utility for real visual continuity
+    (Phase 2/4/5) - stateless (a thin ffmpeg subprocess wrapper), so
+    caching is a convenience rather than a correctness requirement,
+    matching every other stateless service factory in this file.
+    """
+
+    return FrameExtractionService()
+
+
+@lru_cache
+def get_extracted_frame_asset_storage_service() -> AssetStorageService:
+    """
+    Shared, process-lifetime storage for frames this codebase extracts
+    itself from already-generated clips (visual continuity self-
+    consistency references - see SceneVideoGenerationService's own
+    _extract_reference_for_new_identities/_extract_seam_reference).
+
+    Deliberately a SEPARATE AssetStorageService/AssetIndex from
+    get_asset_workflow_service()'s own manual-upload/stock one - these
+    are never user-provided assets (IndexedAssetSource.GENERATED, not
+    MANUAL_UPLOAD) and have no reason to share that index. Must be
+    cached, not built fresh per call: a reference extracted while
+    generating scene 1 has to still be resolvable when scene 2
+    generates later, in a separate get_scene_video_generation_service()
+    call - AssetIndex is explicitly in-memory only (see its own
+    docstring), so the same instance has to persist across those
+    calls for the whole desktop process lifetime.
+    """
+
+    return AssetStorageService(
+        storage_root=EXTRACTED_FRAME_STORAGE_ROOT,
+        asset_index=AssetIndex(),
+    )
+
+
 def get_scene_video_generation_service() -> SceneVideoGenerationService:
     """
     Return the real submit/poll/download/attach loop driving Google
@@ -701,7 +743,10 @@ def get_scene_video_generation_service() -> SceneVideoGenerationService:
     construction-time defaults), so a fresh instance per call is
     equivalent to a cached one, and matches
     get_google_flow_generation_orchestrator_service()'s own choice not
-    to cache.
+    to cache. frame_extraction_service/asset_storage_service ARE their
+    own cached singletons (see their own factories above) precisely so
+    that real, cross-scene continuity state survives across these
+    otherwise-fresh instances.
     """
 
     return SceneVideoGenerationService(
@@ -710,6 +755,8 @@ def get_scene_video_generation_service() -> SceneVideoGenerationService:
         registry=get_infrastructure().provider_registry,
         provider=get_google_flow_real_ui_adapter(),
         profile_management_service=get_provider_profile_management_service(),
+        frame_extraction_service=get_frame_extraction_service(),
+        asset_storage_service=get_extracted_frame_asset_storage_service(),
     )
 
 

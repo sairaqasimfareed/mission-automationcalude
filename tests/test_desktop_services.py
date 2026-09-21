@@ -106,6 +106,63 @@ def test_get_render_runtime_factory_is_shared_with_content_pipeline() -> None:
     )
 
 
+def test_get_extracted_frame_asset_storage_service_is_shared_and_persistent() -> None:
+    """
+    Real-world finding, 2026-09-21: SceneVideoGenerationService used
+    to be wired without frame_extraction_service/asset_storage_service
+    at all in the desktop process - Phase 2/4/5's real visual-
+    continuity/multi-clip-splitting features were fully built and
+    real-world verified, but unreachable from the actual app. Also
+    regression-tests that this is cached (not built fresh per call) -
+    AssetIndex is explicitly in-memory only, so a reference extracted
+    while generating scene 1 must still be resolvable when scene 2
+    generates later, in a separate get_scene_video_generation_service()
+    call.
+    """
+
+    services.get_extracted_frame_asset_storage_service.cache_clear()
+
+    storage_service = services.get_extracted_frame_asset_storage_service()
+
+    assert storage_service is services.get_extracted_frame_asset_storage_service()
+
+    assert (
+        storage_service.storage_root == services.EXTRACTED_FRAME_STORAGE_ROOT.resolve()
+    )
+
+
+def test_get_frame_extraction_service_is_shared() -> None:
+    services.get_frame_extraction_service.cache_clear()
+
+    frame_extraction_service = services.get_frame_extraction_service()
+
+    assert frame_extraction_service is services.get_frame_extraction_service()
+
+
+def test_get_scene_video_generation_service_wires_real_continuity_dependencies() -> (
+    None
+):
+    """
+    The whole point of the fix: a real caller must actually get
+    frame_extraction_service/asset_storage_service wired in, using the
+    SAME shared, cached instances every call - not silently reproduce
+    the pre-fix "no continuity features at all" behavior.
+    """
+
+    _clear_caches()
+    services.get_extracted_frame_asset_storage_service.cache_clear()
+    services.get_frame_extraction_service.cache_clear()
+
+    service = services.get_scene_video_generation_service()
+
+    assert service._frame_extraction_service is (  # noqa: SLF001
+        services.get_frame_extraction_service()
+    )
+    assert service._asset_storage_service is (  # noqa: SLF001
+        services.get_extracted_frame_asset_storage_service()
+    )
+
+
 def test_get_final_export_service_is_ready() -> None:
     _clear_caches()
 
