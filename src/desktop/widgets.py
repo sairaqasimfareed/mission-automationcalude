@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QSize
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -23,10 +23,18 @@ from src.desktop.theme import SPACE_LG, SPACE_MD, SPACE_SM
 # visual language (card shape, heading scale, button variants)
 # instead of each view re-implementing its own layout conventions.
 
+# Real-world finding, 2026-09-17: QLabel defaults to non-selectable
+# text, and every text label in this app is built through the helpers
+# below (nothing outside this file calls QLabel(text) directly) - so
+# no label anywhere could be selected or copied. Applying this one
+# flag here fixes it app-wide instead of touching every view.
+_SELECTABLE_TEXT = Qt.TextInteractionFlag.TextSelectableByMouse
+
 
 def heading(text: str) -> QLabel:
     label = QLabel(text)
     label.setProperty("role", "heading")
+    label.setTextInteractionFlags(_SELECTABLE_TEXT)
 
     return label
 
@@ -34,6 +42,7 @@ def heading(text: str) -> QLabel:
 def subheading(text: str) -> QLabel:
     label = QLabel(text)
     label.setProperty("role", "subheading")
+    label.setTextInteractionFlags(_SELECTABLE_TEXT)
 
     return label
 
@@ -42,6 +51,7 @@ def muted(text: str) -> QLabel:
     label = QLabel(text)
     label.setProperty("role", "muted")
     label.setWordWrap(True)
+    label.setTextInteractionFlags(_SELECTABLE_TEXT)
 
     return label
 
@@ -50,6 +60,7 @@ def small_muted(text: str) -> QLabel:
     label = QLabel(text)
     label.setProperty("role", "small-muted")
     label.setWordWrap(True)
+    label.setTextInteractionFlags(_SELECTABLE_TEXT)
 
     return label
 
@@ -60,6 +71,7 @@ def status_label(text: str, *, role: str) -> QLabel:
     label = QLabel(text)
     label.setProperty("role", role)
     label.setWordWrap(True)
+    label.setTextInteractionFlags(_SELECTABLE_TEXT)
 
     return label
 
@@ -68,6 +80,7 @@ def badge(text: str) -> QLabel:
     label = QLabel(text)
     label.setProperty("role", "badge")
     label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+    label.setTextInteractionFlags(_SELECTABLE_TEXT)
 
     return label
 
