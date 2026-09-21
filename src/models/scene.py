@@ -27,6 +27,24 @@ class Scene(MissionBaseModel):
     visual_prompt: str
     estimated_duration_seconds: int
 
+    # Real-world finding, 2026-09-20: estimated_duration_seconds is a
+    # word-count guess made at script-planning time, before any real
+    # voice audio exists - real TTS pacing routinely doesn't match it,
+    # which used to force video clip duration (sized from the guess)
+    # and real narration into a mismatch that downstream trimming had
+    # to resolve destructively. Deliberately a SEPARATE field, not an
+    # overwrite of estimated_duration_seconds: DurationMismatchPolicyService
+    # and other planning-time readers (shot planning, genre timeline,
+    # prompt compilation, genre directives) still want the original
+    # "planned" guess to stay distinguishable from this "real, post-
+    # generation" value. Set once by VoicePipelineStage right after
+    # this scene's real voice audio is generated and measured (see
+    # its own generation loop) - None until then. SceneVideoGenerationService
+    # reads this (falling back to estimated_duration_seconds only
+    # defensively) to size the real Google Flow clip request from
+    # truth instead of a guess.
+    real_narration_duration_seconds: float | None = None
+
     camera_direction: str = ""
     sound_design: str = ""
 

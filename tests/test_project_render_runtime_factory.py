@@ -412,9 +412,16 @@ def test_build_aligns_resolution_requests_by_scene_number() -> None:
         "Narration 2.",
     ]
 
+    # Real-world finding, 2026-09-20: this used to be each scene's own
+    # estimated_duration_seconds (10, 20 here) - a pre-generation
+    # word-count guess, fed as a hard ceiling voice generation had to
+    # fit real narration into. Passing None instead lets narration
+    # generate at its natural length; video clip duration now follows
+    # voice's own real, measured result instead of the other way
+    # around (see SceneVideoGenerationService).
     assert [request[2] for request in requests] == [
-        10,
-        20,
+        None,
+        None,
     ]
 
 

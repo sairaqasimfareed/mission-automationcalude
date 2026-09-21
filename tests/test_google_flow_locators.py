@@ -11,11 +11,17 @@ def test_clamp_to_verified_duration_returns_an_exact_match_unchanged() -> None:
         assert clamp_to_verified_duration(float(verified)) == verified
 
 
-def test_clamp_to_verified_duration_rounds_to_the_closest_verified_value() -> None:
-    assert clamp_to_verified_duration(5.0) == 4
+def test_clamp_to_verified_duration_rounds_up_to_the_next_verified_value() -> None:
+    assert clamp_to_verified_duration(5.0) == 6
     assert clamp_to_verified_duration(5.5) == 6
-    assert clamp_to_verified_duration(7.0) == 6
+    assert clamp_to_verified_duration(7.0) == 8
     assert clamp_to_verified_duration(7.5) == 8
+
+
+def test_clamp_to_verified_duration_never_rounds_below_the_request() -> None:
+    for requested in (4.1, 4.9, 6.1, 6.9):
+        clamped = clamp_to_verified_duration(requested)
+        assert clamped >= requested
 
 
 def test_clamp_to_verified_duration_clamps_a_value_above_the_verified_range() -> None:

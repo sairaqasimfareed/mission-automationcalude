@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 
 from src.models.audio_timeline import AudioTimeline
 from src.models.media_strategy import (
@@ -54,11 +55,18 @@ class VoicePipelineStage(BasePipelineStage):
         generation_service: VoiceGenerationService,
         timeline_service: VoiceTimelineService,
         provider_name: str | None = None,
+        transition_duration_seconds: float = 0.0,
+        clip_duration_rounding_fn: Callable[[float], float] | None = None,
     ) -> None:
         if not blueprints:
             raise ValueError(
                 "Voice pipeline stage requires at least "
                 "one resolved voice blueprint."
+            )
+
+        if transition_duration_seconds < 0.0:
+            raise ValueError(
+                "Voice pipeline stage transition duration " "cannot be negative."
             )
 
         normalized_provider = (
@@ -72,6 +80,23 @@ class VoicePipelineStage(BasePipelineStage):
         self._timeline_service = timeline_service
 
         self._provider_name = normalized_provider or None
+
+        self._transition_duration_seconds = transition_duration_seconds
+
+        # Real-world finding, 2026-09-20: real Google Flow clips only
+        # come in a few fixed lengths (see
+        # src.providers.google_flow.locators.clamp_to_verified_duration),
+        # so the real video position of scene N+1 depends on scene N's
+        # real narration duration ROUNDED to whatever length its clip
+        # will actually request, not the raw narration length itself.
+        # Injected rather than imported directly - this pipeline layer
+        # has no existing dependency on src.providers, and shouldn't
+        # gain one just for this. Defaults to identity (no rounding),
+        # reproducing this class's own prior, unrounded behavior when
+        # not wired by the caller (e.g. in tests).
+        self._clip_duration_rounding_fn = clip_duration_rounding_fn or (
+            lambda seconds: seconds
+        )
 
         self._validate_blueprints(self._blueprints)
 
@@ -147,15 +172,60 @@ class VoicePipelineStage(BasePipelineStage):
 
         warnings: list[str] = []
 
-        start_time_seconds = 0.0
+        scenes_by_number = {scene.scene_number: scene for scene in context.job.scenes}
+
+        # Real-world finding, 2026-09-20: this used to be a single
+        # dict precomputed up front by summing each scene's own
+        # estimated_duration_seconds (see the now-removed
+        # _scene_video_start_offsets), because - at the time - each
+        # scene's real generated video clip was requested at, and
+        # landed at, exactly that estimate. Now that video clip
+        # duration follows voice's own real, measured result instead
+        # (see ProjectRenderRuntimeFactory and
+        # SceneVideoGenerationService), that premise is inverted: a
+        # scene's real video position can only be known after every
+        # PRECEDING scene's own real, clamp-rounded duration is known.
+        # Scenes already generate in scene_number order below, so this
+        # is fully reconstructible incrementally, one running total
+        # (running_video_position) updated after each scene's own real
+        # result - see the update after the audio_track checks below.
+        # Still subtracts one transition's worth of overlap per
+        # boundary, same reasoning as the real-world finding this
+        # replaces documented.
+        running_video_position = 0.0
+
+        # Real-world finding, 2026-09-17: positioning scene N+1's voice
+        # at its own crossfade-corrected start (see the running
+        # running_video_position update below) without ALSO shrinking
+        # scene N's own usable duration by the same
+        # transition_duration_seconds lets scene N's real narration
+        # run into scene N+1's already-started track - confirmed on a
+        # real 18-scene render: 13 of 17 scene boundaries had 0.36-0.6s
+        # where two different lines of narration played simultaneously
+        # at full volume (voice tracks are never ducked against each
+        # other, only music/SFX are ducked against voice). Only
+        # relevant when a real scene-slot ceiling IS set (Phase 2 or a
+        # caller that still passes one) - available_scene_duration_seconds
+        # is None by default now, so this block is a no-op for the
+        # default flow, left in place rather than deleted.
+        if self._transition_duration_seconds > 0.0:
+            for blueprint in self._blueprints:
+                if blueprint.available_scene_duration_seconds is not None:
+                    blueprint.available_scene_duration_seconds = max(
+                        0.1,
+                        blueprint.available_scene_duration_seconds
+                        - self._transition_duration_seconds,
+                    )
 
         for blueprint in sorted(
             self._blueprints,
             key=lambda value: (value.scene_number),
         ):
+            scene_start_seconds = max(0.0, running_video_position)
+
             result = self._generation_service.generate(
                 blueprint,
-                start_time_seconds=(start_time_seconds),
+                start_time_seconds=scene_start_seconds,
                 provider_name=(self._provider_name),
             )
 
@@ -216,9 +286,32 @@ class VoicePipelineStage(BasePipelineStage):
                     ),
                 )
 
-            start_time_seconds = (
-                result.audio_track.start_time_seconds
-                + result.audio_track.duration_seconds
+            # This scene's real, measured duration - what
+            # SceneVideoGenerationService will size its real Google
+            # Flow clip request from, instead of the pre-generation
+            # word-count guess (see Scene.real_narration_duration_seconds's
+            # own docstring). Mutated in place on the job's own Scene
+            # object, same pattern as blueprint.narration_text
+            # elsewhere in this pipeline.
+            scene = scenes_by_number.get(blueprint.scene_number)
+
+            if scene is not None:
+                scene.real_narration_duration_seconds = (
+                    result.audio_track.duration_seconds
+                )
+
+            # The next scene's real video position depends on THIS
+            # scene's own real duration rounded to whatever clip
+            # length will actually be requested for it (identity when
+            # no rounding function was wired - see __init__).
+            rounded_clip_seconds = self._clip_duration_rounding_fn(
+                result.audio_track.duration_seconds
+            )
+
+            running_video_position = (
+                scene_start_seconds
+                + rounded_clip_seconds
+                - self._transition_duration_seconds
             )
 
         # replace=True: this branch only runs when coverage is missing

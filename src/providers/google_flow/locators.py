@@ -88,8 +88,8 @@ def clamp_to_verified_duration(requested_seconds: float) -> int:
     """
     Google Flow only accepts VERIFIED_DURATIONS_SECONDS - requesting
     anything else (e.g. 7s) fails with FLOW_SETTINGS_UNAVAILABLE.
-    Clamp to the closest verified value rather than passing a raw
-    estimate straight through.
+    Round UP to the closest verified value that is still >= the
+    request, rather than passing a raw estimate straight through.
 
     Deliberately the ONE place this clamp is computed - real-world
     finding, 2026-09-14: scene_video_generation_service.py used to
@@ -102,12 +102,28 @@ def clamp_to_verified_duration(requested_seconds: float) -> int:
     human/Veo would read. Both call sites now use this single function
     so the number stated in a compiled prompt always matches what gets
     requested.
+
+    Real-world finding, 2026-09-18: rounding to the NEAREST verified
+    value (the original policy) can round DOWN - e.g. a scene planned
+    at 4.8s clamped to 4s - silently handing the video less screen
+    time than the scene was actually planned/narrated for, on top of
+    (and indistinguishable from) any real narration-overshoot. Since a
+    real narration only ever needs MORE room, never less, rounding up
+    is the only direction that can't itself cause an overshoot -
+    excess space beyond the narration is harmless, a video clip
+    shorter than what was planned is not.
     """
 
-    return min(
-        VERIFIED_DURATIONS_SECONDS,
-        key=lambda verified: abs(verified - requested_seconds),
-    )
+    at_or_above = [
+        verified
+        for verified in VERIFIED_DURATIONS_SECONDS
+        if verified >= requested_seconds
+    ]
+
+    if at_or_above:
+        return min(at_or_above)
+
+    return max(VERIFIED_DURATIONS_SECONDS)
 
 
 # How many video variations one submission generates for the same
@@ -147,6 +163,78 @@ class GoogleFlowRealAccessibleNames(BaseModel):
     prompt_input_css: str = ".prompt-input .ProseMirror"
     clear_prompt_button: str = "Clear prompt"
     add_ingredients_button: str = "Add ingredients to the prompt box"
+    # Real-world finding, 2026-09-20: confirmed via a real, live
+    # walkthrough of the "Add ingredients" flow this session (the
+    # exact ingredient-attachment flow the class docstring's own
+    # "seen but never opened" gap referred to) - clicking
+    # add_ingredients_button opens a real asset picker panel (tabs:
+    # All/Images/Videos/Voices/Characters/Avatars/Uploads, search,
+    # sort); upload_media_button triggers a real native OS file
+    # picker (a real <input type="file">, confirmed automatable via
+    # Playwright's expect_file_chooser()); selecting an uploaded
+    # asset shows a preview with add_to_prompt_button, which attaches
+    # it - confirmed by a small thumbnail/chip appearing above the
+    # prompt text box. Button text is directly readable from the real
+    # screenshots this session captured, unlike prior findings in
+    # this file that came from a DevTools ARIA-snapshot inspection -
+    # still real, live-product evidence, just a different capture
+    # method. reference_attached_indicator_css was originally a
+    # best-effort guess (no DOM/DevTools inspection, only a visual
+    # screenshot) - now superseded, 2026-09-21, by this phase's own
+    # real verification check: a live DOM dump taken right after
+    # clicking add_to_prompt_button showed the guess (".prompt-input
+    # img") was wrong - the attached thumbnail is NOT inside the
+    # prompt editor at all. The real structure is
+    # <div class="prompt-top-row has-ingredient-bar"> containing two
+    # SIBLINGS: <flow-ingredient-bar class="prompt-ingredient-bar">
+    # (holding <flow-image-ingredient-chip><button aria-label=
+    # "Ingredient"><div class="chip-image-wrapper"><img
+    # class="chip-image" alt="Ingredient image">) and, separately,
+    # <flow-rich-text-editor class="prompt-input"> (the text box
+    # itself, unrelated to the chip). The same verification session
+    # also found a real, separate constraint: Flow refuses image
+    # ingredients outright at 4s/6s ("You cannot use image ingredients
+    # with the currently selected duration") - only 8s (the max
+    # verified bucket) currently accepts one, confirmed directly by
+    # the account owner watching the live browser.
+    upload_media_button: str = "Upload media"
+    # Real-world finding, 2026-09-21 (Phase 4's own real two-scene
+    # continuity check - four separate live failures before the real
+    # root cause was identified, the last one diagnosed directly by
+    # the account owner watching it happen): Flow's own picker panel
+    # defaults its selected/"active" row to the most recently
+    # GENERATED VIDEO, completely independent of whatever file was
+    # just uploaded - a generic accessible-name search for "Add to
+    # prompt", and even an explicit click on whichever row Flow marks
+    # "active", both inherit that wrong default whenever a video was
+    # created more recently than the upload (routinely true right
+    # after an earlier scene's own real generation - exactly this
+    # phase's own two-scene scenario). The only reliable target,
+    # confirmed via a live DOM dump of the real picker overlay
+    # (<flow-add-menu-popover-content>), is the row matching the
+    # uploaded file's OWN FILENAME (this codebase always generates a
+    # unique, hash-suffixed one, so name collisions with unrelated
+    # earlier uploads are not a real risk) - see
+    # _attach_reference_assets' own matching_rows/ready_row logic.
+    # Once that row is clicked, a *detail pane*
+    # (<flow-add-menu-detail-pane>) shows a live preview of it, and
+    # ITS OWN "Add to prompt" button - class "detail-add-to-prompt-btn"
+    # - is what actually attaches that specific asset; scoping to this
+    # class instead of a page-wide accessible-name search removes any
+    # ambiguity about which control is meant.
+    add_to_prompt_button_css: str = ".detail-add-to-prompt-btn"
+    # Real-world finding, 2026-09-21 (same real verification session,
+    # confirmed directly by the account owner manually walking through
+    # a real, successful attachment while narrating the real UI
+    # timing): a freshly selected asset shows a real loading spinner
+    # in the detail pane's preview box while Flow finishes rendering
+    # it, and "Add to prompt" only genuinely attaches the right asset
+    # once that finishes. detail_preview_image_css is that real
+    # "rendering finished" signal to wait on before ever clicking
+    # add_to_prompt_button_css - the <img> only appears once the
+    # detail pane has a genuine, loaded preview.
+    detail_preview_image_css: str = ".detail-preview-image"
+    reference_attached_indicator_css: str = ".prompt-ingredient-bar img.chip-image"
     agent_toggle_button: str = "Agent"
     settings_trigger_button: str = "Settings trigger"
     select_model_family_button: str = "Select model family"

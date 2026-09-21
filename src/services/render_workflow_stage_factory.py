@@ -15,6 +15,10 @@ from src.pipeline.timeline_stage import (
     TimelinePipelineStage,
 )
 from src.pipeline.voice_stage import VoicePipelineStage
+from src.providers.google_flow.locators import clamp_to_verified_duration
+from src.services.genre_profile_registry_service import (
+    GenreProfileRegistryService,
+)
 from src.services.genre_timeline_pipeline_service import (
     GenreTimelinePipelineService,
 )
@@ -62,6 +66,7 @@ class RenderWorkflowStageFactory:
         voice_timeline_service: VoiceTimelineService,
         asset_workflow_service: SceneAssetWorkflowService,
         genre_timeline_service: GenreTimelinePipelineService,
+        genre_profile_registry_service: GenreProfileRegistryService | None = None,
         music_generation_service: MusicGenerationService | None = None,
         sound_effect_generation_service: SoundEffectGenerationService | None = None,
         render_service: RenderService | None = None,
@@ -81,6 +86,11 @@ class RenderWorkflowStageFactory:
         self._asset_workflow_service = asset_workflow_service
 
         self._genre_timeline_service = genre_timeline_service
+
+        self._genre_profile_registry_service = (
+            genre_profile_registry_service
+            or GenreProfileRegistryService.with_default_profiles()
+        )
 
         self._music_generation_service = music_generation_service
 
@@ -222,11 +232,49 @@ class RenderWorkflowStageFactory:
         voice-resolution result.
         """
 
+        # Real-world finding, 2026-09-17: positioning each voice track
+        # from the cumulative sum of scenes' own estimated_duration_seconds
+        # (see VoicePipelineStage._scene_video_start_offsets) matches each
+        # scene's real video slot - but the actually rendered video is
+        # shorter than that: every crossfade between consecutive scenes
+        # overlaps the two clips, eating the transition's own duration out
+        # of the combined timeline. Uncorrected, voice runs increasingly
+        # ahead of the real, transition-shortened video - confirmed on a
+        # real render (18 scenes, one crossfade per boundary): in sync for
+        # the first couple of scenes, then compounding out of sync for the
+        # rest of the video, with narration's tail words landing after the
+        # video had already cut away. The transition duration is a real,
+        # per-genre value (0.3s-0.8s across registered profiles, never a
+        # universal constant), so it must be resolved from the same genre
+        # profile TimelinePipelineStage below will independently apply.
+        # Resolution failures (an invalid/blank genre_id, an
+        # unregistered id with no usable fallback) are not this
+        # method's concern to validate or report - TimelinePipelineStage
+        # below already owns real genre_id validation and error
+        # messages. Falling back to "no correction" on any resolution
+        # failure here keeps this addition purely beneficial: it never
+        # introduces a new failure mode, it only improves voice timing
+        # when a real profile is actually found.
+        try:
+            resolved_genre_profile = self._genre_profile_registry_service.resolve(
+                genre_id
+            ).profile
+        except (KeyError, ValueError):
+            resolved_genre_profile = None
+
+        transition_duration_seconds = (
+            resolved_genre_profile.editing.default_transition_duration_seconds
+            if resolved_genre_profile is not None
+            else 0.0
+        )
+
         voice_stage = VoicePipelineStage(
             blueprints=voice_blueprints,
             generation_service=(self._voice_generation_service),
             timeline_service=(self._voice_timeline_service),
             provider_name=(voice_provider_name),
+            transition_duration_seconds=transition_duration_seconds,
+            clip_duration_rounding_fn=clamp_to_verified_duration,
         )
 
         asset_stage = AssetPipelineStage(
@@ -250,6 +298,7 @@ class RenderWorkflowStageFactory:
                 if self._production_render_service is not None
                 else None
             ),
+            transition_duration_seconds=transition_duration_seconds,
         )
 
         stages: list[BasePipelineStage] = [
@@ -263,6 +312,7 @@ class RenderWorkflowStageFactory:
                 MusicPipelineStage(
                     generation_service=self._music_generation_service,
                     provider_name=music_provider_name,
+                    transition_duration_seconds=transition_duration_seconds,
                 )
             )
 
@@ -271,6 +321,7 @@ class RenderWorkflowStageFactory:
                 SoundEffectPipelineStage(
                     generation_service=self._sound_effect_generation_service,
                     provider_name=sound_effect_provider_name,
+                    transition_duration_seconds=transition_duration_seconds,
                 )
             )
 

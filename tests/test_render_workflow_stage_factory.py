@@ -7,6 +7,7 @@ import pytest
 from src.models.editing_directives import (
     SceneEditingDirectives,
 )
+from src.models.genre_profile import GenreEditingProfile, GenreProfile
 from src.models.resolved_voice_blueprint import (
     ResolvedVoiceBlueprint,
     ResolvedVoiceProfileReference,
@@ -28,6 +29,9 @@ from src.pipeline.timeline_stage import (
 )
 from src.pipeline.voice_stage import (
     VoicePipelineStage,
+)
+from src.services.genre_profile_registry_service import (
+    GenreProfileRegistryService,
 )
 from src.services.genre_timeline_pipeline_service import (
     GenreTimelinePipelineService,
@@ -105,6 +109,7 @@ def _factory(
     *,
     render_service: RenderService | None = None,
     production_render_service: ProductionRenderService | None = None,
+    genre_profile_registry_service: GenreProfileRegistryService | None = None,
 ) -> RenderWorkflowStageFactory:
     """
     Build the render workflow factory with typed identity dependencies.
@@ -119,6 +124,7 @@ def _factory(
         voice_timeline_service=_dependency(VoiceTimelineService),
         asset_workflow_service=_dependency(SceneAssetWorkflowService),
         genre_timeline_service=_dependency(GenreTimelinePipelineService),
+        genre_profile_registry_service=genre_profile_registry_service,
         render_service=render_service,
         production_render_service=(production_render_service),
     )
@@ -393,6 +399,81 @@ def test_build_forwards_voice_provider_name() -> None:
     )
 
     assert voice_stage._provider_name == "elevenlabs"
+
+
+def test_build_forwards_the_resolved_genres_transition_duration_to_voice_stage() -> (
+    None
+):
+    """
+    Real-world finding, 2026-09-17: a crossfade between consecutive
+    scenes overlaps their clips, so the real rendered video is shorter
+    than the naive sum of scene durations by one transition's duration
+    per scene boundary - confirmed on a real 18-scene render, voice
+    positioned without this correction drifted increasingly out of
+    sync with the transition-shortened video. The correction amount is
+    a real, per-genre value (never a universal constant - registered
+    profiles range 0.3s-0.8s), so the factory must resolve it from the
+    same genre profile TimelinePipelineStage independently applies and
+    forward it to VoicePipelineStage.
+    """
+
+    registry = GenreProfileRegistryService(
+        profiles=[
+            GenreProfile(
+                genre_id="genre.test_documentary",
+                display_name="Test Documentary",
+                editing=GenreEditingProfile(
+                    default_transition_duration_seconds=0.6,
+                ),
+            ),
+        ],
+    )
+
+    factory = _factory(genre_profile_registry_service=registry)
+
+    stages = factory.build(
+        voice_blueprints=[
+            _blueprint(),
+        ],
+        genre_id="genre.test_documentary",
+    )
+
+    voice_stage = cast(
+        VoicePipelineStage,
+        stages[0],
+    )
+
+    assert voice_stage._transition_duration_seconds == 0.6
+
+
+def test_build_defaults_transition_duration_to_zero_when_genre_is_unresolvable() -> (
+    None
+):
+    """
+    Resolution failures (an unregistered genre_id with no usable
+    fallback) are not this factory's concern to validate or report -
+    TimelinePipelineStage already owns real genre_id validation. This
+    proves that case degrades gracefully to no correction, rather than
+    the factory itself raising.
+    """
+
+    empty_registry = GenreProfileRegistryService(profiles=[])
+
+    factory = _factory(genre_profile_registry_service=empty_registry)
+
+    stages = factory.build(
+        voice_blueprints=[
+            _blueprint(),
+        ],
+        genre_id="genre.nonexistent",
+    )
+
+    voice_stage = cast(
+        VoicePipelineStage,
+        stages[0],
+    )
+
+    assert voice_stage._transition_duration_seconds == 0.0
 
 
 def test_build_forwards_timeline_configuration() -> None:

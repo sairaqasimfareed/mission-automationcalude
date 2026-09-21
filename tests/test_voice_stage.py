@@ -200,6 +200,8 @@ def build_script() -> Script:
 
 def build_scene(
     scene_number: int,
+    *,
+    estimated_duration_seconds: int = 5,
 ) -> Scene:
     """Build one valid synthetic scene."""
 
@@ -208,13 +210,14 @@ def build_scene(
         title=(f"Voice Scene {scene_number}"),
         narration=(f"Synthetic narration for " f"scene {scene_number}."),
         visual_prompt=("Synthetic visual for " "voice-stage testing."),
-        estimated_duration_seconds=5,
+        estimated_duration_seconds=estimated_duration_seconds,
     )
 
 
 def build_job(
     *,
     include_scenes: bool = True,
+    scenes: list[Scene] | None = None,
 ) -> VideoJob:
     """Build a domain-valid VideoJob for voice-stage tests."""
 
@@ -229,7 +232,9 @@ def build_job(
         script=build_script(),
     )
 
-    if include_scenes:
+    if scenes is not None:
+        job.scenes = scenes
+    elif include_scenes:
         # Reversed intentionally so generation ordering can be tested.
         job.scenes = [
             build_scene(2),
@@ -518,7 +523,19 @@ def test_generation_order_is_deterministic() -> None:
     ]
 
 
-def test_scene_start_times_are_sequential() -> None:
+def test_scene_start_times_follow_each_scenes_own_real_measured_duration() -> None:
+    """
+    Real-world finding, 2026-09-20: video clip duration now follows
+    voice's own real, measured result instead of the other way around
+    (see ProjectRenderRuntimeFactory and SceneVideoGenerationService) -
+    a scene's real generated video clip is no longer requested at its
+    pre-generation estimated_duration_seconds at all, so positioning
+    the next scene's voice from that estimate would drift it away from
+    its own, now-differently-sized video. Positioning from each
+    scene's own REAL measured duration instead keeps every scene's
+    voice aligned with its own real video, by construction.
+    """
+
     job = build_job()
 
     service = build_success_service()
@@ -533,6 +550,10 @@ def test_scene_start_times_are_sequential() -> None:
 
     assert result.status == PipelineStageStatus.COMPLETED
 
+    # Both synthetic scenes are built with estimated_duration_seconds=5
+    # (build_scene's default, now irrelevant to positioning) - scene 2
+    # is positioned at 4.0, scene 1's REAL generated duration (see
+    # build_success_service), never at 5.0 (the old estimate).
     assert service.received_start_times == [
         0.0,
         4.0,
@@ -540,7 +561,234 @@ def test_scene_start_times_are_sequential() -> None:
 
     assert job.audio_timeline is not None
 
+    # scene 1: start=0.0, real duration=4.0 -> ends at 4.0
+    # scene 2: start=4.0, real duration=6.0 -> ends at 10.0
     assert job.audio_timeline.calculate_duration() == 10.0
+
+
+def test_scene_start_times_follow_real_duration_even_when_it_undershoots() -> None:
+    """
+    Scene 1's real narration running much shorter than its old
+    planning-time estimate must still position scene 2 from that real,
+    shorter duration - there is no separate video slot left to
+    preserve once video itself is sized from the real duration too.
+    """
+
+    job = build_job(
+        scenes=[
+            build_scene(1, estimated_duration_seconds=8),
+            build_scene(2, estimated_duration_seconds=6),
+        ],
+    )
+
+    service = SyntheticVoiceGenerationService(
+        specifications={
+            1: SyntheticVoiceSpecification(duration_seconds=2.0),
+            2: SyntheticVoiceSpecification(duration_seconds=3.0),
+        },
+    )
+
+    stage = VoicePipelineStage(
+        blueprints=[build_blueprint(1), build_blueprint(2)],
+        generation_service=service,
+        timeline_service=(VoiceTimelineService()),
+    )
+
+    result = stage.execute(build_context(job))
+
+    assert result.status == PipelineStageStatus.COMPLETED
+
+    # Scene 1's real narration (2.0s) is far short of its old 8s
+    # planning estimate - scene 2 must start at 2.0 (scene 1's REAL
+    # duration), never at 8.0 (the now-irrelevant estimate).
+    assert service.received_start_times == [
+        0.0,
+        2.0,
+    ]
+
+
+def test_clip_duration_rounding_fn_is_applied_to_the_next_scenes_start() -> None:
+    """
+    When a rounding function is wired (production wires
+    clamp_to_verified_duration, rounding up to Google Flow's real
+    {4,6,8}s clip lengths), the NEXT scene's start position must use
+    the rounded value - the real video clip requested for the prior
+    scene will be that rounded length, not its raw real narration
+    duration.
+    """
+
+    job = build_job()
+
+    service = SyntheticVoiceGenerationService(
+        specifications={
+            1: SyntheticVoiceSpecification(duration_seconds=4.3),
+            2: SyntheticVoiceSpecification(duration_seconds=2.0),
+        },
+    )
+
+    stage = VoicePipelineStage(
+        blueprints=[build_blueprint(1), build_blueprint(2)],
+        generation_service=service,
+        timeline_service=(VoiceTimelineService()),
+        clip_duration_rounding_fn=(
+            lambda seconds: next(b for b in (4, 6, 8) if b >= seconds)
+        ),
+    )
+
+    result = stage.execute(build_context(job))
+
+    assert result.status == PipelineStageStatus.COMPLETED
+
+    # Scene 1's real duration (4.3s) rounds up to a 6s clip - scene 2
+    # starts at 6.0, not at 4.3 (the raw, unrounded real duration).
+    assert service.received_start_times == [
+        0.0,
+        6.0,
+    ]
+
+
+def test_real_narration_duration_seconds_is_written_back_to_the_scene() -> None:
+    """
+    Scene.real_narration_duration_seconds must be set to each scene's
+    own real, measured duration after generation - this is what
+    SceneVideoGenerationService reads to size the real Google Flow
+    clip request from truth instead of the pre-generation estimate.
+    """
+
+    job = build_job()
+
+    service = build_success_service()
+
+    stage = VoicePipelineStage(
+        blueprints=build_blueprints(),
+        generation_service=service,
+        timeline_service=(VoiceTimelineService()),
+    )
+
+    result = stage.execute(build_context(job))
+
+    assert result.status == PipelineStageStatus.COMPLETED
+
+    scenes_by_number = {scene.scene_number: scene for scene in job.scenes}
+
+    assert scenes_by_number[1].real_narration_duration_seconds == 4.0
+    assert scenes_by_number[2].real_narration_duration_seconds == 6.0
+
+
+def test_available_scene_duration_shrinks_by_the_transition_duration() -> None:
+    """
+    Real-world finding, 2026-09-17: positioning scene N+1's voice at
+    its own crossfade-corrected start (transition_duration_seconds
+    earlier than the nominal boundary) without ALSO shrinking scene
+    N's own usable duration by that same amount lets scene N's real
+    narration run into scene N+1's already-started track - confirmed
+    on a real 18-scene render: 13 of 17 scene boundaries had 0.36-0.6s
+    where two different lines of narration played simultaneously at
+    full volume (voice tracks are never ducked against each other,
+    only music/SFX are ducked against voice). Each blueprint's own
+    available_scene_duration_seconds must shrink by
+    transition_duration_seconds so a scene's real narration can never
+    reach into the next scene's corrected start position.
+    """
+
+    blueprint_1 = build_blueprint(1)
+    blueprint_1.available_scene_duration_seconds = 8.0
+
+    blueprint_2 = build_blueprint(2)
+    blueprint_2.available_scene_duration_seconds = 6.0
+
+    job = build_job()
+
+    service = build_success_service()
+
+    stage = VoicePipelineStage(
+        blueprints=[blueprint_1, blueprint_2],
+        generation_service=service,
+        timeline_service=(VoiceTimelineService()),
+        transition_duration_seconds=0.6,
+    )
+
+    result = stage.execute(build_context(job))
+
+    assert result.status == PipelineStageStatus.COMPLETED
+
+    assert blueprint_1.available_scene_duration_seconds == 7.4
+    assert blueprint_2.available_scene_duration_seconds == 5.4
+
+
+def test_available_scene_duration_is_unchanged_with_no_transition_duration() -> None:
+    """Backward compatible: a genre with no configured transition
+    duration (the default, 0.0) must not touch this clamp at all."""
+
+    blueprint_1 = build_blueprint(1)
+    blueprint_1.available_scene_duration_seconds = 8.0
+
+    job = build_job(
+        scenes=[
+            build_scene(1),
+            build_scene(2),
+        ],
+    )
+
+    service = build_success_service()
+
+    stage = VoicePipelineStage(
+        blueprints=[blueprint_1, build_blueprint(2)],
+        generation_service=service,
+        timeline_service=(VoiceTimelineService()),
+    )
+
+    stage.execute(build_context(job))
+
+    assert blueprint_1.available_scene_duration_seconds == 8.0
+
+
+def test_available_scene_duration_never_goes_below_a_safety_floor() -> None:
+    """A scene whose nominal slot is already shorter than one
+    transition must still get a small, positive usable window rather
+    than a zero or negative clamp target."""
+
+    blueprint_1 = build_blueprint(1)
+    blueprint_1.available_scene_duration_seconds = 0.3
+
+    job = build_job()
+
+    service = build_success_service()
+
+    stage = VoicePipelineStage(
+        blueprints=[blueprint_1, build_blueprint(2)],
+        generation_service=service,
+        timeline_service=(VoiceTimelineService()),
+        transition_duration_seconds=0.6,
+    )
+
+    stage.execute(build_context(job))
+
+    assert blueprint_1.available_scene_duration_seconds == 0.1
+
+
+def test_available_scene_duration_of_none_is_left_alone() -> None:
+    """A blueprint with no resolved available duration at all (None)
+    must not be given one by this correction."""
+
+    blueprint_1 = build_blueprint(1)
+
+    assert blueprint_1.available_scene_duration_seconds is None
+
+    job = build_job()
+
+    service = build_success_service()
+
+    stage = VoicePipelineStage(
+        blueprints=[blueprint_1, build_blueprint(2)],
+        generation_service=service,
+        timeline_service=(VoiceTimelineService()),
+        transition_duration_seconds=0.6,
+    )
+
+    stage.execute(build_context(job))
+
+    assert blueprint_1.available_scene_duration_seconds is None
 
 
 def test_provider_override_is_normalized_and_forwarded() -> None:
@@ -873,7 +1121,14 @@ def main() -> None:
     test_unknown_blueprint_scene_fails()
     test_successful_voice_generation()
     test_generation_order_is_deterministic()
-    test_scene_start_times_are_sequential()
+    test_scene_start_times_follow_each_scenes_own_real_measured_duration()
+    test_scene_start_times_follow_real_duration_even_when_it_undershoots()
+    test_clip_duration_rounding_fn_is_applied_to_the_next_scenes_start()
+    test_real_narration_duration_seconds_is_written_back_to_the_scene()
+    test_available_scene_duration_shrinks_by_the_transition_duration()
+    test_available_scene_duration_is_unchanged_with_no_transition_duration()
+    test_available_scene_duration_never_goes_below_a_safety_floor()
+    test_available_scene_duration_of_none_is_left_alone()
     test_provider_override_is_normalized_and_forwarded()
     test_empty_provider_override_becomes_none()
     test_warnings_are_aggregated_and_deduplicated()

@@ -130,11 +130,27 @@ class ProjectRenderRuntimeFactory:
             language_code=language_code,
         )
 
+        # Real-world finding, 2026-09-20: scene.estimated_duration_seconds
+        # is a word-count guess made before any real voice audio exists.
+        # Passing it here as a hard ceiling used to force real narration
+        # into whatever video slot the guess had already committed to -
+        # since real TTS pacing routinely doesn't match a generic-rate
+        # estimate, this was the actual root cause of the destructive
+        # trim cascade in VoiceGenerationService.run_job() (confirmed on
+        # a real render: narration trimmed down to a single word).
+        # Passing None instead lets narration generate at its natural
+        # length - available_scene_duration_seconds is Optional
+        # end-to-end and every trigger in that cascade is already gated
+        # on "is not None", so this one change disables the whole ladder
+        # for the default case without deleting any of it. Video clip
+        # duration now follows voice's own real, measured result instead
+        # of the other way around (see VoicePipelineStage and
+        # SceneVideoGenerationService._submit()).
         requests: list[VoiceResolutionRequest] = [
             (
                 directive,
                 scene.narration,
-                scene.estimated_duration_seconds,
+                None,
             )
             for directive, scene in zip(
                 directives,
