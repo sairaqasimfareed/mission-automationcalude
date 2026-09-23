@@ -50,6 +50,15 @@ class PostRenderSubtitleBurnService:
 
     Audio passes through untouched (-c:a copy) - this pass only ever
     touches video pixels.
+
+    has_audio=False (real, disclosed gap found 2026-09-24 while wiring
+    REQ-00/REQ-0 into the live render path): a job with every audio
+    toggle off (REQ-13) never runs Stage 2's mux at all, so the video
+    reaching this stage genuinely has zero audio streams - the
+    previously-hardcoded `-map 0:a` would have failed FFmpeg's own
+    stream-mapping outright. False omits both the audio map and
+    `-c:a copy`, producing a real video-only output; True (the
+    default) reproduces this method's exact prior behavior.
     """
 
     def __init__(
@@ -69,6 +78,7 @@ class PostRenderSubtitleBurnService:
         cues: list[AbsoluteSubtitleCue],
         output_file: str,
         video_duration_seconds: float,
+        has_audio: bool = True,
         progress_callback: ProgressCallback | None = None,
         cancellation_check: CancellationCheck | None = None,
     ) -> RenderResult:
@@ -153,11 +163,17 @@ class PostRenderSubtitleBurnService:
             filter_complex,
             "-map",
             "[video_final]",
-            "-map",
-            "0:a",
-            "-c:v",
-            resolved_config.selected_video_codec,
         ]
+
+        if has_audio:
+            arguments.extend(["-map", "0:a"])
+
+        arguments.extend(
+            [
+                "-c:v",
+                resolved_config.selected_video_codec,
+            ]
+        )
 
         if resolved_config.selected_video_codec in {"libx264", "libx265"}:
             arguments.extend(
@@ -170,7 +186,10 @@ class PostRenderSubtitleBurnService:
             )
 
         arguments.extend(["-pix_fmt", resolved_config.config.pixel_format.value])
-        arguments.extend(["-c:a", "copy"])
+
+        if has_audio:
+            arguments.extend(["-c:a", "copy"])
+
         arguments.append(staging_output_file)
 
         command_plan = FFmpegCommandPlan(
@@ -178,7 +197,7 @@ class PostRenderSubtitleBurnService:
             input_plan=input_plan,
             filter_complex=filter_complex,
             video_output_label="video_final",
-            audio_output_label="source_audio",
+            audio_output_label=("source_audio" if has_audio else None),
             output_file=staging_output_file,
             arguments=arguments,
         )

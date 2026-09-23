@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 from src.models.audience_promise import AudiencePromise, PromiseStrength
 from src.models.audio_inclusion_preferences import AudioInclusionPreferences
 from src.models.audio_timeline import AudioTimeline
 from src.models.audio_track import AudioTrack, AudioTrackType
+from src.models.editing_directives import DirectiveIntensity
 from src.models.enums import (
     JobStatus,
     WorkflowStage,
@@ -17,10 +19,25 @@ from src.models.media_strategy import (
 from src.models.render_result import (
     RenderResult,
     RenderStatus,
+    SceneRenderTiming,
 )
 from src.models.research import (
     ResearchResult,
     ResearchStatus,
+)
+from src.models.resolved_editing_blueprint import (
+    BlueprintResolutionStatus,
+    ResolvedCameraInstruction,
+    ResolvedMusicInstruction,
+    ResolvedPresetReference,
+    ResolvedSceneEditingBlueprint,
+    ResolvedSubtitleInstruction,
+    ResolvedTransitionInstruction,
+)
+from src.models.resolved_voice_blueprint import (
+    ResolvedVoiceBlueprint,
+    ResolvedVoiceProfileReference,
+    VoiceBlueprintResolutionStatus,
 )
 from src.models.scene import (
     Scene,
@@ -36,6 +53,7 @@ from src.models.video_clip import (
 )
 from src.models.video_job import VideoJob
 from src.models.video_timeline import VideoTimeline
+from src.models.video_timeline_item import VideoTimelineItem
 from src.pipeline.pipeline_stage import (
     PipelineStageName,
     PipelineStageStatus,
@@ -331,23 +349,17 @@ def test_default_render_service() -> None:
 def test_progress_callback_reaches_production_render_service() -> None:
     """
     context.services["progress_callback"] must be forwarded to
-    ProductionRenderService.render(), and must be None when no
-    callback was supplied - never silently dropped either way.
+    ProductionRenderService.render() (the real fallback call - see
+    _fake_production_render_service()'s own docstring), and must be
+    None when no callback was supplied - never silently dropped
+    either way.
     """
 
     job = build_job()
     job.voice_file = "assets/audio/test_voice.wav"
     job.audio_timeline = AudioTimeline()
 
-    fake_production_render_service = MagicMock()
-    fake_production_render_service.render.return_value = RenderResult(
-        success=True,
-        output_file="outputs/test_render.mp4",
-        render_engine="ffmpeg",
-        render_time_seconds=0.1,
-        duration_seconds=10,
-        status=RenderStatus.COMPLETED,
-    )
+    fake_production_render_service = _fake_production_render_service()
 
     stage = RenderPipelineStage(
         production_render_service=fake_production_render_service,
@@ -397,7 +409,28 @@ def _all_track_types_timeline() -> AudioTimeline:
 
 
 def _fake_production_render_service() -> MagicMock:
+    """
+    A fake ProductionRenderService whose render_video_only() always
+    raises NotImplementedError - REQ-00/REQ-0 staged-pipeline swap,
+    2026-09-24: _execute_production_render() always tries the new
+    staged path (Stage 1 -> conditional Stage 2 -> conditional Stage 3)
+    first now, falling back to this exact render() call only when
+    Stage 1 itself raises NotImplementedError (real command-line-
+    length-driven chunking need). Every caller of this helper is
+    testing render()'s own kwarg-forwarding contract specifically
+    (audio filtering, subtitle toggle, progress callback, REQ-12
+    fallback), which is still real, live production code whenever
+    that fallback triggers - so the mock deliberately always takes it,
+    keeping these tests' original intent intact rather than needing a
+    second, much larger staged-path fixture for tests that were never
+    about the staged path's own orchestration in the first place (see
+    the new staged-path-specific tests below instead).
+    """
+
     fake = MagicMock()
+    fake.render_video_only.side_effect = NotImplementedError(
+        "Synthetic chunking requirement - forces the real fallback."
+    )
     fake.render.return_value = RenderResult(
         success=True,
         output_file="outputs/test_render.mp4",
@@ -837,6 +870,397 @@ def test_execute_video_only_without_timeline_fails_cleanly() -> None:
     assert result.status == PipelineStageStatus.FAILED
 
     fake_production_render_service.render_video_only.assert_not_called()
+
+
+def _staged_preset(*, directive_path: str, preset_id: str) -> ResolvedPresetReference:
+    return ResolvedPresetReference(
+        directive_path=directive_path,
+        requested_preset_id=preset_id,
+        resolved_preset_id=preset_id,
+        found_exact_match=True,
+        used_fallback=False,
+    )
+
+
+def _staged_editing_blueprint() -> ResolvedSceneEditingBlueprint:
+    return ResolvedSceneEditingBlueprint(
+        scene_number=1,
+        genre_preset=_staged_preset(
+            directive_path="genre_preset_id", preset_id="genre.default"
+        ),
+        camera=ResolvedCameraInstruction(
+            preset=_staged_preset(
+                directive_path="camera.preset_id", preset_id="camera.none"
+            ),
+            intensity=DirectiveIntensity.MEDIUM,
+        ),
+        transition_in=ResolvedTransitionInstruction(
+            preset=_staged_preset(
+                directive_path="transition_in.preset_id", preset_id="transition.cut"
+            ),
+            duration_seconds=0.0,
+        ),
+        transition_out=ResolvedTransitionInstruction(
+            preset=_staged_preset(
+                directive_path="transition_out.preset_id", preset_id="transition.cut"
+            ),
+            duration_seconds=0.0,
+        ),
+        music=ResolvedMusicInstruction(
+            preset=_staged_preset(
+                directive_path="music.preset_id", preset_id="music.none"
+            ),
+            enabled=False,
+        ),
+        subtitles=ResolvedSubtitleInstruction(
+            preset=_staged_preset(
+                directive_path="subtitles.preset_id", preset_id="subtitle.default"
+            ),
+            enabled=True,
+            burn_into_video=False,
+        ),
+        status=BlueprintResolutionStatus.RESOLVED,
+    )
+
+
+def _staged_job_with_real_cues() -> VideoJob:
+    """
+    REQ-00/REQ-0 staged-pipeline swap, 2026-09-24: a job whose video
+    timeline carries a real VideoTimelineItem (with a resolved editing
+    blueprint) and whose voice blueprint carries real narration text -
+    the minimum needed for resolve_absolute_subtitle_cues() to
+    produce real, non-empty cues (unlike build_job()'s own bare
+    VideoTimeline, which has no items at all and so can never resolve
+    any cues - see _fake_production_render_service()'s own docstring
+    for why the other staged-pipeline-adjacent tests never needed this).
+    """
+
+    job = build_job()
+    job.voice_file = "assets/audio/test_voice.wav"
+
+    clip = job.video_clips[0]
+
+    item = VideoTimelineItem(
+        clip=clip,
+        scene_number=1,
+        start_time_seconds=0.0,
+        end_time_seconds=10.0,
+        track_index=0,
+        layer_index=0,
+        enabled=True,
+        editing_blueprint=_staged_editing_blueprint(),
+    )
+
+    job.video_timeline = VideoTimeline(
+        clips=[clip],
+        items=[item],
+        output_resolution="1280x720",
+        frame_rate=30,
+    )
+
+    return job
+
+
+def _staged_voice_blueprint() -> ResolvedVoiceBlueprint:
+    return ResolvedVoiceBlueprint(
+        scene_number=1,
+        status=VoiceBlueprintResolutionStatus.RESOLVED,
+        profile=ResolvedVoiceProfileReference(
+            requested_profile_id="voice.staged_test",
+            resolved_profile_id="voice.staged_test",
+            display_name="Staged Test Voice",
+            found_exact_match=True,
+            used_fallback=False,
+        ),
+        narration_text="Real narration text for the staged pipeline test.",
+        estimated_speech_duration_seconds=10.0,
+    )
+
+
+def _staged_stage1_result(*, output_file: str) -> RenderResult:
+    return RenderResult(
+        success=True,
+        output_file=output_file,
+        render_engine="ffmpeg",
+        render_time_seconds=0.1,
+        duration_seconds=10,
+        status=RenderStatus.COMPLETED,
+        scene_timings=[
+            SceneRenderTiming(
+                scene_number=1,
+                start_seconds=0.0,
+                end_seconds=10.0,
+            ),
+        ],
+    )
+
+
+def test_staged_render_promotes_stage1_output_when_mux_and_subtitles_both_skipped(
+    tmp_path: Path,
+) -> None:
+    """
+    REQ-00/REQ-0 staged-pipeline swap: every mux-time audio toggle off
+    plus subtitles disabled means Stage 2 and Stage 3 both never run -
+    Stage 1's own raw output must still end up promoted to the job's
+    real configured output path (not left sitting at its intermediate
+    stage1 path), reusing ProductionRenderService's own proven
+    staged-file-promotion primitive.
+    """
+
+    job = build_job()
+    job.voice_file = "assets/audio/test_voice.wav"
+    job.audio_timeline = AudioTimeline()
+
+    target_output_file = tmp_path / "final_video.mp4"
+    stage1_output_file = tmp_path / "final_video.stage1.mp4"
+    stage1_output_file.write_bytes(b"synthetic stage1 output")
+
+    fake_production_render_service = MagicMock()
+    fake_production_render_service.output_file = target_output_file.as_posix()
+    fake_production_render_service.render_video_only.return_value = (
+        _staged_stage1_result(output_file=stage1_output_file.as_posix())
+    )
+
+    fake_audio_mux_render_service = MagicMock()
+    fake_subtitle_burn_service = MagicMock()
+
+    stage = RenderPipelineStage(
+        production_render_service=fake_production_render_service,
+        voice_blueprints=[MagicMock()],
+        subtitles_enabled=False,
+        audio_mux_render_service=fake_audio_mux_render_service,
+        subtitle_burn_service=fake_subtitle_burn_service,
+    )
+
+    result = stage.execute(build_context(job))
+
+    assert result.successful is True
+
+    fake_production_render_service.render_video_only.assert_called_once()
+    fake_audio_mux_render_service.mux.assert_not_called()
+    fake_subtitle_burn_service.burn.assert_not_called()
+
+    assert job.render_result is not None
+    assert job.render_result.output_file == target_output_file.as_posix()
+    assert not stage1_output_file.exists()
+    assert target_output_file.exists()
+
+
+def test_staged_render_calls_mux_and_skips_subtitles_when_disabled() -> None:
+    """
+    REQ-00/REQ-0 staged-pipeline swap: real muxed audio tracks plus
+    subtitles disabled means Stage 2 runs (writing straight to the
+    real target output file, since no Stage 3 follows) and Stage 3
+    never runs at all.
+    """
+
+    job = build_job()
+    job.voice_file = "assets/audio/test_voice.wav"
+    job.audio_timeline = _all_track_types_timeline()
+
+    fake_production_render_service = MagicMock()
+    fake_production_render_service.output_file = "outputs/final_video.mp4"
+    fake_production_render_service.render_video_only.return_value = (
+        _staged_stage1_result(output_file="outputs/final_video.stage1.mp4")
+    )
+
+    fake_audio_mux_render_service = MagicMock()
+    fake_audio_mux_render_service.mux.return_value = RenderResult(
+        success=True,
+        output_file="outputs/final_video.mp4",
+        render_engine="ffmpeg",
+        render_time_seconds=0.1,
+        duration_seconds=10,
+        status=RenderStatus.COMPLETED,
+    )
+
+    fake_subtitle_burn_service = MagicMock()
+
+    stage = RenderPipelineStage(
+        production_render_service=fake_production_render_service,
+        voice_blueprints=[MagicMock()],
+        subtitles_enabled=False,
+        audio_mux_render_service=fake_audio_mux_render_service,
+        subtitle_burn_service=fake_subtitle_burn_service,
+    )
+
+    result = stage.execute(build_context(job))
+
+    assert result.successful is True
+
+    fake_audio_mux_render_service.mux.assert_called_once()
+    mux_kwargs = fake_audio_mux_render_service.mux.call_args.kwargs
+    assert mux_kwargs["output_file"] == "outputs/final_video.mp4"
+    reached_types = {track.track_type for track in mux_kwargs["audio_timeline"].tracks}
+    assert reached_types == {
+        AudioTrackType.VOICEOVER,
+        AudioTrackType.BACKGROUND_MUSIC,
+        AudioTrackType.SOUND_EFFECT,
+    }
+
+    fake_subtitle_burn_service.burn.assert_not_called()
+
+    assert job.render_result is not None
+    assert job.render_result.output_file == "outputs/final_video.mp4"
+
+
+def test_staged_render_burns_subtitles_with_has_audio_false_when_mux_skipped() -> None:
+    """
+    REQ-00/REQ-0 staged-pipeline swap: every mux-time toggle off but
+    subtitles enabled, with real resolvable cues - Stage 2 must be
+    skipped (AudioMuxRenderService.mux() itself hard-rejects an empty
+    track list) and Stage 3 must burn directly onto Stage 1's own
+    audio-less output, passing has_audio=False - the real gap this
+    whole staged swap was built to close (see
+    PostRenderSubtitleBurnService.burn()'s own docstring).
+    """
+
+    job = _staged_job_with_real_cues()
+    job.audio_timeline = AudioTimeline()
+
+    fake_production_render_service = MagicMock()
+    fake_production_render_service.output_file = "outputs/final_video.mp4"
+    fake_production_render_service.render_video_only.return_value = (
+        _staged_stage1_result(output_file="outputs/final_video.stage1.mp4")
+    )
+
+    fake_audio_mux_render_service = MagicMock()
+
+    fake_subtitle_burn_service = MagicMock()
+    fake_subtitle_burn_service.burn.return_value = RenderResult(
+        success=True,
+        output_file="outputs/final_video.mp4",
+        render_engine="ffmpeg",
+        render_time_seconds=0.1,
+        duration_seconds=10,
+        status=RenderStatus.COMPLETED,
+    )
+
+    stage = RenderPipelineStage(
+        production_render_service=fake_production_render_service,
+        voice_blueprints=[_staged_voice_blueprint()],
+        subtitles_enabled=True,
+        audio_mux_render_service=fake_audio_mux_render_service,
+        subtitle_burn_service=fake_subtitle_burn_service,
+    )
+
+    result = stage.execute(build_context(job))
+
+    assert result.successful is True
+
+    fake_audio_mux_render_service.mux.assert_not_called()
+
+    fake_subtitle_burn_service.burn.assert_called_once()
+    burn_kwargs = fake_subtitle_burn_service.burn.call_args.kwargs
+    assert burn_kwargs["input_video_file"] == "outputs/final_video.stage1.mp4"
+    assert burn_kwargs["output_file"] == "outputs/final_video.mp4"
+    assert burn_kwargs["has_audio"] is False
+    assert burn_kwargs["cues"]
+
+    assert job.render_result is not None
+    assert job.render_result.output_file == "outputs/final_video.mp4"
+
+
+def test_staged_render_burns_subtitles_with_has_audio_true_when_mux_ran() -> None:
+    """
+    REQ-00/REQ-0 staged-pipeline swap: real muxed audio tracks AND
+    real resolvable cues - Stage 2 runs first, and Stage 3 burns onto
+    Stage 2's own output (not Stage 1's), passing has_audio=True.
+    """
+
+    job = _staged_job_with_real_cues()
+    job.audio_timeline = _all_track_types_timeline()
+
+    fake_production_render_service = MagicMock()
+    fake_production_render_service.output_file = "outputs/final_video.mp4"
+    fake_production_render_service.render_video_only.return_value = (
+        _staged_stage1_result(output_file="outputs/final_video.stage1.mp4")
+    )
+
+    fake_audio_mux_render_service = MagicMock()
+    fake_audio_mux_render_service.mux.return_value = RenderResult(
+        success=True,
+        output_file="outputs/final_video.stage2.mp4",
+        render_engine="ffmpeg",
+        render_time_seconds=0.1,
+        duration_seconds=10,
+        status=RenderStatus.COMPLETED,
+    )
+
+    fake_subtitle_burn_service = MagicMock()
+    fake_subtitle_burn_service.burn.return_value = RenderResult(
+        success=True,
+        output_file="outputs/final_video.mp4",
+        render_engine="ffmpeg",
+        render_time_seconds=0.1,
+        duration_seconds=10,
+        status=RenderStatus.COMPLETED,
+    )
+
+    stage = RenderPipelineStage(
+        production_render_service=fake_production_render_service,
+        voice_blueprints=[_staged_voice_blueprint()],
+        subtitles_enabled=True,
+        audio_mux_render_service=fake_audio_mux_render_service,
+        subtitle_burn_service=fake_subtitle_burn_service,
+    )
+
+    result = stage.execute(build_context(job))
+
+    assert result.successful is True
+
+    fake_audio_mux_render_service.mux.assert_called_once()
+    mux_kwargs = fake_audio_mux_render_service.mux.call_args.kwargs
+    assert mux_kwargs["output_file"] == "outputs/final_video.stage2.mp4"
+
+    fake_subtitle_burn_service.burn.assert_called_once()
+    burn_kwargs = fake_subtitle_burn_service.burn.call_args.kwargs
+    assert burn_kwargs["input_video_file"] == "outputs/final_video.stage2.mp4"
+    assert burn_kwargs["output_file"] == "outputs/final_video.mp4"
+    assert burn_kwargs["has_audio"] is True
+    assert burn_kwargs["cues"]
+
+
+def test_staged_render_stage1_failure_short_circuits_mux_and_subtitles() -> None:
+    """
+    A failed Stage 1 must never reach Stage 2 or Stage 3, and its
+    failure must be what the pipeline reports - matching every other
+    render-failure path's own established contract.
+    """
+
+    job = build_job()
+    job.voice_file = "assets/audio/test_voice.wav"
+    job.audio_timeline = _all_track_types_timeline()
+
+    fake_production_render_service = MagicMock()
+    fake_production_render_service.output_file = "outputs/final_video.mp4"
+    fake_production_render_service.render_video_only.return_value = RenderResult(
+        success=False,
+        output_file=None,
+        render_engine="ffmpeg",
+        render_time_seconds=0.1,
+        duration_seconds=0,
+        status=RenderStatus.FAILED,
+        error_message="Synthetic Stage 1 failure.",
+    )
+
+    fake_audio_mux_render_service = MagicMock()
+    fake_subtitle_burn_service = MagicMock()
+
+    stage = RenderPipelineStage(
+        production_render_service=fake_production_render_service,
+        voice_blueprints=[MagicMock()],
+        audio_mux_render_service=fake_audio_mux_render_service,
+        subtitle_burn_service=fake_subtitle_burn_service,
+    )
+
+    result = stage.execute(build_context(job))
+
+    assert result.successful is False
+    assert result.errors == ["Synthetic Stage 1 failure."]
+
+    fake_audio_mux_render_service.mux.assert_not_called()
+    fake_subtitle_burn_service.burn.assert_not_called()
 
 
 def main() -> None:

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 from src.models.audio_inclusion_preferences import AudioInclusionPreferences
+from src.models.audio_timeline import AudioTimeline
 from src.models.render_result import RenderResult
 from src.models.resolved_voice_blueprint import (
     ResolvedVoiceBlueprint,
 )
+from src.models.video_timeline import VideoTimeline
 from src.pipeline.base_stage import BasePipelineStage
 from src.pipeline.pipeline_stage import (
     PipelineStageName,
@@ -17,11 +20,19 @@ from src.pipeline.stage_result import StageResult
 from src.services.audio_inclusion_filter_service import (
     filter_audio_timeline_for_mux,
 )
+from src.services.audio_mux_render_service import AudioMuxRenderService
+from src.services.ffmpeg_execution_service import ProgressCallback
+from src.services.post_render_subtitle_burn_service import (
+    PostRenderSubtitleBurnService,
+)
 from src.services.production_render_service import (
     ProductionRenderService,
 )
 from src.services.render_service import RenderService
 from src.services.seo.seo_context_builder import SEOContextBuilder
+from src.services.subtitle_cue_resolution_service import (
+    resolve_absolute_subtitle_cues,
+)
 from src.services.top10_countdown_service import Top10CountdownService
 
 
@@ -51,6 +62,8 @@ class RenderPipelineStage(BasePipelineStage):
         subtitles_enabled: bool = True,
         genre_id: str | None = None,
         top10_countdown_service: Top10CountdownService | None = None,
+        audio_mux_render_service: AudioMuxRenderService | None = None,
+        subtitle_burn_service: PostRenderSubtitleBurnService | None = None,
     ) -> None:
         if production_render_service is not None and not voice_blueprints:
             raise ValueError(
@@ -103,6 +116,23 @@ class RenderPipelineStage(BasePipelineStage):
         # renders through the normal composite path below with no
         # countdown splice, rather than failing.
         self._top10_countdown_service = top10_countdown_service
+
+        # REQ-00 Stage 2 / REQ-0 Stage 3, 2026-09-24: neither service
+        # has any external composition-root dependency (each
+        # self-constructs its own FFmpegCapabilityService/
+        # FFmpegExecutionService), so unlike top10_countdown_service
+        # these are not threaded through RenderWorkflowStageFactory -
+        # a real default instance is always available. Constructor
+        # overrides exist only so _execute_staged_render()'s
+        # orchestration can be tested against real service instances
+        # without needing real FFmpeg for every test.
+        self._audio_mux_render_service = (
+            audio_mux_render_service or AudioMuxRenderService()
+        )
+
+        self._subtitle_burn_service = (
+            subtitle_burn_service or PostRenderSubtitleBurnService()
+        )
 
     @property
     def stage_name(
@@ -182,9 +212,9 @@ class RenderPipelineStage(BasePipelineStage):
         if video_timeline is None:
             raise RuntimeError("Production render requires " "VideoJob.video_timeline.")
 
-        audio_timeline = context.job.audio_timeline
+        unfiltered_audio_timeline = context.job.audio_timeline
 
-        if audio_timeline is None:
+        if unfiltered_audio_timeline is None:
             raise ValueError(
                 "Production render stage requires " "VideoJob.audio_timeline."
             )
@@ -199,8 +229,16 @@ class RenderPipelineStage(BasePipelineStage):
         # tracks as a legitimate, silently-handled "render without
         # audio" case (confirmed via REQ-00 Stage 1's own relaxation of
         # what used to be an unconditional audio-nodes requirement).
+        #
+        # unfiltered_audio_timeline (the real, un-gated one) is kept
+        # separately rather than overwritten - MasterEditPlanService's
+        # render-readiness validation (voice_ready) requires a real
+        # voiceover track regardless of what the user chose to mute,
+        # and REQ-00 Stage 1's render_video_only() runs that same
+        # validation. See _execute_staged_render()'s own docstring for
+        # why passing it the filtered timeline would be wrong.
         audio_timeline = filter_audio_timeline_for_mux(
-            audio_timeline=audio_timeline,
+            audio_timeline=unfiltered_audio_timeline,
             preferences=self._audio_inclusion_preferences,
         )
 
@@ -254,6 +292,27 @@ class RenderPipelineStage(BasePipelineStage):
                 progress_callback=progress_callback,
             )
 
+        # REQ-00/REQ-0 staged pipeline swap, 2026-09-24: Stage 1 (video-
+        # only) -> conditional Stage 2 (audio mux) -> conditional Stage 3
+        # (subtitle burn-in), replacing the old one-shot composite
+        # render() below for any job whose command fits one FFmpeg
+        # invocation. render_video_only() deliberately does not support
+        # command-line-length-driven chunking yet (see its own
+        # docstring) - a job long/complex enough to need it raises
+        # NotImplementedError before any FFmpeg execution starts (no
+        # partial file to clean up), and falls back to the old,
+        # still-fully-functional composite render() unchanged below.
+        try:
+            return self._execute_staged_render(
+                production_render_service=production_render_service,
+                video_timeline=video_timeline,
+                unfiltered_audio_timeline=unfiltered_audio_timeline,
+                muxed_audio_timeline=audio_timeline,
+                progress_callback=progress_callback,
+            )
+        except NotImplementedError:
+            pass
+
         return production_render_service.render(
             video_timeline=video_timeline,
             audio_timeline=audio_timeline,
@@ -263,6 +322,142 @@ class RenderPipelineStage(BasePipelineStage):
             letterbox_enabled=self._letterbox_enabled,
             include_subtitles=self._subtitles_enabled,
         )
+
+    def _execute_staged_render(
+        self,
+        *,
+        production_render_service: ProductionRenderService,
+        video_timeline: VideoTimeline,
+        unfiltered_audio_timeline: AudioTimeline,
+        muxed_audio_timeline: AudioTimeline,
+        progress_callback: ProgressCallback | None,
+    ) -> RenderResult:
+        """
+        REQ-00 Stage 1 -> conditional Stage 2 -> conditional REQ-0
+        Stage 3.
+
+        Stage 1 always receives unfiltered_audio_timeline, the job's
+        real, un-gated audio timeline - MasterEditPlanService's render-
+        readiness validation (voice_ready) requires a real voiceover
+        track regardless of what will actually be muxed in (voiceover/
+        music/SFX generation is unconditional - see
+        AudioInclusionPreferences' own docstring - only mux-time
+        inclusion is toggled), and Stage 1's own render graph never
+        builds audio nodes anyway (render_video_only() always passes
+        include_audio=False internally), so what is IN that timeline
+        has zero effect on Stage 1's actual output pixels.
+
+        muxed_audio_timeline is the REQ-13 mux-time-filtered timeline
+        (filter_audio_timeline_for_mux()'s own result) - it alone
+        decides whether Stage 2 runs at all. Every toggle off (a
+        legitimate silent render, not an error) means muxed_audio_
+        timeline.tracks is empty: AudioMuxRenderService.mux() itself
+        hard-rejects an empty track list, so Stage 2 is skipped
+        entirely and Stage 1's own raw output (which already has zero
+        audio streams by construction) is used directly wherever
+        Stage 2's result would otherwise have been used.
+        """
+
+        target_output_file = production_render_service.output_file
+
+        stage1_output_file = self._stage_output_file(target_output_file, "stage1")
+
+        stage1_result = production_render_service.render_video_only(
+            video_timeline=video_timeline,
+            audio_timeline=unfiltered_audio_timeline,
+            voice_blueprints=self._voice_blueprints,
+            output_file=stage1_output_file,
+            progress_callback=progress_callback,
+            transition_duration_seconds=self._transition_duration_seconds,
+            letterbox_enabled=self._letterbox_enabled,
+        )
+
+        if not stage1_result.success:
+            return stage1_result
+
+        has_muxed_audio = bool(muxed_audio_timeline.tracks)
+
+        cues = (
+            resolve_absolute_subtitle_cues(
+                video_timeline=video_timeline,
+                voice_blueprints=self._voice_blueprints,
+                scene_timings=stage1_result.scene_timings,
+                transition_duration_seconds=self._transition_duration_seconds,
+            )
+            if self._subtitles_enabled
+            else []
+        )
+
+        needs_subtitle_burn = bool(cues)
+
+        if has_muxed_audio:
+            stage2_output_file = (
+                self._stage_output_file(target_output_file, "stage2")
+                if needs_subtitle_burn
+                else target_output_file
+            )
+
+            stage2_result = self._audio_mux_render_service.mux(
+                video_only_render_result=stage1_result,
+                audio_timeline=muxed_audio_timeline,
+                output_file=stage2_output_file,
+                progress_callback=progress_callback,
+            )
+
+            if not stage2_result.success:
+                return stage2_result
+        else:
+            stage2_result = stage1_result
+
+        if needs_subtitle_burn:
+            if stage2_result.output_file is None:
+                raise RuntimeError(
+                    "Successful staged render did not " "provide an output file."
+                )
+
+            return self._subtitle_burn_service.burn(
+                input_video_file=stage2_result.output_file,
+                cues=cues,
+                output_file=target_output_file,
+                video_duration_seconds=float(stage2_result.duration_seconds),
+                has_audio=has_muxed_audio,
+                progress_callback=progress_callback,
+            )
+
+        # stage2_result is the final result. When it was never routed
+        # through Stage 2's own mux (has_muxed_audio False) it is still
+        # sitting at stage1_output_file rather than the real target -
+        # promote it now, reusing ProductionRenderService's own proven
+        # staged-file-promotion primitive rather than a second one.
+        if stage2_result.output_file != target_output_file:
+            promoted_output_file = ProductionRenderService._promote_staged_output(
+                staging_output_file=(stage2_result.output_file or stage1_output_file),
+                target_output_file=target_output_file,
+            )
+
+            return stage2_result.model_copy(
+                update={"output_file": promoted_output_file}
+            )
+
+        return stage2_result
+
+    @staticmethod
+    def _stage_output_file(target_output_file: str, stage_name: str) -> str:
+        """
+        Return an intermediate per-stage output path derived from the
+        job's real final output path (e.g. "final_video.mp4" ->
+        "final_video.stage1.mp4") - distinct from ProductionRender
+        Service._staging_output_file()'s own ".part" marker (that one
+        is FFmpeg's own in-progress write target for a single stage,
+        this one distinguishes one whole stage's finished output from
+        another's within the same staged render).
+        """
+
+        target_path = Path(target_output_file)
+
+        return target_path.with_name(
+            f"{target_path.stem}.{stage_name}{target_path.suffix}"
+        ).as_posix()
 
     def execute_video_only(
         self,
