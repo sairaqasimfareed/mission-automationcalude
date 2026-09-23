@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import sys
 from pathlib import Path
 from typing import NamedTuple
@@ -622,13 +623,17 @@ class VideoFilterTranslationService:
                 "strength",
             )
 
+            angle_expression = self._vignette_angle_expression(
+                execution.numeric_intensity_percent
+            )
+
             filter_node = FilterNode(
                 media_type=(FilterMediaType.VIDEO),
                 filter_name="vignette",
                 input_labels=[input_label],
                 output_labels=[output_label],
                 options={
-                    "angle": "PI/4",
+                    "angle": angle_expression,
                     "eval": "frame",
                     "enable": enable,
                 },
@@ -636,6 +641,7 @@ class VideoFilterTranslationService:
                 metadata={
                     "semantic_strength": (strength),
                     "ffmpeg_mapping": ("soft_vignette"),
+                    "numeric_intensity_percent": (execution.numeric_intensity_percent),
                 },
             )
 
@@ -685,17 +691,24 @@ class VideoFilterTranslationService:
                 "noise",
             )
 
+            noise_level = self._film_grain_noise_level(
+                execution.numeric_intensity_percent
+            )
+
             filter_node = FilterNode(
                 media_type=FilterMediaType.VIDEO,
                 filter_name="noise",
                 input_labels=[input_label],
                 output_labels=[output_label],
                 options={
-                    "alls": "12",
+                    "alls": str(noise_level),
                     "allf": "t",
                     "enable": enable,
                 },
                 source_render_node_id=str(render_node.id),
+                metadata={
+                    "numeric_intensity_percent": (execution.numeric_intensity_percent),
+                },
             )
 
             return self._active(
@@ -703,6 +716,16 @@ class VideoFilterTranslationService:
                 input_label=input_label,
                 output_label=output_label,
                 filters=[filter_node],
+            )
+
+        if execution.preset_id == "visual.top10_rank_badge":
+            return self._translate_rank_badge(
+                render_node=render_node,
+                execution=execution,
+                input_label=input_label,
+                output_label=output_label,
+                capabilities=capabilities,
+                enable=enable,
             )
 
         grade_params = self._PARAMETRIC_GRADE_PRESETS.get(execution.preset_id)
@@ -729,6 +752,88 @@ class VideoFilterTranslationService:
 
         raise ValueError("Unsupported FFmpeg visual preset: " f"{execution.preset_id}.")
 
+    # REQ-12, 2026-09-23: fixed pixel margin from the frame edge for
+    # the top10 countdown rank badge - top-right corner, matching the
+    # common countdown-video convention; no exact side was locked by
+    # the user, only "right or left top corner".
+    _RANK_BADGE_MARGIN_PX = 40
+    _RANK_BADGE_FONTSIZE = 64
+
+    def _translate_rank_badge(
+        self,
+        *,
+        render_node: RenderNode,
+        execution: EffectExecution,
+        input_label: str,
+        output_label: str,
+        capabilities: FFmpegCapabilities,
+        enable: str,
+    ) -> VideoFilterTranslation:
+        """
+        Persistent top-right corner badge showing a scene's countdown
+        rank (e.g. "10", "9", ...) for the REQ-12 top10 genre.
+
+        Reuses the exact drawtext/font-resolution/text-file machinery
+        already proven by the subtitle path and by
+        TopTenRankCardRenderService's own number-reveal drawtext, per
+        this codebase's real-world finding that inline text= escaping
+        is fragile - textfile= sidesteps it entirely.
+        """
+
+        self._require_filter(
+            capabilities,
+            "drawtext",
+        )
+
+        badge_text = execution.rank_badge_text
+
+        if not badge_text:
+            return self._skipped(
+                render_node=render_node,
+                input_label=input_label,
+                reason=("Rank badge has no text to display."),
+            )
+
+        text_path = "'" + self._write_subtitle_text_file(badge_text) + "'"
+
+        options = {
+            "textfile": text_path,
+            "fontsize": str(self._RANK_BADGE_FONTSIZE),
+            "fontcolor": "white",
+            "borderw": "4",
+            "bordercolor": "black@0.85",
+            "box": "1",
+            "boxcolor": "black@0.45",
+            "boxborderw": "18",
+            "x": f"w-text_w-{self._RANK_BADGE_MARGIN_PX}",
+            "y": str(self._RANK_BADGE_MARGIN_PX),
+            "enable": enable,
+        }
+
+        font_file = self._resolve_subtitle_font_file()
+
+        if font_file is not None:
+            options["fontfile"] = f"'{font_file}'"
+
+        filter_node = FilterNode(
+            media_type=(FilterMediaType.VIDEO),
+            filter_name="drawtext",
+            input_labels=[input_label],
+            output_labels=[output_label],
+            options=options,
+            source_render_node_id=str(render_node.id),
+            metadata={
+                "rank_badge_text": badge_text,
+            },
+        )
+
+        return self._active(
+            render_node=render_node,
+            input_label=input_label,
+            output_label=output_label,
+            filters=[filter_node],
+        )
+
     # Simple single-pass color-grade presets (grayscale, punch,
     # cool grades, and the parametric "LUT" presets - this codebase
     # has no real .cube/lut3d engine, so these approximate a LUT's
@@ -753,7 +858,20 @@ class VideoFilterTranslationService:
             brightness=-0.02,
             contrast=1.08,
             saturation=0.92,
-            color_balance={"bs": "0.10", "rs": "-0.05"},
+            # Real finding via isolated real-FFmpeg colorbalance
+            # experiments, 2026-09-22: FFmpeg's colorbalance "shadows"
+            # zone ("bs"/"rs") only has any measurable effect on truly
+            # near-black content (luma below roughly 90/255) - a swept
+            # test across the full luma range showed "bs"/"rs" produce
+            # ZERO change at true-midtone (128/255) and brighter, even
+            # at the most extreme allowed magnitude (+-0.99). Most real
+            # footage (midtones through highlights) is controlled by
+            # the "highlights" zone ("bh"/"rh") instead, confirmed by
+            # the same sweep. Kept the original shadows entries (they
+            # do genuinely affect real dark/shadow regions of a frame)
+            # and added highlights entries so the cool/blue tint is
+            # actually visible on typical, non-near-black content too.
+            color_balance={"bs": "0.10", "rs": "-0.05", "bh": "0.08", "rh": "-0.05"},
         ),
         "visual.lut_teal_orange": _ParametricGradeSpec(
             brightness=0.0,
@@ -787,6 +905,58 @@ class VideoFilterTranslationService:
             brightness=0.02,
             contrast=1.2,
             saturation=1.35,
+            color_balance=None,
+        ),
+        # REQ-11 (genre-adaptive color grading), 2026-09-22: real,
+        # deliberate replacements for two genres whose PREVIOUS grade
+        # assignment actually contradicted this REQ's own locked
+        # creative direction - genre.medical was on visual.cool_blue_
+        # grade (a real cool/blue tint via colorbalance) despite the
+        # locked design wanting medical to read "clean and neutral";
+        # genre.travel was on visual.lut_vibrant_punch (vibrant, but
+        # with no warm color push at all) despite the locked design
+        # specifically wanting "vibrant, warm, golden-hour" for
+        # travel. genre.top10's own visual.high_contrast_punch already
+        # reasonably matches "punchy and saturated" and is left
+        # unchanged.
+        "visual.golden_hour_warm": _ParametricGradeSpec(
+            brightness=0.03,
+            contrast=1.1,
+            saturation=1.2,
+            # Real finding via isolated real-FFmpeg colorbalance
+            # experiments, 2026-09-22: two earlier draft fixes here
+            # (adding "bm", then switching the test source's gray
+            # value) both failed with IDENTICAL measured output before
+            # and after - the real root cause, found by hand-sweeping
+            # colorbalance's bs/bm/bh parameters individually across
+            # the full 0-255 luma range on flat test frames: FFmpeg's
+            # "shadows" zone only affects luma below ~90/255, and
+            # "midtones" only affects a narrow band around ~50-90/255 -
+            # both are completely inert (zero measurable change, even
+            # at the max +-0.99 magnitude) at true-midtone (128/255)
+            # and brighter. Everything from ~96/255 up through 255 -
+            # most real footage - is controlled by the "highlights"
+            # zone ("rh"/"bh") instead, regardless of the "highlights"
+            # name suggesting only bright/near-white content. Added
+            # real "rh"/"bh" entries (calibrated via a direct
+            # before/after pixel measurement, not assumed) so the warm
+            # push is actually visible on typical, non-near-black
+            # content; kept the shadow/midtone entries since they do
+            # genuinely affect a real frame's true dark regions.
+            color_balance={
+                "rs": "0.08",
+                "rm": "0.10",
+                "rh": "0.08",
+                "gm": "0.04",
+                "bs": "-0.05",
+                "bm": "-0.06",
+                "bh": "-0.08",
+            },
+        ),
+        "visual.clean_neutral": _ParametricGradeSpec(
+            brightness=0.02,
+            contrast=1.05,
+            saturation=0.95,
             color_balance=None,
         ),
     }
@@ -1006,6 +1176,25 @@ class VideoFilterTranslationService:
             }
         )
 
+        warnings: list[str] = []
+
+        if execution.animation_preset_id == "animation.subtitle_fade":
+            # REQ-5 (genre-aware subtitle styling), 2026-09-22: real
+            # fade-in/fade-out, replacing the previous hard pop on/off
+            # - genres that set this preset (horror, storytelling,
+            # mystery, survival) had it stored and validated but never
+            # actually applied (confirmed via code: this branch used to
+            # only append a warning, never touch options at all).
+            options["alpha"] = self._subtitle_fade_alpha_expression(
+                local_start_seconds=local_start,
+                local_end_seconds=local_end,
+            )
+        elif execution.animation_preset_id is not None:
+            warnings.append(
+                "Unsupported subtitle animation preset "
+                f"ignored: {execution.animation_preset_id}."
+            )
+
         filter_node = FilterNode(
             media_type=(FilterMediaType.VIDEO),
             filter_name="drawtext",
@@ -1027,14 +1216,52 @@ class VideoFilterTranslationService:
             filters=[filter_node],
         )
 
-        if execution.animation_preset_id == "animation.subtitle_fade":
-            translation.warnings.append(
-                "Subtitle fade animation metadata is "
-                "preserved; alpha-keyframe translation "
-                "will be integrated with subtitle styling."
-            )
+        translation.warnings.extend(warnings)
 
         return translation
+
+    # A short, fixed fade - long enough to read as a real transition,
+    # short enough to never dominate even a brief subtitle cue.
+    _SUBTITLE_FADE_SECONDS = 0.15
+
+    @classmethod
+    def _subtitle_fade_alpha_expression(
+        cls,
+        *,
+        local_start_seconds: float,
+        local_end_seconds: float,
+    ) -> str:
+        """
+        Real alpha-keyframe fade-in/fade-out for one subtitle cue.
+
+        The fade duration is clamped to at most a quarter of the cue's
+        own real duration, so a very short cue still fades cleanly in
+        then out rather than the two ramps overlapping/inverting.
+        """
+
+        cue_duration = max(0.0, local_end_seconds - local_start_seconds)
+
+        fade_seconds = min(cls._SUBTITLE_FADE_SECONDS, cue_duration / 4.0)
+
+        if fade_seconds <= 0.0:
+            return "1"
+
+        fade_in_end = local_start_seconds + fade_seconds
+
+        fade_out_start = local_end_seconds - fade_seconds
+
+        # Single-quoted, matching _enable_expression's own convention -
+        # the commas inside if(...) must be protected from FFmpeg's
+        # outer filtergraph parser, which otherwise reads a bare comma
+        # as separating the next filter in the chain.
+        return (
+            "'"
+            f"if(lt(t,{cls._number(fade_in_end)}),"
+            f"(t-{cls._number(local_start_seconds)})/{cls._number(fade_seconds)},"
+            f"if(lt(t,{cls._number(fade_out_start)}),1,"
+            f"({cls._number(local_end_seconds)}-t)/{cls._number(fade_seconds)}))"
+            "'"
+        )
 
     # Per-platform fallback fonts for drawtext, tried in order. Windows
     # FFmpeg builds commonly ship without fontconfig support at all, and
@@ -1101,6 +1328,24 @@ class VideoFilterTranslationService:
                 "x": "(w-text_w)/2",
                 "y": "h-text_h-90",
             }
+        elif preset_id == "subtitle.bold_punchy":
+            # REQ-5 (genre-aware subtitle styling), 2026-09-22: for
+            # top10/reaction/comedy - genres whose own thumbnail
+            # text_style already reads "large_number"/"bold_expressive"/
+            # "bold_playful" (see title_card_text_style_resolution_
+            # service.py's own "heavy" keyword bucket) - a real,
+            # distinct treatment: larger than either existing preset, a
+            # bright accent color instead of plain white (real color/
+            # emphasis difference, not just a size bump), and a heavier
+            # border for a punchier, more energetic on-screen feel.
+            style = {
+                "fontcolor": "yellow",
+                "fontsize": "60",
+                "borderw": "5",
+                "bordercolor": "black",
+                "x": "(w-text_w)/2",
+                "y": "h-text_h-70",
+            }
         else:
             raise ValueError("Unsupported FFmpeg subtitle preset: " f"{preset_id}.")
 
@@ -1120,7 +1365,18 @@ class VideoFilterTranslationService:
             "fade_black": "fadeblack",
             "wipe_left": "wipeleft",
             "wipe_right": "wiperight",
+            # REQ-6 (transition variety), 2026-09-22: real, confirmed
+            # xfade options (ran `ffmpeg -h filter=xfade` directly to
+            # verify the full 58-option list before adding these) -
+            # wipe/slide previously only had left(+wipe_right)
+            # registered despite FFmpeg supporting all four directions
+            # for both natively.
+            "wipe_up": "wipeup",
+            "wipe_down": "wipedown",
             "slide_left": "slideleft",
+            "slide_right": "slideright",
+            "slide_up": "slideup",
+            "slide_down": "slidedown",
             "circle_crop": "circlecrop",
             "pixelize": "pixelize",
         }
@@ -1198,6 +1454,87 @@ class VideoFilterTranslationService:
             skipped=True,
             warnings=[reason],
         )
+
+    # REQ-1/2 (tension-adaptive film grain/vignette), 2026-09-22: real
+    # bounds for scaling EffectExecution.numeric_intensity_percent
+    # (0-100, from GenreDirectiveGenerationService's own genre-range/
+    # tension_level linear scaling) into an actual, varying FFmpeg
+    # filter parameter - neither preset had one before (film_grain
+    # used a hardcoded alls=12 regardless of any intensity;
+    # vignette_soft read a "strength" value that was never actually
+    # applied to the real vignette filter at all, only stored in
+    # metadata as dead data).
+    #
+    # noise filter's alls (all-plane strength): 4 reads as barely
+    # visible grain, 30 as genuinely heavy - a real, perceptible range
+    # without ever looking like pure static.
+    _GRAIN_NOISE_LEVEL_AT_ZERO_PERCENT = 4
+    _GRAIN_NOISE_LEVEL_AT_HUNDRED_PERCENT = 30
+
+    # vignette filter's angle (radians): FFmpeg's own vignette filter
+    # gets STRONGER (a tighter, darker vignette) as angle gets LARGER,
+    # not smaller - confirmed empirically against real ffmpeg output
+    # (a flat white frame's corner brightness drops monotonically from
+    # ~238 at angle=0.2 to ~0 at angle=1.5); an earlier version of this
+    # comment had the direction backwards. PI/6 (~0.524 rad) reads as a
+    # soft, barely-there vignette; PI/2.5 (~1.257 rad) reads as a real,
+    # strong one.
+    _VIGNETTE_ANGLE_AT_ZERO_PERCENT_RADIANS = math.pi / 6.0
+    _VIGNETTE_ANGLE_AT_HUNDRED_PERCENT_RADIANS = math.pi / 2.5
+
+    @classmethod
+    def _film_grain_noise_level(
+        cls,
+        numeric_intensity_percent: int | None,
+    ) -> int:
+        """
+        Real, varying noise `alls` value for a given resolved 0-100
+        intensity. None (no genre range configured for this scene -
+        every genre that doesn't request "visual.film_grain_light" at
+        all never reaches this method in the first place) reproduces
+        the exact previous hardcoded behavior (alls=12) rather than
+        silently changing look for any existing caller.
+        """
+
+        if numeric_intensity_percent is None:
+            return 12
+
+        clamped = max(0, min(100, numeric_intensity_percent))
+
+        span = (
+            cls._GRAIN_NOISE_LEVEL_AT_HUNDRED_PERCENT
+            - cls._GRAIN_NOISE_LEVEL_AT_ZERO_PERCENT
+        )
+
+        return round(cls._GRAIN_NOISE_LEVEL_AT_ZERO_PERCENT + span * (clamped / 100.0))
+
+    @classmethod
+    def _vignette_angle_expression(
+        cls,
+        numeric_intensity_percent: int | None,
+    ) -> str:
+        """
+        Real, varying vignette `angle` value (radians, formatted for
+        FFmpeg) for a given resolved 0-100 intensity. None reproduces
+        the exact previous hardcoded behavior ("PI/4") - see
+        _film_grain_noise_level's own docstring for why.
+        """
+
+        if numeric_intensity_percent is None:
+            return "PI/4"
+
+        clamped = max(0, min(100, numeric_intensity_percent))
+
+        span = (
+            cls._VIGNETTE_ANGLE_AT_HUNDRED_PERCENT_RADIANS
+            - cls._VIGNETTE_ANGLE_AT_ZERO_PERCENT_RADIANS
+        )
+
+        angle_radians = cls._VIGNETTE_ANGLE_AT_ZERO_PERCENT_RADIANS + span * (
+            clamped / 100.0
+        )
+
+        return f"{angle_radians:.4f}"
 
     @staticmethod
     def _enable_expression(

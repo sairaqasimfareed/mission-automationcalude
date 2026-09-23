@@ -21,6 +21,9 @@ from src.models.upload_settings import UploadSettings
 from src.models.video_settings import VideoSettings
 from src.models.visual_settings import VisualSettings
 from src.models.voice_settings import VoiceSettings
+from src.providers.dry_run_thumbnail_image_provider import (
+    DryRunThumbnailImageProvider,
+)
 from src.providers.dry_run_voice_provider import DryRunVoiceProvider
 from src.services.genre_timeline_pipeline_service import (
     GenreTimelinePipelineService,
@@ -35,6 +38,7 @@ from src.services.scene_asset_workflow_service import (
     SceneAssetWorkflowService,
 )
 from src.services.secrets.provider_secret_manager import InMemorySecretStore
+from src.services.top10_countdown_service import Top10CountdownService
 
 
 def _settings(**overrides: object) -> Settings:
@@ -68,6 +72,42 @@ def test_build_production_runtime_returns_complete_runtime() -> None:
 
     assert isinstance(runtime, ProductionApplicationRuntime)
     assert isinstance(runtime.application, MissionApplicationService)
+
+
+def test_build_production_runtime_no_thumbnail_image_provider_leaves_top10_countdown_unavailable() -> (
+    None
+):
+    """
+    REQ-12: omitting thumbnail_image_provider (the default) must
+    reproduce every existing caller's exact behavior - no
+    Top10CountdownService, a genre.top10 job renders through the
+    normal composite path with no countdown splice.
+    """
+
+    runtime = build_production_runtime(
+        asset_workflow_service=_fake_asset_workflow_service(),
+        genre_timeline_service=_fake_genre_timeline_service(),
+        settings=_settings(),
+    )
+
+    assert runtime.top10_countdown_service is None
+
+
+def test_build_production_runtime_forwards_thumbnail_image_provider() -> None:
+    """
+    REQ-12: a real thumbnail_image_provider must reach
+    ProductionApplicationFactory and produce a real, working
+    Top10CountdownService on the returned runtime.
+    """
+
+    runtime = build_production_runtime(
+        asset_workflow_service=_fake_asset_workflow_service(),
+        genre_timeline_service=_fake_genre_timeline_service(),
+        settings=_settings(),
+        thumbnail_image_provider=DryRunThumbnailImageProvider(),
+    )
+
+    assert isinstance(runtime.top10_countdown_service, Top10CountdownService)
 
 
 def test_build_production_runtime_no_override_behavior_unchanged() -> None:

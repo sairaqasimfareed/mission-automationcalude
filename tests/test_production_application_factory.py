@@ -13,6 +13,10 @@ from src.models.provider_profile import (
 from src.models.voice_profile import (
     VoiceProfile,
 )
+from src.providers.dry_run_thumbnail_image_provider import (
+    DryRunThumbnailImageProvider,
+)
+from src.providers.thumbnail_image_provider import ThumbnailImageProvider
 from src.providers.voice_provider import (
     VoiceProvider,
 )
@@ -38,6 +42,7 @@ from src.services.scene_asset_workflow_service import (
 from src.services.secrets.provider_secret_manager import (
     SecretStore,
 )
+from src.services.top10_countdown_service import Top10CountdownService
 
 
 def _provider_profile() -> ProviderProfile:
@@ -123,6 +128,7 @@ def _factory(
     checkpoint_storage_root: str | Path | None = None,
     production_render_service: ProductionRenderService | None = None,
     advanced_settings: AdvancedSettings | None = None,
+    thumbnail_image_provider: ThumbnailImageProvider | None = None,
 ) -> ProductionApplicationFactory:
     """Build one production application factory for composition tests."""
 
@@ -143,6 +149,7 @@ def _factory(
         checkpoint_storage_root=(checkpoint_storage_root),
         production_render_service=(production_render_service),
         advanced_settings=advanced_settings,
+        thumbnail_image_provider=thumbnail_image_provider,
     )
 
 
@@ -166,6 +173,43 @@ def test_build_returns_complete_runtime() -> None:
     assert (
         runtime.render_stage_factory.production_render_service
         is runtime.production_render_service
+    )
+
+
+def test_no_thumbnail_image_provider_leaves_top10_countdown_unavailable() -> None:
+    """
+    REQ-12: omitting thumbnail_image_provider (the default) must
+    reproduce every prior caller's exact behavior - no
+    Top10CountdownService at all, a genre.top10 job then renders
+    through the normal composite path with no countdown splice.
+    """
+
+    runtime = _factory().build()
+
+    assert runtime.top10_countdown_service is None
+    assert runtime.render_stage_factory.top10_countdown_service is None
+
+
+def test_thumbnail_image_provider_builds_a_real_working_top10_countdown_service() -> (
+    None
+):
+    """
+    REQ-12: supplying a real ThumbnailImageProvider builds a real
+    Top10CountdownService from pieces already composed inside build()
+    (llm_service, voice_resolution_runtime, voice_generation_service),
+    and the SAME instance reaches RenderWorkflowStageFactory - the one
+    actually used by the real render pipeline, not a second, separate
+    instance nothing calls.
+    """
+
+    runtime = _factory(
+        thumbnail_image_provider=DryRunThumbnailImageProvider(),
+    ).build()
+
+    assert isinstance(runtime.top10_countdown_service, Top10CountdownService)
+    assert (
+        runtime.render_stage_factory.top10_countdown_service
+        is runtime.top10_countdown_service
     )
 
 

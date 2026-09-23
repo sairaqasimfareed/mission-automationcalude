@@ -13,6 +13,7 @@ from src.models.voice_profile import VoiceProfile
 from src.providers.dry_run_thumbnail_image_provider import (
     DryRunThumbnailImageProvider,
 )
+from src.providers.dry_run_voice_provider import DryRunVoiceProvider
 from src.providers.elevenlabs_voice_search_client import ElevenLabsVoiceSearchClient
 from src.providers.google_flow.real_adapter import GoogleFlowRealUIAdapter
 from src.services.application_infrastructure_factory import (
@@ -33,6 +34,7 @@ from src.services.google_flow_generation_orchestrator_service import (
     GoogleFlowGenerationOrchestratorService,
 )
 from src.services.media_generation_pipeline import MediaGenerationPipeline
+from src.services.opening_title_card_service import OpeningTitleCardService
 from src.services.pipeline_checkpoint_storage_service import (
     PipelineCheckpointStorageService,
 )
@@ -80,6 +82,12 @@ from src.services.thumbnail.thumbnail_concept_generation_service import (
 )
 from src.services.thumbnail.thumbnail_package_service import (
     ThumbnailPackageService,
+)
+from src.services.title_card_image_generation_service import (
+    TitleCardImageGenerationService,
+)
+from src.services.title_card_music_generation_service import (
+    TitleCardMusicGenerationService,
 )
 from src.services.topic_candidate_generation_service import (
     TopicCandidateGenerationService,
@@ -233,7 +241,28 @@ def get_production_runtime() -> ProductionApplicationRuntime:
         # profiles configured yet falls back to the loader's own
         # dry-run placeholder, exactly like every other override here.
         provider_profiles=desktop_profiles or None,
-        voice_providers=report.voice_providers or None,
+        # Real bug found and fixed 2026-09-23: this comment's own
+        # stated intent ("falls back to the loader's own dry-run
+        # placeholder") only actually happens when dry_run=True -
+        # RuntimeConfigurationLoader._build_voice_providers() returns
+        # a real EMPTY list (not a placeholder) whenever dry_run=False
+        # and require_voice_provider=False (this function's own call
+        # below), which is exactly the real, non-dry-run desktop app's
+        # normal state. A real operator hit this directly: every
+        # desktop-persisted voice/music/sound provider profile failing
+        # to resolve its secret (e.g. after external Windows Credential
+        # Manager cleanup) left report.voice_providers empty, which
+        # then hard-crashed MainWindow() construction itself via
+        # ProductionApplicationFactory's own "at least one voice
+        # provider" requirement - with no way to even reach Provider
+        # Manager to fix the broken secret, since the window never
+        # opened. Falling back to an explicit DryRunVoiceProvider here
+        # (rather than relying on the loader's own inconsistent
+        # fallback) guarantees the app can always open - real voice
+        # generation then correctly degrades to placeholder behavior
+        # until the user re-configures the failing profile via
+        # Provider Manager, instead of the whole app being unusable.
+        voice_providers=(report.voice_providers or [DryRunVoiceProvider()]),
         music_providers=report.music_providers or None,
         sound_effect_providers=report.sound_effect_providers or None,
         asset_workflow_service=(
@@ -288,6 +317,29 @@ def get_production_runtime() -> ProductionApplicationRuntime:
         # unconditional "no voice provider configured" raise, which
         # fires before that override is ever applied.
         require_voice_provider=False,
+        # Real bug found and fixed 2026-09-23, same class as the two
+        # above but one layer deeper: a desktop-persisted LLM provider
+        # profile's secret_reference can go stale outside this app's
+        # control (external Windows Credential Manager cleanup, in the
+        # real case that surfaced this) - ProviderStartupValidator then
+        # correctly finds zero healthy LLM profiles and hard-raises,
+        # which crashes MainWindow() construction itself with no way
+        # to even reach Provider Manager to fix the broken secret,
+        # since the window never opens. This desktop entrypoint is the
+        # ONLY place a person can fix a broken provider profile, so it
+        # must never be the thing that broken profile locks them out
+        # of - see build_production_runtime()'s own docstring for why
+        # CLI callers keep the fail-fast default.
+        require_healthy_llm_provider=False,
+        # REQ-12 (top10 countdown rank cards), 2026-09-23: same real,
+        # already-accepted composition DryRunThumbnailImageProvider
+        # already uses for thumbnails (get_thumbnail_package_service())
+        # - no real, non-dry-run image provider is wired into this app
+        # yet for ANY image-generation path, a pre-existing, disclosed
+        # gap this reuses rather than worsens. Supplying it here is
+        # what makes Top10CountdownService real and reachable from the
+        # actual render pipeline, not just constructible in isolation.
+        thumbnail_image_provider=DryRunThumbnailImageProvider(),
     )
 
     for profile in desktop_profiles:
@@ -438,6 +490,41 @@ def get_thumbnail_package_service() -> ThumbnailPackageService:
         ),
         image_provider=DryRunThumbnailImageProvider(),
         storage_root=THUMBNAIL_STORAGE_ROOT,
+    )
+
+
+@lru_cache
+def get_opening_title_card_service() -> OpeningTitleCardService:
+    """
+    Return the shared REQ-4 opening-title-card orchestrator.
+
+    Reuses the same real concept-generation/image-provider composition
+    get_thumbnail_package_service() already uses (DryRunThumbnailImage
+    Provider - no real, non-dry-run image provider is wired into this
+    app yet for ANY image-generation path, thumbnails included; this
+    is a pre-existing, disclosed gap, not something this wiring makes
+    worse) and the shared production music-generation service.
+    """
+
+    runtime = get_production_runtime()
+
+    if runtime.music_generation_service is None:
+        raise RuntimeError(
+            "Opening title card requires a configured music "
+            "generation service - none is available in this runtime."
+        )
+
+    return OpeningTitleCardService(
+        image_generation_service=TitleCardImageGenerationService(
+            concept_generation_service=ThumbnailConceptGenerationService(
+                llm_service=get_infrastructure().llm_service,
+            ),
+            image_provider=DryRunThumbnailImageProvider(),
+        ),
+        music_generation_service=TitleCardMusicGenerationService(
+            music_generation_service=runtime.music_generation_service,
+        ),
+        genre_profile_registry=runtime.genre_registry,
     )
 
 

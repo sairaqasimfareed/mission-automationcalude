@@ -57,6 +57,21 @@ class EffectExecution(MissionBaseModel):
 
     intensity: DirectiveIntensity = DirectiveIntensity.MEDIUM
 
+    # REQ-1/2, 2026-09-22: carried through from
+    # ResolvedVisualEffectInstruction.numeric_intensity_percent - see
+    # VisualEffectDirective's own docstring for why this exists
+    # alongside `intensity` rather than replacing it.
+    numeric_intensity_percent: int | None = Field(
+        default=None,
+        ge=0,
+        le=100,
+    )
+
+    # REQ-12, 2026-09-23: carried through from
+    # ResolvedVisualEffectInstruction.rank_badge_text - see
+    # VisualEffectDirective's own docstring.
+    rank_badge_text: str | None = None
+
     start_time_seconds: float = Field(
         ge=0.0,
     )

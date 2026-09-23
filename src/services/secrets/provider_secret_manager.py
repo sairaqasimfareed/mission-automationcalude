@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import Protocol
-from uuid import uuid4
 
 from pydantic import Field
 
@@ -107,15 +106,30 @@ class ProviderSecretManager:
         profile_id: str,
         secret_value: str,
     ) -> ProviderSecretResult:
-        """Create and store a new provider secret."""
+        """
+        Create or refresh a provider secret.
+
+        The reference is deterministic per profile_id (no random
+        suffix) so calling this again for the same profile_id - the
+        real, expected case every time the app starts and rebuilds its
+        runtime configuration from the same .env API keys - reuses and
+        overwrites the SAME stored entry instead of minting a new one.
+        Real bug found 2026-09-23: a random uuid4() suffix here meant
+        every app launch/test run wrote a brand-new Windows Credential
+        Manager entry that was never cleaned up, eventually exhausting
+        the real OS credential store (CredWrite: "Not enough memory
+        resources are available") - see the
+        windows_credential_store_exhaustion memory for the full
+        diagnosis.
+        """
 
         normalized_profile_id = self._clean_profile_id(profile_id)
 
         normalized_secret = self._validate_secret(secret_value)
 
-        secret_reference = (
-            "secret://providers/" f"{normalized_profile_id}/" f"{uuid4()}"
-        )
+        secret_reference = "secret://providers/" f"{normalized_profile_id}/" "default"
+
+        already_existed = self.secret_store.contains(secret_reference)
 
         self.secret_store.save(
             secret_reference,
@@ -125,7 +139,8 @@ class ProviderSecretManager:
         return ProviderSecretResult(
             secret_reference=secret_reference,
             masked_value=self.mask_secret(normalized_secret),
-            created=True,
+            created=not already_existed,
+            replaced=already_existed,
         )
 
     def replace_secret(
@@ -134,12 +149,29 @@ class ProviderSecretManager:
         secret_reference: str,
         new_secret_value: str,
     ) -> ProviderSecretResult:
-        """Replace an existing provider secret."""
+        """
+        Replace an existing provider secret, or recreate it under the
+        same reference if it no longer exists in the underlying store.
+
+        Real scenario, 2026-09-23: a durably-persisted ProviderProfile
+        (e.g. a real ElevenLabs voice/music/sound profile, saved via
+        ProviderProfileManagementService) keeps its own secret_reference
+        across app restarts, unlike the LLM providers - so if the
+        underlying OS credential entry is ever removed externally (a
+        user clearing stale Windows Credential Manager entries, for
+        example), the persisted reference string still exists but no
+        longer resolves. Previously this hard-raised here, meaning the
+        normal "re-enter your API key" recovery path in Provider
+        Manager would ALSO fail with the same error. Since
+        secret_store.save() is already an upsert regardless of prior
+        existence, there is no real reason to block that write here -
+        recreating under the same reference is the correct, self-
+        healing behavior.
+        """
 
         normalized_reference = self._validate_reference(secret_reference)
 
-        if not self.secret_store.contains(normalized_reference):
-            raise KeyError("Cannot replace a secret that does not exist.")
+        already_existed = self.secret_store.contains(normalized_reference)
 
         normalized_secret = self._validate_secret(new_secret_value)
 
@@ -151,7 +183,8 @@ class ProviderSecretManager:
         return ProviderSecretResult(
             secret_reference=normalized_reference,
             masked_value=self.mask_secret(normalized_secret),
-            replaced=True,
+            created=not already_existed,
+            replaced=already_existed,
         )
 
     def resolve_secret(

@@ -114,6 +114,8 @@ class EditingDirectiveResolutionService:
                     preset_id=effect.preset_id,
                 ),
                 intensity=effect.intensity,
+                numeric_intensity_percent=effect.numeric_intensity_percent,
+                rank_badge_text=effect.rank_badge_text,
                 timing_mode=effect.timing_mode,
                 start_offset_seconds=(effect.start_offset_seconds),
                 duration_seconds=(effect.duration_seconds),

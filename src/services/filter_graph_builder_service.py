@@ -131,10 +131,11 @@ class FilterGraphBuilderService:
                 "FFmpeg filter graph requires " "at least one video source."
             )
 
-        if not audio_nodes:
-            raise ValueError(
-                "FFmpeg filter graph requires " "at least one audio source."
-            )
+        # REQ-00 Stage 1 (video-only render) builds a render graph with
+        # no AUDIO_TRACK nodes at all - an empty audio_nodes list is a
+        # deliberate, valid input then, not an error. Every other
+        # caller still supplies real audio nodes, so this only relaxes
+        # what used to be an unconditional requirement.
 
         video_composition = self._single_node(
             render_graph=render_graph,
@@ -155,6 +156,17 @@ class FilterGraphBuilderService:
 
         pixel_format = str(resolved_config.config.pixel_format.value)
 
+        # REQ-3 (cinematic letterboxing), 2026-09-22: resolved once by
+        # whichever caller builds the render workflow (genre default +
+        # real per-project override, see VideoJob.letterbox_enabled's
+        # own docstring) and carried here on the video-composition
+        # node's own payload - same place output_resolution/frame_rate
+        # already travel, rather than a new parameter threaded through
+        # every layer between RenderGraphBuilderService and here.
+        letterbox_enabled = bool(
+            video_composition.payload.get("letterbox_enabled", False)
+        )
+
         scene_operation_nodes = self._scene_operation_nodes(render_graph)
 
         transition_nodes = self._transition_nodes(render_graph)
@@ -173,18 +185,23 @@ class FilterGraphBuilderService:
             frame_rate=frame_rate,
             pixel_format=pixel_format,
             capabilities=(resolved_config.capabilities),
+            letterbox_enabled=letterbox_enabled,
         )
 
-        audio_chains = self._build_audio_chains(
-            audio_nodes=audio_nodes,
-            first_input_index=len(video_nodes),
+        audio_chains = (
+            self._build_audio_chains(
+                audio_nodes=audio_nodes,
+                first_input_index=len(video_nodes),
+            )
+            if audio_nodes
+            else []
         )
 
         graph = FilterGraph(
             video_chains=video_chains,
             audio_chains=audio_chains,
             video_output_label=("video_final"),
-            audio_output_label=("audio_final"),
+            audio_output_label=("audio_final" if audio_nodes else None),
             source_render_graph_id=str(render_graph.id),
             filter_count=0,
             is_valid=False,
@@ -204,6 +221,7 @@ class FilterGraphBuilderService:
                 "audio_input_count": len(audio_nodes),
                 "translated_scene_operation_count": (translated_operation_count),
                 "translated_transition_count": (translated_transition_count),
+                "letterbox_enabled": letterbox_enabled,
             },
         )
 
@@ -225,6 +243,7 @@ class FilterGraphBuilderService:
         frame_rate: float,
         pixel_format: str,
         capabilities: FFmpegCapabilities,
+        letterbox_enabled: bool = False,
     ) -> tuple[
         list[FilterChain],
         list[str],
@@ -234,6 +253,13 @@ class FilterGraphBuilderService:
         """
         Normalize each scene, translate scene-local operations,
         then compose prepared scenes.
+
+        REQ-3 (cinematic letterboxing), 2026-09-22: when enabled, scene
+        composition converges on an intermediate "video_preletterbox"
+        label instead of "video_final" directly, and one more chain
+        (the real 2.35:1 crop/pad) becomes the true final "video_final"
+        stream - see _build_letterbox_chain. Disabled (the default)
+        reproduces this method's exact prior behavior.
         """
 
         chains: list[FilterChain] = []
@@ -407,17 +433,106 @@ class FilterGraphBuilderService:
             scene_durations=(scene_durations),
             transition_nodes=(transition_nodes),
             capabilities=capabilities,
+            final_output_label=(
+                "video_preletterbox" if letterbox_enabled else "video_final"
+            ),
         )
 
         chains.append(composition_chain)
 
         warnings.extend(composition_warnings)
 
+        if letterbox_enabled:
+            letterbox_chain = self._build_letterbox_chain(
+                input_label="video_preletterbox",
+                output_label="video_final",
+                width=width,
+                height=height,
+            )
+
+            if letterbox_chain is not None:
+                chains.append(letterbox_chain)
+
         return (
             chains,
             self._unique_text(warnings),
             translated_operation_count,
             translated_transition_count,
+        )
+
+    _LETTERBOX_ASPECT_RATIO = 2.35
+
+    @classmethod
+    def _build_letterbox_chain(
+        cls,
+        *,
+        input_label: str,
+        output_label: str,
+        width: int,
+        height: int,
+    ) -> FilterChain | None:
+        """
+        Real REQ-3 (cinematic letterboxing) pad/crop step: crop the
+        already-composed frame down to a centered 2.35:1 (CinemaScope)
+        window, then pad it back out to the full output canvas with
+        black bars - genuine matting (a real slice of the top/bottom
+        frame is removed, not squeezed/rescaled), matching how film
+        letterboxing actually works.
+
+        Returns None (a harmless no-op, no chain added) when the
+        canvas is already at or narrower than 2.35:1 (e.g. a portrait
+        output) - there is no meaningful bar to add, and forcing one
+        would crop away most of the frame for no visual benefit.
+        """
+
+        inner_height = int(width / cls._LETTERBOX_ASPECT_RATIO)
+
+        inner_height -= inner_height % 2
+
+        if inner_height <= 0 or inner_height >= height:
+            return None
+
+        bar_height = (height - inner_height) // 2
+
+        cropped_label = f"{output_label}_letterbox_cropped"
+
+        crop_node = FilterNode(
+            media_type=(FilterMediaType.VIDEO),
+            filter_name="crop",
+            input_labels=[input_label],
+            output_labels=[cropped_label],
+            options={
+                "w": str(width),
+                "h": str(height - 2 * bar_height),
+                "x": "0",
+                "y": str(bar_height),
+            },
+        )
+
+        pad_node = FilterNode(
+            media_type=(FilterMediaType.VIDEO),
+            filter_name="pad",
+            input_labels=[cropped_label],
+            output_labels=[output_label],
+            options={
+                "w": str(width),
+                "h": str(height),
+                "x": "0",
+                "y": str(bar_height),
+                "color": "black",
+            },
+        )
+
+        return FilterChain(
+            media_type=(FilterMediaType.VIDEO),
+            nodes=[crop_node, pad_node],
+            input_labels=[input_label],
+            output_label=output_label,
+            metadata={
+                "operation": "letterbox",
+                "aspect_ratio": str(cls._LETTERBOX_ASPECT_RATIO),
+                "bar_height_px": bar_height,
+            },
         )
 
     def _build_video_composition_chain(
@@ -428,6 +543,7 @@ class FilterGraphBuilderService:
         scene_durations: dict[tuple[int, int], float],
         transition_nodes: list[RenderNode],
         capabilities: FFmpegCapabilities,
+        final_output_label: str = "video_final",
     ) -> tuple[
         FilterChain,
         list[str],
@@ -442,6 +558,10 @@ class FilterGraphBuilderService:
         other consecutive pair - the composite (scene_number,
         clip_sequence_index) key is what lets two entries share one
         scene_number without colliding.
+
+        final_output_label defaults to "video_final" - see
+        _finalize_video_output's own docstring for why REQ-3
+        (letterboxing) is the one caller that passes something else.
         """
 
         if not video_nodes:
@@ -494,6 +614,7 @@ class FilterGraphBuilderService:
                 transition_nodes=transition_nodes,
                 capabilities=capabilities,
                 consumed_transition_ids=(consumed_transition_ids),
+                output_label=final_output_label,
             )
 
             composition_filters.extend(final_filters)
@@ -508,7 +629,7 @@ class FilterGraphBuilderService:
                     media_type=(FilterMediaType.VIDEO),
                     nodes=(composition_filters),
                     input_labels=[composed_label],
-                    output_label=("video_final"),
+                    output_label=final_output_label,
                     metadata={
                         "operation": ("video_composition"),
                         "scene_count": 1,
@@ -613,6 +734,7 @@ class FilterGraphBuilderService:
             transition_nodes=transition_nodes,
             capabilities=capabilities,
             consumed_transition_ids=(consumed_transition_ids),
+            output_label=final_output_label,
         )
 
         composition_filters.extend(final_filters)
@@ -634,7 +756,7 @@ class FilterGraphBuilderService:
                 input_labels=[
                     scene_final_labels[scene_key] for scene_key in ordered_scene_keys
                 ],
-                output_label="video_final",
+                output_label=final_output_label,
                 metadata={
                     "operation": ("video_composition"),
                     "scene_count": len(ordered_scene_keys),
@@ -703,13 +825,20 @@ class FilterGraphBuilderService:
         transition_nodes: list[RenderNode],
         capabilities: FFmpegCapabilities,
         consumed_transition_ids: set[str],
+        output_label: str = "video_final",
     ) -> tuple[list[FilterNode], list[str]]:
         """
-        Produce the final "video_final" stream.
+        Produce the final composed-video stream.
 
         Applies a timeline-out fade when configured (a cut preset
         needs no filter and is simply marked consumed); otherwise
         passes the composed stream through unchanged.
+
+        output_label defaults to "video_final" - REQ-3 (cinematic
+        letterboxing) is the one caller that passes something else
+        (an intermediate label), so its own letterbox pad/crop chain
+        can become the true final "video_final" stream instead of this
+        one - see _build_video_chains' own letterbox_enabled handling.
         """
 
         node = self._timeline_transition_node(
@@ -733,7 +862,7 @@ class FilterGraphBuilderService:
                 translation = self._translation_service.translate_timeline_fade(
                     render_node=node,
                     input_label=composed_label,
-                    output_label="video_final",
+                    output_label=output_label,
                     fade_start_seconds=fade_start,
                     capabilities=capabilities,
                 )
@@ -747,7 +876,7 @@ class FilterGraphBuilderService:
 
         output_filter = self._null_video_filter(
             input_label=composed_label,
-            output_label="video_final",
+            output_label=output_label,
             capabilities=capabilities,
         )
 

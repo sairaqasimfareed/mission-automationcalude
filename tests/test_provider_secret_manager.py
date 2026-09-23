@@ -107,4 +107,64 @@ assert masked.endswith("5678")
 assert masked != "abcdefgh12345678"
 
 
+# Real bug fix, 2026-09-23: create_secret() called again for the SAME
+# profile_id must reuse the exact same reference and overwrite the
+# stored value in place, not mint a new one - the real, expected case
+# every time an app restart rebuilds its runtime configuration from
+# the same .env API keys. Previously this accumulated a brand-new
+# Windows Credential Manager entry on every single app launch/test
+# run with no cleanup, eventually exhausting the real OS credential
+# store (see windows_credential_store_exhaustion memory).
+reuse_store = InMemorySecretStore()
+reuse_manager = ProviderSecretManager(reuse_store)
+
+first_result = reuse_manager.create_secret(
+    profile_id="provider.llm.openai",
+    secret_value="sk-first-secret-key-1",
+)
+
+assert first_result.created is True
+assert first_result.replaced is False
+
+second_result = reuse_manager.create_secret(
+    profile_id="provider.llm.openai",
+    secret_value="sk-second-secret-key-2",
+)
+
+assert second_result.secret_reference == first_result.secret_reference
+assert second_result.created is False
+assert second_result.replaced is True
+
+assert (
+    reuse_manager.resolve_secret(first_result.secret_reference)
+    == "sk-second-secret-key-2"
+)
+
+print("Repeated create_secret() for the same profile_id reuses one reference.")
+
+
+# Real bug fix, 2026-09-23: replace_secret() must self-heal rather than
+# hard-fail when the underlying store entry no longer exists (e.g. a
+# durably-persisted ProviderProfile's secret_reference outliving an
+# externally-deleted Windows Credential Manager entry) - the normal
+# "re-enter your API key" recovery path goes through replace_secret(),
+# so it must not raise here.
+healing_store = InMemorySecretStore()
+healing_manager = ProviderSecretManager(healing_store)
+
+missing_reference = "secret://providers/voice/does-not-exist-anymore"
+
+healed_result = healing_manager.replace_secret(
+    secret_reference=missing_reference,
+    new_secret_value="sk-recovered-secret-key",
+)
+
+assert healed_result.secret_reference == missing_reference
+assert healed_result.created is True
+assert healed_result.replaced is False
+assert healing_manager.resolve_secret(missing_reference) == "sk-recovered-secret-key"
+
+print("replace_secret() self-heals a missing reference instead of raising.")
+
+
 print("Provider Secret Manager tests completed successfully.")

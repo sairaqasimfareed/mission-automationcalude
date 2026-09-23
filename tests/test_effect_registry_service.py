@@ -242,7 +242,7 @@ assert (
             active_only=True,
         )
     )
-    == 8
+    == 13  # REQ-6: +5 (wipe_up, wipe_down, slide_right, slide_up, slide_down)
 )
 
 assert (
@@ -252,7 +252,7 @@ assert (
             active_only=True,
         )
     )
-    == 13
+    == 16  # REQ-11: +2 (golden_hour_warm, clean_neutral); REQ-12: +1 (top10_rank_badge)
 )
 
 assert (

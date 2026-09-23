@@ -3,11 +3,13 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFormLayout,
+    QFrame,
     QHeaderView,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
+    QScrollArea,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -79,7 +81,29 @@ class VoiceManagerView(QWidget):
         self._selected_profile_id: str | None = None
         self._suggestions: list[ElevenLabsVoiceSearchResult] = []
 
-        outer = QVBoxLayout(self)
+        # REQ-0X (Voice Manager layout bug), 2026-09-23: this view's
+        # own minimumSizeHint() measures (470, 755), but MainWindow's
+        # documented minimum window size is only 900x600 - a real
+        # 155px shortfall confirmed by direct measurement, not just
+        # visual inspection. With no QScrollArea anywhere, Qt had no
+        # way to accommodate that overflow except silently compressing
+        # content below its natural size at or near that minimum
+        # window size - the real cause of both reported symptoms (the
+        # "Real {provider} voice" description crowding into the
+        # mapping form below it, and the genre table rendering as a
+        # clipped sliver). Same established pattern already used by
+        # ClipWorkspaceView/ProductionAudioView elsewhere in this
+        # codebase.
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+
+        content_container = QWidget()
+
+        outer = QVBoxLayout(content_container)
         outer.setContentsMargins(24, 20, 24, 20)
         outer.setSpacing(16)
 
@@ -121,6 +145,9 @@ class VoiceManagerView(QWidget):
         self._genre_table.verticalHeader().setVisible(False)
         self._genre_table.setMaximumHeight(220)
         outer.addWidget(self._genre_table)
+
+        scroll_area.setWidget(content_container)
+        outer_layout.addWidget(scroll_area)
 
     def _build_list_panel(self) -> QWidget:
         panel = QWidget()

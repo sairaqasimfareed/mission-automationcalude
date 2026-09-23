@@ -1049,3 +1049,110 @@ def test_real_production_render_service_executes_ffmpeg(
     assert f"width={SMOKE_WIDTH}" in probe_output
 
     assert f"height={SMOKE_HEIGHT}" in probe_output
+
+
+def test_real_production_render_service_video_only(
+    tmp_path: Path,
+) -> None:
+    """
+    REQ-00 Stage 1 (video-only render), 2026-09-21: render_video_only()
+    must produce a real output file with a video stream and NO audio
+    stream at all - the exact opposite of render()'s own smoke test
+    above, verified against a real FFmpeg execution, not a mocked one.
+    audio_timeline/voice_blueprints are still supplied (this method's
+    input contract deliberately matches render()), they just never
+    reach the produced file.
+    """
+
+    (
+        ffmpeg,
+        ffprobe,
+    ) = _require_ffmpeg()
+
+    source_video = tmp_path / "inputs" / "scene_001.mp4"
+
+    source_audio = tmp_path / "inputs" / "voice_001.wav"
+
+    output_file = tmp_path / "outputs" / "production_render_video_only_smoke.mp4"
+
+    _create_source_video(
+        ffmpeg=ffmpeg,
+        output_file=source_video,
+    )
+
+    _create_source_audio(
+        ffmpeg=ffmpeg,
+        output_file=source_audio,
+    )
+
+    output_file.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    video_timeline = _video_timeline(
+        source_file=source_video,
+    )
+
+    audio_timeline = _audio_timeline(
+        source_file=source_audio,
+    )
+
+    voice_blueprint = _voice_blueprint()
+
+    service = ProductionRenderService(
+        ffmpeg_config=FFmpegConfig(
+            ffmpeg_path=ffmpeg,
+            ffprobe_path=ffprobe,
+            video_codec=(FFmpegVideoCodec.LIBX264),
+            hardware_acceleration=(FFmpegHardwareAcceleration.NONE),
+            timeout_seconds=60.0,
+        ),
+        output_file=output_file.as_posix(),
+    )
+
+    result = service.render_video_only(
+        video_timeline=video_timeline,
+        audio_timeline=audio_timeline,
+        voice_blueprints=[
+            voice_blueprint,
+        ],
+    )
+
+    assert result.success is True
+
+    assert result.status == RenderStatus.COMPLETED
+
+    rendered_file = Path(result.output_file)
+
+    assert rendered_file == output_file
+
+    assert rendered_file.is_file()
+
+    assert rendered_file.stat().st_size > 0
+
+    probe_output = _probe_output(
+        ffprobe=ffprobe,
+        output_file=rendered_file,
+    )
+
+    assert "codec_type=video" in probe_output
+
+    assert "codec_type=audio" not in probe_output
+
+    assert "codec_name=h264" in probe_output
+
+    # REQ-00 Stage 1: real scene timing must survive onto the returned
+    # RenderResult - a single, un-transitioned scene's real position is
+    # trivially [0, duration), but this exercises the real, wired path
+    # end to end (the interesting crossfade-correction math itself is
+    # unit-tested in test_production_render_service_scene_timings.py).
+    assert len(result.scene_timings) == 1
+
+    assert result.scene_timings[0].scene_number == 1
+
+    assert result.scene_timings[0].clip_sequence_index == 0
+
+    assert result.scene_timings[0].start_seconds == 0.0
+
+    assert result.scene_timings[0].end_seconds == float(SMOKE_DURATION_SECONDS)

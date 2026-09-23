@@ -561,6 +561,87 @@ class EffectRegistryService:
                     "energetic",
                 ],
             ),
+            # REQ-6 (transition variety), 2026-09-22: the missing real
+            # xfade directions - wipe/slide only had left (+wipe_right)
+            # registered before this, even though FFmpeg's own xfade
+            # filter natively supports up/down/right for both. "push"
+            # deliberately NOT added - confirmed against FFmpeg's real
+            # xfade option list, there is no push-named transition at
+            # all; what many editors brand as "push" is mechanically
+            # identical to slide, already covered by transition.
+            # slide_left/slide_right - a separate "push" preset would
+            # just be slide under a different name, not a real new
+            # transition.
+            EffectPreset(
+                preset_id="transition.wipe_up",
+                category=EffectCategory.TRANSITION,
+                display_name="Wipe Up",
+                fallback_preset_id="transition.cut",
+                implementation={
+                    "type": "wipe_up",
+                    "default_duration_seconds": 0.5,
+                },
+                tags=[
+                    "reaction",
+                    "top10",
+                ],
+            ),
+            EffectPreset(
+                preset_id="transition.wipe_down",
+                category=EffectCategory.TRANSITION,
+                display_name="Wipe Down",
+                fallback_preset_id="transition.cut",
+                implementation={
+                    "type": "wipe_down",
+                    "default_duration_seconds": 0.5,
+                },
+                tags=[
+                    "reaction",
+                    "top10",
+                ],
+            ),
+            EffectPreset(
+                preset_id="transition.slide_right",
+                category=EffectCategory.TRANSITION,
+                display_name="Slide Right",
+                fallback_preset_id="transition.cut",
+                implementation={
+                    "type": "slide_right",
+                    "default_duration_seconds": 0.6,
+                },
+                tags=[
+                    "travel",
+                    "energetic",
+                ],
+            ),
+            EffectPreset(
+                preset_id="transition.slide_up",
+                category=EffectCategory.TRANSITION,
+                display_name="Slide Up",
+                fallback_preset_id="transition.cut",
+                implementation={
+                    "type": "slide_up",
+                    "default_duration_seconds": 0.6,
+                },
+                tags=[
+                    "travel",
+                    "energetic",
+                ],
+            ),
+            EffectPreset(
+                preset_id="transition.slide_down",
+                category=EffectCategory.TRANSITION,
+                display_name="Slide Down",
+                fallback_preset_id="transition.cut",
+                implementation={
+                    "type": "slide_down",
+                    "default_duration_seconds": 0.6,
+                },
+                tags=[
+                    "travel",
+                    "energetic",
+                ],
+            ),
             # --- Visual effects / filters ---
             EffectPreset(
                 preset_id="visual.grayscale",
@@ -703,6 +784,60 @@ class EffectRegistryService:
                     "lut",
                     "travel",
                     "top10",
+                ],
+            ),
+            # REQ-11 (genre-adaptive color grading), 2026-09-22: real,
+            # deliberate replacements for genre.travel/genre.medical -
+            # see _PARAMETRIC_GRADE_PRESETS' own comment in
+            # video_filter_translation_service.py for why the presets
+            # they previously used didn't actually match this REQ's
+            # own locked creative direction.
+            EffectPreset(
+                preset_id="visual.golden_hour_warm",
+                category=EffectCategory.VISUAL,
+                display_name="Golden Hour Warm",
+                fallback_preset_id="visual.none",
+                implementation={
+                    "filter": "golden_hour_warm",
+                },
+                tags=[
+                    "travel",
+                    "warm",
+                    "vibrant",
+                ],
+            ),
+            EffectPreset(
+                preset_id="visual.clean_neutral",
+                category=EffectCategory.VISUAL,
+                display_name="Clean Neutral",
+                fallback_preset_id="visual.none",
+                implementation={
+                    "filter": "clean_neutral",
+                },
+                tags=[
+                    "medical",
+                    "clean",
+                    "neutral",
+                ],
+            ),
+            # REQ-12, 2026-09-23: persistent top-right corner badge
+            # showing a scene's top10 countdown rank (e.g. "10",
+            # "9", ...) for the duration of that scene's own footage.
+            # No color-grade implementation fields - the real dynamic
+            # payload (rank_badge_text) is threaded per-scene through
+            # VisualEffectDirective/ResolvedVisualEffectInstruction/
+            # EffectExecution, mirroring numeric_intensity_percent's
+            # own 3-layer pattern from REQ-1/2.
+            EffectPreset(
+                preset_id="visual.top10_rank_badge",
+                category=EffectCategory.VISUAL,
+                display_name="Top 10 Rank Badge",
+                fallback_preset_id="visual.none",
+                implementation={},
+                tags=[
+                    "top10",
+                    "countdown",
+                    "badge",
                 ],
             ),
             # --- Animation: additional motion styles ---

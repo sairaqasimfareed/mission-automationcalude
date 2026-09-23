@@ -57,6 +57,32 @@ class Scene(MissionBaseModel):
     # the legacy sentence-split Script path, which has no such signal.
     narrative_function: str | None = None
 
+    # REQ-1/2 (tension-adaptive film grain/vignette), 2026-09-22: the
+    # originating ScriptSegment's own real tension_level (0-100),
+    # already computed and already read at scene-planning time
+    # (ScenePlannerAgent._build_scene uses it to pick camera_direction)
+    # but never stored onto Scene itself until now - the same "carried
+    # over from ScriptSegment, None for the legacy Script path" pattern
+    # as narrative_function above. GenreDirectiveGenerationService
+    # reads this to linearly scale grain/vignette intensity within a
+    # genre's own min/max range - a calm scene stays light, a
+    # climactic one gets heavier, without a new LLM call.
+    tension_level: int | None = None
+
+    # REQ-12 (top10 countdown rank cards), 2026-09-23: which list-item
+    # rank (10 down to 1) this scene's own narration belongs to -
+    # None for a hook/intro scene that comes before the countdown
+    # starts, and for every scene in every non-top10 genre. Assigned
+    # by TopTenRankAssignmentService AFTER normal script/scene
+    # generation completes (real narration text already exists) -
+    # deliberately NOT threaded through StoryBeat/ScriptSegment like
+    # tension_level/narrative_function above, since scene boundaries
+    # (a generic function of estimated narration duration and sentence
+    # density) are not guaranteed to align 1:1 with list-item
+    # boundaries - a single list item's narration can legitimately
+    # span multiple consecutive scenes, all sharing the same rank.
+    list_rank: int | None = None
+
     # Post-Script-Approval Production Plan, Phase 0: "All downstream
     # artifacts identify the exact locked script SHA-256." Set only
     # when this scene was planned from a script that already has a

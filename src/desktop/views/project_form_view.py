@@ -6,7 +6,9 @@ from uuid import UUID
 from pydantic import ValidationError
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
+    QFileDialog,
     QFormLayout,
     QFrame,
     QLineEdit,
@@ -19,7 +21,15 @@ from PySide6.QtWidgets import (
 
 from src.desktop.approval_mode_labels import APPROVAL_MODE_PRESETS
 from src.desktop.job_store import JobStore
-from src.desktop.widgets import button, card, heading, muted
+from src.desktop.widgets import (
+    button,
+    card,
+    heading,
+    muted,
+    row,
+    small_muted,
+    subheading,
+)
 from src.models.advanced_settings import AdvancedSettings
 from src.models.approval import ApprovalPolicy, ApprovalPolicyConfig
 from src.models.audience_settings import AudienceSettings
@@ -167,6 +177,7 @@ class ProjectFormView(QWidget):
 
         self._genre = QComboBox()
         self._genre.addItems(_DEFAULT_GENRE_IDS)
+        self._genre.currentTextChanged.connect(self._handle_genre_changed)
         form.addRow("Genre", self._genre)
 
         self._duration_seconds = QSpinBox()
@@ -198,6 +209,53 @@ class ProjectFormView(QWidget):
         card_layout.addLayout(form)
 
         layout.addWidget(frame)
+
+        # REQ-12 (top10 countdown rank cards), 2026-09-23: only
+        # meaningful for genre.top10 - no separate master enable
+        # toggle, since this format doesn't make sense without the
+        # countdown (unlike title_card_enabled, a genre-agnostic
+        # opt-in). Same conditional-visibility pattern as
+        # self._custom_approval_frame just below - shown/hidden by
+        # _handle_genre_changed() rather than a second, competing
+        # mechanism.
+        self._top10_frame, top10_layout = card(
+            "Top 10 countdown cards", icon_name="clapper"
+        )
+        top10_layout.addWidget(
+            small_muted(
+                'Rank cards ("#10", "#9", ...) between each list '
+                "item, all sharing one background image so the whole "
+                "countdown stays visually consistent."
+            )
+        )
+
+        top10_layout.addWidget(subheading("Background image"))
+
+        self._top10_image_path_display = QLineEdit()
+        self._top10_image_path_display.setReadOnly(True)
+        self._top10_image_path_display.setPlaceholderText(
+            "Auto-generate a dedicated AI image (default)"
+        )
+
+        top10_auto_image_button = button("Auto-generate image")
+        top10_auto_image_button.clicked.connect(self._top10_image_path_display.clear)
+
+        top10_upload_image_button = button("Upload my own image...")
+        top10_upload_image_button.clicked.connect(
+            self._handle_browse_top10_background_image
+        )
+
+        top10_layout.addLayout(row(top10_auto_image_button, top10_upload_image_button))
+        top10_layout.addWidget(self._top10_image_path_display)
+
+        self._top10_voiceover_checkbox = QCheckBox(
+            'Include "Number N" voiceover for each rank'
+        )
+        self._top10_voiceover_checkbox.setChecked(True)
+        top10_layout.addWidget(self._top10_voiceover_checkbox)
+
+        layout.addWidget(self._top10_frame)
+        self._top10_frame.setVisible(self._genre.currentText() == "genre.top10")
 
         self._custom_approval_frame, custom_approval_layout = card(
             "Custom approval - per stage", icon_name="settings"
@@ -274,6 +332,20 @@ class ProjectFormView(QWidget):
     def _handle_approval_mode_changed(self, mode: str) -> None:
         self._custom_approval_frame.setVisible(mode == "Custom Approval")
 
+    def _handle_genre_changed(self, genre_id: str) -> None:
+        self._top10_frame.setVisible(genre_id == "genre.top10")
+
+    def _handle_browse_top10_background_image(self) -> None:
+        file_path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "Select a background image for the top10 countdown cards",
+            "",
+            "Image files (*.png *.jpg *.jpeg *.webp)",
+        )
+
+        if file_path:
+            self._top10_image_path_display.setText(file_path)
+
     def _build_approval_policy(self) -> ApprovalPolicyConfig:
         mode = self._approval_mode.currentText()
 
@@ -319,6 +391,10 @@ class ProjectFormView(QWidget):
 
         self._platform.setCurrentIndex(0)
         self._approval_mode.setCurrentText("Custom Approval")
+
+        self._top10_image_path_display.clear()
+        self._top10_voiceover_checkbox.setChecked(True)
+        self._top10_frame.setVisible(self._genre.currentText() == "genre.top10")
 
         defaults = ApprovalPolicyConfig.review_critical_stages()
         for field_name, select in self._decision_point_selects.items():
@@ -388,6 +464,13 @@ class ProjectFormView(QWidget):
             job = self._job_mapper.map(specification, niche=self._niche.text())
             job.genre_id = self._genre.currentText()
             job.approval_policy = self._build_approval_policy()
+
+            if job.genre_id == "genre.top10":
+                image_path = self._top10_image_path_display.text().strip()
+                job.top10_countdown_background_image_path = image_path or None
+                job.top10_countdown_include_numbering_voiceover = (
+                    self._top10_voiceover_checkbox.isChecked()
+                )
         except (ValidationError, ValueError) as error:
             QMessageBox.warning(
                 self,

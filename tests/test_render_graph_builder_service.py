@@ -619,4 +619,67 @@ restored = RenderGraph.model_validate_json(serialized)
 assert restored == graph
 
 
+# REQ-00 Stage 1 (video-only render), 2026-09-21: include_audio=False,
+# include_subtitles=False must build a graph with no AUDIO_TRACK/
+# AUDIO_MIX/SUBTITLE nodes at all, and an output node depending only
+# on video composition - subtitle_plan/audio_timeline are still
+# supplied (a real caller always has them), just unused for node
+# construction.
+
+video_only_graph = service.build(
+    master_plan=master_plan,
+    transition_plan=transition_plan,
+    effect_plan=effect_plan,
+    subtitle_plan=subtitle_plan,
+    camera_plan=camera_plan,
+    animation_plan=animation_plan,
+    include_audio=False,
+    include_subtitles=False,
+)
+
+assert video_only_graph.is_valid is True
+
+assert video_only_graph.is_render_ready is True
+
+assert (
+    sum(node.node_type == RenderNodeType.AUDIO_TRACK for node in video_only_graph.nodes)
+    == 0
+)
+
+assert (
+    sum(node.node_type == RenderNodeType.AUDIO_MIX for node in video_only_graph.nodes)
+    == 0
+)
+
+assert (
+    sum(node.node_type == RenderNodeType.SUBTITLE for node in video_only_graph.nodes)
+    == 0
+)
+
+assert (
+    sum(node.node_type == RenderNodeType.VIDEO_CLIP for node in video_only_graph.nodes)
+    == 2
+)
+
+video_only_output_node = video_only_graph.output_node
+
+assert video_only_output_node is not None
+
+video_only_composition_nodes = [
+    node
+    for node in video_only_graph.nodes
+    if node.node_type == RenderNodeType.VIDEO_COMPOSITION
+]
+
+assert len(video_only_composition_nodes) == 1
+
+assert video_only_output_node.dependency_ids == [
+    str(video_only_composition_nodes[0].id)
+]
+
+video_only_ordered = service.topological_order(video_only_graph)
+
+assert len(video_only_ordered) == video_only_graph.node_count
+
+
 print("Render Graph Builder Service tests " "completed successfully.")

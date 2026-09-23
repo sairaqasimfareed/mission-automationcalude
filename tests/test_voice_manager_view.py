@@ -8,7 +8,7 @@ from collections.abc import Iterator  # noqa: E402
 from unittest.mock import patch  # noqa: E402
 
 import pytest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
+from PySide6.QtWidgets import QApplication, QMessageBox, QScrollArea  # noqa: E402
 
 from src.desktop.views.voice_manager_view import VoiceManagerView  # noqa: E402
 from src.models.elevenlabs_voice_search import (  # noqa: E402
@@ -373,3 +373,54 @@ def test_switching_profile_clears_suggestions(qapp: QApplication) -> None:
 
     assert view._suggestions == []  # noqa: SLF001
     assert view._suggestions_list.count() == 0  # noqa: SLF001
+
+
+def test_content_is_wrapped_in_a_resizable_scroll_area(qapp: QApplication) -> None:
+    """
+    REQ-0X (Voice Manager layout bug): real fix, confirmed via direct
+    Qt measurement before this test existed - the view's own
+    minimumSizeHint() was (470, 755), 155px taller than MainWindow's
+    documented minimum window size (900x600, main_window.py:43), with
+    no QScrollArea anywhere to absorb that overflow - Qt had no choice
+    but to silently compress content below its natural size, which is
+    what produced both reported symptoms (the description label
+    crowding the mapping form, the genre table rendering as a clipped
+    sliver). Wrapping content in a QScrollArea (matching
+    ClipWorkspaceView/ProductionAudioView's own established pattern)
+    fixes this at the root: the view's minimumSizeHint() no longer
+    demands more height than it can get - it can always scroll instead
+    of being squeezed.
+    """
+
+    view = _view(qapp)
+    view.refresh()
+
+    scroll_areas = view.findChildren(QScrollArea)
+    assert len(scroll_areas) == 1
+
+    scroll_area = scroll_areas[0]
+    assert scroll_area.widgetResizable() is True
+    assert scroll_area.widget() is not None
+
+    # The real, load-bearing assertion: this view must never again
+    # demand more height than MainWindow's own documented minimum
+    # window size can offer, or content gets silently compressed
+    # below its natural size with no way to scroll to see the rest.
+    assert view.minimumSizeHint().height() <= 600
+
+
+def test_genre_table_and_key_form_widgets_are_reachable_inside_the_scroll_area(
+    qapp: QApplication,
+) -> None:
+    """The fix must not have accidentally detached any real content -
+    every widget the view relies on must still be a real descendant
+    reachable from the view itself, just now inside a QScrollArea."""
+
+    view = _view(qapp)
+    view.refresh()
+    view._select_profile_id("voice.horror_whisper")  # noqa: SLF001
+
+    assert view._genre_table.rowCount() > 0  # noqa: SLF001
+    assert view.isAncestorOf(view._genre_table)  # noqa: SLF001
+    assert view.isAncestorOf(view._voice_id_field)  # noqa: SLF001
+    assert view.isAncestorOf(view._display_name)  # noqa: SLF001

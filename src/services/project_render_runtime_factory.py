@@ -172,6 +172,9 @@ class ProjectRenderRuntimeFactory:
             output_resolution=output_resolution,
             frame_rate=frame_rate,
             warn_on_blueprint_fallbacks=(warn_on_blueprint_fallbacks),
+            letterbox_enabled_override=job.letterbox_enabled,
+            audio_inclusion_preferences=job.audio_inclusion_preferences,
+            subtitles_enabled=job.subtitles_enabled,
         )
 
         return RenderOrchestratorService(

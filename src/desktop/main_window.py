@@ -19,6 +19,30 @@ from src.desktop.views.project_workspace_view import ProjectWorkspaceView
 from src.desktop.views.provider_manager_view import ProviderManagerView
 from src.desktop.views.settings_view import SettingsView
 from src.desktop.views.voice_manager_view import VoiceManagerView
+from src.services.opening_title_card_service import OpeningTitleCardService
+from src.shared.logger import logger
+
+
+def _get_opening_title_card_service_or_none() -> OpeningTitleCardService | None:
+    """
+    REQ-4 (opening title card): services.get_opening_title_card_
+    service() raises when no music-generation service is configured
+    in this runtime (real, disclosed precondition - see that
+    function's own docstring). Unlike most services this window
+    constructs, that must never crash app startup itself - the same
+    "the one place a person can fix a broken provider must never be
+    the thing a broken provider locks them out of" reasoning already
+    applied to ProviderStartupValidator (see [[windows_credential_
+    store_exhaustion]]). None makes PackagingView show its own real,
+    disclosed "not configured" message instead of a button.
+    """
+
+    try:
+        return services.get_opening_title_card_service()
+    except RuntimeError as error:
+        logger.warning(f"Opening title card service unavailable: {error}")
+
+        return None
 
 
 class MainWindow(QMainWindow):
@@ -83,6 +107,7 @@ class MainWindow(QMainWindow):
             scene_video_generation_service=(
                 services.get_scene_video_generation_service()
             ),
+            opening_title_card_service=_get_opening_title_card_service_or_none(),
             on_back=self.show_dashboard,
         )
 

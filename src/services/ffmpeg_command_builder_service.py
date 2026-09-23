@@ -110,8 +110,8 @@ class FFmpegCommandBuilderService:
 
         audio_output_label = filter_graph.audio_output_label
 
-        if video_output_label is None or audio_output_label is None:
-            raise ValueError("FFmpeg filter graph requires " "video and audio outputs.")
+        if video_output_label is None:
+            raise ValueError("FFmpeg filter graph requires " "a video output.")
 
         self._validate_filter_outputs(
             filter_complex=filter_complex,
@@ -131,6 +131,7 @@ class FFmpegCommandBuilderService:
         self._validate_final_arguments(
             arguments=arguments,
             output_file=cleaned_output,
+            audio_expected=(audio_output_label is not None),
         )
 
         executable = resolved_config.capabilities.ffmpeg_path
@@ -178,8 +179,9 @@ class FFmpegCommandBuilderService:
         if not video_nodes:
             raise ValueError("FFmpeg input plan requires " "video sources.")
 
-        if not audio_nodes:
-            raise ValueError("FFmpeg input plan requires " "audio sources.")
+        # REQ-00 Stage 1 (video-only render) supplies a render graph
+        # with no AUDIO_TRACK nodes at all - zero audio inputs is then
+        # a deliberate, valid plan, not an error.
 
         bindings: list[FFmpegInputBinding] = []
 
@@ -231,7 +233,7 @@ class FFmpegCommandBuilderService:
         input_plan: FFmpegInputPlan,
         filter_complex: str,
         video_output_label: str,
-        audio_output_label: str,
+        audio_output_label: str | None,
         resolved_config: FFmpegResolvedConfig,
         output_file: str,
     ) -> list[str]:
@@ -260,8 +262,19 @@ class FFmpegCommandBuilderService:
                 filter_complex,
                 "-map",
                 f"[{video_output_label}]",
-                "-map",
-                f"[{audio_output_label}]",
+            ]
+        )
+
+        if audio_output_label is not None:
+            arguments.extend(
+                [
+                    "-map",
+                    f"[{audio_output_label}]",
+                ]
+            )
+
+        arguments.extend(
+            [
                 "-c:v",
                 resolved_config.selected_video_codec,
             ]
@@ -291,16 +304,17 @@ class FFmpegCommandBuilderService:
 
         arguments.extend(config.extra_video_args)
 
-        arguments.extend(
-            [
-                "-c:a",
-                resolved_config.selected_audio_codec,
-                "-b:a",
-                config.audio_bitrate,
-            ]
-        )
+        if audio_output_label is not None:
+            arguments.extend(
+                [
+                    "-c:a",
+                    resolved_config.selected_audio_codec,
+                    "-b:a",
+                    config.audio_bitrate,
+                ]
+            )
 
-        arguments.extend(config.extra_audio_args)
+            arguments.extend(config.extra_audio_args)
 
         arguments.extend(
             FFmpegCommandBuilderService._metadata_arguments(config.metadata)
@@ -446,14 +460,20 @@ class FFmpegCommandBuilderService:
         *,
         filter_complex: str,
         video_output_label: str,
-        audio_output_label: str,
+        audio_output_label: str | None,
     ) -> None:
-        """Validate final filter labels before mapping them into the command."""
+        """
+        Validate final filter labels before mapping them into the
+        command.
 
-        labels = (
-            ("video", video_output_label),
-            ("audio", audio_output_label),
-        )
+        audio_output_label is None for a REQ-00 Stage 1 video-only
+        command plan - only the video label is validated then.
+        """
+
+        labels = [("video", video_output_label)]
+
+        if audio_output_label is not None:
+            labels.append(("audio", audio_output_label))
 
         for media_name, raw_label in labels:
             label = raw_label.strip()
@@ -473,7 +493,10 @@ class FFmpegCommandBuilderService:
                     "is not produced by filter_complex."
                 )
 
-        if video_output_label.strip() == audio_output_label.strip():
+        if (
+            audio_output_label is not None
+            and video_output_label.strip() == audio_output_label.strip()
+        ):
             raise ValueError("FFmpeg video and audio output labels must be distinct.")
 
     @staticmethod
@@ -481,8 +504,16 @@ class FFmpegCommandBuilderService:
         *,
         arguments: list[str],
         output_file: str,
+        audio_expected: bool = True,
     ) -> None:
-        """Validate deterministic invariants of the finished argv sequence."""
+        """
+        Validate deterministic invariants of the finished argv
+        sequence.
+
+        audio_expected is False for a REQ-00 Stage 1 video-only
+        command plan - no -c:a and only one -map is then correct, not
+        a missing-argument defect.
+        """
 
         if not arguments:
             raise ValueError("FFmpeg command arguments cannot be empty.")
@@ -507,11 +538,21 @@ class FFmpegCommandBuilderService:
         if arguments.count("-c:v") != 1:
             raise ValueError("FFmpeg command must select exactly one video encoder.")
 
-        if arguments.count("-c:a") != 1:
-            raise ValueError("FFmpeg command must select exactly one audio encoder.")
+        expected_audio_encoder_count = 1 if audio_expected else 0
 
-        if arguments.count("-map") != 2:
-            raise ValueError("FFmpeg command must contain exactly two final mappings.")
+        if arguments.count("-c:a") != expected_audio_encoder_count:
+            raise ValueError(
+                "FFmpeg command must select exactly "
+                f"{expected_audio_encoder_count} audio encoder(s)."
+            )
+
+        expected_map_count = 2 if audio_expected else 1
+
+        if arguments.count("-map") != expected_map_count:
+            raise ValueError(
+                f"FFmpeg command must contain exactly {expected_map_count} "
+                "final mapping(s)."
+            )
 
     @staticmethod
     def _metadata_arguments(

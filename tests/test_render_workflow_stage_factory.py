@@ -17,6 +17,7 @@ from src.pipeline.asset_stage import (
     AssetPipelineStage,
 )
 from src.pipeline.music_stage import MusicPipelineStage
+from src.pipeline.native_clip_audio_stage import NativeClipAudioPipelineStage
 from src.pipeline.pipeline_stage import (
     PipelineStageName,
 )
@@ -52,6 +53,7 @@ from src.services.scene_asset_workflow_service import (
 from src.services.sound_effect_generation_service import (
     SoundEffectGenerationService,
 )
+from src.services.top10_countdown_service import Top10CountdownService
 from src.services.voice_generation_service import (
     VoiceGenerationService,
 )
@@ -232,7 +234,7 @@ def test_build_returns_required_stage_order() -> None:
         genre_id="documentary",
     )
 
-    assert len(stages) == 4
+    assert len(stages) == 5
 
     assert isinstance(
         stages[0],
@@ -251,6 +253,11 @@ def test_build_returns_required_stage_order() -> None:
 
     assert isinstance(
         stages[3],
+        NativeClipAudioPipelineStage,
+    )
+
+    assert isinstance(
+        stages[4],
         RenderPipelineStage,
     )
 
@@ -258,6 +265,7 @@ def test_build_returns_required_stage_order() -> None:
         PipelineStageName.VOICE,
         PipelineStageName.ASSET_SELECTION,
         PipelineStageName.VIDEO_TIMELINE,
+        PipelineStageName.AUDIO_TIMELINE,
         PipelineStageName.RENDER,
     ]
 
@@ -283,11 +291,13 @@ def test_build_inserts_music_and_sound_effect_stages_when_configured() -> None:
         PipelineStageName.VIDEO_TIMELINE,
         PipelineStageName.BACKGROUND_MUSIC,
         PipelineStageName.SOUND_EFFECTS,
+        PipelineStageName.AUDIO_TIMELINE,
         PipelineStageName.RENDER,
     ]
 
     assert isinstance(stages[3], MusicPipelineStage)
     assert isinstance(stages[4], SoundEffectPipelineStage)
+    assert isinstance(stages[5], NativeClipAudioPipelineStage)
 
 
 def test_build_creates_fresh_stage_instances() -> None:
@@ -372,7 +382,7 @@ def test_build_passes_voice_blueprints_to_production_render_stage() -> None:
 
     render_stage = cast(
         RenderPipelineStage,
-        stages[3],
+        stages[4],
     )
 
     assert render_stage.production_render_enabled is True
@@ -399,6 +409,58 @@ def test_build_forwards_voice_provider_name() -> None:
     )
 
     assert voice_stage._provider_name == "elevenlabs"
+
+
+def test_build_forwards_top10_countdown_service_and_genre_id_to_render_stage() -> None:
+    """
+    REQ-12: the real top10_countdown_service configured on this
+    factory, and the real genre_id passed to this build() call, must
+    both reach RenderPipelineStage unchanged - the countdown branch
+    inside _execute_production_render() needs both.
+    """
+
+    top10_countdown_service = _dependency(Top10CountdownService)
+
+    factory = RenderWorkflowStageFactory(
+        voice_generation_service=_dependency(VoiceGenerationService),
+        voice_timeline_service=_dependency(VoiceTimelineService),
+        asset_workflow_service=_dependency(SceneAssetWorkflowService),
+        genre_timeline_service=_dependency(GenreTimelinePipelineService),
+        top10_countdown_service=top10_countdown_service,
+    )
+
+    stages = factory.build(
+        voice_blueprints=[_blueprint()],
+        genre_id="top10",
+    )
+
+    render_stage = cast(
+        RenderPipelineStage,
+        stages[4],
+    )
+
+    assert render_stage._top10_countdown_service is top10_countdown_service
+    assert render_stage._genre_id == "top10"
+
+
+def test_build_leaves_top10_countdown_service_none_when_not_configured() -> None:
+    """REQ-12: the default, unconfigured state - a job then falls
+    through to the normal composite render, never fails."""
+
+    factory = _factory()
+
+    stages = factory.build(
+        voice_blueprints=[_blueprint()],
+        genre_id="documentary",
+    )
+
+    render_stage = cast(
+        RenderPipelineStage,
+        stages[4],
+    )
+
+    assert render_stage._top10_countdown_service is None
+    assert render_stage._genre_id == "documentary"
 
 
 def test_build_forwards_the_resolved_genres_transition_duration_to_voice_stage() -> (
@@ -585,7 +647,7 @@ def test_build_uses_production_renderer_by_default() -> None:
 
     render_stage = cast(
         RenderPipelineStage,
-        stages[3],
+        stages[4],
     )
 
     assert render_stage.production_render_enabled is True
@@ -609,7 +671,7 @@ def test_build_uses_explicit_production_renderer() -> None:
 
     render_stage = cast(
         RenderPipelineStage,
-        stages[3],
+        stages[4],
     )
 
     assert render_stage.production_render_enabled is True

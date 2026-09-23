@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from src.models.audio_inclusion_preferences import AudioInclusionPreferences
 from src.models.editing_directives import (
     SceneEditingDirectives,
 )
@@ -9,6 +10,7 @@ from src.models.resolved_voice_blueprint import (
 from src.pipeline.asset_stage import AssetPipelineStage
 from src.pipeline.base_stage import BasePipelineStage
 from src.pipeline.music_stage import MusicPipelineStage
+from src.pipeline.native_clip_audio_stage import NativeClipAudioPipelineStage
 from src.pipeline.render_stage import RenderPipelineStage
 from src.pipeline.sound_effect_stage import SoundEffectPipelineStage
 from src.pipeline.timeline_stage import (
@@ -33,6 +35,7 @@ from src.services.scene_asset_workflow_service import (
 from src.services.sound_effect_generation_service import (
     SoundEffectGenerationService,
 )
+from src.services.top10_countdown_service import Top10CountdownService
 from src.services.voice_generation_service import (
     VoiceGenerationService,
 )
@@ -71,6 +74,7 @@ class RenderWorkflowStageFactory:
         sound_effect_generation_service: SoundEffectGenerationService | None = None,
         render_service: RenderService | None = None,
         production_render_service: ProductionRenderService | None = None,
+        top10_countdown_service: Top10CountdownService | None = None,
     ) -> None:
         if render_service is not None and production_render_service is not None:
             raise ValueError(
@@ -95,6 +99,14 @@ class RenderWorkflowStageFactory:
         self._music_generation_service = music_generation_service
 
         self._sound_effect_generation_service = sound_effect_generation_service
+
+        # REQ-12 (top10 countdown rank cards), 2026-09-23: None means
+        # top10 countdown rendering stays unavailable for jobs built
+        # from this factory (see ProductionApplicationFactory's own
+        # thumbnail_image_provider docstring for why) - a genre.top10
+        # job then renders through the normal composite path with no
+        # countdown splice, rather than failing.
+        self._top10_countdown_service = top10_countdown_service
 
         self._render_service = render_service
 
@@ -195,6 +207,19 @@ class RenderWorkflowStageFactory:
 
         return self._production_render_service is not None
 
+    @property
+    def top10_countdown_service(
+        self,
+    ) -> Top10CountdownService | None:
+        """
+        Return the configured REQ-12 top10-countdown orchestrator.
+
+        None means top10 countdown rendering is unavailable - see this
+        class's own __init__ docstring for why.
+        """
+
+        return self._top10_countdown_service
+
     def build(
         self,
         *,
@@ -207,6 +232,9 @@ class RenderWorkflowStageFactory:
         output_resolution: str = "1920x1080",
         frame_rate: int = 30,
         warn_on_blueprint_fallbacks: bool = True,
+        letterbox_enabled_override: bool | None = None,
+        audio_inclusion_preferences: AudioInclusionPreferences | None = None,
+        subtitles_enabled: bool = True,
     ) -> list[BasePipelineStage]:
         """
         Build one ordered render workflow.
@@ -218,18 +246,43 @@ class RenderWorkflowStageFactory:
         -> VIDEO_TIMELINE
         -> BACKGROUND_MUSIC (only when configured)
         -> SOUND_EFFECTS (only when configured)
+        -> AUDIO_TIMELINE (native clip audio, only when production
+           rendering is enabled)
         -> RENDER
 
-        Music and sound effects read the resolved editing blueprint
-        TimelinePipelineStage attaches to each timeline item, so they
-        must run after it. Neither stage is registered at all when its
-        generation service was not supplied to this factory - unlike
-        voice, they are optional enhancements, not a required stage.
+        Music, sound effects, and native clip audio all read the
+        resolved video_timeline TimelinePipelineStage builds, so they
+        must run after it. None of the three is a required stage -
+        music/sound effects are only registered when their own
+        generation service was supplied; native clip audio only needs
+        real FFmpeg (ProductionRenderService's own scene-timing
+        computation), so it's registered whenever production
+        rendering itself is enabled, and is a real no-op internally
+        whenever VideoJob.audio_inclusion_preferences.
+        include_native_clip_audio is off (the real default).
 
         Production composition passes the same resolved voice
         blueprints used by the voice stage into the production render
         stage so subtitle execution remains based on the authoritative
         voice-resolution result.
+
+        letterbox_enabled_override (REQ-3, cinematic letterboxing) is
+        the real per-project switch - None (the default) inherits the
+        resolved genre's own GenreEditingProfile.letterbox_enabled_by_
+        default; True/False always wins over that default. Same
+        resolution-order pattern as this method's own transition-
+        duration lookup just below.
+
+        audio_inclusion_preferences (REQ-13) is the real per-project
+        VideoJob.audio_inclusion_preferences - forwarded unchanged to
+        RenderPipelineStage, which defaults to a fresh
+        AudioInclusionPreferences() (today's exact real behavior) when
+        None.
+
+        subtitles_enabled is the real per-project
+        VideoJob.subtitles_enabled - forwarded unchanged to
+        RenderPipelineStage. Defaults to True, reproducing every
+        render's real prior behavior.
         """
 
         # Real-world finding, 2026-09-17: positioning each voice track
@@ -268,6 +321,16 @@ class RenderWorkflowStageFactory:
             else 0.0
         )
 
+        letterbox_enabled = (
+            letterbox_enabled_override
+            if letterbox_enabled_override is not None
+            else (
+                resolved_genre_profile.editing.letterbox_enabled_by_default
+                if resolved_genre_profile is not None
+                else False
+            )
+        )
+
         voice_stage = VoicePipelineStage(
             blueprints=voice_blueprints,
             generation_service=(self._voice_generation_service),
@@ -299,6 +362,11 @@ class RenderWorkflowStageFactory:
                 else None
             ),
             transition_duration_seconds=transition_duration_seconds,
+            letterbox_enabled=letterbox_enabled,
+            audio_inclusion_preferences=audio_inclusion_preferences,
+            subtitles_enabled=subtitles_enabled,
+            genre_id=genre_id,
+            top10_countdown_service=self._top10_countdown_service,
         )
 
         stages: list[BasePipelineStage] = [
@@ -321,6 +389,13 @@ class RenderWorkflowStageFactory:
                 SoundEffectPipelineStage(
                     generation_service=self._sound_effect_generation_service,
                     provider_name=sound_effect_provider_name,
+                    transition_duration_seconds=transition_duration_seconds,
+                )
+            )
+
+        if self._production_render_service is not None:
+            stages.append(
+                NativeClipAudioPipelineStage(
                     transition_duration_seconds=transition_duration_seconds,
                 )
             )

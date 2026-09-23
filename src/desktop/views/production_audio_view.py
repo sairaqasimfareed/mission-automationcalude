@@ -5,6 +5,7 @@ from uuid import UUID
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QFrame,
     QHBoxLayout,
     QLineEdit,
@@ -112,6 +113,7 @@ class ProductionAudioView(QWidget):
                 widget.deleteLater()
 
         self._build_generation_card(job)
+        self._build_audio_inclusion_card(job)
         self._build_summary_card()
         self._build_sound_design_card(job)
         self._build_voice_card(job)
@@ -172,6 +174,84 @@ class ProductionAudioView(QWidget):
         layout.addWidget(all_audio_button, alignment=_LEFT)
 
         self._layout.addWidget(frame)
+
+    def _build_audio_inclusion_card(self, job: VideoJob) -> None:
+        """
+        REQ-13: which already-generated audio actually reaches the
+        final render mix. Voiceover, background music, and sound
+        effects always generate regardless of these toggles - see
+        AudioInclusionPreferences' own docstring - this only decides
+        what's muxed into the finished video, so it's safe to change
+        after generation without re-running anything.
+        """
+
+        frame, layout = card("Audio mix", icon_name="audio")
+
+        layout.addWidget(
+            small_muted(
+                "Choose which already-generated audio ends up in the "
+                "final render. Turning something off here doesn't "
+                "delete it or stop it from generating - it just leaves "
+                "it out of the mix."
+            )
+        )
+
+        preferences = job.audio_inclusion_preferences
+
+        native_clip_checkbox = QCheckBox("Use the AI-generated clips' own native audio")
+        native_clip_checkbox.setChecked(preferences.include_native_clip_audio)
+        native_clip_checkbox.setToolTip(
+            "Only has an effect once native clip audio has been "
+            "extracted for a scene - most jobs won't have any yet."
+        )
+        layout.addWidget(native_clip_checkbox)
+
+        voiceover_checkbox = QCheckBox("Include voiceover")
+        voiceover_checkbox.setChecked(preferences.include_voiceover)
+        layout.addWidget(voiceover_checkbox)
+
+        music_checkbox = QCheckBox("Include background music")
+        music_checkbox.setChecked(preferences.include_music)
+        layout.addWidget(music_checkbox)
+
+        sound_effects_checkbox = QCheckBox("Include sound effects")
+        sound_effects_checkbox.setChecked(preferences.include_sound_effects)
+        layout.addWidget(sound_effects_checkbox)
+
+        save_button = button("Save audio mix settings", icon_name="check")
+        save_button.clicked.connect(
+            lambda: self._handle_save_audio_inclusion_preferences(
+                native_clip_checkbox=native_clip_checkbox,
+                voiceover_checkbox=voiceover_checkbox,
+                music_checkbox=music_checkbox,
+                sound_effects_checkbox=sound_effects_checkbox,
+            )
+        )
+        layout.addWidget(save_button, alignment=_LEFT)
+
+        self._layout.addWidget(frame)
+
+    def _handle_save_audio_inclusion_preferences(
+        self,
+        *,
+        native_clip_checkbox: QCheckBox,
+        voiceover_checkbox: QCheckBox,
+        music_checkbox: QCheckBox,
+        sound_effects_checkbox: QCheckBox,
+    ) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        preferences = job.audio_inclusion_preferences
+
+        preferences.include_native_clip_audio = native_clip_checkbox.isChecked()
+        preferences.include_voiceover = voiceover_checkbox.isChecked()
+        preferences.include_music = music_checkbox.isChecked()
+        preferences.include_sound_effects = sound_effects_checkbox.isChecked()
+
+        self._on_change()
 
     def _build_summary_card(self) -> None:
         summary = self._last_audio_summary
@@ -283,6 +363,8 @@ class ProductionAudioView(QWidget):
 
         row_layout.addWidget(small_muted(cue.rationale))
 
+        button_row = QHBoxLayout()
+
         generate_button = button(
             "Regenerate"
             if cue.status == SoundDesignItemStatus.GENERATED
@@ -291,7 +373,18 @@ class ProductionAudioView(QWidget):
         generate_button.clicked.connect(
             lambda: self._handle_generate_sfx_cue(job, str(cue.id))
         )
-        row_layout.addWidget(generate_button, alignment=_LEFT)
+        button_row.addWidget(generate_button)
+
+        remove_button = button("Remove", variant="ghost")
+        remove_button.clicked.connect(
+            lambda _checked=False, cue_id=str(cue.id): (
+                self._handle_remove_sfx_cue(job, cue_id)
+            )
+        )
+        button_row.addWidget(remove_button)
+
+        button_row.addStretch()
+        row_layout.addLayout(button_row)
 
         return row_layout
 
@@ -325,6 +418,8 @@ class ProductionAudioView(QWidget):
 
         row_layout.addWidget(small_muted(segment.rationale))
 
+        button_row = QHBoxLayout()
+
         generate_button = button(
             "Regenerate"
             if segment.status == SoundDesignItemStatus.GENERATED
@@ -333,7 +428,18 @@ class ProductionAudioView(QWidget):
         generate_button.clicked.connect(
             lambda: self._handle_generate_music_segment(job, str(segment.id))
         )
-        row_layout.addWidget(generate_button, alignment=_LEFT)
+        button_row.addWidget(generate_button)
+
+        remove_button = button("Remove", variant="ghost")
+        remove_button.clicked.connect(
+            lambda _checked=False, segment_id=str(segment.id): (
+                self._handle_remove_music_segment(job, segment_id)
+            )
+        )
+        button_row.addWidget(remove_button)
+
+        button_row.addStretch()
+        row_layout.addLayout(button_row)
 
         return row_layout
 
@@ -396,6 +502,73 @@ class ProductionAudioView(QWidget):
             return
 
         self._on_change()
+
+    def _handle_remove_sfx_cue(self, job: VideoJob, cue_id: str) -> None:
+        """
+        REQ-10(b): a real Remove, not just Regenerate - surfaced by a
+        real finding this session (a generated SFX cue inventing
+        "dogs barking" for a scene the narration never mentioned;
+        regenerating only rerolls to a different guess, it can never
+        remove an unwanted cue outright). Same shape as
+        content_studio_view.py's own _handle_remove_research_gap -
+        filter the owning list by id, no confirmation dialog. Also
+        clears the matching AudioTrack if this cue was already
+        generated, so a removed cue's own audio never lingers in the
+        real mix.
+        """
+
+        plan = job.sound_design_plan
+
+        if plan is None:
+            return
+
+        removed = next((cue for cue in plan.sfx_cues if str(cue.id) == cue_id), None)
+
+        plan.sfx_cues = [cue for cue in plan.sfx_cues if str(cue.id) != cue_id]
+
+        self._discard_matching_audio_track(
+            job, removed.audio_track_id if removed is not None else None
+        )
+
+        self._on_change()
+
+    def _handle_remove_music_segment(self, job: VideoJob, segment_id: str) -> None:
+        plan = job.sound_design_plan
+
+        if plan is None:
+            return
+
+        removed = next(
+            (
+                segment
+                for segment in plan.music_segments
+                if str(segment.id) == segment_id
+            ),
+            None,
+        )
+
+        plan.music_segments = [
+            segment for segment in plan.music_segments if str(segment.id) != segment_id
+        ]
+
+        self._discard_matching_audio_track(
+            job, removed.audio_track_id if removed is not None else None
+        )
+
+        self._on_change()
+
+    @staticmethod
+    def _discard_matching_audio_track(
+        job: VideoJob, audio_track_id: str | None
+    ) -> None:
+        if audio_track_id is None or job.audio_timeline is None:
+            return
+
+        job.audio_timeline.tracks = [
+            track
+            for track in job.audio_timeline.tracks
+            if str(track.id) != audio_track_id
+        ]
 
     def _handle_generate_all_music(self, job: VideoJob) -> None:
         plan = job.sound_design_plan

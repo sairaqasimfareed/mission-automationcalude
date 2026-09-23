@@ -6,6 +6,7 @@ from src.models.approval import ApprovalPolicyConfig
 from src.models.artifact_lifecycle import ArtifactVersionRecord
 from src.models.asset_state import SceneAssetState
 from src.models.audience_promise import AudiencePromise
+from src.models.audio_inclusion_preferences import AudioInclusionPreferences
 from src.models.audio_timeline import AudioTimeline
 from src.models.base import MissionBaseModel
 from src.models.cinematic_prompt import CinematicPromptPackage
@@ -56,6 +57,7 @@ from src.models.shot_planning import CinematicShotPlan
 from src.models.sound_design_plan import SoundDesignPlan
 from src.models.story_angle import StoryAngle, StoryAngleEvaluation
 from src.models.story_blueprint import StoryBlueprint
+from src.models.thumbnail import ThumbnailTextPosition
 from src.models.topic_candidate import TopicCandidate
 from src.models.video_clip import VideoClip
 from src.models.video_timeline import VideoTimeline
@@ -261,6 +263,108 @@ class VideoJob(MissionBaseModel):
     video_timeline: VideoTimeline | None = None
     render_result: RenderResult | None = None
 
+    # REQ-10(a): independent, per-project, genre-independent mux-time
+    # audio inclusion toggles - see AudioInclusionPreferences' own
+    # docstring. Real dataclass default (not None) so an existing job
+    # loaded from storage before this field existed gets today's
+    # real, implicit behavior (every generated track type included)
+    # rather than an extra None-check at every call site.
+    audio_inclusion_preferences: AudioInclusionPreferences = Field(
+        default_factory=AudioInclusionPreferences
+    )
+
+    # REQ-00 Stage 1: a video-only render's own result, kept distinct
+    # from render_result (which still means the real, final composite
+    # render - Stage 2's audio mux and Stage 3's subtitle burn-in don't
+    # exist yet, so render_result stays the only thing anything today
+    # treats as "the finished video"). Populated only by
+    # RenderPipelineStage.execute_video_only(), which nothing calls
+    # yet - no real caller (REQ-0A's review gate, Stage 2's own mux
+    # service) is built yet either.
+    video_only_render_result: RenderResult | None = None
+
+    # REQ-3 (cinematic letterboxing), 2026-09-22: real per-project
+    # override switch on top of the genre's own
+    # GenreEditingProfile.letterbox_enabled_by_default. None (the
+    # default) means "inherit the genre's own default" - an existing
+    # job loaded from storage before this field existed keeps behaving
+    # exactly as its genre already specifies, no extra migration
+    # needed. True/False is an explicit user choice that always wins
+    # over the genre default, resolved once per render by whichever
+    # caller builds the render workflow (RenderWorkflowStageFactory.
+    # build(), same resolution-order pattern as transition_duration_
+    # seconds' own genre-profile lookup).
+    letterbox_enabled: bool | None = None
+
+    # Subtitle on/off toggle, 2026-09-23: real per-project switch for
+    # whether the final video burns subtitles in at all - defaults to
+    # True, reproducing every render's real prior behavior (subtitles
+    # were always unconditionally baked in before this field existed).
+    # Reuses RenderGraphBuilderService/FilterGraphBuilderService's own
+    # include_subtitles relaxation (REQ-00 Stage 1 built it; this is
+    # the first caller to expose it as a real per-project choice on
+    # the LIVE composite render() path rather than an all-or-nothing
+    # Stage 1/Stage 2 split). Takes effect on the NEXT render, not
+    # retroactively on an already-rendered video.
+    subtitles_enabled: bool = True
+
+    # REQ-4 (opening title card), 2026-09-22: real per-project opt-in
+    # - unlike letterboxing above, there is no genre default here, and
+    # it defaults OFF. Genre doesn't decide whether to spend real,
+    # billed generation cost (a dedicated title-card image AND a
+    # dedicated music sting, every enabled render) - that's a per-
+    # project decision only the user makes, matching the explicit,
+    # opt-in shape of REQ-10(a)'s own "Generate voiceover/music/SFX"
+    # buttons rather than REQ-1/2/3's genre-default-with-override
+    # shape.
+    title_card_enabled: bool = False
+
+    # Manual override for the title card's own title text. None (the
+    # default) means "resolve automatically" - the real resolution
+    # order (SEOPackage.selected_title if one has been generated for
+    # this job, else topic) lives in resolve_title_card_text()
+    # (src/services/title_card_text_resolution_service.py), not here,
+    # since SEOPackage is stored separately from VideoJob (via the job
+    # store, not an embedded field) and this model has no business
+    # reaching into that storage itself.
+    title_card_text: str | None = None
+
+    # Manual override for the title card's own text block position.
+    # None (the default) means CENTER, the design default. Reuses
+    # ThumbnailTextPosition (the same concept thumbnails already use)
+    # rather than a new title-card-only position type.
+    title_card_text_position: ThumbnailTextPosition | None = None
+
+    # Manual override for the title card's own background image -
+    # 2026-09-23, added alongside REQ-12's own manual-background-image
+    # option for the same real gap. None (the default) means "generate
+    # a dedicated AI image" (OpeningTitleCardService's own existing
+    # behavior, unchanged) - a real local file path here is used
+    # directly instead, skipping image generation entirely.
+    title_card_image_path: str | None = None
+
+    # REQ-12 (top10 countdown rank cards), 2026-09-23: set at project
+    # creation time (New Project form, only shown for genre.top10) -
+    # same "None means auto-generate, a real path means use this
+    # instead" shape as title_card_image_path above. One background
+    # image is shared across all 10 rank cards by design (guarantees
+    # visual consistency across the whole countdown - see
+    # voice_profile_differentiation memory's own real-world finding on
+    # why 10 independently-generated Flow clips would risk visual
+    # drift), so this is a single path, not a per-rank list.
+    top10_countdown_background_image_path: str | None = None
+
+    # REQ-12: whether each rank card includes a real "Number {N}."
+    # voiceover line, independent of the main render's own voiceover/
+    # music/SFX toggles (AudioInclusionPreferences) - those govern the
+    # main render's audio; this is a distinct, smaller element (a
+    # handful of short generated lines, not the narration track).
+    # Defaults on when the countdown feature itself is active
+    # (genre_id == "genre.top10" - there is no separate master enable
+    # toggle; the format IS the countdown, unlike title_card_enabled's
+    # genre-agnostic opt-in).
+    top10_countdown_include_numbering_voiceover: bool = True
+
     # Content-aware sound design (scene-specific SFX cues + a music
     # mood curve, generated from the actual script) - optional. None
     # means the render pipeline falls back to genre-level
@@ -399,6 +503,9 @@ class VideoJob(MissionBaseModel):
 
             if self.audio_timeline is None:
                 raise ValueError("Render result requires an audio timeline.")
+
+        if self.video_only_render_result is not None and self.video_timeline is None:
+            raise ValueError("Video-only render result requires a video timeline.")
 
         if self.policy_report is not None:
             if self.policy_report.source_mode != self.production_mode:

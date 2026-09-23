@@ -222,6 +222,8 @@ class EffectExecutionService:
             effect_type=effect_type,
             timing_mode=instruction.timing_mode,
             intensity=instruction.intensity,
+            numeric_intensity_percent=instruction.numeric_intensity_percent,
+            rank_badge_text=instruction.rank_badge_text,
             start_time_seconds=global_start,
             end_time_seconds=global_end,
             duration_seconds=duration,

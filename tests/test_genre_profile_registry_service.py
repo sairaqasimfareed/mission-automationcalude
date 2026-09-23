@@ -35,6 +35,7 @@ expected_genres = {
     "genre.mystery",
     "genre.reaction",
     "genre.survival",
+    "genre.comedy",
 }
 
 assert {profile.genre_id for profile in registry.list_all()} == expected_genres
@@ -368,7 +369,7 @@ for genre_id in continuity_stitching_genres:
         == VoiceDeliveryMode.CONTINUITY_STITCHING
     ), genre_id
 
-print("Real, differentiated voice_delivery_mode confirmed across all 11 genres.")
+print("Real, differentiated voice_delivery_mode confirmed across all 12 genres.")
 
 
 print("Genre Profile Registry Service tests " "completed successfully.")

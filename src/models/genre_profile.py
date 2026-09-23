@@ -46,6 +46,7 @@ class GenreTone(str, Enum):
     INSPIRATIONAL = "inspirational"
     CINEMATIC = "cinematic"
     FRIENDLY = "friendly"
+    HUMOROUS = "humorous"
 
 
 class NarrationPerson(str, Enum):
@@ -119,6 +120,7 @@ class HookArchetype(str, Enum):
     DRAMATIC_MOMENT = "dramatic_moment"
     TRANSFORMATION = "transformation"
     RANKED_LIST_PROMISE = "ranked_list_promise"
+    ABSURD_PREMISE = "absurd_premise"
 
 
 class ResearchDepth(str, Enum):
@@ -558,9 +560,60 @@ class GenreEditingProfile(MissionBaseModel):
         le=100.0,
     )
 
+    # REQ-1/2 (tension-adaptive film grain/vignette), 2026-09-22:
+    # per-genre intensity RANGE (0-100, same scale as
+    # Scene.tension_level) - a calm scene resolves near the minimum,
+    # a climactic one near the maximum, linearly scaled by
+    # GenreDirectiveGenerationService. Both default to 0-0 ("off") so
+    # a genre not explicitly given a real range never gets grain/
+    # vignette it wasn't deliberately given - matches this field's
+    # own established pattern (every other genre-varying dimension on
+    # this model is a deliberate creative choice, not a silent
+    # default). visual_preset_ids still lists "visual.film_grain_
+    # light"/"visual.vignette_soft" as before for a genre that wants
+    # them at all - these ranges only control how strong they resolve
+    # per scene, not whether they're requested in the first place.
+    film_grain_minimum_intensity_percent: int = Field(default=0, ge=0, le=100)
+    film_grain_maximum_intensity_percent: int = Field(default=0, ge=0, le=100)
+
+    vignette_minimum_intensity_percent: int = Field(default=0, ge=0, le=100)
+    vignette_maximum_intensity_percent: int = Field(default=0, ge=0, le=100)
+
+    # REQ-3 (cinematic letterboxing), 2026-09-22: this genre's own
+    # DEFAULT for whether every render gets 2.35:1 black-bar
+    # letterboxing baked in during Stage 1 - same per-genre pattern as
+    # REQ-1/2 above (a genre's own creative choice, defaults to False/
+    # off so no existing genre changes look without being deliberately
+    # given this). VideoJob.letterbox_enabled is a separate, real
+    # per-project override on top of this default - see that field's
+    # own docstring for the resolution order.
+    letterbox_enabled_by_default: bool = False
+
     metadata: dict[str, Any] = Field(
         default_factory=dict,
     )
+
+    @model_validator(mode="after")
+    def validate_intensity_ranges(self) -> GenreEditingProfile:
+        if (
+            self.film_grain_maximum_intensity_percent
+            < self.film_grain_minimum_intensity_percent
+        ):
+            raise ValueError(
+                "film_grain_maximum_intensity_percent cannot be "
+                "less than film_grain_minimum_intensity_percent."
+            )
+
+        if (
+            self.vignette_maximum_intensity_percent
+            < self.vignette_minimum_intensity_percent
+        ):
+            raise ValueError(
+                "vignette_maximum_intensity_percent cannot be "
+                "less than vignette_minimum_intensity_percent."
+            )
+
+        return self
 
     @field_validator("camera_preset_id")
     @classmethod

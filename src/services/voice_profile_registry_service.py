@@ -416,6 +416,102 @@ class VoiceProfileRegistryService:
                     ],
                 ),
                 VoiceProfile(
+                    # 2026-09-23 real fix: genre.comedy previously shared
+                    # voice.neutral_narrator with 5 other, unrelated
+                    # genres (default/medical/mystery/reaction/survival)
+                    # - a real mismatch flagged directly by the user
+                    # while reviewing the Voice Manager screen, the same
+                    # class of "generic default doesn't fit this genre"
+                    # gap REQ-1/2 and REQ-11 already found and fixed on
+                    # the visual side. Comedy specifically wants upbeat,
+                    # expressive delivery neutral's own "safe, clear and
+                    # balanced" design explicitly does not provide.
+                    profile_id=("voice.comedy_playful"),
+                    display_name=("Comedy Playful"),
+                    description=(
+                        "Upbeat, playful and expressive " "comedic narration."
+                    ),
+                    emotion=VoiceEmotion.HAPPY,
+                    pace=VoicePace.FAST,
+                    energy=VoiceEnergy.HIGH,
+                    pitch_style=(VoicePitchStyle.BRIGHT),
+                    # Comedic timing lives in the pauses (setup, beat,
+                    # punchline) - DRAMATIC here means well-placed comedic
+                    # pauses, the same enum value horror_whisper/
+                    # warm_storyteller use for emotional weight, applied
+                    # to a different real effect.
+                    pause_style=(VoicePauseStyle.DRAMATIC),
+                    emphasis_style=(VoiceEmphasisStyle.BALANCED),
+                    default_speed=1.05,
+                    default_pitch_adjustment=1.0,
+                    default_volume_gain_db=0.3,
+                    default_stability=0.5,
+                    default_similarity_boost=0.75,
+                    default_style_strength=0.45,
+                    default_speaker_boost=True,
+                    provider_mappings={
+                        "elevenlabs": {
+                            "model_id": ("eleven_multilingual_v2"),
+                            "recommended_voice_tags": [
+                                "playful",
+                                "upbeat",
+                                "comedic",
+                            ],
+                        },
+                    },
+                    tags=[
+                        "comedy",
+                        "playful",
+                        "energetic",
+                    ],
+                ),
+                VoiceProfile(
+                    # Same real fix as voice.comedy_playful above -
+                    # mystery and survival also shared neutral_narrator
+                    # despite both wanting real tension neutral's design
+                    # explicitly excludes. Deliberately distinct from
+                    # voice.horror_whisper's own slow, low-energy DREAD -
+                    # this is alert tension (moderate pace/energy), not
+                    # horror's slow-burn atmosphere, so the two genres
+                    # that already own a bespoke profile (horror) and
+                    # these two (mystery/survival) read as genuinely
+                    # different, not a horror_whisper reuse.
+                    profile_id=("voice.tense_suspense"),
+                    display_name=("Tense Suspense"),
+                    description=(
+                        "Tense, alert narration for " "mystery and survival stories."
+                    ),
+                    emotion=VoiceEmotion.TENSE,
+                    pace=VoicePace.MODERATE,
+                    energy=VoiceEnergy.MEDIUM,
+                    pitch_style=(VoicePitchStyle.NATURAL),
+                    pause_style=(VoicePauseStyle.DRAMATIC),
+                    emphasis_style=(VoiceEmphasisStyle.SELECTIVE),
+                    default_speed=0.97,
+                    default_pitch_adjustment=-0.5,
+                    default_volume_gain_db=0.0,
+                    default_stability=0.65,
+                    default_similarity_boost=0.8,
+                    default_style_strength=0.35,
+                    default_speaker_boost=True,
+                    provider_mappings={
+                        "elevenlabs": {
+                            "model_id": ("eleven_multilingual_v2"),
+                            "recommended_voice_tags": [
+                                "tense",
+                                "alert",
+                                "suspenseful",
+                            ],
+                        },
+                    },
+                    tags=[
+                        "mystery",
+                        "survival",
+                        "tense",
+                        "suspenseful",
+                    ],
+                ),
+                VoiceProfile(
                     profile_id=("voice.warm_storyteller"),
                     display_name=("Warm Storyteller"),
                     description=(

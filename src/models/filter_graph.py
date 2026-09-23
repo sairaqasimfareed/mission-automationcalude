@@ -76,7 +76,13 @@ class FilterGraph(MissionBaseModel):
             ]
         )
 
-        self.is_valid = bool(self.video_output_label) and bool(self.audio_output_label)
+        # REQ-00 Stage 1 (video-only render) produces a graph with no
+        # audio_chains at all and a deliberately None audio_output_label -
+        # a valid graph then, not a defect. audio_output_label is only
+        # required when there is real audio to output.
+        self.is_valid = bool(self.video_output_label) and (
+            bool(self.audio_output_label) if self.audio_chains else True
+        )
 
     def render_filter_complex(
         self,

@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QHBoxLayout, QStackedWidget, QVBoxLayout, QWidget
 
 from src.desktop.job_store import JobStore
 from src.desktop.views.clip_workspace_view import ClipWorkspaceView
+from src.desktop.views.compiled_prompt_view import CompiledPromptView
 from src.desktop.views.content_studio_view import ContentStudioView
 from src.desktop.views.editing_timeline_view import EditingTimelineView
 from src.desktop.views.packaging_view import PackagingView
@@ -19,12 +20,14 @@ from src.models.production_readiness import ReadinessState
 from src.models.video_job import VideoJob
 from src.services.content_intelligence_pipeline import ContentIntelligencePipeline
 from src.services.content_pipeline import ContentPipeline
+from src.services.enriched_scene_prompt_service import EnrichedScenePromptService
 from src.services.fact_check_service import FactCheckService
 from src.services.final_export.final_export_service import FinalExportService
 from src.services.google_flow_generation_ledger_service import (
     GoogleFlowGenerationLedgerService,
 )
 from src.services.media_generation_pipeline import MediaGenerationPipeline
+from src.services.opening_title_card_service import OpeningTitleCardService
 from src.services.production_readiness_service import ProductionReadinessService
 from src.services.project_header_service import ProjectHeaderService
 from src.services.project_render_runtime_factory import ProjectRenderRuntimeFactory
@@ -132,6 +135,7 @@ class ProjectWorkspaceView(QWidget):
         fact_check_service: FactCheckService,
         on_back: Callable[[], None],
         scene_video_generation_service: SceneVideoGenerationService | None = None,
+        opening_title_card_service: OpeningTitleCardService | None = None,
     ) -> None:
         super().__init__()
 
@@ -190,6 +194,13 @@ class ProjectWorkspaceView(QWidget):
             on_change=self.refresh,
             scene_video_generation_service=scene_video_generation_service,
         )
+        self.compiled_prompts = CompiledPromptView(
+            job_store=job_store,
+            on_change=self.refresh,
+            enriched_scene_prompt_service=EnrichedScenePromptService(
+                scene_video_generation_service=scene_video_generation_service,
+            ),
+        )
         self.production_audio = ProductionAudioView(
             job_store=job_store,
             media_generation_pipeline=media_generation_pipeline,
@@ -210,11 +221,13 @@ class ProjectWorkspaceView(QWidget):
             final_export_service=final_export_service,
             on_change=self.refresh,
             approval_gate_service=content_intelligence_pipeline.approval_gate_service,
+            opening_title_card_service=opening_title_card_service,
         )
 
         self._workspaces: list[tuple[str, str, str, QWidget]] = [
             ("Content", "research", "content_studio", self.content_studio),
             ("Clips", "clapper", "clip_workspace", self.clip_workspace),
+            ("Prompts", "tag", "compiled_prompts", self.compiled_prompts),
             ("Audio", "audio", "production_audio", self.production_audio),
             ("Timeline", "timeline", "editing_timeline", self.editing_timeline),
             ("Render", "play", "render_workspace", self.render_workspace),

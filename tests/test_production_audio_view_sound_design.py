@@ -12,6 +12,12 @@ import pytest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLineEdit, QPushButton  # noqa: E402
 
 from src.desktop.views.production_audio_view import ProductionAudioView  # noqa: E402
+from src.models.audio_timeline import AudioTimeline  # noqa: E402
+from src.models.audio_track import (  # noqa: E402
+    AudioTrack,
+    AudioTrackStatus,
+    AudioTrackType,
+)
 from src.models.sound_design_plan import (  # noqa: E402
     MusicMoodSegment,
     SoundDesignItemStatus,
@@ -197,3 +203,152 @@ def test_generate_music_segment_button_calls_generate_single_music_segment(
     all_music_button.click()
 
     pipeline.generate_single_music_segment.assert_called_once_with(job, str(segment.id))
+
+
+def test_remove_sfx_cue_removes_it_from_the_plan(qapp: QApplication) -> None:
+    job = _job_with_plan()
+    view, _ = _build_view(job)
+
+    assert job.sound_design_plan is not None
+    assert len(job.sound_design_plan.sfx_cues) == 1
+
+    remove_button = next(
+        button for button in _find_buttons(view) if button.text() == "Remove"
+    )
+    remove_button.click()
+
+    assert job.sound_design_plan.sfx_cues == []
+
+
+def test_remove_sfx_cue_with_no_audio_track_yet_works_without_error(
+    qapp: QApplication,
+) -> None:
+    """A cue that was never generated (audio_track_id is None) must
+    still remove cleanly - no AttributeError/KeyError trying to find
+    a track that was never created."""
+
+    job = _job_with_plan()
+    assert job.sound_design_plan is not None
+    assert job.sound_design_plan.sfx_cues[0].audio_track_id is None
+
+    view, _ = _build_view(job)
+
+    remove_button = next(
+        button for button in _find_buttons(view) if button.text() == "Remove"
+    )
+    remove_button.click()
+
+    assert job.sound_design_plan.sfx_cues == []
+
+
+def test_remove_sfx_cue_clears_its_generated_audio_track(qapp: QApplication) -> None:
+    job = _job_with_plan()
+    assert job.sound_design_plan is not None
+
+    cue = job.sound_design_plan.sfx_cues[0]
+    track = AudioTrack(
+        track_type=AudioTrackType.SOUND_EFFECT,
+        source_file="/generated/sfx.mp3",
+        duration_seconds=1.0,
+        status=AudioTrackStatus.READY,
+    )
+    cue.audio_track_id = str(track.id)
+    cue.status = SoundDesignItemStatus.GENERATED
+
+    other_track = AudioTrack(
+        track_type=AudioTrackType.VOICEOVER,
+        source_file="/generated/voice.mp3",
+        duration_seconds=5.0,
+        status=AudioTrackStatus.READY,
+    )
+    job.audio_timeline = AudioTimeline(tracks=[track, other_track])
+
+    view, _ = _build_view(job)
+
+    remove_button = next(
+        button for button in _find_buttons(view) if button.text() == "Remove"
+    )
+    remove_button.click()
+
+    assert job.sound_design_plan.sfx_cues == []
+    assert job.audio_timeline is not None
+    assert [t.id for t in job.audio_timeline.tracks] == [other_track.id]
+
+
+def test_remove_music_segment_removes_it_from_the_plan(qapp: QApplication) -> None:
+    job = _job_with_plan()
+    view, _ = _build_view(job)
+
+    assert job.sound_design_plan is not None
+    assert len(job.sound_design_plan.music_segments) == 1
+
+    remove_buttons = [
+        button for button in _find_buttons(view) if button.text() == "Remove"
+    ]
+    # Two "Remove" buttons exist (one SFX cue, one music segment) - the
+    # second corresponds to the music segment row, added after the SFX
+    # row in _build_sound_design_card's own ordering.
+    assert len(remove_buttons) == 2
+    remove_buttons[1].click()
+
+    assert job.sound_design_plan.music_segments == []
+
+
+def test_remove_music_segment_clears_its_generated_audio_track(
+    qapp: QApplication,
+) -> None:
+    job = _job_with_plan()
+    assert job.sound_design_plan is not None
+
+    segment = job.sound_design_plan.music_segments[0]
+    track = AudioTrack(
+        track_type=AudioTrackType.BACKGROUND_MUSIC,
+        source_file="/generated/music.mp3",
+        duration_seconds=8.0,
+        status=AudioTrackStatus.READY,
+    )
+    segment.audio_track_id = str(track.id)
+    segment.status = SoundDesignItemStatus.GENERATED
+
+    job.audio_timeline = AudioTimeline(tracks=[track])
+
+    view, _ = _build_view(job)
+
+    remove_buttons = [
+        button for button in _find_buttons(view) if button.text() == "Remove"
+    ]
+    remove_buttons[1].click()
+
+    assert job.sound_design_plan.music_segments == []
+    assert job.audio_timeline is not None
+    assert job.audio_timeline.tracks == []
+
+
+def test_removed_cues_row_disappears_after_refresh(qapp: QApplication) -> None:
+    """
+    refresh() clears old rows via deleteLater() - the same pattern
+    every view in this codebase already uses - which only actually
+    destroys the QObjects once Qt's event loop gets a turn to process
+    it, unreliable to force synchronously even via processEvents() in
+    an offscreen test session. Rendering a FRESH view instance against
+    the same, now-mutated job sidesteps that timing entirely and still
+    proves the real thing that matters: the view reflects the current
+    model state on its next real render, not stale in-memory rows.
+    """
+
+    job = _job_with_plan()
+    view, _ = _build_view(job)
+
+    assert len(_find_line_edits(view)) == 2
+
+    remove_button = next(
+        button for button in _find_buttons(view) if button.text() == "Remove"
+    )
+    remove_button.click()
+
+    assert job.sound_design_plan is not None
+    assert job.sound_design_plan.sfx_cues == []
+
+    fresh_view, _ = _build_view(job)
+
+    assert len(_find_line_edits(fresh_view)) == 1

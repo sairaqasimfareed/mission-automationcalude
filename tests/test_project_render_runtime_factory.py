@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import cast
 
 from src.models.advanced_settings import AdvancedSettings
+from src.models.audio_inclusion_preferences import AudioInclusionPreferences
 from src.models.editing_directives import (
     SceneEditingDirectives,
 )
@@ -247,6 +248,9 @@ class RecordingStageFactory(RenderWorkflowStageFactory):
                 str,
                 int,
                 bool,
+                bool | None,
+                AudioInclusionPreferences | None,
+                bool,
             ]
         ] = []
 
@@ -256,6 +260,8 @@ class RecordingStageFactory(RenderWorkflowStageFactory):
         voice_blueprints: list[ResolvedVoiceBlueprint],
         genre_id: str,
         voice_provider_name: str | None = None,
+        music_provider_name: str | None = None,
+        sound_effect_provider_name: str | None = None,
         overrides_by_scene: (
             dict[
                 int,
@@ -266,6 +272,9 @@ class RecordingStageFactory(RenderWorkflowStageFactory):
         output_resolution: str = ("1920x1080"),
         frame_rate: int = 30,
         warn_on_blueprint_fallbacks: bool = True,
+        letterbox_enabled_override: bool | None = None,
+        audio_inclusion_preferences: AudioInclusionPreferences | None = None,
+        subtitles_enabled: bool = True,
     ) -> list[BasePipelineStage]:
         self.calls.append(
             (
@@ -276,6 +285,9 @@ class RecordingStageFactory(RenderWorkflowStageFactory):
                 output_resolution,
                 frame_rate,
                 warn_on_blueprint_fallbacks,
+                letterbox_enabled_override,
+                audio_inclusion_preferences,
+                subtitles_enabled,
             )
         )
 
@@ -489,6 +501,86 @@ def test_build_forwards_render_configuration() -> None:
     assert call[5] == 60
 
     assert call[6] is False
+
+
+def test_build_forwards_job_letterbox_enabled_override() -> None:
+    """REQ-3 (cinematic letterboxing): VideoJob.letterbox_enabled is
+    the real per-project override - build() must forward it to the
+    stage factory verbatim (None included, meaning "inherit the
+    genre's own default")."""
+
+    stage_factory = RecordingStageFactory()
+
+    factory = _factory(stage_factory=stage_factory)
+
+    job = _job()
+    job.letterbox_enabled = True
+
+    factory.build(job=job, genre_id="genre.documentary")
+
+    assert stage_factory.calls[0][7] is True
+
+    stage_factory_none = RecordingStageFactory()
+
+    factory_none = _factory(stage_factory=stage_factory_none)
+
+    factory_none.build(job=_job(), genre_id="genre.documentary")
+
+    assert stage_factory_none.calls[0][7] is None
+
+
+def test_build_forwards_job_audio_inclusion_preferences() -> None:
+    """REQ-13 (audio inclusion toggle UI): VideoJob.audio_inclusion_
+    preferences (always a real, non-None value - VideoJob's own
+    default_factory) must be forwarded to the stage factory verbatim,
+    matching the exact same forwarding precedent as letterbox_enabled_
+    override above."""
+
+    stage_factory = RecordingStageFactory()
+
+    factory = _factory(stage_factory=stage_factory)
+
+    job = _job()
+    job.audio_inclusion_preferences = AudioInclusionPreferences(
+        include_native_clip_audio=True,
+        include_voiceover=False,
+        include_music=True,
+        include_sound_effects=False,
+    )
+
+    factory.build(job=job, genre_id="genre.documentary")
+
+    forwarded = stage_factory.calls[0][8]
+    assert forwarded is job.audio_inclusion_preferences
+    assert forwarded is not None
+    assert forwarded.include_native_clip_audio is True
+    assert forwarded.include_voiceover is False
+
+
+def test_build_forwards_job_subtitles_enabled() -> None:
+    """Subtitle on/off toggle: VideoJob.subtitles_enabled must be
+    forwarded to the stage factory verbatim, matching the exact same
+    forwarding precedent as letterbox_enabled_override/audio_
+    inclusion_preferences above."""
+
+    stage_factory = RecordingStageFactory()
+
+    factory = _factory(stage_factory=stage_factory)
+
+    job = _job()
+    job.subtitles_enabled = False
+
+    factory.build(job=job, genre_id="genre.documentary")
+
+    assert stage_factory.calls[0][9] is False
+
+    stage_factory_default = RecordingStageFactory()
+
+    factory_default = _factory(stage_factory=stage_factory_default)
+
+    factory_default.build(job=_job(), genre_id="genre.documentary")
+
+    assert stage_factory_default.calls[0][9] is True
 
 
 def test_build_returns_render_orchestrator() -> None:

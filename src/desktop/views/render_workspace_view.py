@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import shutil
 from collections.abc import Callable
+from pathlib import Path
 from uuid import UUID
 
-from PySide6.QtCore import QObject, Qt, QThread, Signal
+from PySide6.QtCore import QObject, Qt, QThread, QUrl, Signal
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -260,11 +263,14 @@ class RenderWorkspaceView(QWidget):
             layout.addWidget(badge(render_result.status.value))
 
             if render_result.render_result is not None:
+                output_file = render_result.render_result.output_file
+
                 layout.addWidget(
-                    small_muted(
-                        f"Output file: {render_result.render_result.output_file}"
-                    ),
+                    small_muted(f"Output file: {output_file}"),
                 )
+
+                if output_file:
+                    self._build_render_output_actions(layout, output_file)
 
             if render_result.errors:
                 layout.addWidget(
@@ -299,6 +305,65 @@ class RenderWorkspaceView(QWidget):
             layout.addWidget(small_muted("Requires planned scenes."))
 
         self._layout.addWidget(frame)
+
+    def _build_render_output_actions(
+        self, layout: QVBoxLayout, output_file: str
+    ) -> None:
+        """
+        REQ-0A (Render Download/Review Gate): let the user grab and
+        inspect the raw rendered file before committing to further,
+        more expensive post-processing - directly addresses this
+        project's own recurring "which render was this screenshot
+        even from" confusion (stale outputs/final_video.mp4 getting
+        silently overwritten by every subsequent render).
+        """
+
+        reveal_button = button("Reveal in folder", icon_name="folder")
+        reveal_button.clicked.connect(
+            lambda: self._handle_reveal_render_output(output_file)
+        )
+        layout.addWidget(reveal_button, alignment=_LEFT)
+
+        open_button = button("Open in default player", icon_name="play")
+        open_button.clicked.connect(
+            lambda: self._handle_open_render_output(output_file)
+        )
+        layout.addWidget(open_button, alignment=_LEFT)
+
+        save_copy_button = button("Save a copy as...", icon_name="export")
+        save_copy_button.clicked.connect(
+            lambda: self._handle_save_render_output_copy(output_file)
+        )
+        layout.addWidget(save_copy_button, alignment=_LEFT)
+
+    def _handle_reveal_render_output(self, output_file: str) -> None:
+        QDesktopServices.openUrl(
+            QUrl.fromLocalFile(str(Path(output_file).parent)),
+        )
+
+    def _handle_open_render_output(self, output_file: str) -> None:
+        QDesktopServices.openUrl(QUrl.fromLocalFile(output_file))
+
+    def _handle_save_render_output_copy(self, output_file: str) -> None:
+        source_path = Path(output_file)
+
+        destination, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Save a copy of the rendered video",
+            source_path.name,
+        )
+
+        if not destination:
+            return
+
+        try:
+            shutil.copy2(source_path, destination)
+        except OSError as error:
+            show_recoverable_error(
+                self,
+                "Could not save a copy",
+                f"The rendered file could not be copied to {destination}: {error}",
+            )
 
     def _build_output_resolution_choice(
         self, layout: QVBoxLayout, job: VideoJob

@@ -12,6 +12,7 @@ from src.providers.dry_run_sound_effect_provider import (
 )
 from src.providers.music_provider import MusicProvider
 from src.providers.sound_effect_provider import SoundEffectProvider
+from src.providers.thumbnail_image_provider import ThumbnailImageProvider
 from src.providers.voice_provider import VoiceProvider
 from src.services.application_infrastructure_factory import (
     ApplicationInfrastructure,
@@ -66,6 +67,16 @@ from src.services.secrets.provider_secret_manager import (
 )
 from src.services.sound_effect_generation_service import (
     SoundEffectGenerationService,
+)
+from src.services.thumbnail.thumbnail_concept_generation_service import (
+    ThumbnailConceptGenerationService,
+)
+from src.services.title_card_image_generation_service import (
+    TitleCardImageGenerationService,
+)
+from src.services.top10_countdown_service import Top10CountdownService
+from src.services.top10_numbering_voiceover_service import (
+    TopTenNumberingVoiceoverService,
 )
 from src.services.voice_generation_service import (
     VoiceGenerationService,
@@ -133,6 +144,11 @@ class ProductionApplicationRuntime:
 
     resume_planner_service: PipelineResumePlannerService | None
 
+    # REQ-12 (top10 countdown rank cards), 2026-09-23: None whenever
+    # no ThumbnailImageProvider was configured - see ProductionApplic
+    # ationFactory.__init__'s own thumbnail_image_provider docstring.
+    top10_countdown_service: Top10CountdownService | None = None
+
 
 class ProductionApplicationFactory:
     """
@@ -193,6 +209,7 @@ class ProductionApplicationFactory:
         production_render_service: ProductionRenderService | None = None,
         voice_provider_mapping_service: VoiceProviderMappingService | None = None,
         dynamic_voice_selection_service: DynamicVoiceSelectionService | None = None,
+        thumbnail_image_provider: ThumbnailImageProvider | None = None,
     ) -> None:
         if not provider_profiles:
             raise ValueError(
@@ -290,6 +307,20 @@ class ProductionApplicationFactory:
         # selected live from ElevenLabs at generation time instead of
         # requiring one. See VoiceResolutionRuntimeFactory.build().
         self._dynamic_voice_selection_service = dynamic_voice_selection_service
+
+        # REQ-12 (top10 countdown rank cards), 2026-09-23: optional so
+        # every existing caller/test keeps working unchanged. Top10
+        # countdown rendering needs a real background-image generation
+        # path (TitleCardImageGenerationService), which needs a real
+        # ThumbnailImageProvider - a choice this shared CLI+desktop
+        # composition root has never made on its own (thumbnails are a
+        # desktop-UI-only concern built separately in
+        # src.desktop.services). None (the default) means top10
+        # countdown rendering stays unavailable - a genre.top10 job
+        # renders through the normal composite path with no countdown
+        # splice, the same real, disclosed fallback every other
+        # not-yet-configured optional piece here already has.
+        self._thumbnail_image_provider = thumbnail_image_provider
 
         if production_render_service is not None:
             self._production_render_service: ProductionRenderService | None = (
@@ -452,6 +483,30 @@ class ProductionApplicationFactory:
             else None
         )
 
+        # REQ-12 (top10 countdown rank cards), 2026-09-23: built from
+        # pieces already composed above (llm_service, voice_resolution
+        # _runtime, voice_generation_service) plus the one real,
+        # desktop-only choice this shared root has never made on its
+        # own - see __init__'s own thumbnail_image_provider docstring.
+        top10_countdown_service = (
+            Top10CountdownService(
+                image_generation_service=TitleCardImageGenerationService(
+                    concept_generation_service=ThumbnailConceptGenerationService(
+                        llm_service=infrastructure.llm_service,
+                    ),
+                    image_provider=self._thumbnail_image_provider,
+                ),
+                numbering_voiceover_service=TopTenNumberingVoiceoverService(
+                    voice_directive_resolution_service=(
+                        voice_resolution_runtime.resolution_service
+                    ),
+                    voice_generation_service=voice_generation_service,
+                ),
+            )
+            if self._thumbnail_image_provider is not None
+            else None
+        )
+
         render_stage_factory = RenderWorkflowStageFactory(
             voice_generation_service=(voice_generation_service),
             voice_timeline_service=(voice_timeline_service),
@@ -459,6 +514,7 @@ class ProductionApplicationFactory:
             genre_timeline_service=(self._genre_timeline_service),
             genre_profile_registry_service=(self._genre_registry),
             music_generation_service=music_generation_service,
+            top10_countdown_service=top10_countdown_service,
             sound_effect_generation_service=(sound_effect_generation_service),
             **(
                 {
@@ -518,6 +574,7 @@ class ProductionApplicationFactory:
             checkpoint_storage_service=(checkpoint_storage_service),
             checkpoint_service=(checkpoint_service),
             resume_planner_service=(resume_planner_service),
+            top10_countdown_service=top10_countdown_service,
         )
 
     def build_application(

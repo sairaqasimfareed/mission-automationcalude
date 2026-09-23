@@ -1037,6 +1037,29 @@ class _FakeThumbnailPackageService:
         )
 
 
+def _orientation_and_platform_combos(
+    view: PackagingView,
+) -> tuple[QComboBox, QComboBox]:
+    """
+    Find the export-variants card's own orientation/platform combos by
+    their real content rather than raw findChildren() order - the
+    packaging view now also renders REQ-4's own title-card position
+    combo, which shifts positional indices depending on where it lands
+    in the layout, so combos[0]/combos[1] is no longer a safe way to
+    address these two specifically.
+    """
+
+    combos = view.findChildren(QComboBox)
+
+    orientation_combo = next(
+        combo for combo in combos if combo.itemText(0) == "Landscape (16:9)"
+    )
+
+    platform_combo = next(combo for combo in combos if combo.itemText(0) == "None")
+
+    return orientation_combo, platform_combo
+
+
 def test_export_variants_card_requires_a_successful_render(
     qapp: QApplication, tmp_path: Path
 ) -> None:
@@ -1091,8 +1114,7 @@ def test_generate_export_variant_stores_the_result(
     view._job_store.set_render_result(job.id, _render_orchestration_result(job))
     view.refresh(job)
 
-    combos = view.findChildren(QComboBox)
-    orientation_combo, platform_combo = combos[0], combos[1]
+    orientation_combo, platform_combo = _orientation_and_platform_combos(view)
     orientation_combo.setCurrentIndex(0)  # Landscape
     platform_combo.setCurrentIndex(0)  # None
 
@@ -1142,8 +1164,7 @@ def test_generate_export_variant_appends_to_existing_variants(
     )
     view.refresh(job)
 
-    combos = view.findChildren(QComboBox)
-    orientation_combo, platform_combo = combos[0], combos[1]
+    orientation_combo, platform_combo = _orientation_and_platform_combos(view)
     orientation_combo.setCurrentIndex(1)  # Portrait
     platform_combo.setCurrentIndex(0)  # None
 
@@ -1189,8 +1210,7 @@ def test_choosing_youtube_suggests_landscape_orientation(
 ) -> None:
     view, _job = _view_with_render_result(tmp_path, _FakeExportVariantRenderService())
 
-    combos = view.findChildren(QComboBox)
-    orientation_combo, platform_combo = combos[0], combos[1]
+    orientation_combo, platform_combo = _orientation_and_platform_combos(view)
     orientation_combo.setCurrentIndex(1)  # start on Portrait
 
     platform_index = platform_combo.findData(Platform.YOUTUBE.value)
@@ -1204,8 +1224,7 @@ def test_choosing_tiktok_suggests_portrait_orientation(
 ) -> None:
     view, _job = _view_with_render_result(tmp_path, _FakeExportVariantRenderService())
 
-    combos = view.findChildren(QComboBox)
-    orientation_combo, platform_combo = combos[0], combos[1]
+    orientation_combo, platform_combo = _orientation_and_platform_combos(view)
     orientation_combo.setCurrentIndex(0)  # start on Landscape
 
     platform_index = platform_combo.findData(Platform.TIKTOK.value)
@@ -1225,8 +1244,7 @@ def test_choosing_facebook_leaves_orientation_untouched(
 
     view, _job = _view_with_render_result(tmp_path, _FakeExportVariantRenderService())
 
-    combos = view.findChildren(QComboBox)
-    orientation_combo, platform_combo = combos[0], combos[1]
+    orientation_combo, platform_combo = _orientation_and_platform_combos(view)
     orientation_combo.setCurrentIndex(1)  # Portrait
 
     platform_index = platform_combo.findData(Platform.FACEBOOK.value)
@@ -1263,8 +1281,7 @@ def test_generate_export_variant_passes_the_chosen_platform_through(
     view._job_store.set_render_result(job.id, _render_orchestration_result(job))
     view.refresh(job)
 
-    combos = view.findChildren(QComboBox)
-    orientation_combo, platform_combo = combos[0], combos[1]
+    orientation_combo, platform_combo = _orientation_and_platform_combos(view)
     orientation_combo.setCurrentIndex(0)  # Landscape
     platform_combo.setCurrentIndex(platform_combo.findData(Platform.FACEBOOK.value))
 

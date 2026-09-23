@@ -8,7 +8,7 @@ from collections.abc import Iterator  # noqa: E402
 
 import pytest  # noqa: E402
 from PySide6.QtCore import Qt  # noqa: E402
-from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
+from PySide6.QtWidgets import QApplication, QPushButton, QWidget  # noqa: E402
 
 from src.desktop.job_store import InMemoryJobStore  # noqa: E402
 from src.desktop.views.project_form_view import (  # noqa: E402
@@ -141,6 +141,137 @@ def test_reset_restores_custom_approval_defaults(qapp: QApplication) -> None:
     assert view._approval_mode.currentText() == "Custom Approval"
     defaults = ApprovalPolicyConfig.review_critical_stages()
     assert view._build_approval_policy().hook == defaults.hook
+
+
+def test_top10_card_hidden_by_default_and_shown_for_top10_genre(
+    qapp: QApplication,
+) -> None:
+    view = _view()
+
+    assert view._genre.currentText() != "genre.top10"
+    assert view._top10_frame.isHidden() is True
+
+    view._genre.setCurrentText("genre.top10")
+
+    assert view._top10_frame.isHidden() is False
+
+    view._genre.setCurrentText("genre.horror")
+
+    assert view._top10_frame.isHidden() is True
+
+
+def test_top10_voiceover_checkbox_defaults_checked(qapp: QApplication) -> None:
+    view = _view()
+
+    assert view._top10_voiceover_checkbox.isChecked() is True
+
+
+def test_top10_auto_image_button_clears_the_path_display(qapp: QApplication) -> None:
+    view = _view()
+
+    view._top10_image_path_display.setText("/some/manual/image.png")
+
+    auto_button = next(
+        button
+        for button in view._top10_frame.findChildren(QPushButton)
+        if button.text() == "Auto-generate image"
+    )
+    auto_button.click()
+
+    assert view._top10_image_path_display.text() == ""
+
+
+def test_creating_a_top10_project_persists_manual_image_and_voiceover_choice(
+    qapp: QApplication,
+) -> None:
+    view = _view()
+
+    view._project_name.setText("Top 10 Test Project")
+    view._channel_name.setText("Test Channel")
+    view._topic.setText("Test Topic")
+    view._video_type.setText("top10 countdown")
+    view._niche.setText("Test Niche")
+    view._genre.setCurrentText("genre.top10")
+
+    view._top10_image_path_display.setText("/local/countdown_background.png")
+    view._top10_voiceover_checkbox.setChecked(False)
+
+    from uuid import UUID
+
+    created_ids: list[UUID] = []
+    view._on_created = created_ids.append
+
+    view._handle_create_clicked()
+
+    assert len(created_ids) == 1
+    job = view._job_store.get(created_ids[0])
+    assert job is not None
+    assert job.genre_id == "genre.top10"
+    assert (
+        job.top10_countdown_background_image_path == "/local/countdown_background.png"
+    )
+    assert job.top10_countdown_include_numbering_voiceover is False
+
+
+def test_creating_a_top10_project_with_no_manual_image_leaves_it_none(
+    qapp: QApplication,
+) -> None:
+    view = _view()
+
+    view._project_name.setText("Top 10 Auto Project")
+    view._channel_name.setText("Test Channel")
+    view._topic.setText("Test Topic")
+    view._video_type.setText("top10 countdown")
+    view._niche.setText("Test Niche")
+    view._genre.setCurrentText("genre.top10")
+
+    from uuid import UUID
+
+    created_ids: list[UUID] = []
+    view._on_created = created_ids.append
+
+    view._handle_create_clicked()
+
+    job = view._job_store.get(created_ids[0])
+    assert job is not None
+    assert job.top10_countdown_background_image_path is None
+    assert job.top10_countdown_include_numbering_voiceover is True
+
+
+def test_creating_a_non_top10_project_leaves_top10_fields_at_their_defaults(
+    qapp: QApplication,
+) -> None:
+    """
+    Even if the (hidden) top10 fields somehow carried stale text from
+    a prior genre selection, a non-top10 project must never persist
+    them - _handle_create_clicked() only reads them when genre_id ==
+    "genre.top10".
+    """
+
+    view = _view()
+
+    view._project_name.setText("Non-Top10 Project")
+    view._channel_name.setText("Test Channel")
+    view._topic.setText("Test Topic")
+    view._video_type.setText("documentary")
+    view._niche.setText("Test Niche")
+
+    view._genre.setCurrentText("genre.top10")
+    view._top10_image_path_display.setText("/stale/path.png")
+    view._genre.setCurrentText("genre.horror")
+
+    from uuid import UUID
+
+    created_ids: list[UUID] = []
+    view._on_created = created_ids.append
+
+    view._handle_create_clicked()
+
+    job = view._job_store.get(created_ids[0])
+    assert job is not None
+    assert job.genre_id == "genre.horror"
+    assert job.top10_countdown_background_image_path is None
+    assert job.top10_countdown_include_numbering_voiceover is True
 
 
 def test_creating_a_project_with_a_custom_override_persists_it(

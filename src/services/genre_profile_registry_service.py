@@ -550,6 +550,18 @@ class GenreProfileRegistryService:
                     maximum_active_effects=8,
                     default_transition_duration_seconds=0.8,
                     default_music_volume_percent=25.0,
+                    # REQ-1/2, 2026-09-22: the flagship "real, non-zero
+                    # range" genre - highest ceiling of any genre, a
+                    # climactic horror scene should read genuinely
+                    # gritty.
+                    film_grain_minimum_intensity_percent=10,
+                    film_grain_maximum_intensity_percent=60,
+                    vignette_minimum_intensity_percent=20,
+                    vignette_maximum_intensity_percent=70,
+                    # REQ-3 (cinematic letterboxing): the flagship
+                    # cinematic genre - bars fit horror's own gritty,
+                    # theatrical appeal.
+                    letterbox_enabled_by_default=True,
                 ),
                 thumbnail=GenreThumbnailProfile(
                     style_id="thumbnail.horror",
@@ -647,6 +659,8 @@ class GenreProfileRegistryService:
                     transition_out_preset_id=("transition.cross_dissolve"),
                     visual_preset_ids=[
                         "visual.lut_kodak_warm",
+                        "visual.vignette_soft",
+                        "visual.film_grain_light",
                     ],
                     music_preset_id="music.documentary_calm_ambient",
                     sound_effect_preset_ids=[
@@ -655,6 +669,17 @@ class GenreProfileRegistryService:
                     subtitle_preset_id=("subtitle.cinematic"),
                     default_transition_duration_seconds=0.6,
                     default_music_volume_percent=18.0,
+                    # REQ-1/2, 2026-09-22: moderate range - a real,
+                    # deliberate look, but documentary stays measured
+                    # even at its most intense, never as gritty as
+                    # horror.
+                    film_grain_minimum_intensity_percent=5,
+                    film_grain_maximum_intensity_percent=25,
+                    vignette_minimum_intensity_percent=10,
+                    vignette_maximum_intensity_percent=35,
+                    # REQ-3 (cinematic letterboxing): documentary's own
+                    # measured, cinematic framing benefits from it too.
+                    letterbox_enabled_by_default=True,
                 ),
                 thumbnail=GenreThumbnailProfile(
                     style_id=("thumbnail.documentary"),
@@ -744,6 +769,8 @@ class GenreProfileRegistryService:
                     visual_preset_ids=[
                         "visual.grayscale",
                         "visual.sepia_tone",
+                        "visual.vignette_soft",
+                        "visual.film_grain_light",
                     ],
                     music_preset_id="music.history_dramatic_orchestral",
                     sound_effect_preset_ids=[
@@ -752,6 +779,17 @@ class GenreProfileRegistryService:
                     subtitle_preset_id=("subtitle.cinematic"),
                     default_transition_duration_seconds=0.6,
                     default_music_volume_percent=20.0,
+                    # REQ-1/2, 2026-09-22: moderate-high range -
+                    # history already leans into a period-piece look
+                    # (grayscale/sepia), grain/vignette reinforce that
+                    # at real dramatic moments.
+                    film_grain_minimum_intensity_percent=10,
+                    film_grain_maximum_intensity_percent=40,
+                    vignette_minimum_intensity_percent=15,
+                    vignette_maximum_intensity_percent=45,
+                    # REQ-3 (cinematic letterboxing): reinforces
+                    # history's own period-piece look.
+                    letterbox_enabled_by_default=True,
                 ),
                 thumbnail=GenreThumbnailProfile(
                     style_id="thumbnail.history",
@@ -837,8 +875,13 @@ class GenreProfileRegistryService:
                     camera_preset_id=("camera.pan_right"),
                     transition_in_preset_id=("transition.slide_left"),
                     transition_out_preset_id=("transition.slide_left"),
+                    # REQ-11 (genre-adaptive color grading), 2026-09-22:
+                    # visual.lut_vibrant_punch was vibrant but had no
+                    # warm color push at all - replaced with the real
+                    # "vibrant, warm, golden-hour" grade this REQ's own
+                    # locked design specifically wants for travel.
                     visual_preset_ids=[
-                        "visual.lut_vibrant_punch",
+                        "visual.golden_hour_warm",
                     ],
                     music_preset_id="music.travel_upbeat_acoustic",
                     sound_effect_preset_ids=[
@@ -935,7 +978,13 @@ class GenreProfileRegistryService:
                     sound_effect_preset_ids=[
                         "sfx.whoosh_transition",
                     ],
-                    subtitle_preset_id=("subtitle.default"),
+                    # REQ-5 (genre-aware subtitle styling), 2026-09-22:
+                    # top10's own real listicle energy (matches its
+                    # thumbnail text_style="large_number") deserves the
+                    # same bold, punchy treatment on subtitles too, not
+                    # the same restrained default every "effectively
+                    # off" genre gets.
+                    subtitle_preset_id=("subtitle.bold_punchy"),
                     maximum_active_effects=10,
                     default_transition_duration_seconds=0.35,
                     default_music_volume_percent=32.0,
@@ -1035,6 +1084,16 @@ class GenreProfileRegistryService:
                     subtitle_animation_preset_id=("animation.subtitle_fade"),
                     default_transition_duration_seconds=0.6,
                     default_music_volume_percent=24.0,
+                    # REQ-1/2, 2026-09-22: "lean light, not a strong
+                    # opinion either way" bucket - too content-
+                    # dependent to generalize, so a low ceiling only
+                    # (film grain deliberately not added at all here -
+                    # storytelling's own look leans on vignette alone).
+                    vignette_minimum_intensity_percent=5,
+                    vignette_maximum_intensity_percent=20,
+                    # REQ-3 (cinematic letterboxing): storytelling's
+                    # own emotional, cinematic framing fits bars too.
+                    letterbox_enabled_by_default=True,
                 ),
                 thumbnail=GenreThumbnailProfile(
                     style_id=("thumbnail.storytelling"),
@@ -1128,8 +1187,14 @@ class GenreProfileRegistryService:
                     camera_preset_id="camera.none",
                     transition_in_preset_id="transition.cross_dissolve",
                     transition_out_preset_id="transition.cross_dissolve",
+                    # REQ-11 (genre-adaptive color grading), 2026-09-22:
+                    # visual.cool_blue_grade actually contradicted this
+                    # REQ's own locked design - a real cool/blue tint,
+                    # not the "clean and neutral" look medical was
+                    # supposed to have. Replaced with a genuinely
+                    # neutral grade (no color cast at all).
                     visual_preset_ids=[
-                        "visual.cool_blue_grade",
+                        "visual.clean_neutral",
                     ],
                     music_preset_id="music.medical_calm_piano",
                     subtitle_preset_id="subtitle.cinematic",
@@ -1217,7 +1282,12 @@ class GenreProfileRegistryService:
                     slang_intensity=DirectiveIntensity.MEDIUM,
                 ),
                 voice=GenreVoiceProfile(
-                    voice_profile_id="voice.neutral_narrator",
+                    # REQ (voice profile differentiation, 2026-09-23):
+                    # was voice.neutral_narrator - see
+                    # voice.tense_suspense's own comment in
+                    # voice_profile_registry_service.py. Free-text tags
+                    # below unchanged, already fit mystery well.
+                    voice_profile_id="voice.tense_suspense",
                     voice_delivery_mode=VoiceDeliveryMode.EMOTION_TAGS,
                     emotion="mysterious",
                     pace=GenrePacingStyle.MODERATE,
@@ -1233,6 +1303,7 @@ class GenreProfileRegistryService:
                     visual_preset_ids=[
                         "visual.vignette_soft",
                         "visual.lut_moody_desaturated",
+                        "visual.film_grain_light",
                     ],
                     animation_preset_ids=[
                         "animation.slow_parallax_reverse",
@@ -1245,6 +1316,17 @@ class GenreProfileRegistryService:
                     subtitle_animation_preset_id="animation.subtitle_fade",
                     default_transition_duration_seconds=0.7,
                     default_music_volume_percent=22.0,
+                    # REQ-1/2, 2026-09-22: real, non-zero range - close
+                    # to horror's own gritty look but a touch lighter,
+                    # matching mystery's moodier-not-outright-horror
+                    # tone.
+                    film_grain_minimum_intensity_percent=8,
+                    film_grain_maximum_intensity_percent=45,
+                    vignette_minimum_intensity_percent=15,
+                    vignette_maximum_intensity_percent=55,
+                    # REQ-3 (cinematic letterboxing): fits mystery's
+                    # own moody, cinematic tone.
+                    letterbox_enabled_by_default=True,
                 ),
                 thumbnail=GenreThumbnailProfile(
                     style_id="thumbnail.mystery",
@@ -1347,7 +1429,11 @@ class GenreProfileRegistryService:
                     sound_effect_preset_ids=[
                         "sfx.whoosh_transition",
                     ],
-                    subtitle_preset_id="subtitle.default",
+                    # REQ-5 (genre-aware subtitle styling), 2026-09-22:
+                    # reaction's own thumbnail text_style="bold_
+                    # expressive" - the same bold energy fits its
+                    # subtitles too.
+                    subtitle_preset_id="subtitle.bold_punchy",
                     maximum_active_effects=10,
                     default_transition_duration_seconds=0.3,
                     default_music_volume_percent=20.0,
@@ -1424,7 +1510,12 @@ class GenreProfileRegistryService:
                     slang_intensity=DirectiveIntensity.MEDIUM,
                 ),
                 voice=GenreVoiceProfile(
-                    voice_profile_id="voice.neutral_narrator",
+                    # REQ (voice profile differentiation, 2026-09-23):
+                    # was voice.neutral_narrator - see
+                    # voice.tense_suspense's own comment in
+                    # voice_profile_registry_service.py. Free-text tags
+                    # below unchanged, already fit survival well.
+                    voice_profile_id="voice.tense_suspense",
                     voice_delivery_mode=VoiceDeliveryMode.EMOTION_TAGS,
                     emotion="serious",
                     pace=GenrePacingStyle.MODERATE,
@@ -1440,6 +1531,8 @@ class GenreProfileRegistryService:
                     visual_preset_ids=[
                         "visual.horror_dark_grade",
                         "visual.lut_bleach_bypass",
+                        "visual.vignette_soft",
+                        "visual.film_grain_light",
                     ],
                     animation_preset_ids=[
                         "animation.slow_pan_vertical",
@@ -1452,6 +1545,18 @@ class GenreProfileRegistryService:
                     subtitle_animation_preset_id="animation.subtitle_fade",
                     default_transition_duration_seconds=0.7,
                     default_music_volume_percent=22.0,
+                    # REQ-1/2, 2026-09-22: real, non-zero range -
+                    # matches history/mystery's own moderate-high
+                    # treatment; survival already leans gritty
+                    # (horror_dark_grade/bleach_bypass), grain/vignette
+                    # reinforce that at real high-tension moments.
+                    film_grain_minimum_intensity_percent=10,
+                    film_grain_maximum_intensity_percent=45,
+                    vignette_minimum_intensity_percent=15,
+                    vignette_maximum_intensity_percent=50,
+                    # REQ-3 (cinematic letterboxing): reinforces
+                    # survival's own gritty, high-tension look.
+                    letterbox_enabled_by_default=True,
                 ),
                 thumbnail=GenreThumbnailProfile(
                     style_id="thumbnail.survival",
@@ -1508,6 +1613,132 @@ class GenreProfileRegistryService:
                     "survival",
                     "preparedness",
                     "outdoors",
+                ],
+            ),
+            GenreProfile(
+                genre_id="genre.comedy",
+                display_name="Comedy / Entertainment",
+                description=(
+                    "Fast-paced, punchline-driven comedic " "entertainment content."
+                ),
+                script=GenreScriptProfile(
+                    tone=GenreTone.HUMOROUS,
+                    pacing=GenrePacingStyle.DYNAMIC,
+                    hook_style="punchline_tease",
+                    narrative_style="comedic",
+                    sentence_length="short",
+                    use_cliffhangers=False,
+                    use_open_loops=False,
+                    emotional_intensity=DirectiveIntensity.MEDIUM,
+                    slang_intensity=DirectiveIntensity.HIGH,
+                ),
+                voice=GenreVoiceProfile(
+                    # REQ (voice profile differentiation, 2026-09-23):
+                    # was voice.neutral_narrator, shared with 5 other
+                    # unrelated genres - see voice.comedy_playful's own
+                    # comment in voice_profile_registry_service.py. This
+                    # genre's own emotion/pace/pitch_style/pause_style/
+                    # emphasis_style free-text tags below are unchanged -
+                    # they already fit comedy well; only the underlying
+                    # base profile (numeric TTS parameters, real-voice-
+                    # search tags) needed a genre-appropriate match
+                    # instead of neutral's generic defaults.
+                    voice_profile_id="voice.comedy_playful",
+                    voice_delivery_mode=VoiceDeliveryMode.EMOTION_TAGS,
+                    emotion="playful",
+                    pace=GenrePacingStyle.FAST,
+                    energy=DirectiveIntensity.HIGH,
+                    pitch_style="bright",
+                    pause_style="comedic_timing",
+                    emphasis_style="punchline",
+                ),
+                editing=GenreEditingProfile(
+                    camera_preset_id="camera.none",
+                    transition_in_preset_id="transition.cut",
+                    transition_out_preset_id="transition.cut",
+                    visual_preset_ids=[
+                        "visual.high_contrast_punch",
+                    ],
+                    music_preset_id="music.comedy_upbeat_quirky",
+                    sound_effect_preset_ids=[
+                        "sfx.whoosh_transition",
+                    ],
+                    # REQ-5 (genre-aware subtitle styling), 2026-09-22:
+                    # comedy's own thumbnail text_style="bold_playful" -
+                    # the same bold energy fits its subtitles too.
+                    subtitle_preset_id="subtitle.bold_punchy",
+                    maximum_active_effects=10,
+                    default_transition_duration_seconds=0.25,
+                    default_music_volume_percent=20.0,
+                ),
+                thumbnail=GenreThumbnailProfile(
+                    style_id="thumbnail.comedy",
+                    composition="subject_and_context",
+                    color_mood="bright_vibrant",
+                    text_style="bold_playful",
+                    use_faces=True,
+                    maximum_words=4,
+                ),
+                seo=GenreSEOProfile(
+                    title_tone=GenreTone.HUMOROUS,
+                    description_style="playful_engaging",
+                    keyword_style="trending",
+                    hashtag_style="comedy",
+                ),
+                content_intelligence=GenreContentIntelligenceProfile(
+                    # Real-world finding, 2026-09-21: the user asked
+                    # for Google Flow (AI_GENERATE) as this genre's
+                    # default source - GenreContentIntelligenceProfile's
+                    # own validator explicitly disallows this
+                    # ("AI_GENERATE is reserved and disabled" as a
+                    # genre-level default; only MANUAL_UPLOAD/
+                    # STOCK_FOOTAGE are supported, Scene's own validator
+                    # enforces the same restriction). Flow generation
+                    # stays available per scene via the normal
+                    # AssetUserDecision.AI_GENERATE decision path - it
+                    # just can't be this genre's own automatic default.
+                    # MANUAL_UPLOAD chosen to match genre.reaction, the
+                    # closest existing entertainment-tagged genre.
+                    default_scene_source_type=SceneSourceType.MANUAL_UPLOAD,
+                    preferred_angle_styles=[
+                        "character_pov",
+                        "question_driven",
+                    ],
+                    narrative_architecture_hint=(
+                        "Setup -> escalating comedic bits -> punchline "
+                        "-> callback/button -> optional post-credit tag."
+                    ),
+                    pacing_curve=_oscillating_pacing_curve(),
+                    preferred_hook_archetypes=[
+                        HookArchetype.ABSURD_PREMISE,
+                        HookArchetype.COLD_OPEN,
+                    ],
+                    hook_intensity=DirectiveIntensity.HIGH,
+                    reveal_density_per_minute=3.0,
+                    pattern_interrupt_frequency=DirectiveIntensity.HIGH,
+                    research_policy=ResearchPolicy(
+                        depth=ResearchDepth.LOW,
+                        minimum_source_count=0,
+                        uncertain_information_policy=(
+                            UncertainInformationPolicy.USE_FREELY
+                        ),
+                    ),
+                    cta_policy=CTAPolicy.DIRECT,
+                    quality_thresholds={
+                        "audience_fit": 45,
+                        "hook_strength": 45,
+                    },
+                    character_policy=CharacterPolicy(
+                        allow_dialogue=True,
+                        maximum_character_count=5,
+                    ),
+                    scene_density_per_minute=8.0,
+                    average_visual_duration_seconds=5.0,
+                ),
+                tags=[
+                    "comedy",
+                    "entertainment",
+                    "humor",
                 ],
             ),
         ]

@@ -72,6 +72,16 @@ class ResolvedVisualEffectInstruction(MissionBaseModel):
 
     intensity: DirectiveIntensity = DirectiveIntensity.MEDIUM
 
+    # REQ-1/2, 2026-09-22: carried through from
+    # VisualEffectDirective.numeric_intensity_percent - see that
+    # field's own docstring.
+    numeric_intensity_percent: int | None = None
+
+    # REQ-12, 2026-09-23: carried through from
+    # VisualEffectDirective.rank_badge_text - see that field's own
+    # docstring.
+    rank_badge_text: str | None = None
+
     timing_mode: DirectiveTimingMode = DirectiveTimingMode.FULL_SCENE
 
     start_offset_seconds: float = 0.0

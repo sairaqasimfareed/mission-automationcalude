@@ -9,7 +9,10 @@ from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
+    QFileDialog,
+    QFormLayout,
     QFrame,
     QLineEdit,
     QScrollArea,
@@ -23,6 +26,7 @@ from src.desktop.widgets import (
     button,
     card,
     muted,
+    row,
     small_muted,
     status_label,
     subheading,
@@ -34,14 +38,20 @@ from src.models.export_variant import ExportVariant, ExportVariantCollection
 from src.models.final_export import FinalExportPackage
 from src.models.seo import SEOPackage, SEOStatus
 from src.models.specification_enums import AspectRatio
-from src.models.thumbnail import ThumbnailArtifact, ThumbnailArtifactStatus
+from src.models.thumbnail import (
+    ThumbnailArtifact,
+    ThumbnailArtifactStatus,
+    ThumbnailTextPosition,
+)
 from src.models.video_job import VideoJob
 from src.services.approval_gate_service import ApprovalGateService
 from src.services.export_variant_render_service import ExportVariantRenderService
 from src.services.final_export.final_export_service import FinalExportService
+from src.services.opening_title_card_service import OpeningTitleCardService
 from src.services.seo.seo_context_builder import SEOContextBuilder
 from src.services.seo.seo_package_service import SEOPackageService
 from src.services.thumbnail.thumbnail_package_service import ThumbnailPackageService
+from src.services.title_card_text_resolution_service import resolve_title_card_text
 
 _ORIENTATION_LABELS: list[tuple[str, str]] = [
     ("Landscape (16:9)", AspectRatio.LANDSCAPE.value),
@@ -70,6 +80,19 @@ _PLATFORM_ORIENTATION_SUGGESTION: dict[Platform, AspectRatio] = {
 }
 
 _LEFT = Qt.AlignmentFlag.AlignLeft
+
+# REQ-4 (opening title card): "" represents the real default (None on
+# VideoJob.title_card_text_position, which resolves to CENTER) rather
+# than an explicit CENTER override - keeping the distinction visible
+# in the UI (an unset override vs. an explicit choice that happens to
+# also be CENTER) even though both currently render identically.
+_TITLE_CARD_POSITION_LABELS: list[tuple[str, str]] = [
+    ("Auto (center)", ""),
+    ("Top", ThumbnailTextPosition.TOP.value),
+    ("Bottom", ThumbnailTextPosition.BOTTOM.value),
+    ("Center left", ThumbnailTextPosition.CENTER_LEFT.value),
+    ("Center right", ThumbnailTextPosition.CENTER_RIGHT.value),
+]
 
 
 def _resolved_genre_id(job: VideoJob) -> str:
@@ -158,6 +181,7 @@ class PackagingView(QWidget):
         on_change: Callable[[], None],
         approval_gate_service: ApprovalGateService | None = None,
         export_variant_render_service: ExportVariantRenderService | None = None,
+        opening_title_card_service: OpeningTitleCardService | None = None,
     ) -> None:
         super().__init__()
 
@@ -170,6 +194,14 @@ class PackagingView(QWidget):
         self._export_variant_render_service = (
             export_variant_render_service or ExportVariantRenderService()
         )
+        # REQ-4 (opening title card): unlike export_variant_render_
+        # service above, this cannot default-construct on its own - it
+        # needs real, already-configured image/music generation
+        # services (see services.get_opening_title_card_service()).
+        # None means "not wired up by this caller" - the title card
+        # card shows a real, disclosed message instead of a button
+        # rather than crashing.
+        self._opening_title_card_service = opening_title_card_service
         self._job_id: UUID | None = None
 
         outer_layout = QVBoxLayout(self)
@@ -203,6 +235,7 @@ class PackagingView(QWidget):
                 widget.deleteLater()
 
         self._build_seo_card(job)
+        self._build_title_card_card(job)
         self._build_thumbnail_card(job)
         self._build_export_variants_card(job)
         self._build_final_export_card(job)
@@ -265,6 +298,307 @@ class PackagingView(QWidget):
             layout.addWidget(small_muted("Requires an approved script."))
 
         self._layout.addWidget(frame)
+
+    def _build_title_card_card(self, job: VideoJob) -> None:
+        """
+        REQ-4 (opening title card): real per-project opt-in control -
+        default OFF (this spends real, billed generation cost every
+        enabled render, so genre never decides this, only the user
+        does), plus a manual title-text override (pre-filled with
+        what would auto-resolve: SEOPackage.selected_title, falling
+        back to topic) and a 5-way position override. Same screen the
+        CTA/export-variant controls and the real SEO title already
+        live on, per the user's own explicit design choice - this
+        override sits right next to the SEO title it defaults from.
+        """
+
+        frame, layout = card("Opening title card", icon_name="clapper")
+
+        layout.addWidget(
+            small_muted(
+                "A short branded intro before the video starts - a "
+                "dedicated AI-generated image and music sting, every "
+                "time it's enabled. Real generation cost, so it's off "
+                "by default."
+            )
+        )
+
+        assert self._job_id is not None
+
+        enabled_checkbox = QCheckBox("Add an opening title card to this render")
+        enabled_checkbox.setChecked(job.title_card_enabled)
+        layout.addWidget(enabled_checkbox)
+
+        seo_package = self._job_store.get_seo_package(self._job_id)
+
+        auto_resolved_title = resolve_title_card_text(
+            override=None,
+            selected_seo_title=(
+                seo_package.selected_title if seo_package is not None else None
+            ),
+            topic=job.topic,
+        )
+
+        form = QFormLayout()
+        form.setSpacing(8)
+
+        title_input = QLineEdit(job.title_card_text or "")
+        title_input.setPlaceholderText(f"Auto: {auto_resolved_title}")
+        form.addRow("Title text (optional override)", title_input)
+
+        position_select = QComboBox()
+        position_select.addItems([label for label, _ in _TITLE_CARD_POSITION_LABELS])
+
+        current_position_value = (
+            job.title_card_text_position.value
+            if job.title_card_text_position is not None
+            else ""
+        )
+
+        for index, (_label, value) in enumerate(_TITLE_CARD_POSITION_LABELS):
+            if value == current_position_value:
+                position_select.setCurrentIndex(index)
+                break
+
+        form.addRow("Text position", position_select)
+
+        layout.addLayout(form)
+
+        # REQ-12-adjacent, 2026-09-23: same real "manual override wins
+        # over AI generation" option added for the top10 countdown's
+        # own background image, applied here too. Auto/Manual is
+        # deliberately not a separate persisted mode flag - the image
+        # path itself IS the mode: empty means auto-generate, a real
+        # path means use it directly. "Auto-generate image" simply
+        # clears the field; "Upload my own image..." opens a picker
+        # and only changes the field if a file is actually chosen
+        # (cancelling the dialog leaves whatever was there before).
+        layout.addWidget(subheading("Background image"))
+
+        image_path_display = QLineEdit(job.title_card_image_path or "")
+        image_path_display.setReadOnly(True)
+        image_path_display.setPlaceholderText(
+            "Auto-generate a dedicated AI image (default)"
+        )
+
+        auto_image_button = button("Auto-generate image")
+        auto_image_button.clicked.connect(image_path_display.clear)
+
+        upload_image_button = button("Upload my own image...")
+        upload_image_button.clicked.connect(
+            lambda: self._handle_browse_title_card_image(image_path_display)
+        )
+
+        layout.addLayout(row(auto_image_button, upload_image_button))
+        layout.addWidget(image_path_display)
+
+        save_button = button("Save title card settings", icon_name="check")
+        save_button.clicked.connect(
+            lambda: self._handle_save_title_card_settings(
+                enabled_checkbox=enabled_checkbox,
+                title_input=title_input,
+                position_select=position_select,
+                image_path_display=image_path_display,
+            )
+        )
+        layout.addWidget(save_button, alignment=_LEFT)
+
+        if job.title_card_enabled:
+            layout.addWidget(subheading("Apply to your render"))
+
+            if self._opening_title_card_service is None:
+                layout.addWidget(
+                    small_muted("Title card generation is not configured.")
+                )
+            else:
+                assert self._job_id is not None
+
+                render_orchestration_result = self._job_store.get_render_result(
+                    self._job_id
+                )
+                render_result = (
+                    render_orchestration_result.render_result
+                    if render_orchestration_result is not None
+                    else None
+                )
+
+                if (
+                    render_orchestration_result is None
+                    or not render_orchestration_result.success
+                    or render_result is None
+                    or render_result.output_file is None
+                ):
+                    layout.addWidget(
+                        small_muted(
+                            "Requires a successful render (see Render "
+                            "Workspace) before a title card can be applied."
+                        )
+                    )
+                else:
+                    generate_title_card_button = button(
+                        "Generate title card onto the render",
+                        variant="primary",
+                        icon_name="clapper",
+                    )
+                    generate_title_card_button.clicked.connect(
+                        self._handle_generate_title_card
+                    )
+                    layout.addWidget(generate_title_card_button, alignment=_LEFT)
+
+        self._layout.addWidget(frame)
+
+    def _handle_generate_title_card(self) -> None:
+        """
+        REQ-4 (opening title card) real trigger: takes the job's
+        already-rendered video and prepends a real title card onto it,
+        replacing job_store's own render result with the new, longer
+        final file - the same file REQ-0A's own download/review
+        actions and this card's own export-variant pass already read
+        from, so no separate "which file is the real one" concept is
+        introduced.
+
+        Synchronous, matching this view's own established pattern for
+        every other real generation action here (SEO/thumbnail/export
+        variant) - none of them use a QThread worker; only the much
+        longer multi-scene main render does (RenderWorkspaceView).
+        """
+
+        job = self._current_job()
+
+        if (
+            job is None
+            or self._job_id is None
+            or self._opening_title_card_service is None
+        ):
+            return
+
+        render_orchestration_result = self._job_store.get_render_result(self._job_id)
+
+        if render_orchestration_result is None:
+            return
+
+        render_result = render_orchestration_result.render_result
+
+        if render_result is None or render_result.output_file is None:
+            return
+
+        seo_package = self._job_store.get_seo_package(self._job_id)
+
+        main_video_path = Path(render_result.output_file)
+
+        output_file = str(
+            main_video_path.with_name(
+                f"{main_video_path.stem}_with_title_card{main_video_path.suffix}"
+            )
+        )
+
+        try:
+            context = SEOContextBuilder().build(
+                job,
+                genre_id=_resolved_genre_id(job),
+            )
+
+            new_render_result = self._opening_title_card_service.build(
+                seo_context=context,
+                genre_id=_resolved_genre_id(job),
+                channel_name=job.channel_name,
+                topic=job.topic,
+                main_video_file=render_result.output_file,
+                main_video_duration_seconds=float(render_result.duration_seconds),
+                output_file=output_file,
+                selected_seo_title=(
+                    seo_package.selected_title if seo_package is not None else None
+                ),
+            )
+        except (RuntimeError, ValueError) as error:
+            self._record_error(
+                job,
+                f"Title card generation failed: {error}",
+                on_retry=self._handle_generate_title_card,
+            )
+
+            return
+
+        if not new_render_result.success:
+            message = new_render_result.error_message or "Title card generation failed."
+
+            self._record_error(
+                job,
+                message,
+                on_retry=self._handle_generate_title_card,
+            )
+
+            return
+
+        self._job_store.set_render_result(
+            self._job_id,
+            render_orchestration_result.model_copy(
+                update={"render_result": new_render_result}
+            ),
+        )
+
+        self._on_change()
+
+    def _handle_browse_title_card_image(self, image_path_display: QLineEdit) -> None:
+        file_path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "Select a background image for the title card",
+            "",
+            "Image files (*.png *.jpg *.jpeg *.webp)",
+        )
+
+        if file_path:
+            image_path_display.setText(file_path)
+
+    def _handle_save_title_card_settings(
+        self,
+        *,
+        enabled_checkbox: QCheckBox,
+        title_input: QLineEdit,
+        position_select: QComboBox,
+        image_path_display: QLineEdit,
+    ) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        job.title_card_enabled = enabled_checkbox.isChecked()
+
+        title_text = title_input.text().strip()
+
+        job.title_card_text = title_text or None
+
+        selected_label = position_select.currentText()
+
+        selected_value = next(
+            (
+                value
+                for label, value in _TITLE_CARD_POSITION_LABELS
+                if label == selected_label
+            ),
+            "",
+        )
+
+        job.title_card_text_position = (
+            ThumbnailTextPosition(selected_value) if selected_value else None
+        )
+
+        image_path = image_path_display.text().strip()
+
+        job.title_card_image_path = image_path or None
+
+        self._on_change()
+
+    def _handle_save_subtitles_enabled(self, checkbox: QCheckBox) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        job.subtitles_enabled = checkbox.isChecked()
+
+        self._on_change()
 
     def _build_thumbnail_card(self, job: VideoJob) -> None:
         frame, layout = card("Thumbnail", icon_name="image")
@@ -493,6 +827,23 @@ class PackagingView(QWidget):
         frame, layout = card("Export variants", icon_name="clapper")
 
         assert self._job_id is not None
+
+        subtitles_checkbox = QCheckBox("Include subtitles in the final video")
+        subtitles_checkbox.setChecked(job.subtitles_enabled)
+        layout.addWidget(subtitles_checkbox)
+
+        layout.addWidget(
+            small_muted(
+                "Applies to your NEXT render, not retroactively to an "
+                "already-rendered video above."
+            )
+        )
+
+        subtitles_save_button = button("Save subtitle setting", icon_name="check")
+        subtitles_save_button.clicked.connect(
+            lambda: self._handle_save_subtitles_enabled(subtitles_checkbox)
+        )
+        layout.addWidget(subtitles_save_button, alignment=_LEFT)
 
         render_orchestration_result = self._job_store.get_render_result(self._job_id)
         render_result = (

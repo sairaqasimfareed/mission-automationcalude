@@ -13,7 +13,7 @@ from src.models.ffmpeg_config import FFmpegConfig, FFmpegResolvedConfig
 from src.models.ffmpeg_input import FFmpegInputPlan
 from src.models.master_edit_plan import MasterEditPlan
 from src.models.render_failure_diagnosis import classify_render_failure
-from src.models.render_result import RenderResult, RenderStatus
+from src.models.render_result import RenderResult, RenderStatus, SceneRenderTiming
 from src.models.resolved_voice_blueprint import (
     ResolvedVoiceBlueprint,
 )
@@ -208,6 +208,8 @@ class ProductionRenderService:
         progress_callback: ProgressCallback | None = None,
         cancellation_check: CancellationCheck | None = None,
         transition_duration_seconds: float = 0.0,
+        letterbox_enabled: bool = False,
+        include_subtitles: bool = True,
     ) -> RenderResult:
         """
         Execute a prepared production timeline through FFmpeg.
@@ -239,6 +241,23 @@ class ProductionRenderService:
         it (the default, 0.0) reproduces this method's exact prior
         behavior and is correct whenever the render never needs
         chunking, or the genre has no configured transition duration.
+
+        letterbox_enabled (REQ-3, cinematic letterboxing) should be
+        the caller's own already-resolved value (genre default + real
+        per-project override - see VideoJob.letterbox_enabled's own
+        docstring). Omitting it (the default, False) reproduces this
+        method's exact prior behavior.
+
+        include_subtitles - the caller's own real per-project
+        VideoJob.subtitles_enabled toggle. Omitting it (the default,
+        True) reproduces this method's exact prior behavior - every
+        real render up to this point always burned subtitles in
+        unconditionally. False reuses the exact same
+        RenderGraphBuilderService/FilterGraphBuilderService relaxation
+        REQ-00 Stage 1's render_video_only() already proved (skips
+        SUBTITLE node construction entirely) - this is the first
+        caller to expose it as a real per-project choice rather than
+        an all-or-nothing Stage 1/Stage 2 split.
         """
 
         duration_seconds = video_timeline.calculate_duration()
@@ -272,6 +291,8 @@ class ProductionRenderService:
                 target_output_file=target_output_file,
                 resolved_config=resolved_config,
                 transition_duration_seconds=transition_duration_seconds,
+                letterbox_enabled=letterbox_enabled,
+                include_subtitles=include_subtitles,
             )
         )
 
@@ -330,6 +351,8 @@ class ProductionRenderService:
                             target_output_file=target_output_file,
                             resolved_config=resolved_config,
                             transition_duration_seconds=(transition_duration_seconds),
+                            letterbox_enabled=letterbox_enabled,
+                            include_subtitles=include_subtitles,
                         )
                     )
 
@@ -355,7 +378,385 @@ class ProductionRenderService:
             progress_callback=progress_callback,
             cancellation_check=cancellation_check,
             transition_duration_seconds=transition_duration_seconds,
+            letterbox_enabled=letterbox_enabled,
+            include_subtitles=include_subtitles,
         )
+
+    def render_video_only(
+        self,
+        *,
+        video_timeline: VideoTimeline,
+        audio_timeline: AudioTimeline,
+        voice_blueprints: list[ResolvedVoiceBlueprint],
+        output_file: str | None = None,
+        progress_callback: ProgressCallback | None = None,
+        cancellation_check: CancellationCheck | None = None,
+        transition_duration_seconds: float = 0.0,
+        letterbox_enabled: bool = False,
+    ) -> RenderResult:
+        """
+        REQ-00 Stage 1: render scenes/crossfades/transitions/color-
+        grade/grain/vignette only - no audio, no subtitles muxed in.
+        Narration/music/SFX still generate normally elsewhere in the
+        pipeline (Stage 2 mixes them onto this method's own output
+        later, via a separate service - not built yet); this method
+        never touches them.
+
+        audio_timeline/voice_blueprints are still required, same as
+        render() - MasterEditPlanService's duration-compatibility
+        validation and SubtitleExecutionService's own plan-readiness
+        check both still run unchanged (only the render graph's node
+        construction skips AUDIO_TRACK/AUDIO_MIX/SUBTITLE), so this
+        method's input contract deliberately matches render() exactly
+        rather than inventing a narrower one.
+
+        transition_duration_seconds should be the same value the
+        caller resolved for this job (same meaning as render()'s own
+        parameter of the same name) - used here only to compute each
+        scene's real, crossfade-corrected final position (see
+        _compute_real_scene_timings/SceneRenderTiming), never forwarded
+        to command-plan construction, since subtitle timing (the only
+        other consumer of this value in _build_command_plan) is
+        irrelevant when include_subtitles=False.
+
+        Deliberately does not support command-line-length-driven
+        chunking yet (see render()'s own _render_chunked) - raises
+        rather than silently producing a truncated or malformed
+        command for a video long/complex enough to need it. Chunked
+        video-only rendering is real follow-up work, not done here.
+
+        letterbox_enabled (REQ-3) is the caller's own already-resolved
+        value, same meaning as render()'s own parameter of the same
+        name.
+        """
+
+        duration_seconds = video_timeline.calculate_duration()
+
+        if duration_seconds <= 0.0:
+            raise ValueError(
+                "Production rendering requires " "positive video duration."
+            )
+
+        if not voice_blueprints:
+            raise ValueError(
+                "Production rendering requires " "resolved voice blueprints."
+            )
+
+        target_output_file = self._resolve_output_file(output_file)
+
+        effective_ffmpeg_config = self._with_bounded_keyframe_interval(
+            self._ffmpeg_config,
+            frame_rate=video_timeline.frame_rate,
+        )
+
+        resolved_config = self._ffmpeg_capability_service.resolve(
+            effective_ffmpeg_config
+        )
+
+        command_plan, master_plan, warnings, staging_output_file = (
+            self._build_command_plan(
+                video_timeline=video_timeline,
+                audio_timeline=audio_timeline,
+                voice_blueprints=voice_blueprints,
+                target_output_file=target_output_file,
+                resolved_config=resolved_config,
+                include_audio=False,
+                include_subtitles=False,
+                letterbox_enabled=letterbox_enabled,
+            )
+        )
+
+        full_command_length = self._assembled_command_length(command_plan)
+
+        if full_command_length is not None and full_command_length > (
+            self._SAFE_COMMAND_LINE_LENGTH
+        ):
+            raise NotImplementedError(
+                "This video is long/complex enough to need chunked "
+                "rendering, which REQ-00 Stage 1's video-only render "
+                "does not support yet - render() (the existing "
+                "composite path) still handles this case."
+            )
+
+        scene_timings = self._compute_real_scene_timings(
+            video_timeline=video_timeline,
+            transition_duration_seconds=transition_duration_seconds,
+        )
+
+        return self._execute_command_plan(
+            command_plan=command_plan,
+            master_plan=master_plan,
+            warnings=warnings,
+            resolved_config=resolved_config,
+            duration_seconds=duration_seconds,
+            staging_output_file=staging_output_file,
+            target_output_file=target_output_file,
+            progress_callback=progress_callback,
+            cancellation_check=cancellation_check,
+            scene_timings=scene_timings,
+        )
+
+    def render_top10_countdown(
+        self,
+        *,
+        video_timeline: VideoTimeline,
+        audio_timeline: AudioTimeline,
+        voice_blueprints: list[ResolvedVoiceBlueprint],
+        rank_by_scene_number: dict[int, int],
+        rank_card_results: dict[int, RenderResult],
+        output_file: str | None = None,
+        progress_callback: ProgressCallback | None = None,
+        cancellation_check: CancellationCheck | None = None,
+        transition_duration_seconds: float = 0.0,
+        letterbox_enabled: bool = False,
+        include_subtitles: bool = True,
+    ) -> RenderResult:
+        """
+        REQ-12 (top10 countdown rank cards): render the main timeline
+        as real, independent scene-range segments split at each rank's
+        own first scene, splice each rank's standalone card
+        (TopTenRankCardRenderService's own already-rendered output -
+        picture and "Number N"/whoosh audio already baked into one
+        real file) immediately before that rank's segment, then
+        losslessly join every segment into one final file - a real
+        hard cut at every rank-card boundary, never a crossfade,
+        sidestepping this codebase's own documented crossfade-
+        arithmetic bug history for a boundary kind
+        VoicePipelineStage's positioning was never told about.
+
+        Deliberately reuses three already-proven primitives rather
+        than inventing new timing math: _slice_for_scenes (the same
+        real, crossfade-corrected scene-range slicing _render_chunked
+        already relies on for oversized-command chunking, just driven
+        by rank boundaries here instead of command-length ones),
+        _build_command_plan/_execute_command_plan (identical to every
+        other render path), and _concat_chunks (already re-decodes/
+        re-encodes rather than stream-copying, so it tolerates the
+        rank cards' own, independently-produced encoder state exactly
+        the way it already tolerates one chunked render's own
+        independently-produced segments).
+
+        rank_by_scene_number maps a ranked scene's own scene_number to
+        its rank (1-10) - typically
+        TopTenRankAssignmentResult.rank_by_scene_number(). A scene
+        absent from this mapping is treated as unranked (the real
+        intro/hook footage that precedes rank 10) and gets no card
+        inserted before it.
+
+        rank_card_results maps rank -> that rank's own real,
+        already-executed TopTenRankCardRenderService.build() result -
+        every rank actually referenced by rank_by_scene_number must
+        have a successful entry here, or this method raises rather
+        than silently rendering without that rank's card.
+        """
+
+        duration_seconds = video_timeline.calculate_duration()
+
+        if duration_seconds <= 0.0:
+            raise ValueError(
+                "Production rendering requires " "positive video duration."
+            )
+
+        if not voice_blueprints:
+            raise ValueError(
+                "Production rendering requires " "resolved voice blueprints."
+            )
+
+        scene_numbers = sorted(
+            {item.scene_number for item in video_timeline.items if item.enabled}
+        )
+
+        if not scene_numbers:
+            raise ValueError(
+                "Top10 countdown rendering requires " "at least one enabled scene."
+            )
+
+        rank_groups = self._group_scenes_by_rank(
+            scene_numbers=scene_numbers,
+            rank_by_scene_number=rank_by_scene_number,
+        )
+
+        used_ranks = sorted(
+            {rank for rank, _group_scene_numbers in rank_groups if rank is not None}
+        )
+
+        if not used_ranks:
+            raise ValueError(
+                "Top10 countdown rendering requires " "at least one ranked scene."
+            )
+
+        missing_ranks = [
+            rank
+            for rank in used_ranks
+            if not (
+                (result := rank_card_results.get(rank)) is not None
+                and result.success
+                and result.output_file
+            )
+        ]
+
+        if missing_ranks:
+            missing_text = ", ".join(str(rank) for rank in missing_ranks)
+
+            raise ValueError(
+                "Top10 countdown rendering is missing a real, "
+                f"successful rank card for rank(s): {missing_text}."
+            )
+
+        target_output_file = self._resolve_output_file(output_file)
+
+        effective_ffmpeg_config = self._with_bounded_keyframe_interval(
+            self._ffmpeg_config,
+            frame_rate=video_timeline.frame_rate,
+        )
+
+        resolved_config = self._ffmpeg_capability_service.resolve(
+            effective_ffmpeg_config
+        )
+
+        scene_chunk_indices = {
+            scene_number: group_index
+            for group_index, (_rank, group_scene_numbers) in enumerate(rank_groups)
+            for scene_number in group_scene_numbers
+        }
+
+        target_path = Path(target_output_file)
+
+        segment_output_files: list[str] = []
+        chunk_files: list[str] = []
+        aggregated_warnings: list[str] = []
+        total_render_time_seconds = 0.0
+
+        for group_index, (rank, group_scene_numbers) in enumerate(rank_groups):
+            group_video_timeline, group_audio_timeline, group_voice_blueprints = (
+                self._slice_for_scenes(
+                    video_timeline=video_timeline,
+                    audio_timeline=audio_timeline,
+                    voice_blueprints=voice_blueprints,
+                    scene_numbers=set(group_scene_numbers),
+                    chunk_index=group_index,
+                    transition_duration_seconds=transition_duration_seconds,
+                    scene_chunk_indices=scene_chunk_indices,
+                )
+            )
+
+            segment_output_file = str(
+                target_path.with_name(
+                    f"{target_path.stem}.rankchunk{group_index:03d}"
+                    f"{target_path.suffix}"
+                )
+            )
+
+            command_plan, master_plan, warnings, staging_output_file = (
+                self._build_command_plan(
+                    video_timeline=group_video_timeline,
+                    audio_timeline=group_audio_timeline,
+                    voice_blueprints=group_voice_blueprints,
+                    target_output_file=segment_output_file,
+                    resolved_config=resolved_config,
+                    include_timeline_in=(group_index == 0),
+                    include_timeline_out=(group_index == len(rank_groups) - 1),
+                    transition_duration_seconds=transition_duration_seconds,
+                    letterbox_enabled=letterbox_enabled,
+                    include_subtitles=include_subtitles,
+                )
+            )
+
+            segment_result = self._execute_command_plan(
+                command_plan=command_plan,
+                master_plan=master_plan,
+                warnings=warnings,
+                resolved_config=resolved_config,
+                duration_seconds=group_video_timeline.calculate_duration(),
+                staging_output_file=staging_output_file,
+                target_output_file=segment_output_file,
+                progress_callback=progress_callback,
+                cancellation_check=cancellation_check,
+            )
+
+            if not segment_result.success:
+                self._cleanup_chunk_files(segment_output_files)
+
+                return segment_result
+
+            segment_output_files.append(
+                segment_result.output_file or segment_output_file
+            )
+
+            aggregated_warnings.extend(segment_result.warnings)
+
+            total_render_time_seconds += segment_result.render_time_seconds
+
+            if rank is not None:
+                chunk_files.append(str(rank_card_results[rank].output_file))
+
+            chunk_files.append(segment_result.output_file or segment_output_file)
+
+        total_duration_seconds = duration_seconds + sum(
+            float(rank_card_results[rank].duration_seconds) for rank in used_ranks
+        )
+
+        concat_result = self._concat_chunks(
+            chunk_files=chunk_files,
+            target_output_file=target_output_file,
+            total_duration_seconds=total_duration_seconds,
+            resolved_config=resolved_config,
+            progress_callback=progress_callback,
+            cancellation_check=cancellation_check,
+        )
+
+        self._cleanup_chunk_files(segment_output_files)
+
+        if not concat_result.success:
+            return concat_result
+
+        combined_warnings = self._unique_warnings(
+            [
+                *aggregated_warnings,
+                *concat_result.warnings,
+                "Render was split at rank-card boundaries and "
+                f"{len(used_ranks)} countdown card(s) were spliced in "
+                "as real hard cuts.",
+            ]
+        )
+
+        return concat_result.model_copy(
+            update={
+                "render_time_seconds": (
+                    total_render_time_seconds + concat_result.render_time_seconds
+                ),
+                "duration_seconds": int(total_duration_seconds),
+                "warnings": combined_warnings,
+            }
+        )
+
+    @staticmethod
+    def _group_scenes_by_rank(
+        *,
+        scene_numbers: list[int],
+        rank_by_scene_number: dict[int, int],
+    ) -> list[tuple[int | None, list[int]]]:
+        """
+        Split ordered scene numbers into contiguous runs sharing the
+        same rank (or no rank at all).
+
+        A rank's real coverage is always a contiguous block of the
+        script (TopTenRankAssignmentService assigns one rank to one
+        contiguous group of scenes), so this never needs to merge two
+        separated runs of the same rank back together.
+        """
+
+        groups: list[tuple[int | None, list[int]]] = []
+
+        for scene_number in scene_numbers:
+            rank = rank_by_scene_number.get(scene_number)
+
+            if groups and groups[-1][0] == rank:
+                groups[-1][1].append(scene_number)
+            else:
+                groups.append((rank, [scene_number]))
+
+        return groups
 
     @classmethod
     def _with_bounded_keyframe_interval(
@@ -402,6 +803,9 @@ class ProductionRenderService:
         include_timeline_in: bool = True,
         include_timeline_out: bool = True,
         transition_duration_seconds: float = 0.0,
+        include_audio: bool = True,
+        include_subtitles: bool = True,
+        letterbox_enabled: bool = False,
     ) -> tuple[FFmpegCommandPlan, MasterEditPlan, list[str], str]:
         """
         Build the deterministic FFmpeg command for one timeline pair
@@ -419,6 +823,15 @@ class ProductionRenderService:
         audio: a real crossfade blends two scenes' full frames
         (subtitles already burned in) together for that many seconds
         at every internal boundary.
+
+        include_audio/include_subtitles default to True, reproducing
+        this method's exact prior behavior. REQ-00 Stage 1 (video-only
+        render, see render_video_only()) passes both False - the
+        caller still supplies a real audio_timeline/voice_blueprints
+        (master_plan/subtitle_plan construction and duration-
+        compatibility validation are unchanged either way), only the
+        render graph's own node construction skips AUDIO_TRACK/
+        AUDIO_MIX/SUBTITLE nodes.
         """
 
         staging_output_file = self._staging_output_file(target_output_file)
@@ -479,6 +892,9 @@ class ProductionRenderService:
             camera_plan=camera_plan,
             animation_plan=animation_plan,
             mark_ready=True,
+            include_audio=include_audio,
+            include_subtitles=include_subtitles,
+            letterbox_enabled=letterbox_enabled,
         )
 
         filter_graph = self._filter_graph_builder_service.build(
@@ -515,8 +931,16 @@ class ProductionRenderService:
         target_output_file: str,
         progress_callback: ProgressCallback | None,
         cancellation_check: CancellationCheck | None,
+        scene_timings: list[SceneRenderTiming] | None = None,
     ) -> RenderResult:
-        """Execute one already-built FFmpeg command plan to completion."""
+        """
+        Execute one already-built FFmpeg command plan to completion.
+
+        scene_timings defaults to None (empty on the returned
+        RenderResult) - only render_video_only() currently computes
+        and passes real timings through; every other caller is
+        unaffected.
+        """
 
         self._master_edit_plan_service.mark_rendering(master_plan)
 
@@ -595,6 +1019,7 @@ class ProductionRenderService:
                 selected_video_codec=selected_video_codec,
                 selected_audio_codec=selected_audio_codec,
                 selected_hardware_acceleration=(selected_hardware_acceleration),
+                scene_timings=list(scene_timings or []),
             )
 
         error_message = execution_result.error_message or (
@@ -695,6 +1120,8 @@ class ProductionRenderService:
         progress_callback: ProgressCallback | None,
         cancellation_check: CancellationCheck | None,
         transition_duration_seconds: float = 0.0,
+        letterbox_enabled: bool = False,
+        include_subtitles: bool = True,
     ) -> RenderResult:
         """
         Render a timeline too large for one FFmpeg command line as
@@ -705,6 +1132,10 @@ class ProductionRenderService:
         path as a normal render (_build_command_plan /
         _execute_command_plan) - only the video/audio timeline given
         to it is a scene-bounded slice, re-based to start at zero.
+
+        letterbox_enabled (REQ-3) is applied identically to every
+        chunk (same crop/pad params, same output resolution) so the
+        concatenated chunks stay visually consistent at their seams.
         """
 
         scene_numbers = sorted(
@@ -722,6 +1153,8 @@ class ProductionRenderService:
                     target_output_file=target_output_file,
                     resolved_config=resolved_config,
                     transition_duration_seconds=transition_duration_seconds,
+                    letterbox_enabled=letterbox_enabled,
+                    include_subtitles=include_subtitles,
                 )
             )
 
@@ -745,6 +1178,8 @@ class ProductionRenderService:
             resolved_config=resolved_config,
             full_command_length=full_command_length,
             transition_duration_seconds=transition_duration_seconds,
+            letterbox_enabled=letterbox_enabled,
+            include_subtitles=include_subtitles,
         )
 
         scene_groups = self._split_scene_numbers(scene_numbers, chunk_count)
@@ -786,6 +1221,8 @@ class ProductionRenderService:
                     include_timeline_in=(index == 0),
                     include_timeline_out=(index == len(scene_groups) - 1),
                     transition_duration_seconds=transition_duration_seconds,
+                    letterbox_enabled=letterbox_enabled,
+                    include_subtitles=include_subtitles,
                 )
             )
 
@@ -857,6 +1294,8 @@ class ProductionRenderService:
         resolved_config: FFmpegResolvedConfig,
         full_command_length: int,
         transition_duration_seconds: float = 0.0,
+        letterbox_enabled: bool = False,
+        include_subtitles: bool = True,
     ) -> int:
         """
         Return the smallest chunk count whose every chunk's own
@@ -898,6 +1337,8 @@ class ProductionRenderService:
                     chunk_index=group_index,
                     transition_duration_seconds=transition_duration_seconds,
                     scene_chunk_indices=scene_chunk_indices,
+                    letterbox_enabled=letterbox_enabled,
+                    include_subtitles=include_subtitles,
                 )
                 for group_index, group in enumerate(groups)
             ):
@@ -916,6 +1357,8 @@ class ProductionRenderService:
         chunk_index: int = 0,
         transition_duration_seconds: float = 0.0,
         scene_chunk_indices: dict[int, int] | None = None,
+        letterbox_enabled: bool = False,
+        include_subtitles: bool = True,
     ) -> bool:
         """Build one candidate chunk's command plan just to measure it."""
 
@@ -939,6 +1382,8 @@ class ProductionRenderService:
                 target_output_file=self.DEFAULT_OUTPUT_FILE,
                 resolved_config=resolved_config,
                 transition_duration_seconds=transition_duration_seconds,
+                letterbox_enabled=letterbox_enabled,
+                include_subtitles=include_subtitles,
             )
         )
 
@@ -1053,6 +1498,63 @@ class ProductionRenderService:
                 running_count += 1
 
         return counts
+
+    @classmethod
+    def _compute_real_scene_timings(
+        cls,
+        *,
+        video_timeline: VideoTimeline,
+        transition_duration_seconds: float,
+    ) -> list[SceneRenderTiming]:
+        """
+        REQ-00 Stage 1: each enabled video clip's real, crossfade-
+        corrected position in the rendered video-only output's own
+        final timeline - see SceneRenderTiming's own docstring for why
+        this exists and who consumes it.
+
+        Reuses _cumulative_real_crossfade_counts rather than
+        reimplementing the same correction a second time.
+        render_video_only() never chunks (see its own docstring - a
+        NotImplementedError is raised instead for a command long
+        enough to need it), so every item maps to one single chunk for
+        that method's own purposes - every boundary between enabled
+        items is a real crossfade, none are chunk hard-cuts. Inherits
+        the same documented, known limitation every other consumer of
+        this correction has: one uniform transition_duration_seconds
+        across every boundary, not a real per-scene override.
+        """
+
+        ordered_items = sorted(
+            (item for item in video_timeline.items if item.enabled),
+            key=lambda item: item.start_time_seconds,
+        )
+
+        scene_chunk_indices = {item.scene_number: 0 for item in ordered_items}
+
+        crossfade_counts = cls._cumulative_real_crossfade_counts(
+            video_timeline=video_timeline,
+            scene_chunk_indices=scene_chunk_indices,
+        )
+
+        timings: list[SceneRenderTiming] = []
+
+        for item in ordered_items:
+            real_start_seconds = max(
+                0.0,
+                item.start_time_seconds
+                - (crossfade_counts.get(item.id, 0) * transition_duration_seconds),
+            )
+
+            timings.append(
+                SceneRenderTiming(
+                    scene_number=item.scene_number,
+                    clip_sequence_index=item.clip_sequence_index,
+                    start_seconds=real_start_seconds,
+                    end_seconds=(real_start_seconds + item.duration_seconds),
+                )
+            )
+
+        return timings
 
     @classmethod
     def _slice_for_scenes(

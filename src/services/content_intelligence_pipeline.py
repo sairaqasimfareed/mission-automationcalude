@@ -80,6 +80,7 @@ from src.services.story_angle_generation_service import StoryAngleGenerationServ
 from src.services.story_blueprint_generation_service import (
     StoryBlueprintGenerationService,
 )
+from src.services.top10_rank_assignment_service import TopTenRankAssignmentService
 from src.services.visual_continuity_service import VisualContinuityService
 from src.services.visual_continuity_validation_service import (
     VisualContinuityValidationService,
@@ -239,6 +240,11 @@ class ContentIntelligencePipeline:
         )
         self.continuity_validation_service = ContinuityValidationService()
         self.scene_sound_design_service = SceneSoundDesignService(
+            llm_service=llm_service,
+            profile_ids=profile_ids,
+            estimated_cost_usd=estimated_cost_usd,
+        )
+        self.top10_rank_assignment_service = TopTenRankAssignmentService(
             llm_service=llm_service,
             profile_ids=profile_ids,
             estimated_cost_usd=estimated_cost_usd,
@@ -775,6 +781,57 @@ class ContentIntelligencePipeline:
                 f"({len(job.sound_design_plan.sfx_cues)} SFX cue(s), "
                 f"{len(job.sound_design_plan.music_segments)} music "
                 "segment(s))."
+            ),
+            category=DecisionCategory.GENERATION,
+        )
+
+        return job
+
+    def run_top10_rank_assignment(self, job: VideoJob) -> VideoJob:
+        """
+        REQ-12 (top10 countdown rank cards): assign countdown ranks
+        (10 down to 1) to a genre.top10 job's already-generated
+        scenes, from their real narration - see
+        TopTenRankAssignmentService's own docstring for why this runs
+        as a separate, later pass rather than being threaded through
+        script/scene generation itself.
+
+        Only meaningful for genre.top10 - callers (run_all() below)
+        gate on that; this method itself does not re-check genre_id,
+        matching run_sound_design()'s own separation of "what runs
+        this stage" from "how the stage itself works".
+
+        Fails loudly (does not write anything onto job.scenes) when
+        the assignment is incomplete - a countdown video missing one
+        of its own numbered items is a real, user-visible defect that
+        must surface before render, not something to guess around.
+        """
+
+        if not job.scenes:
+            raise RuntimeError("Rank assignment requires planned scenes.")
+
+        result = self.top10_rank_assignment_service.assign(scenes=job.scenes)
+
+        if result.missing_ranks:
+            missing = ", ".join(str(rank) for rank in result.missing_ranks)
+
+            raise RuntimeError(
+                f"Rank assignment did not cover every countdown item - "
+                f"missing rank(s): {missing}."
+            )
+
+        rank_by_scene_number = result.rank_by_scene_number()
+
+        for scene in job.scenes:
+            scene.list_rank = rank_by_scene_number.get(scene.scene_number)
+
+        self.approval_gate_service.record_event(
+            job=job,
+            stage="top10_rank_assignment",
+            summary=(
+                f"Countdown rank assignment complete "
+                f"({len(result.assignments)} rank(s), "
+                f"{len(result.warnings)} warning(s))."
             ),
             category=DecisionCategory.GENERATION,
         )
@@ -1771,6 +1828,24 @@ class ContentIntelligencePipeline:
 
         if job.sound_design_plan is None and job.scenes:
             job = self.run_sound_design(job)
+
+        # REQ-12 (top10 countdown rank cards): only meaningful for
+        # this one genre - every other genre's scenes keep
+        # list_rank=None, its own real default. Guarded on "has ANY
+        # scene been assigned a rank yet" rather than "does every
+        # scene have one" - hook/intro scenes deliberately keep
+        # list_rank=None forever by design (see
+        # TopTenRankAssignmentService's own docstring), so checking
+        # for a fully-ranked scene list would never be true and would
+        # re-run this stage on every single run_all() call instead of
+        # just the first. A script revision that regenerates job.scenes
+        # (run_scene_planning building fresh Scene instances) already
+        # resets every one of them to list_rank=None, so this check
+        # correctly re-triggers assignment for the new scenes too,
+        # with no separate invalidation tracking needed.
+        if job.genre_id == "genre.top10" and job.scenes:
+            if not any(scene.list_rank is not None for scene in job.scenes):
+                job = self.run_top10_rank_assignment(job)
 
         # Real-world finding, 2026-09-14: the visual-continuity ->
         # shot-planning -> cinematic-prompt-compilation chain is fully

@@ -56,8 +56,28 @@ class RenderGraphBuilderService:
         camera_plan: CameraExecutionPlan,
         animation_plan: AnimationExecutionPlan,
         mark_ready: bool = True,
+        include_audio: bool = True,
+        include_subtitles: bool = True,
+        letterbox_enabled: bool = False,
     ) -> RenderGraph:
-        """Build and validate the complete final render graph."""
+        """
+        Build and validate the complete final render graph.
+
+        include_audio/include_subtitles default to True, reproducing
+        this method's exact prior behavior for every existing caller.
+        REQ-00 Stage 1 (video-only render) passes both False so the
+        graph contains only VIDEO_CLIP/TRANSITION/editing nodes and no
+        AUDIO_TRACK/AUDIO_MIX/SUBTITLE nodes - subtitle_plan is still
+        validated either way (a caller always has a real one to give,
+        even if unused here), only its node construction is skipped.
+
+        letterbox_enabled defaults to False, reproducing this method's
+        exact prior behavior. REQ-3 (cinematic letterboxing) carries
+        the caller's already-resolved (genre default + real per-
+        project override) choice onto the video-composition node's own
+        payload - FilterGraphBuilderService reads it from there, same
+        place output_resolution/frame_rate already travel.
+        """
 
         if not master_plan.ready_for_render:
             raise ValueError(
@@ -99,9 +119,11 @@ class RenderGraphBuilderService:
 
             video_node_by_scene[key] = str(node.id)
 
-        audio_nodes = [
-            self._audio_node(track) for track in master_plan.audio_timeline.tracks
-        ]
+        audio_nodes = (
+            [self._audio_node(track) for track in master_plan.audio_timeline.tracks]
+            if include_audio
+            else []
+        )
 
         nodes.extend(audio_nodes)
 
@@ -137,13 +159,17 @@ class RenderGraphBuilderService:
             for execution in animation_plan.executions
         ]
 
-        subtitle_nodes = [
-            self._subtitle_node(
-                execution=execution,
-                video_node_by_scene=(video_node_by_scene),
-            )
-            for execution in subtitle_plan.executions
-        ]
+        subtitle_nodes = (
+            [
+                self._subtitle_node(
+                    execution=execution,
+                    video_node_by_scene=(video_node_by_scene),
+                )
+                for execution in subtitle_plan.executions
+            ]
+            if include_subtitles
+            else []
+        )
 
         editing_nodes = [
             *camera_nodes,
@@ -163,16 +189,20 @@ class RenderGraphBuilderService:
             master_plan=master_plan,
             video_nodes=video_nodes,
             editing_nodes=editing_nodes,
+            letterbox_enabled=letterbox_enabled,
         )
 
         nodes.append(video_composition_node)
 
-        audio_mix_node = self._audio_mix_node(
-            master_plan=master_plan,
-            audio_nodes=audio_nodes,
-        )
+        audio_mix_node: RenderNode | None = None
 
-        nodes.append(audio_mix_node)
+        if include_audio:
+            audio_mix_node = self._audio_mix_node(
+                master_plan=master_plan,
+                audio_nodes=audio_nodes,
+            )
+
+            nodes.append(audio_mix_node)
 
         output_node = self._output_node(
             master_plan=master_plan,
@@ -826,6 +856,7 @@ class RenderGraphBuilderService:
         master_plan: MasterEditPlan,
         video_nodes: list[RenderNode],
         editing_nodes: list[RenderNode],
+        letterbox_enabled: bool = False,
     ) -> RenderNode:
         """Build final video-composition node."""
 
@@ -848,6 +879,7 @@ class RenderGraphBuilderService:
             payload={
                 "output_resolution": (master_plan.video_timeline.output_resolution),
                 "frame_rate": (master_plan.video_timeline.frame_rate),
+                "letterbox_enabled": letterbox_enabled,
             },
         )
 
@@ -878,21 +910,28 @@ class RenderGraphBuilderService:
         *,
         master_plan: MasterEditPlan,
         video_composition_node: RenderNode,
-        audio_mix_node: RenderNode,
+        audio_mix_node: RenderNode | None,
     ) -> RenderNode:
-        """Build final output node."""
+        """
+        Build final output node.
+
+        audio_mix_node is None for a REQ-00 Stage 1 video-only graph -
+        the output then depends on video composition alone.
+        """
 
         duration = master_plan.total_duration_seconds
+
+        dependency_ids = [str(video_composition_node.id)]
+
+        if audio_mix_node is not None:
+            dependency_ids.append(str(audio_mix_node.id))
 
         return RenderNode(
             node_type=(RenderNodeType.OUTPUT),
             start_time_seconds=0.0,
             end_time_seconds=duration,
             duration_seconds=duration,
-            dependency_ids=[
-                str(video_composition_node.id),
-                str(audio_mix_node.id),
-            ],
+            dependency_ids=dependency_ids,
             payload={
                 "container": "mp4",
                 "video_codec": None,

@@ -1,17 +1,23 @@
 from __future__ import annotations
 
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
 
 from src.models.approval import ApprovalPolicyConfig
 from src.models.production_handoff import ProductionHandoffState
+from src.models.scene import Scene
 from src.models.script_lock import ScriptProvenance
 from src.models.script_selection_edit import (
     SelectionEditOperation,
     SelectionEditRequest,
 )
 from src.models.script_version import VersionReason
+from src.models.top10_rank_assignment import (
+    TopTenRankAssignment,
+    TopTenRankAssignmentResult,
+)
 from src.models.video_job import VideoJob
 from src.services.approval_gate_service import ApprovalGateService
 from src.services.content_intelligence_pipeline import ContentIntelligencePipeline
@@ -1717,6 +1723,115 @@ def test_run_all_generates_a_sound_design_plan_automatically() -> None:
     job = pipeline.run_all(_job())
 
     assert job.sound_design_plan is not None
+
+
+def _top10_scenes() -> list[Scene]:
+    return [
+        Scene(
+            scene_number=1,
+            title="Intro",
+            narration="Counting down ten terrifying survival stories.",
+            visual_prompt="A dramatic wide shot.",
+            estimated_duration_seconds=6,
+        ),
+        Scene(
+            scene_number=2,
+            title="Number ten",
+            narration="At number ten, a hiker got lost for three days.",
+            visual_prompt="A hiker in fog.",
+            estimated_duration_seconds=8,
+        ),
+        Scene(
+            scene_number=3,
+            title="Number nine",
+            narration="At number nine, a sailor was adrift for two weeks.",
+            visual_prompt="A boat adrift at sea.",
+            estimated_duration_seconds=8,
+        ),
+    ]
+
+
+def test_run_top10_rank_assignment_requires_scenes() -> None:
+    pipeline, _ = _pipeline()
+
+    with pytest.raises(RuntimeError, match="requires planned scenes"):
+        pipeline.run_top10_rank_assignment(_job(genre_id="genre.top10"))
+
+
+def test_run_top10_rank_assignment_writes_list_rank_onto_scenes() -> None:
+    pipeline, _ = _pipeline()
+
+    job = _job(genre_id="genre.top10")
+    job.scenes = _top10_scenes()
+
+    # A real assignment always covers all 10 ranks (missing_ranks is
+    # real, load-bearing validation this test must satisfy too) - only
+    # ranks 10/9 correspond to this job's own 3 test scenes, the rest
+    # reference scene numbers that don't exist on this job at all,
+    # which is harmless: rank_by_scene_number() simply has no matching
+    # scene to apply them to.
+    pipeline.top10_rank_assignment_service.assign = MagicMock(  # type: ignore[method-assign]
+        return_value=TopTenRankAssignmentResult(
+            assignments=[
+                TopTenRankAssignment(
+                    rank=10, scene_numbers=[2], rationale="Test rank 10."
+                ),
+                TopTenRankAssignment(
+                    rank=9, scene_numbers=[3], rationale="Test rank 9."
+                ),
+                *(
+                    TopTenRankAssignment(
+                        rank=rank,
+                        scene_numbers=[100 + rank],
+                        rationale=f"Test rank {rank} (no matching real scene).",
+                    )
+                    for rank in range(1, 9)
+                ),
+            ]
+        )
+    )
+
+    result_job = pipeline.run_top10_rank_assignment(job)
+
+    scenes_by_number = {scene.scene_number: scene for scene in result_job.scenes}
+
+    assert scenes_by_number[1].list_rank is None
+    assert scenes_by_number[2].list_rank == 10
+    assert scenes_by_number[3].list_rank == 9
+
+
+def test_run_top10_rank_assignment_raises_when_incomplete() -> None:
+    pipeline, _ = _pipeline()
+
+    job = _job(genre_id="genre.top10")
+    job.scenes = _top10_scenes()
+
+    pipeline.top10_rank_assignment_service.assign = MagicMock(  # type: ignore[method-assign]
+        return_value=TopTenRankAssignmentResult(
+            assignments=[
+                TopTenRankAssignment(
+                    rank=10, scene_numbers=[2], rationale="Test rank 10."
+                ),
+            ]
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="missing rank"):
+        pipeline.run_top10_rank_assignment(job)
+
+    # The whole point of failing loudly: an incomplete assignment must
+    # not have written anything onto the job's scenes either.
+    assert all(scene.list_rank is None for scene in job.scenes)
+
+
+def test_run_all_never_calls_rank_assignment_for_a_non_top10_genre() -> None:
+    pipeline, _ = _pipeline()
+
+    pipeline.top10_rank_assignment_service.assign = MagicMock()  # type: ignore[method-assign]
+
+    pipeline.run_all(_job())
+
+    pipeline.top10_rank_assignment_service.assign.assert_not_called()
 
 
 def test_run_all_generates_the_cinematic_prompt_chain_automatically() -> None:

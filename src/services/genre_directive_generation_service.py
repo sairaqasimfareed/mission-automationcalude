@@ -17,6 +17,7 @@ from src.models.editing_directives import (
     VisualEffectDirective,
 )
 from src.models.genre_profile import (
+    GenreEditingProfile,
     GenreProfile,
 )
 from src.models.scene import Scene
@@ -270,6 +271,51 @@ class GenreDirectiveGenerationService:
 
         return _INTENSITY_ORDER[position]
 
+    # REQ-1/2 (tension-adaptive film grain/vignette), 2026-09-22: a
+    # scene with no real tension_level (the legacy sentence-split
+    # planner never sets it) resolves at this neutral midpoint rather
+    # than silently landing at either range extreme.
+    _DEFAULT_TENSION_LEVEL = 50
+
+    _GRAIN_PRESET_ID = "visual.film_grain_light"
+    _VIGNETTE_PRESET_ID = "visual.vignette_soft"
+
+    @classmethod
+    def _numeric_intensity_for_preset(
+        cls,
+        *,
+        preset_id: str,
+        scene: Scene,
+        editing: GenreEditingProfile,
+    ) -> int | None:
+        """
+        Linearly scale a genre-tension-adaptive preset's real 0-100
+        intensity from the scene's own tension_level, within the
+        genre's own min/max range for that specific preset - see
+        GenreEditingProfile's own film_grain_*/vignette_* field
+        docstrings. None for any other preset, which keeps using the
+        coarse `intensity` enum unchanged.
+        """
+
+        if preset_id == cls._GRAIN_PRESET_ID:
+            minimum = editing.film_grain_minimum_intensity_percent
+            maximum = editing.film_grain_maximum_intensity_percent
+        elif preset_id == cls._VIGNETTE_PRESET_ID:
+            minimum = editing.vignette_minimum_intensity_percent
+            maximum = editing.vignette_maximum_intensity_percent
+        else:
+            return None
+
+        tension_level = (
+            scene.tension_level
+            if scene.tension_level is not None
+            else cls._DEFAULT_TENSION_LEVEL
+        )
+
+        tension_level = max(0, min(100, tension_level))
+
+        return round(minimum + (maximum - minimum) * (tension_level / 100.0))
+
     @classmethod
     def _build_from_profile(
         cls,
@@ -295,10 +341,31 @@ class GenreDirectiveGenerationService:
             VisualEffectDirective(
                 preset_id=preset_id,
                 intensity=intensity,
+                numeric_intensity_percent=(
+                    cls._numeric_intensity_for_preset(
+                        preset_id=preset_id,
+                        scene=scene,
+                        editing=editing,
+                    )
+                ),
                 timing_mode=(DirectiveTimingMode.FULL_SCENE),
             )
             for preset_id in (editing.visual_preset_ids)
         ]
+
+        # REQ-12 (top10 countdown rank cards), 2026-09-23: a scene
+        # ranked by TopTenRankAssignmentService gets a persistent
+        # corner badge for the duration of its own footage - additive,
+        # every non-ranked scene's visual_effects list is unaffected.
+        if scene.list_rank is not None:
+            visual_effects = visual_effects + [
+                VisualEffectDirective(
+                    preset_id="visual.top10_rank_badge",
+                    intensity=intensity,
+                    rank_badge_text=str(scene.list_rank),
+                    timing_mode=(DirectiveTimingMode.FULL_SCENE),
+                )
+            ]
 
         animations = [
             AnimationDirective(

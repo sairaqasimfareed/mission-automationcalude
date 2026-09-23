@@ -12,6 +12,15 @@ class AudioTrackType(str, Enum):
     BACKGROUND_MUSIC = "background_music"
     SOUND_EFFECT = "sound_effect"
 
+    # REQ-10(a), 2026-09-22: a generated video clip's own embedded
+    # audio (e.g. Google Flow's real, confirmed lip-synced dialogue -
+    # see the character-oriented-video-mode memory), extracted and
+    # positioned at that clip's real, crossfade-corrected final-
+    # timeline start (see SceneRenderTiming) - reuses this same
+    # AudioTrack/AudioTimeline mixing/ducking machinery rather than a
+    # parallel audio path, per REQ-10(a)'s own locked design.
+    NATIVE_CLIP = "native_clip"
+
 
 class AudioTrackStatus(str, Enum):
     PENDING = "pending"

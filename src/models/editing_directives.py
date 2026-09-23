@@ -142,6 +142,29 @@ class VisualEffectDirective(MissionBaseModel):
 
     intensity: DirectiveIntensity = DirectiveIntensity.MEDIUM
 
+    # REQ-1/2, 2026-09-22: a real 0-100 value for a genre-tension-
+    # adaptive effect (film grain/vignette) - None for every other
+    # effect, which keeps using the coarse `intensity` enum above
+    # unchanged. Deliberately a separate field rather than replacing
+    # `intensity` - that enum is a broader, pre-existing mechanism
+    # (camera/transition/other effects all read it too) this doesn't
+    # touch.
+    numeric_intensity_percent: int | None = Field(
+        default=None,
+        ge=0,
+        le=100,
+    )
+
+    # REQ-12 (top10 countdown rank cards), 2026-09-23: the real
+    # persistent corner-badge text ("10", "9", ...) for a scene whose
+    # own Scene.list_rank is set - None for every other effect and
+    # every non-top10 scene. Same "separate field alongside the
+    # existing preset/intensity mechanism" shape as
+    # numeric_intensity_percent above, for the same reason: this is
+    # real, per-scene DYNAMIC data a static, pre-registered
+    # EffectRegistryService preset has no way to carry on its own.
+    rank_badge_text: str | None = None
+
     timing_mode: DirectiveTimingMode = DirectiveTimingMode.FULL_SCENE
 
     start_offset_seconds: float = Field(

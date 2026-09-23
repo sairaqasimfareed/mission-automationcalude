@@ -480,6 +480,7 @@ class ScenePlannerAgent:
             camera_direction=camera_direction,
             sound_design="Subtle cinematic ambience",
             narrative_function=segment.narrative_function.value,
+            tension_level=segment.tension_level,
             status=SceneStatus.READY,
             source_type=source_type,
             # Stock-footage scenes always require a stock_query - the

@@ -8,12 +8,14 @@ from src.models.provider_profile import ProviderProfile
 from src.models.voice_profile import VoiceProfile
 from src.providers.music_provider import MusicProvider
 from src.providers.sound_effect_provider import SoundEffectProvider
+from src.providers.thumbnail_image_provider import ThumbnailImageProvider
 from src.providers.voice_provider import VoiceProvider
 from src.services.dynamic_voice_selection_service import DynamicVoiceSelectionService
 from src.services.genre_timeline_pipeline_service import (
     GenreTimelinePipelineService,
 )
 from src.services.health.provider_startup_validator import (
+    ProviderStartupValidationResult,
     ProviderStartupValidator,
 )
 from src.services.production_application_factory import (
@@ -35,6 +37,7 @@ from src.services.scene_asset_workflow_service import (
 from src.services.secrets.provider_secret_manager import SecretStore
 from src.services.startup_diagnostics import StartupDiagnosticsReporter
 from src.services.voice_provider_mapping_service import VoiceProviderMappingService
+from src.shared.logger import logger
 
 
 def build_production_runtime(
@@ -54,6 +57,8 @@ def build_production_runtime(
     dynamic_voice_selection_service: DynamicVoiceSelectionService | None = None,
     require_llm_key: bool = True,
     require_voice_provider: bool = True,
+    require_healthy_llm_provider: bool = True,
+    thumbnail_image_provider: ThumbnailImageProvider | None = None,
 ) -> ProductionApplicationRuntime:
     """
     Compose and validate one production Mission Automation runtime.
@@ -146,6 +151,28 @@ def build_production_runtime(
     real, non-empty voice_providers override crashed first outside
     dry-run. Defaults to True, reproducing this function's exact prior
     behavior for every existing caller.
+
+    require_healthy_llm_provider=False (2026-09-23, real bug hit live:
+    a desktop-persisted provider profile's secret_reference can go
+    stale outside this app's own control - e.g. an external Windows
+    Credential Manager cleanup - leaving ProviderStartupValidator with
+    zero healthy LLM profiles) lets this function log that outcome as
+    a warning instead of raising. Without this, a caller whose ONLY
+    way to fix a broken provider is through a UI this same call is
+    what constructs (the desktop app's Provider Manager) can never
+    reach that UI at all - the app fails to even open. CLI callers
+    that genuinely have nothing usable to run generation through
+    still want the fail-fast behavior, so this defaults to True,
+    reproducing this function's exact prior behavior for every
+    existing caller.
+
+    thumbnail_image_provider (REQ-12, 2026-09-23) is passed straight
+    through to ProductionApplicationFactory - when supplied, a real
+    Top10CountdownService is built and reaches real top10 countdown
+    rendering; when omitted (the default), top10 countdown rendering
+    stays unavailable and a genre.top10 job renders through the
+    normal composite path with no countdown splice, reproducing this
+    function's exact prior behavior for every existing caller.
     """
 
     configuration = RuntimeConfigurationLoader(
@@ -211,11 +238,25 @@ def build_production_runtime(
         checkpoint_storage_root=effective_checkpoint_storage_root,
         voice_provider_mapping_service=voice_provider_mapping_service,
         dynamic_voice_selection_service=dynamic_voice_selection_service,
+        thumbnail_image_provider=thumbnail_image_provider,
     ).build()
 
-    validation_result = ProviderStartupValidator(
-        runtime.infrastructure,
-    ).validate()
+    try:
+        validation_result = ProviderStartupValidator(
+            runtime.infrastructure,
+        ).validate()
+    except ValueError as error:
+        if require_healthy_llm_provider:
+            raise
+
+        logger.warning(
+            "Provider startup validation found no healthy LLM "
+            f"provider ({error}) - continuing anyway so the caller "
+            "can still reach its own provider configuration UI to "
+            "fix it."
+        )
+
+        validation_result = ProviderStartupValidationResult(results=[])
 
     reporter = StartupDiagnosticsReporter()
 

@@ -21,7 +21,10 @@ class FFmpegCommandPlan(MissionBaseModel):
 
     video_output_label: str
 
-    audio_output_label: str
+    # None for a REQ-00 Stage 1 video-only command plan - there is no
+    # audio filter output to map when the render has no audio input at
+    # all.
+    audio_output_label: str | None = None
 
     output_file: str
 
@@ -41,7 +44,6 @@ class FFmpegCommandPlan(MissionBaseModel):
         "executable",
         "filter_complex",
         "video_output_label",
-        "audio_output_label",
         "output_file",
     )
     @classmethod
@@ -56,10 +58,20 @@ class FFmpegCommandPlan(MissionBaseModel):
 
         return cleaned
 
-    @field_validator(
-        "video_output_label",
-        "audio_output_label",
-    )
+    @field_validator("audio_output_label")
+    @classmethod
+    def clean_optional_audio_label(
+        cls,
+        value: str | None,
+    ) -> str | None:
+        if value is None:
+            return None
+
+        cleaned = value.strip().strip("[]")
+
+        return cleaned or None
+
+    @field_validator("video_output_label")
     @classmethod
     def clean_output_label(
         cls,

@@ -26,6 +26,11 @@ expected_profiles = {
     "voice.travel_energetic",
     "voice.top10_energetic",
     "voice.warm_storyteller",
+    # Voice profile differentiation, 2026-09-23: genre.comedy/mystery/
+    # survival previously all shared voice.neutral_narrator - see each
+    # profile's own comment in voice_profile_registry_service.py.
+    "voice.comedy_playful",
+    "voice.tense_suspense",
 }
 
 assert {profile.profile_id for profile in registry.list_all()} == expected_profiles

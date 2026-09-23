@@ -23,6 +23,15 @@ class ThumbnailTextPosition(str, Enum):
     TOP = "top"
     CENTER = "center"
     BOTTOM = "bottom"
+    # REQ-4 (opening title card), 2026-09-22: horizontal placements,
+    # added for the title card's own real per-project position
+    # override - a wide 16:9 generated image often has its own visual
+    # subject weighted toward one side, so text placed opposite it can
+    # read more intentional than dead-center-over-everything. Purely
+    # additive - confirmed via grep, this enum has no exhaustive
+    # match/switch elsewhere that would need a new case.
+    CENTER_LEFT = "center_left"
+    CENTER_RIGHT = "center_right"
 
 
 class ThumbnailArtifactStatus(str, Enum):
