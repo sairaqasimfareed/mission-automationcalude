@@ -418,6 +418,7 @@ class ProductionApplicationFactory:
         ).build(
             provider_profiles=(list(self._provider_profiles)),
             llm_gateway=(self._llm_gateway),
+            dry_run=(self._advanced_settings.dry_run),
         )
 
         content_pipeline = ContentPipeline(

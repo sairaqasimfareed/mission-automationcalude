@@ -85,6 +85,7 @@ class ApplicationInfrastructureFactory:
         *,
         provider_profiles: list[ProviderProfile] | None = None,
         llm_gateway: LLMGateway | None = None,
+        dry_run: bool | None = None,
     ) -> ApplicationInfrastructure:
         """
         Build one internally consistent shared dependency graph.
@@ -94,6 +95,20 @@ class ApplicationInfrastructureFactory:
 
         Provider secrets remain externally supplied runtime state and are
         never synthesized by this factory.
+
+        dry_run defaults to None (forwarded straight through to
+        ProviderFactory, itself defaulting to the same dynamic global-
+        settings fallback create_provider_adapter() has always had -
+        this method's exact prior behavior for every caller that
+        doesn't pass it). Real bug found and fixed 2026-09-24:
+        ProductionApplicationFactory.build() now passes its own real,
+        explicitly-configured AdvancedSettings.dry_run here instead of
+        omitting it - omitting it used to leave LLM adapter selection
+        silently trusting a global settings singleton (loaded once
+        from the real .env file) instead of whatever dry-run state
+        THIS runtime was actually built with, producing a real network
+        call - and a real, confusing 401 - using a dry-run placeholder
+        secret as if it were a real key.
         """
 
         registry = ProviderRegistry(
@@ -107,6 +122,7 @@ class ApplicationInfrastructureFactory:
         provider_factory = ProviderFactory(
             registry=registry,
             secret_manager=secret_manager,
+            dry_run=dry_run,
         )
 
         budget_service = ProviderBudgetService(

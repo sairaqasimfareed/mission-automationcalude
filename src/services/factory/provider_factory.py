@@ -75,9 +75,31 @@ class ProviderFactory:
         self,
         registry: ProviderRegistry,
         secret_manager: ProviderSecretManager,
+        *,
+        dry_run: bool | None = None,
     ) -> None:
         self.registry = registry
         self.secret_manager = secret_manager
+        # Real bug found and fixed 2026-09-24: create_llm_adapter()
+        # used to omit dry_run entirely when building a real LLM
+        # adapter, silently falling back to create_provider_adapter()'s
+        # own global-settings read - loaded once from the real .env
+        # file, which can disagree with whatever Settings THIS
+        # runtime was actually, explicitly configured with. A caller
+        # that built a dry-run runtime with no real API key, expecting
+        # no real network call, could still reach a real provider
+        # adapter using a placeholder secret as if it were a real key -
+        # a real, observed 401 from the real OpenAI API, not a hang or
+        # a missing-key error.
+        #
+        # dry_run defaults to None (this factory's own exact prior
+        # behavior, still relied on by tests/test_llm_secret_factory_
+        # integration.py: dynamically deferring to whatever the global
+        # settings singleton says at call time) - a caller that knows
+        # its OWN, real dry-run state (ApplicationInfrastructureFactory.
+        # build(), sourced from AdvancedSettings.dry_run) passes it
+        # explicitly instead, which is what actually fixes the bug.
+        self._dry_run = dry_run
 
     def create(
         self,
@@ -143,6 +165,7 @@ class ProviderFactory:
         return create_provider_adapter(
             provider=llm_provider,
             api_key=secret,
+            dry_run=self._dry_run,
         )
 
     def resolve_default_model(
