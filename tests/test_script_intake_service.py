@@ -6,9 +6,40 @@ from src.models.script_intake import ScriptIntakeMode
 from src.models.story_blueprint import StoryBeatType
 from src.models.video_job import VideoJob
 from src.services.llm.llm_service import LLMServiceResult
-from src.services.script_intake_service import ScriptIntakeService
+from src.services.script_intake_service import (
+    ScriptIntakeService,
+    _infer_narrative_function,
+)
 from src.shared.llm.models import LLMCallResult, LLMCallStatus, LLMProvider
 from src.shared.llm.request import LLMRequest
+
+
+def test_infer_narrative_function_single_segment_is_hook() -> None:
+    assert _infer_narrative_function(index=0, total=1) == StoryBeatType.HOOK
+
+
+def test_infer_narrative_function_two_segments_are_hook_then_payoff() -> None:
+    assert _infer_narrative_function(index=0, total=2) == StoryBeatType.HOOK
+    assert _infer_narrative_function(index=1, total=2) == StoryBeatType.PAYOFF
+
+
+def test_infer_narrative_function_three_segments_escalate_in_the_middle() -> None:
+    assert _infer_narrative_function(index=0, total=3) == StoryBeatType.HOOK
+    assert _infer_narrative_function(index=1, total=3) == StoryBeatType.SETUP
+    assert _infer_narrative_function(index=2, total=3) == StoryBeatType.PAYOFF
+
+
+def test_infer_narrative_function_nine_segments_span_the_full_middle_arc() -> None:
+    """A larger script exercises all three middle thirds (SETUP ->
+    ESCALATION -> REVEAL) between the hook and the payoff."""
+
+    functions = [_infer_narrative_function(index=i, total=9) for i in range(9)]
+
+    assert functions[0] == StoryBeatType.HOOK
+    assert functions[-1] == StoryBeatType.PAYOFF
+    assert StoryBeatType.SETUP in functions
+    assert StoryBeatType.ESCALATION in functions
+    assert StoryBeatType.REVEAL in functions
 
 
 class _StubLLMService:
@@ -108,7 +139,16 @@ def test_normalize_segments_are_sequentially_timed_with_no_gaps() -> None:
     assert script.segments[1].start_seconds == script.segments[0].end_seconds
 
 
-def test_normalize_uses_setup_as_the_narrative_function() -> None:
+def test_normalize_infers_hook_for_a_single_segment_script() -> None:
+    """
+    Real user finding, 2026-09-24, live-testing manual content mode:
+    narrative_function used to be hardcoded SETUP for every segment
+    regardless of position, so every resulting scene got identical
+    camera/grain-intensity treatment. A single-segment script is its
+    own hook - there's no later segment for a payoff to contrast
+    against.
+    """
+
     service = _service(_StubLLMService(content=_ALL_FIT_RESPONSE))
 
     script = service.normalize_text_to_script(
@@ -118,7 +158,90 @@ def test_normalize_uses_setup_as_the_narrative_function() -> None:
         target_duration_seconds=180,
     )
 
-    assert script.segments[0].narrative_function == StoryBeatType.SETUP
+    assert script.segments[0].narrative_function == StoryBeatType.HOOK
+    assert script.segments[0].tension_level == 65
+
+
+def test_normalize_first_segment_is_always_the_hook() -> None:
+    service = _service(_StubLLMService(content=_ALL_FIT_RESPONSE))
+
+    script = service.normalize_text_to_script(
+        raw_text="Opening line.\n\nMiddle line.\n\nClosing line.",
+        topic="The Mary Celeste",
+        genre_id="genre.mystery",
+        target_duration_seconds=180,
+    )
+
+    assert script.segments[0].narrative_function == StoryBeatType.HOOK
+
+
+def test_normalize_last_segment_is_always_the_payoff() -> None:
+    service = _service(_StubLLMService(content=_ALL_FIT_RESPONSE))
+
+    script = service.normalize_text_to_script(
+        raw_text="Opening line.\n\nMiddle line.\n\nClosing line.",
+        topic="The Mary Celeste",
+        genre_id="genre.mystery",
+        target_duration_seconds=180,
+    )
+
+    assert script.segments[-1].narrative_function == StoryBeatType.PAYOFF
+
+
+def test_normalize_six_segments_produce_a_real_rising_arc() -> None:
+    """
+    The exact real-world case that surfaced this fix: a real 6-section
+    documentary script (hook / audience promise / story / research+
+    reveal / human angle / ending) used to render 20+ scenes that all
+    showed [setup] with identical camera treatment. Confirms the
+    inferred arc genuinely varies across the whole script, not just
+    at the very first/last segment.
+    """
+
+    service = _service(_StubLLMService(content=_ALL_FIT_RESPONSE))
+
+    raw_text = "\n\n".join(f"Segment {i} narration." for i in range(1, 7))
+
+    script = service.normalize_text_to_script(
+        raw_text=raw_text,
+        topic="The Mary Celeste",
+        genre_id="genre.mystery",
+        target_duration_seconds=180,
+    )
+
+    functions = [segment.narrative_function for segment in script.segments]
+
+    assert functions == [
+        StoryBeatType.HOOK,
+        StoryBeatType.SETUP,
+        StoryBeatType.SETUP,
+        StoryBeatType.ESCALATION,
+        StoryBeatType.REVEAL,
+        StoryBeatType.PAYOFF,
+    ]
+
+    # Real point of this whole fix: not every scene gets the same
+    # treatment anymore.
+    assert len(set(functions)) > 1
+
+    tension_levels = [segment.tension_level for segment in script.segments]
+    assert len(set(tension_levels)) > 1
+
+
+def test_normalize_tension_level_matches_the_inferred_narrative_function() -> None:
+    service = _service(_StubLLMService(content=_ALL_FIT_RESPONSE))
+
+    script = service.normalize_text_to_script(
+        raw_text="Opening line.\n\nClosing line.",
+        topic="The Mary Celeste",
+        genre_id="genre.mystery",
+        target_duration_seconds=180,
+    )
+
+    assert script.segments[0].narrative_function == StoryBeatType.HOOK
+    assert script.segments[0].tension_level == 65
+    assert script.segments[1].narrative_function == StoryBeatType.PAYOFF
+    assert script.segments[1].tension_level == 45
 
 
 def test_normalize_raises_on_empty_text() -> None:

@@ -18,6 +18,70 @@ from src.shared.llm.request import LLMRequest
 # The same rough figure the industry commonly uses for narration VO.
 _WORDS_PER_MINUTE = 150.0
 
+# Real user finding, 2026-09-24, live-testing manual content mode:
+# every imported segment previously got narrative_function=SETUP and
+# tension_level=50 unconditionally, so every resulting scene got
+# identical camera treatment (GenreDirectiveGenerationService shifts
+# camera intensity based on narrative_function - _HIGH_TENSION_BEATS/
+# _LOW_TENSION_BEATS) and identical film grain/vignette intensity
+# (REQ-1/REQ-2 scale those from tension_level) end to end, regardless
+# of the script's actual shape or length. A position-based heuristic
+# is a real, meaningful improvement over that flat default - a
+# segment's own position in the script (first, last, or somewhere in
+# a rising middle) is real, freely-available signal already present
+# in what the user wrote, not a fabricated artifact the "no fake
+# Research/Hook/Beat artifacts" design rule (this class's own
+# docstring) was ever meant to guard against. Deliberately still no
+# LLM call - this stays exactly as deterministic as the rest of
+# normalize_text_to_script().
+_TENSION_LEVEL_BY_BEAT: dict[StoryBeatType, int] = {
+    StoryBeatType.HOOK: 65,
+    StoryBeatType.SETUP: 35,
+    StoryBeatType.ESCALATION: 65,
+    StoryBeatType.REVEAL: 75,
+    StoryBeatType.RE_HOOK: 60,
+    StoryBeatType.MAJOR_REVELATION: 85,
+    StoryBeatType.CLIMAX: 90,
+    StoryBeatType.PAYOFF: 45,
+    StoryBeatType.AFTERSHOCK: 30,
+}
+
+
+def _infer_narrative_function(*, index: int, total: int) -> StoryBeatType:
+    """
+    Infer one imported segment's structural role from its position
+    alone - the first segment is always the hook, the last is always
+    the payoff (nearly universal across short-form narration), and
+    the segments between them rise across three real, evenly-split
+    stretches: an early SETUP stretch, a middle ESCALATION stretch,
+    and a late REVEAL stretch just before the payoff - a plain
+    approximation of the rising-tension arc most narration already
+    follows, not a claim of real structural analysis.
+
+    index is 0-based; total is the segment count. A single-segment
+    script is treated as its own hook - there is no later segment for
+    a payoff to meaningfully contrast against.
+    """
+
+    if total <= 1 or index == 0:
+        return StoryBeatType.HOOK
+
+    if index == total - 1:
+        return StoryBeatType.PAYOFF
+
+    middle_count = total - 2
+    position_in_middle = index - 1
+    third = middle_count / 3.0
+
+    if position_in_middle < third:
+        return StoryBeatType.SETUP
+
+    if position_in_middle < 2 * third:
+        return StoryBeatType.ESCALATION
+
+    return StoryBeatType.REVEAL
+
+
 _MIN_SEGMENT_DURATION_SECONDS = 1.0
 
 
@@ -62,9 +126,13 @@ class ScriptIntakeService:
         """
         Deterministic, no LLM call: splits on blank-line-separated
         paragraphs, one ScriptSegment per paragraph, timed by an
-        estimated speaking pace. narrative_function is SETUP for every
-        segment - an imported script has no real beat sheet to draw a
-        structural role from, and this service never invents one.
+        estimated speaking pace. narrative_function/tension_level are
+        inferred from each segment's own position (see
+        _infer_narrative_function's own docstring) - real, position-
+        based signal already present in the imported text, not a
+        fabricated story beat sheet the "no fake Research/Hook/Beat
+        artifacts" design rule (this class's own docstring) is meant
+        to guard against.
         """
 
         paragraphs = [
@@ -78,21 +146,26 @@ class ScriptIntakeService:
 
         segments: list[ScriptSegment] = []
         cursor_seconds = 0.0
+        total_segments = len(paragraphs)
 
-        for index, paragraph in enumerate(paragraphs, start=1):
+        for position, paragraph in enumerate(paragraphs):
             word_count = len(paragraph.split())
             duration = max(
                 word_count / _WORDS_PER_MINUTE * 60.0, _MIN_SEGMENT_DURATION_SECONDS
             )
 
+            narrative_function = _infer_narrative_function(
+                index=position, total=total_segments
+            )
+
             segments.append(
                 ScriptSegment(
-                    segment_number=index,
+                    segment_number=position + 1,
                     start_seconds=cursor_seconds,
                     end_seconds=cursor_seconds + duration,
-                    narrative_function=StoryBeatType.SETUP,
+                    narrative_function=narrative_function,
                     narration=paragraph,
-                    tension_level=50,
+                    tension_level=_TENSION_LEVEL_BY_BEAT[narrative_function],
                 )
             )
             cursor_seconds += duration
