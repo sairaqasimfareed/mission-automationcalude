@@ -228,4 +228,5 @@ def test_single_chunk_render_with_no_transition_duration_is_unchanged() -> None:
     dependencies["master_edit_plan_service"].build.assert_called_once_with(
         video_timeline=video_timeline,
         audio_timeline=audio_timeline,
+        audio_selection_is_intentional=False,
     )

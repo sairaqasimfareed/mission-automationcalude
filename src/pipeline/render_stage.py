@@ -290,6 +290,7 @@ class RenderPipelineStage(BasePipelineStage):
                 transition_duration_seconds=self._transition_duration_seconds,
                 letterbox_enabled=self._letterbox_enabled,
                 progress_callback=progress_callback,
+                audio_selection_is_intentional=True,
             )
 
         # REQ-00/REQ-0 staged pipeline swap, 2026-09-24: Stage 1 (video-
@@ -313,6 +314,16 @@ class RenderPipelineStage(BasePipelineStage):
         except NotImplementedError:
             pass
 
+        # REQ-13 real gap, found and fixed 2026-09-24: audio_timeline
+        # here is already the REQ-13-filtered selection (line ~240
+        # above), a real, deliberate choice - not an incomplete one.
+        # audio_selection_is_intentional=True tells MasterEditPlan's
+        # own render-readiness computation to stop treating a reduced
+        # or empty result as "not actually ready yet" (see
+        # MasterEditPlan.audio_selection_is_intentional's own
+        # docstring). Before this fix, turning off include_voiceover
+        # (or any toggle combination reducing audio_timeline to zero
+        # tracks) crashed this fallback call outright.
         return production_render_service.render(
             video_timeline=video_timeline,
             audio_timeline=audio_timeline,
@@ -321,6 +332,7 @@ class RenderPipelineStage(BasePipelineStage):
             transition_duration_seconds=self._transition_duration_seconds,
             letterbox_enabled=self._letterbox_enabled,
             include_subtitles=self._subtitles_enabled,
+            audio_selection_is_intentional=True,
         )
 
     def _execute_staged_render(

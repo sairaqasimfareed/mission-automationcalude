@@ -105,10 +105,17 @@ class Top10CountdownService:
         letterbox_enabled: bool = False,
         progress_callback: ProgressCallback | None = None,
         cancellation_check: CancellationCheck | None = None,
+        audio_selection_is_intentional: bool = False,
     ) -> RenderResult:
         """
         Build every rank card and splice them into the final countdown
         render at output_file.
+
+        audio_selection_is_intentional defaults to False, matching
+        ProductionRenderService.render()'s own parameter of the same
+        name - forwarded straight through to render_top10_countdown().
+        A caller that has already applied a real, deliberate REQ-13
+        mux-time filter to audio_timeline passes True.
         """
 
         rank_by_scene_number = {
@@ -213,4 +220,5 @@ class Top10CountdownService:
             cancellation_check=cancellation_check,
             transition_duration_seconds=transition_duration_seconds,
             letterbox_enabled=letterbox_enabled,
+            audio_selection_is_intentional=audio_selection_is_intentional,
         )

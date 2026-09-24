@@ -85,6 +85,21 @@ class MasterEditPlan(MissionBaseModel):
     duration_compatible: bool = False
     ready_for_render: bool = False
 
+    # REQ-13 (audio inclusion toggle UI) real gap, found and fixed
+    # 2026-09-24: voiceover/music/SFX generation is unconditional (see
+    # AudioInclusionPreferences' own docstring) - only MUX-TIME
+    # inclusion is toggled, via filter_audio_timeline_for_mux()
+    # applied by the caller before this plan is ever built here. A
+    # caller that has ALREADY applied that real, deliberate filter
+    # sets this True so refresh_summary() below stops treating a
+    # resulting empty/reduced audio_timeline as "not actually ready
+    # yet" (the old, REQ-13-unaware assumption) and instead treats it
+    # as the legitimate, intentional selection it is. False (the
+    # default) reproduces every prior caller's exact strict behavior -
+    # a genuinely unfiltered/raw audio_timeline still must carry a
+    # real, ready voiceover track to be considered render-ready.
+    audio_selection_is_intentional: bool = False
+
     warnings: list[str] = Field(
         default_factory=list,
     )
@@ -191,7 +206,7 @@ class MasterEditPlan(MissionBaseModel):
             if (track.track_type == AudioTrackType.VOICEOVER)
         ]
 
-        self.voice_ready = bool(voice_tracks) and all(
+        voice_tracks_are_ready = all(
             track.status == AudioTrackStatus.READY
             and bool(track.source_file.strip())
             and track.duration_seconds > 0.0
@@ -199,12 +214,28 @@ class MasterEditPlan(MissionBaseModel):
             for track in voice_tracks
         )
 
-        self.audio_ready = bool(self.audio_timeline.tracks) and all(
+        # An intentionally empty voice_tracks list (include_voiceover
+        # deliberately toggled off) is real-readiness-true, not false -
+        # any voice tracks that DO remain in an intentional selection
+        # still must be genuinely ready, same as always.
+        self.voice_ready = (
+            voice_tracks_are_ready
+            if self.audio_selection_is_intentional
+            else bool(voice_tracks) and voice_tracks_are_ready
+        )
+
+        all_tracks_are_ready = all(
             track.status == AudioTrackStatus.READY
             and bool(track.source_file.strip())
             and track.duration_seconds > 0.0
             and track.start_time_seconds >= 0.0
             for track in (self.audio_timeline.tracks)
+        )
+
+        self.audio_ready = (
+            all_tracks_are_ready
+            if self.audio_selection_is_intentional
+            else bool(self.audio_timeline.tracks) and all_tracks_are_ready
         )
 
         self.duration_compatible = self._durations_are_compatible()
@@ -237,8 +268,16 @@ class MasterEditPlan(MissionBaseModel):
     ) -> bool:
         """Check whether audio fits inside the video timeline."""
 
-        if self.video_duration_seconds <= 0.0 or self.audio_duration_seconds <= 0.0:
+        if self.video_duration_seconds <= 0.0:
             return False
+
+        if self.audio_duration_seconds <= 0.0:
+            # An intentionally empty audio selection (every REQ-13
+            # mux-time toggle off) never "exceeds" the video - there is
+            # nothing to exceed it. An unfiltered/raw plan with no real
+            # audio duration at all is still genuinely not ready,
+            # exactly as before.
+            return self.audio_selection_is_intentional
 
         return self.audio_duration_seconds <= (
             self.video_duration_seconds + self.duration_tolerance_seconds

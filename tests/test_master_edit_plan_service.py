@@ -653,6 +653,90 @@ assert pending_audio_plan.ready_for_render is False
 
 
 # --------------------------------------------------
+# REQ-13 real gap, found and fixed 2026-09-24: an intentional,
+# deliberate mux-time audio selection (RenderPipelineStage, after
+# filter_audio_timeline_for_mux()) must not be treated as "not
+# actually ready yet" just because it ends up empty or lacks a
+# voiceover track - see MasterEditPlan.audio_selection_is_
+# intentional's own docstring. Default (omitted/False) behavior
+# above stays completely unchanged - only proven here for contrast.
+# --------------------------------------------------
+
+intentional_empty_plan = service.build(
+    video_timeline=build_video_timeline(
+        durations=[
+            8,
+            7,
+        ],
+    ),
+    audio_timeline=AudioTimeline(),
+    audio_selection_is_intentional=True,
+)
+
+assert intentional_empty_plan.video_ready is True
+assert intentional_empty_plan.editing_ready is True
+assert intentional_empty_plan.voice_ready is True
+assert intentional_empty_plan.audio_ready is True
+assert intentional_empty_plan.duration_compatible is True
+assert intentional_empty_plan.ready_for_render is True
+
+print("Intentionally empty audio selection " "renders ready, not blocked.")
+
+
+music_only_track = AudioTrack(
+    track_type=AudioTrackType.BACKGROUND_MUSIC,
+    source_file="outputs/audio/music.mp3",
+    start_time_seconds=0.0,
+    duration_seconds=15.0,
+    status=AudioTrackStatus.READY,
+)
+
+intentional_music_only_plan = service.build(
+    video_timeline=build_video_timeline(
+        durations=[
+            8,
+            7,
+        ],
+    ),
+    audio_timeline=AudioTimeline(tracks=[music_only_track]),
+    audio_selection_is_intentional=True,
+)
+
+# include_voiceover=False, include_music=True: no VOICEOVER track at
+# all, but a real, ready BACKGROUND_MUSIC track is present - voice_
+# ready is relaxed (deliberately excluded), audio_ready reflects the
+# real music track's own genuine readiness (still enforced).
+assert intentional_music_only_plan.voice_ready is True
+assert intentional_music_only_plan.audio_ready is True
+assert intentional_music_only_plan.duration_compatible is True
+assert intentional_music_only_plan.ready_for_render is True
+
+print("Intentional voiceover-less selection with real music " "renders ready.")
+
+
+intentional_not_ready_track_plan = service.build(
+    video_timeline=build_video_timeline(
+        durations=[
+            8,
+            7,
+        ],
+    ),
+    audio_timeline=pending_audio_timeline,
+    audio_selection_is_intentional=True,
+)
+
+# A track that IS present in an intentional selection must still be
+# genuinely ready - the relaxation only ever applies to "empty by
+# deliberate choice," never to "present but not actually generated
+# yet."
+assert intentional_not_ready_track_plan.voice_ready is False
+assert intentional_not_ready_track_plan.audio_ready is False
+assert intentional_not_ready_track_plan.ready_for_render is False
+
+print("Intentional selection still requires " "real tracks to be genuinely ready.")
+
+
+# --------------------------------------------------
 # Refresh after timeline mutation
 # --------------------------------------------------
 

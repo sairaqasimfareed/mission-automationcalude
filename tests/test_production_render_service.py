@@ -170,6 +170,7 @@ def test_render_executes_real_render_chain() -> None:
     dependencies["master_edit_plan_service"].build.assert_called_once_with(
         video_timeline=video_timeline,
         audio_timeline=audio_timeline,
+        audio_selection_is_intentional=False,
     )
 
     dependencies["subtitle_execution_service"].build_plan.assert_called_once_with(

@@ -210,6 +210,7 @@ class ProductionRenderService:
         transition_duration_seconds: float = 0.0,
         letterbox_enabled: bool = False,
         include_subtitles: bool = True,
+        audio_selection_is_intentional: bool = False,
     ) -> RenderResult:
         """
         Execute a prepared production timeline through FFmpeg.
@@ -258,6 +259,12 @@ class ProductionRenderService:
         SUBTITLE node construction entirely) - this is the first
         caller to expose it as a real per-project choice rather than
         an all-or-nothing Stage 1/Stage 2 split.
+
+        audio_selection_is_intentional defaults to False, reproducing
+        this method's exact prior strict behavior - see
+        MasterEditPlan.audio_selection_is_intentional's own docstring.
+        A caller that has already applied a real, deliberate mux-time
+        filter (RenderPipelineStage, REQ-13) passes True.
         """
 
         duration_seconds = video_timeline.calculate_duration()
@@ -293,6 +300,7 @@ class ProductionRenderService:
                 transition_duration_seconds=transition_duration_seconds,
                 letterbox_enabled=letterbox_enabled,
                 include_subtitles=include_subtitles,
+                audio_selection_is_intentional=audio_selection_is_intentional,
             )
         )
 
@@ -353,6 +361,9 @@ class ProductionRenderService:
                             transition_duration_seconds=(transition_duration_seconds),
                             letterbox_enabled=letterbox_enabled,
                             include_subtitles=include_subtitles,
+                            audio_selection_is_intentional=(
+                                audio_selection_is_intentional
+                            ),
                         )
                     )
 
@@ -380,6 +391,7 @@ class ProductionRenderService:
             transition_duration_seconds=transition_duration_seconds,
             letterbox_enabled=letterbox_enabled,
             include_subtitles=include_subtitles,
+            audio_selection_is_intentional=audio_selection_is_intentional,
         )
 
     def render_video_only(
@@ -393,6 +405,7 @@ class ProductionRenderService:
         cancellation_check: CancellationCheck | None = None,
         transition_duration_seconds: float = 0.0,
         letterbox_enabled: bool = False,
+        audio_selection_is_intentional: bool = False,
     ) -> RenderResult:
         """
         REQ-00 Stage 1: render scenes/crossfades/transitions/color-
@@ -428,6 +441,16 @@ class ProductionRenderService:
         letterbox_enabled (REQ-3) is the caller's own already-resolved
         value, same meaning as render()'s own parameter of the same
         name.
+
+        audio_selection_is_intentional defaults to False, matching
+        render()'s own parameter of the same name - see MasterEditPlan.
+        audio_selection_is_intentional's own docstring. Today's one
+        real caller (RenderPipelineStage._execute_staged_render())
+        already passes this method the job's real, unfiltered audio
+        timeline (this method's own render graph never builds audio
+        nodes regardless, per include_audio=False below), so it does
+        not need to pass True - kept here for API symmetry with
+        render() and any future caller that might.
         """
 
         duration_seconds = video_timeline.calculate_duration()
@@ -463,6 +486,7 @@ class ProductionRenderService:
                 include_audio=False,
                 include_subtitles=False,
                 letterbox_enabled=letterbox_enabled,
+                audio_selection_is_intentional=audio_selection_is_intentional,
             )
         )
 
@@ -510,6 +534,7 @@ class ProductionRenderService:
         transition_duration_seconds: float = 0.0,
         letterbox_enabled: bool = False,
         include_subtitles: bool = True,
+        audio_selection_is_intentional: bool = False,
     ) -> RenderResult:
         """
         REQ-12 (top10 countdown rank cards): render the main timeline
@@ -659,6 +684,7 @@ class ProductionRenderService:
                     transition_duration_seconds=transition_duration_seconds,
                     letterbox_enabled=letterbox_enabled,
                     include_subtitles=include_subtitles,
+                    audio_selection_is_intentional=audio_selection_is_intentional,
                 )
             )
 
@@ -806,6 +832,7 @@ class ProductionRenderService:
         include_audio: bool = True,
         include_subtitles: bool = True,
         letterbox_enabled: bool = False,
+        audio_selection_is_intentional: bool = False,
     ) -> tuple[FFmpegCommandPlan, MasterEditPlan, list[str], str]:
         """
         Build the deterministic FFmpeg command for one timeline pair
@@ -832,6 +859,17 @@ class ProductionRenderService:
         compatibility validation are unchanged either way), only the
         render graph's own node construction skips AUDIO_TRACK/
         AUDIO_MIX/SUBTITLE nodes.
+
+        audio_selection_is_intentional defaults to False, reproducing
+        this method's exact prior strict behavior. REQ-13 real gap,
+        found and fixed 2026-09-24: a caller (RenderPipelineStage) that
+        has already applied filter_audio_timeline_for_mux() - a real,
+        deliberate selection of which generated tracks actually reach
+        THIS render, not an incomplete one - passes True so
+        MasterEditPlan's own render-readiness computation stops
+        treating the resulting reduced/empty audio_timeline as "not
+        actually ready yet." See MasterEditPlan.audio_selection_is_
+        intentional's own docstring for the full reasoning.
         """
 
         staging_output_file = self._staging_output_file(target_output_file)
@@ -839,6 +877,7 @@ class ProductionRenderService:
         master_plan = self._master_edit_plan_service.build(
             video_timeline=video_timeline,
             audio_timeline=audio_timeline,
+            audio_selection_is_intentional=audio_selection_is_intentional,
         )
 
         self._master_edit_plan_service.validate_render_ready(
@@ -1122,6 +1161,7 @@ class ProductionRenderService:
         transition_duration_seconds: float = 0.0,
         letterbox_enabled: bool = False,
         include_subtitles: bool = True,
+        audio_selection_is_intentional: bool = False,
     ) -> RenderResult:
         """
         Render a timeline too large for one FFmpeg command line as
@@ -1155,6 +1195,7 @@ class ProductionRenderService:
                     transition_duration_seconds=transition_duration_seconds,
                     letterbox_enabled=letterbox_enabled,
                     include_subtitles=include_subtitles,
+                    audio_selection_is_intentional=audio_selection_is_intentional,
                 )
             )
 
@@ -1180,6 +1221,7 @@ class ProductionRenderService:
             transition_duration_seconds=transition_duration_seconds,
             letterbox_enabled=letterbox_enabled,
             include_subtitles=include_subtitles,
+            audio_selection_is_intentional=audio_selection_is_intentional,
         )
 
         scene_groups = self._split_scene_numbers(scene_numbers, chunk_count)
@@ -1223,6 +1265,7 @@ class ProductionRenderService:
                     transition_duration_seconds=transition_duration_seconds,
                     letterbox_enabled=letterbox_enabled,
                     include_subtitles=include_subtitles,
+                    audio_selection_is_intentional=audio_selection_is_intentional,
                 )
             )
 
@@ -1296,6 +1339,7 @@ class ProductionRenderService:
         transition_duration_seconds: float = 0.0,
         letterbox_enabled: bool = False,
         include_subtitles: bool = True,
+        audio_selection_is_intentional: bool = False,
     ) -> int:
         """
         Return the smallest chunk count whose every chunk's own
@@ -1339,6 +1383,7 @@ class ProductionRenderService:
                     scene_chunk_indices=scene_chunk_indices,
                     letterbox_enabled=letterbox_enabled,
                     include_subtitles=include_subtitles,
+                    audio_selection_is_intentional=audio_selection_is_intentional,
                 )
                 for group_index, group in enumerate(groups)
             ):
@@ -1359,6 +1404,7 @@ class ProductionRenderService:
         scene_chunk_indices: dict[int, int] | None = None,
         letterbox_enabled: bool = False,
         include_subtitles: bool = True,
+        audio_selection_is_intentional: bool = False,
     ) -> bool:
         """Build one candidate chunk's command plan just to measure it."""
 
@@ -1384,6 +1430,7 @@ class ProductionRenderService:
                 transition_duration_seconds=transition_duration_seconds,
                 letterbox_enabled=letterbox_enabled,
                 include_subtitles=include_subtitles,
+                audio_selection_is_intentional=audio_selection_is_intentional,
             )
         )
 

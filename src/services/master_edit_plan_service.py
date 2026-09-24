@@ -30,6 +30,7 @@ class MasterEditPlanService:
         duration_tolerance_seconds: float = 0.5,
         metadata: dict[str, Any] | None = None,
         render_identity_hash: str | None = None,
+        audio_selection_is_intentional: bool = False,
     ) -> MasterEditPlan:
         """
         Build and summarize one master editing plan.
@@ -44,6 +45,11 @@ class MasterEditPlanService:
         (RenderIdentityService.compute(job)) and passes the resulting
         string straight through; omitting it reproduces this method's
         exact prior behavior.
+
+        audio_selection_is_intentional defaults to False, reproducing
+        this method's exact prior strict behavior - see
+        MasterEditPlan's own docstring on that field for what True
+        means and when a caller should pass it.
         """
 
         if duration_tolerance_seconds < 0.0:
@@ -55,6 +61,7 @@ class MasterEditPlanService:
             duration_tolerance_seconds=(duration_tolerance_seconds),
             metadata=dict(metadata or {}),
             render_identity_hash=render_identity_hash,
+            audio_selection_is_intentional=audio_selection_is_intentional,
         )
 
         return self.refresh(
