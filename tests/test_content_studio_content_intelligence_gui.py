@@ -564,14 +564,14 @@ def _settings_widgets(
 ) -> dict[str, object]:
     """
     Real widgets matching _handle_save_settings()'s own signature -
-    genre_select/platform_select/production_mode_select/
-    approval_mode_select/content_mode_select/language_input/
-    target_country_input - built directly rather than through
-    _build_settings_card(), since the handler itself is what's under
-    test here.
+    genre_select/duration_seconds_input/platform_select/
+    production_mode_select/approval_mode_select/content_mode_select/
+    language_input/target_country_input - built directly rather than
+    through _build_settings_card(), since the handler itself is what's
+    under test here.
     """
 
-    from PySide6.QtWidgets import QComboBox, QLineEdit
+    from PySide6.QtWidgets import QComboBox, QLineEdit, QSpinBox
 
     from src.desktop.approval_mode_labels import APPROVAL_MODE_PRESETS
     from src.models.enums import ScriptOrigin
@@ -579,6 +579,10 @@ def _settings_widgets(
     genre_select = QComboBox()
     genre_select.addItems(_GENRE_IDS)
     genre_select.setCurrentText(genre_id)
+
+    duration_seconds_input = QSpinBox()
+    duration_seconds_input.setRange(30, 36000)
+    duration_seconds_input.setValue(600)
 
     platform_select = QComboBox()
     platform_select.addItems(["youtube", "facebook", "tiktok"])
@@ -600,6 +604,7 @@ def _settings_widgets(
 
     return {
         "genre_select": genre_select,
+        "duration_seconds_input": duration_seconds_input,
         "platform_select": platform_select,
         "production_mode_select": production_mode_select,
         "approval_mode_select": approval_mode_select,
@@ -743,6 +748,194 @@ def test_upstream_ci_stage_run_button_enabled_in_auto_mode(
     assert view._ci_stage_run_button.isEnabled() is True  # noqa: SLF001
 
 
+def test_manual_mode_script_panel_shows_intake_guidance_not_hook_requirement(
+    qapp: QApplication,
+) -> None:
+    """
+    Real bug found and fixed 2026-09-24, live-testing manual content
+    mode: "Requires a selected hook first." is about the "Run script"
+    button (Auto Content's own generation path) - that requirement
+    never applies in Manual mode at all (the whole point is bypassing
+    it), so showing it above the intake box read as a blocking error
+    on a feature that was actually working fine.
+    """
+
+    from PySide6.QtWidgets import QLabel
+
+    from src.models.enums import ScriptOrigin
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job.script_origin = ScriptOrigin.EXTERNAL
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view._handle_select_ci_stage(8)  # "script" - see _CI_STAGES
+    view.refresh(job)
+
+    label_texts = {label.text() for label in view.findChildren(QLabel)}  # noqa: SLF001
+
+    assert not any("Requires a selected hook" in text for text in label_texts)
+    assert any("Manual Content mode" in text for text in label_texts)
+
+
+def test_auto_mode_script_panel_still_shows_the_hook_requirement(
+    qapp: QApplication,
+) -> None:
+    """The other half: Auto Content mode must keep showing the real,
+    applicable requirement unchanged."""
+
+    from PySide6.QtWidgets import QLabel
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view._handle_select_ci_stage(8)  # "script"
+    view.refresh(job)
+
+    label_texts = {label.text() for label in view.findChildren(QLabel)}  # noqa: SLF001
+
+    assert any("Requires a selected hook" in text for text in label_texts)
+
+
+def test_script_intake_draft_text_survives_a_refresh(
+    qapp: QApplication,
+) -> None:
+    """
+    Real bug found and fixed 2026-09-24, live-testing manual content
+    mode: refresh() tears down and rebuilds every card from scratch on
+    ANY change, including a plain CI-stage tab switch
+    (_handle_select_ci_stage calls refresh() directly) - a brand-new,
+    empty QTextEdit used to replace the old one every time, silently
+    discarding whatever the user had pasted before they got a chance
+    to click "Import script".
+    """
+
+    from src.models.enums import ScriptOrigin
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job.script_origin = ScriptOrigin.EXTERNAL
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view._handle_select_ci_stage(8)  # "script"
+    view.refresh(job)
+
+    assert view._script_intake_editor is not None  # noqa: SLF001
+    view._script_intake_editor.setPlainText(  # noqa: SLF001
+        "A pasted script that must survive navigation."
+    )
+
+    # Simulates switching to a different CI stage tab and back -
+    # _handle_select_ci_stage calls refresh() directly either way.
+    view.refresh(job)
+
+    assert view._script_intake_editor is not None  # noqa: SLF001
+    assert (
+        view._script_intake_editor.toPlainText()  # noqa: SLF001
+        == "A pasted script that must survive navigation."
+    )
+
+
+def test_script_intake_draft_text_clears_after_a_successful_import(
+    qapp: QApplication,
+) -> None:
+    from src.models.enums import ScriptOrigin
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job.script_origin = ScriptOrigin.EXTERNAL
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view._handle_select_ci_stage(8)  # "script"
+    view.refresh(job)
+
+    assert view._script_intake_editor is not None  # noqa: SLF001
+    view._script_intake_editor.setPlainText("Imported narration text.")  # noqa: SLF001
+
+    view._handle_import_script()  # noqa: SLF001
+
+    assert view._script_intake_draft_text == ""  # noqa: SLF001
+
+
+def test_script_intake_section_stays_available_after_import_until_locked(
+    qapp: QApplication,
+) -> None:
+    """
+    Real feature request, 2026-09-24, live-testing manual content
+    mode: replacing an already-imported script had no path at all
+    short of starting a new project - the intake box only ever
+    rendered while job.generated_script was still None. Confirms it
+    reappears (as a "replace it entirely" option) once a script
+    exists but the version isn't locked yet, and that re-importing
+    genuinely replaces the old script's content.
+    """
+
+    from src.models.enums import ScriptOrigin
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job.script_origin = ScriptOrigin.EXTERNAL
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+
+    view._content_intelligence_pipeline.run_script_intake(  # noqa: SLF001
+        job, raw_text="The original imported text."
+    )
+
+    view._handle_select_ci_stage(8)  # "script"
+    view.refresh(job)
+
+    # Available again now that a script exists but isn't locked.
+    assert view._script_intake_editor is not None  # noqa: SLF001
+
+    view._script_intake_editor.setPlainText(  # noqa: SLF001
+        "A completely different replacement script."
+    )
+    view._handle_import_script()  # noqa: SLF001
+
+    assert job.generated_script is not None
+    assert (
+        job.generated_script.full_narration
+        == "A completely different replacement script."
+    )
+
+
+def test_script_intake_section_is_hidden_once_the_script_is_locked(
+    qapp: QApplication,
+) -> None:
+    from src.models.enums import ScriptOrigin
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job.script_origin = ScriptOrigin.EXTERNAL
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+
+    view._content_intelligence_pipeline.run_script_intake(  # noqa: SLF001
+        job, raw_text="A script that is about to be locked."
+    )
+    view._content_intelligence_pipeline.run_script_lock(job)  # noqa: SLF001
+
+    view._handle_select_ci_stage(8)  # "script"
+    view._script_intake_editor = None  # noqa: SLF001
+    view.refresh(job)
+
+    assert view._script_intake_editor is None  # noqa: SLF001
+
+
 def test_changing_genre_in_settings_invalidates_the_stale_editorial_profile(
     qapp: QApplication,
 ) -> None:
@@ -810,6 +1003,31 @@ def test_saving_settings_with_the_same_genre_does_not_invalidate_the_profile(
 
     assert job.genre_id == "genre.mystery"
     assert job.editorial_profile_snapshot is snapshot_before
+
+
+def test_saving_settings_persists_the_target_duration(qapp: QApplication) -> None:
+    """
+    Real feature request, 2026-09-24, live-testing manual content
+    mode: target_duration_seconds was only ever settable once, on the
+    "New Project" form - there was no way to see or change it again
+    anywhere in the app afterward.
+    """
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    assert job.target_duration_seconds != 90
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    widgets = _settings_widgets(genre_id="genre.mystery")
+    widgets["duration_seconds_input"].setValue(90)  # type: ignore[union-attr]
+
+    view._handle_save_settings(**widgets)  # type: ignore[arg-type]
+
+    assert job.target_duration_seconds == 90
 
 
 def test_review_is_a_noop_without_a_configured_reviewer(qapp: QApplication) -> None:

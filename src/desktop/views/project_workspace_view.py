@@ -361,6 +361,8 @@ class ProjectWorkspaceView(QWidget):
 
         fields = [
             ("Mode", summary.production_mode),
+            ("Genre", summary.genre),
+            ("Duration", summary.target_duration),
             ("Stage", summary.current_stage),
             ("Approval", summary.approval_mode),
             ("Next approval", summary.next_approval),

@@ -35,6 +35,31 @@ def test_summarize_reflects_project_name_and_production_mode() -> None:
     assert summary.production_mode == "quick"
 
 
+def test_summarize_reflects_genre_and_short_target_duration() -> None:
+    job = _job(genre_id="genre.travel", target_duration_seconds=45)
+
+    summary = ProjectHeaderService().summarize(job)
+
+    assert summary.genre == "genre.travel"
+    assert summary.target_duration == "45s"
+
+
+def test_summarize_formats_target_duration_in_minutes() -> None:
+    job = _job(target_duration_seconds=600)
+
+    summary = ProjectHeaderService().summarize(job)
+
+    assert summary.target_duration == "10m"
+
+
+def test_summarize_formats_target_duration_with_leftover_seconds() -> None:
+    job = _job(target_duration_seconds=630)
+
+    summary = ProjectHeaderService().summarize(job)
+
+    assert summary.target_duration == "10m 30s"
+
+
 def test_summarize_reflects_current_stage() -> None:
     job = _job(current_stage=WorkflowStage.RENDER)
 

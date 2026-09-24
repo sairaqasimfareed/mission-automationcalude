@@ -461,6 +461,22 @@ def _build_stylesheet() -> str:
         background: {ACCENT_PRESSED};
     }}
 
+    /* Real bug found and fixed 2026-09-24, live-testing manual content
+       mode: a disabled variant="primary" button (e.g. "Run automation"
+       correctly disabled in Manual mode before a script is imported)
+       still rendered fully active - solid accent background, white
+       text - because QSS resolves same-specificity rules by source
+       order, and every [variant="..."] rule above comes AFTER the
+       base QPushButton:disabled rule, silently overriding it whenever
+       both apply. Every variant needs its own explicit :disabled rule;
+       the base one alone is not enough once a variant is set. */
+    QPushButton[variant="primary"]:disabled {{
+        background: {BG_SURFACE};
+        color: {TEXT_MUTED};
+        border: 1px solid {BORDER};
+        font-weight: 600;
+    }}
+
     QPushButton[variant="ghost"] {{
         background: transparent;
         border: 1px solid {BORDER};
@@ -472,6 +488,12 @@ def _build_stylesheet() -> str:
         color: {TEXT_PRIMARY};
     }}
 
+    QPushButton[variant="ghost"]:disabled {{
+        background: transparent;
+        color: {TEXT_MUTED};
+        border-color: {BORDER};
+    }}
+
     QPushButton[variant="danger"] {{
         background: transparent;
         border: 1px solid {ERROR};
@@ -480,6 +502,12 @@ def _build_stylesheet() -> str:
 
     QPushButton[variant="danger"]:hover {{
         background: rgba(255, 92, 108, 0.12);
+    }}
+
+    QPushButton[variant="danger"]:disabled {{
+        background: transparent;
+        color: {TEXT_MUTED};
+        border-color: {BORDER};
     }}
 
     QLineEdit, QComboBox, QSpinBox {{

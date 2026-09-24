@@ -9,12 +9,19 @@ from src.services.production_readiness_service import ProductionReadinessService
 
 class ProjectHeaderSummary:
     """
-    The nine at-a-glance fields a persistent project header shows,
-    each read from real, already-canonical backend state - never
-    tracked separately from it. No field here is computed once and
-    cached; ProjectHeaderService.summarize() derives all of them fresh
-    from the job every call, matching ProductionReadinessService's own
+    The at-a-glance fields a persistent project header shows, each
+    read from real, already-canonical backend state - never tracked
+    separately from it. No field here is computed once and cached;
+    ProjectHeaderService.summarize() derives all of them fresh from
+    the job every call, matching ProductionReadinessService's own
     "never trust a stale verdict" convention.
+
+    genre and target_duration were added 2026-09-24 - a real gap found
+    live-testing manual content mode: the project's own creation-time
+    choices (genre, target duration) were never shown anywhere in the
+    persistent header, only buried inside Project Settings' own form
+    fields (genre) or not shown at all post-creation (duration has no
+    edit path anywhere in the app - it's fixed at project creation).
     """
 
     def __init__(
@@ -22,6 +29,8 @@ class ProjectHeaderSummary:
         *,
         project_name: str,
         production_mode: str,
+        genre: str,
+        target_duration: str,
         current_stage: str,
         approval_mode: str,
         next_approval: str,
@@ -32,6 +41,8 @@ class ProjectHeaderSummary:
     ) -> None:
         self.project_name = project_name
         self.production_mode = production_mode
+        self.genre = genre
+        self.target_duration = target_duration
         self.current_stage = current_stage
         self.approval_mode = approval_mode
         self.next_approval = next_approval
@@ -76,6 +87,8 @@ class ProjectHeaderService:
         return ProjectHeaderSummary(
             project_name=job.project_name,
             production_mode=job.production_mode.value,
+            genre=job.genre_id,
+            target_duration=self._format_duration(job.target_duration_seconds),
             current_stage=job.current_stage.value.replace("_", " "),
             approval_mode=approval_mode,
             next_approval=self._next_approval(job),
@@ -86,6 +99,20 @@ class ProjectHeaderService:
                 "_", " "
             ),
         )
+
+    @staticmethod
+    def _format_duration(target_duration_seconds: int) -> str:
+        """Format a target duration as e.g. "45s" or "10m" / "10m 30s"."""
+
+        if target_duration_seconds < 60:
+            return f"{target_duration_seconds}s"
+
+        minutes, seconds = divmod(target_duration_seconds, 60)
+
+        if seconds == 0:
+            return f"{minutes}m"
+
+        return f"{minutes}m {seconds}s"
 
     @staticmethod
     def _next_approval(job: VideoJob) -> str:

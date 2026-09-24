@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QScrollArea,
+    QSpinBox,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -274,6 +275,18 @@ class ContentStudioView(QWidget):
         self._quality_finding_checkboxes: dict[UUID, QCheckBox] = {}
         self._script_intake_editor: QTextEdit | None = None
         self._script_intake_mode_select: QComboBox | None = None
+        # Real bug found and fixed 2026-09-24, live-testing manual
+        # content mode: refresh() tears down and rebuilds every card
+        # from scratch on ANY change, including a plain CI-stage tab
+        # switch (_handle_select_ci_stage calls refresh() directly) -
+        # a brand-new, empty QTextEdit replaced the old one every
+        # time, silently discarding whatever the user had pasted
+        # before they got a chance to click "Import script". Persisted
+        # here (kept live via the editor's own textChanged signal,
+        # restored into each newly-built editor) so the draft survives
+        # navigation - cleared only once the script is actually
+        # imported.
+        self._script_intake_draft_text: str = ""
 
         # Content Studio Redesign, Phase 18: Activity History filters -
         # plain strings persisted across refresh() (not live QComboBox
@@ -1303,6 +1316,16 @@ class ContentStudioView(QWidget):
 
         form.addRow("Genre", genre_select)
 
+        # Real feature request, 2026-09-24, live-testing manual content
+        # mode: target_duration_seconds was only ever settable once, on
+        # the "New Project" form (project_form_view.py) - there was no
+        # way to see or change it again afterward anywhere in the app.
+        # Matches that form's own QSpinBox range/label exactly.
+        duration_seconds_input = QSpinBox()
+        duration_seconds_input.setRange(30, 36000)
+        duration_seconds_input.setValue(job.target_duration_seconds)
+        form.addRow("Target duration (seconds)", duration_seconds_input)
+
         platform_select = QComboBox()
         platform_select.addItems([platform.value for platform in Platform])
         platform_select.setCurrentText(job.platform.value)
@@ -1350,6 +1373,7 @@ class ContentStudioView(QWidget):
         save_button.clicked.connect(
             lambda: self._handle_save_settings(
                 genre_select=genre_select,
+                duration_seconds_input=duration_seconds_input,
                 platform_select=platform_select,
                 production_mode_select=production_mode_select,
                 approval_mode_select=approval_mode_select,
@@ -3083,11 +3107,27 @@ class ContentStudioView(QWidget):
 
         if script is None:
             can_run = job.selected_hook is not None
-            layout.addWidget(
-                small_muted(
-                    "Not started." if can_run else "Requires a selected hook first."
+
+            # Real bug found and fixed 2026-09-24, live-testing manual
+            # content mode: "Requires a selected hook first." is about
+            # the "Run script" button just below (Auto Content's own
+            # generation path) - in Manual mode that requirement never
+            # applies at all (the whole point is bypassing it), so
+            # showing it here read as a blocking error on the intake
+            # box itself.
+            if _is_manual_content_mode(job):
+                layout.addWidget(
+                    small_muted(
+                        "Manual Content mode - paste or import your own "
+                        "script below."
+                    )
                 )
-            )
+            else:
+                layout.addWidget(
+                    small_muted(
+                        "Not started." if can_run else "Requires a selected hook first."
+                    )
+                )
 
             self._render_script_intake_section(layout, job)
 
@@ -3171,19 +3211,41 @@ class ContentStudioView(QWidget):
 
         self._render_script_version_history(layout, job)
 
+        # Real feature request, 2026-09-24, live-testing manual content
+        # mode: replacing an already-imported script had no path at
+        # all short of starting a new project - the intake box only
+        # ever rendered while job.generated_script was still None.
+        # Stays available (as a distinct "replace it entirely" option,
+        # below the per-segment editors) until the script is actually
+        # locked - matches every other script edit, which stays
+        # available until locked too.
+        if not locked:
+            self._render_script_intake_section(layout, job)
+
         return True
 
     def _render_script_intake_section(self, layout: QVBoxLayout, job: VideoJob) -> None:
         """
         Content Studio Redesign, Phase 15: "Allow users to bypass
         Content Production while still entering the same professional
-        downstream pipeline." Only offered while no script exists yet
-        - once imported, the script is edited through the exact same
-        editor Content Production's own output uses (Phase 12).
+        downstream pipeline." While no script exists yet, this IS the
+        script panel's primary content. Once a script exists, callers
+        also render this as a secondary "replace it entirely" option
+        (available until the script is locked, real feature request
+        found 2026-09-24 - there was previously no way back to intake
+        short of starting a new project) - run_script_intake() itself
+        already tolerates re-import fine (it only ever refuses on an
+        already-locked version), this just exposes that.
         """
 
         layout.addWidget(separator())
-        layout.addWidget(small_muted("Or import an already-written script:"))
+
+        label = (
+            "Replace this script entirely by importing a different one:"
+            if job.generated_script is not None
+            else "Or import an already-written script:"
+        )
+        layout.addWidget(small_muted(label))
 
         intake_editor = QTextEdit()
         intake_editor.setPlaceholderText(
@@ -3191,6 +3253,15 @@ class ContentStudioView(QWidget):
             "a blank line)..."
         )
         intake_editor.setFixedHeight(120)
+        # Restore whatever was typed before the last rebuild (see
+        # _script_intake_draft_text's own docstring in __init__) and
+        # keep it live-synced as the user keeps typing.
+        intake_editor.setPlainText(self._script_intake_draft_text)
+        intake_editor.textChanged.connect(
+            lambda: setattr(
+                self, "_script_intake_draft_text", intake_editor.toPlainText()
+            )
+        )
         self._script_intake_editor = intake_editor
         layout.addWidget(intake_editor)
 
@@ -4322,6 +4393,12 @@ class ContentStudioView(QWidget):
 
             return
 
+        # A successful import means job.generated_script now exists,
+        # so _render_ci_script_panel stops rendering the intake box at
+        # all - clear the draft so a LATER script-unlock-and-reimport
+        # doesn't resurface stale, already-imported text.
+        self._script_intake_draft_text = ""
+
         self._on_change()
 
     def _handle_lock_script(self, override_input: QLineEdit) -> None:
@@ -4660,6 +4737,7 @@ class ContentStudioView(QWidget):
         self,
         *,
         genre_select: QComboBox,
+        duration_seconds_input: QSpinBox,
         platform_select: QComboBox,
         production_mode_select: QComboBox,
         approval_mode_select: QComboBox,
@@ -4691,6 +4769,7 @@ class ContentStudioView(QWidget):
                 job.editorial_profile_snapshot = None
 
             job.genre_id = new_genre_id
+            job.target_duration_seconds = duration_seconds_input.value()
             job.platform = Platform(platform_select.currentText())
             job.production_mode = ProductionMode(production_mode_select.currentText())
             job.approval_policy = _APPROVAL_MODE_PRESETS[
@@ -4705,6 +4784,7 @@ class ContentStudioView(QWidget):
                 f"Could not save project settings: {error}",
                 on_retry=lambda: self._handle_save_settings(
                     genre_select=genre_select,
+                    duration_seconds_input=duration_seconds_input,
                     platform_select=platform_select,
                     production_mode_select=production_mode_select,
                     approval_mode_select=approval_mode_select,
