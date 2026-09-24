@@ -40,7 +40,7 @@ from src.models.approval import HumanApprovalAction
 from src.models.artifact_lifecycle import ArtifactType
 from src.models.content_decision_record import ContentDecisionRecord, DecisionCategory
 from src.models.creative_direction import CreativeDirection
-from src.models.enums import Platform, ProductionMode, WorkflowStage
+from src.models.enums import Platform, ProductionMode, ScriptOrigin, WorkflowStage
 from src.models.hook import HookCandidate, HookEvaluation
 from src.models.production_handoff import ProductionHandoffState
 from src.models.research import ResearchResult, ResearchSource, SourceStatus
@@ -121,6 +121,39 @@ _CI_STAGES: list[tuple[str, str]] = [
     ("scene_planning", "Scene planning"),
     ("production_readiness", "Production readiness"),
 ]
+
+# Manual/auto content mode, locked plan part D, 2026-09-24: the exact
+# stage_keys ContentIntelligencePipeline.run_all() skips entirely for a
+# script-intake job (see its own docstring, parts A-C) - these "Run X"
+# buttons stay DISABLED (not hidden) whenever Manual Content mode is
+# selected, matching the explicit user decision, so the layout stays
+# stable and the reason is visible rather than a button vanishing.
+_UPSTREAM_CI_STAGE_KEYS = frozenset(
+    {
+        "audience_promise",
+        "research_plan",
+        "research",
+        "story_angles",
+        "narrative_architecture",
+        "retention_audit",
+        "hooks",
+        "writing_directives",
+    }
+)
+
+
+def _is_manual_content_mode(job: VideoJob) -> bool:
+    """
+    True when this project's Content mode (see _build_settings_card's
+    own "Content mode" dropdown) is Manual - the user intends to
+    paste/import a finished script rather than generate one, whether
+    or not they have actually done so yet (job.script_intake_result is
+    the separate "has it actually happened" signal - see
+    ContentIntelligencePipeline.run_all()'s own is_intake_job).
+    """
+
+    return job.script_origin == ScriptOrigin.EXTERNAL
+
 
 # Maps each of the 14 granular CI stages onto the nearest of the 9
 # canonical ArtifactType values (Content Studio Redesign, Phase 4) and
@@ -1285,6 +1318,26 @@ class ContentStudioView(QWidget):
         approval_mode_select.setCurrentText(_approval_mode_label(job.approval_policy))
         form.addRow("Approval mode", approval_mode_select)
 
+        # Manual/auto content mode, locked plan part D, 2026-09-24:
+        # reuses job.script_origin (Content Studio Redesign, Phase 2 -
+        # previously modeled but never actually wired to anything real)
+        # rather than a new, parallel field - EXTERNAL means "Manual
+        # Content" (bring your own script, everything before it is
+        # optional), INTERNAL means "Auto Content" (today's default
+        # topic -> research -> story angle -> hook -> script pipeline).
+        # Deliberately independent of job.script_intake_result - a
+        # user can switch to Manual before pasting anything at all;
+        # see _is_manual_content_mode()'s own docstring for how this
+        # drives auto-stage button disabling.
+        content_mode_select = QComboBox()
+        content_mode_select.addItem("Auto Content", ScriptOrigin.INTERNAL)
+        content_mode_select.addItem("Manual Content", ScriptOrigin.EXTERNAL)
+        content_mode_select.setCurrentIndex(
+            0 if job.script_origin == ScriptOrigin.INTERNAL else 1
+        )
+        self._content_mode_select = content_mode_select
+        form.addRow("Content mode", content_mode_select)
+
         language_input = QLineEdit(job.language)
         form.addRow("Language", language_input)
 
@@ -1300,6 +1353,7 @@ class ContentStudioView(QWidget):
                 platform_select=platform_select,
                 production_mode_select=production_mode_select,
                 approval_mode_select=approval_mode_select,
+                content_mode_select=content_mode_select,
                 language_input=language_input,
                 target_country_input=target_country_input,
             )
@@ -1358,7 +1412,19 @@ class ContentStudioView(QWidget):
             "Resume automation" if status.completed_stages else "Run automation",
             variant="primary",
         )
+        # Manual/auto content mode, locked plan part D, 2026-09-24:
+        # disabled (not hidden) while Manual Content mode is selected
+        # and no script has been imported yet - nothing useful for
+        # automation to do (it would only run the upstream chain a
+        # manually-authored script doesn't need), and clicking it
+        # would be a dead end. Re-enabled the moment a script IS
+        # imported - run_all() then correctly skips straight to
+        # continuity/scenes/etc. (see run_all()'s own is_intake_job).
+        run_button.setEnabled(
+            not (_is_manual_content_mode(job) and job.script_intake_result is None)
+        )
         run_button.clicked.connect(self._handle_run_automation)
+        self._automation_run_button = run_button
         run_row.addWidget(run_button)
         run_row.addWidget(badge(f"{len(status.completed_stages)} stage(s) completed"))
         layout.addLayout(run_row)
@@ -1918,6 +1984,18 @@ class ContentStudioView(QWidget):
 
         can_run = builders[stage_key](layout, job)
 
+        # Manual/auto content mode, locked plan part D, 2026-09-24:
+        # these 8 upstream stages have no natural precondition that
+        # would otherwise disable them for a Manual-mode project (e.g.
+        # "Run audience promise" needs nothing at all) - explicitly
+        # disabled here instead. editorial_critique/quality_gate stay
+        # enabled on purpose (part B: real, opt-in manual checks, not
+        # automatic); packaging_hypothesis already disables itself
+        # naturally (it requires job.selected_hook, which an intake
+        # job never has).
+        if stage_key in _UPSTREAM_CI_STAGE_KEYS and _is_manual_content_mode(job):
+            can_run = False
+
         button_row = QHBoxLayout()
         button_row.setSpacing(8)
 
@@ -1926,6 +2004,7 @@ class ContentStudioView(QWidget):
         )
         run_button.setEnabled(can_run)
         run_button.clicked.connect(lambda: self._handle_run_ci_stage(stage_key))
+        self._ci_stage_run_button = run_button
         button_row.addWidget(run_button)
 
         artifact_type, field_name = _CI_STAGE_REVIEW_TARGET[stage_key]
@@ -4584,6 +4663,7 @@ class ContentStudioView(QWidget):
         platform_select: QComboBox,
         production_mode_select: QComboBox,
         approval_mode_select: QComboBox,
+        content_mode_select: QComboBox,
         language_input: QLineEdit,
         target_country_input: QLineEdit,
     ) -> None:
@@ -4616,6 +4696,7 @@ class ContentStudioView(QWidget):
             job.approval_policy = _APPROVAL_MODE_PRESETS[
                 approval_mode_select.currentText()
             ]()
+            job.script_origin = content_mode_select.currentData()
             job.language = language_input.text()
             job.target_country = target_country_input.text()
         except ValueError as error:
@@ -4627,6 +4708,7 @@ class ContentStudioView(QWidget):
                     platform_select=platform_select,
                     production_mode_select=production_mode_select,
                     approval_mode_select=approval_mode_select,
+                    content_mode_select=content_mode_select,
                     language_input=language_input,
                     target_country_input=target_country_input,
                 ),

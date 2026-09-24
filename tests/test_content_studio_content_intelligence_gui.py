@@ -565,14 +565,16 @@ def _settings_widgets(
     """
     Real widgets matching _handle_save_settings()'s own signature -
     genre_select/platform_select/production_mode_select/
-    approval_mode_select/language_input/target_country_input - built
-    directly rather than through _build_settings_card(), since the
-    handler itself is what's under test here.
+    approval_mode_select/content_mode_select/language_input/
+    target_country_input - built directly rather than through
+    _build_settings_card(), since the handler itself is what's under
+    test here.
     """
 
     from PySide6.QtWidgets import QComboBox, QLineEdit
 
     from src.desktop.approval_mode_labels import APPROVAL_MODE_PRESETS
+    from src.models.enums import ScriptOrigin
 
     genre_select = QComboBox()
     genre_select.addItems(_GENRE_IDS)
@@ -591,14 +593,154 @@ def _settings_widgets(
     if approval_mode in APPROVAL_MODE_PRESETS:
         approval_mode_select.setCurrentText(approval_mode)
 
+    content_mode_select = QComboBox()
+    content_mode_select.addItem("Auto Content", ScriptOrigin.INTERNAL)
+    content_mode_select.addItem("Manual Content", ScriptOrigin.EXTERNAL)
+    content_mode_select.setCurrentIndex(0)
+
     return {
         "genre_select": genre_select,
         "platform_select": platform_select,
         "production_mode_select": production_mode_select,
         "approval_mode_select": approval_mode_select,
+        "content_mode_select": content_mode_select,
         "language_input": QLineEdit("English"),
         "target_country_input": QLineEdit("United States"),
     }
+
+
+def test_content_mode_dropdown_defaults_to_auto_and_saves_as_manual(
+    qapp: QApplication,
+) -> None:
+    """
+    Manual/auto content mode, locked plan part D, 2026-09-24: a brand
+    new project defaults to Auto Content (job.script_origin's own real
+    default, ScriptOrigin.INTERNAL) - the dropdown must reflect that,
+    and saving with Manual selected must persist it onto the job.
+    """
+
+    from src.models.enums import ScriptOrigin
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    assert (
+        view._content_mode_select.currentData() == ScriptOrigin.INTERNAL
+    )  # noqa: SLF001
+
+    view._handle_save_settings(
+        **_settings_widgets(genre_id="genre.mystery")  # type: ignore[arg-type]
+    )
+
+    assert job.script_origin == ScriptOrigin.INTERNAL
+
+    widgets = _settings_widgets(genre_id="genre.mystery")
+    widgets["content_mode_select"].setCurrentIndex(1)  # type: ignore[union-attr]
+
+    view._handle_save_settings(**widgets)  # type: ignore[arg-type]
+
+    assert job.script_origin == ScriptOrigin.EXTERNAL
+
+
+def test_run_automation_button_disabled_in_manual_mode_without_an_imported_script(
+    qapp: QApplication,
+) -> None:
+    """
+    Manual/auto content mode, locked plan part D: Manual mode selected
+    but nothing pasted yet - "Run automation" would only run the
+    upstream chain a manually-authored script doesn't need, so it
+    stays disabled (not hidden) until a script actually exists.
+    """
+
+    from src.models.enums import ScriptOrigin
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job.script_origin = ScriptOrigin.EXTERNAL
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    assert view._automation_run_button.isEnabled() is False  # noqa: SLF001
+
+
+def test_run_automation_button_enabled_in_manual_mode_once_a_script_is_imported(
+    qapp: QApplication,
+) -> None:
+    """
+    Manual/auto content mode, locked plan part D: once a script is
+    actually imported, run_all() correctly skips straight to
+    continuity/scenes/etc. (parts A-C) - automation becomes
+    meaningful again and the button re-enables.
+    """
+
+    from src.models.enums import ScriptOrigin
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job.script_origin = ScriptOrigin.EXTERNAL
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+
+    view._content_intelligence_pipeline.run_script_intake(  # noqa: SLF001
+        job, raw_text="Imported narration text."
+    )
+
+    view.refresh(job)
+
+    assert view._automation_run_button.isEnabled() is True  # noqa: SLF001
+
+
+def test_upstream_ci_stage_run_button_disabled_in_manual_mode(
+    qapp: QApplication,
+) -> None:
+    """
+    Manual/auto content mode, locked plan part D: the individual
+    "Run audience promise" button has no natural precondition that
+    would otherwise disable it (it's the very first stage) - Manual
+    mode must disable it explicitly.
+    """
+
+    from src.models.enums import ScriptOrigin
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job.script_origin = ScriptOrigin.EXTERNAL
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view._handle_select_ci_stage(0)  # "audience_promise" - index 0
+    view.refresh(job)
+
+    assert view._ci_stage_run_button.isEnabled() is False  # noqa: SLF001
+
+
+def test_upstream_ci_stage_run_button_enabled_in_auto_mode(
+    qapp: QApplication,
+) -> None:
+    """The other half: Auto Content mode (the default) must never
+    disable a stage that would otherwise be runnable."""
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view._handle_select_ci_stage(0)  # "audience_promise" - index 0
+    view.refresh(job)
+
+    assert view._ci_stage_run_button.isEnabled() is True  # noqa: SLF001
 
 
 def test_changing_genre_in_settings_invalidates_the_stale_editorial_profile(

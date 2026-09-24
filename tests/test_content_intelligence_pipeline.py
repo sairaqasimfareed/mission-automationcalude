@@ -1320,6 +1320,118 @@ def test_run_all_reaches_a_script_lock_for_an_intake_originated_script() -> None
     assert job.script_version_history.is_locked is True
 
 
+def test_run_all_skips_the_entire_upstream_chain_for_an_intake_job() -> None:
+    """
+    Manual/auto content mode, part A, 2026-09-24: run_all() itself
+    (not just run_script_intake()) must never run audience_promise/
+    research_plan/research/story_angles/narrative_architecture/
+    retention_audit/hooks/writing_directives for a script-intake job -
+    confirmed both by every one of those fields staying unset AND by
+    the stub LLM service never receiving a request from any of those
+    agents (the real, user-facing bug this fix closes: real LLM calls
+    were previously burned on content unrelated to the imported
+    script).
+    """
+
+    pipeline, stub = _pipeline()
+
+    job = pipeline.run_script_intake(
+        _job(target_duration_seconds=2), raw_text="Imported narration text."
+    )
+
+    job = pipeline.run_all(job)
+
+    assert job.audience_promise is None
+    assert job.research_plan is None
+    assert job.research is None
+    assert job.story_angles == []
+    assert job.story_blueprint is None
+    assert job.retention_audit is None
+    assert job.hook_candidates == []
+    assert job.writing_directives is None
+
+    skipped_agents = {
+        "AudiencePromiseService",
+        "ResearchPlanningService",
+        "ResearchAgent",
+        "StoryAngleGenerationService",
+        "StoryAngleEvaluationService",
+        "StoryBlueprintGenerationService",
+        "HookGenerationService",
+        "HookEvaluationService",
+        "WritingDirectivesService",
+    }
+
+    called_agents = {request.metadata.get("agent") for request in stub.requests}
+
+    assert not (called_agents & skipped_agents)
+
+
+def test_run_all_skips_editorial_critique_quality_gate_and_packaging_for_an_intake_job() -> (
+    None
+):
+    """
+    Manual/auto content mode, parts B-C, 2026-09-24: editorial
+    critique and quality gate stay opt-in MANUAL checks (not
+    automatic) for an intake job, and packaging_hypothesis is skipped
+    outright (it fundamentally needs job.selected_hook, which an
+    intake job never has).
+    """
+
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_script_intake(
+        _job(target_duration_seconds=2), raw_text="Imported narration text."
+    )
+
+    job = pipeline.run_all(job)
+
+    assert job.editorial_critique is None
+    assert job.script_quality_report is None
+    assert job.packaging_hypothesis is None
+
+
+def test_run_all_still_completes_the_downstream_path_for_an_intake_job() -> None:
+    """
+    Manual/auto content mode, 2026-09-24: everything genuinely safe
+    and unaffected by the missing upstream data (continuity bible,
+    scene planning, sound design) still runs automatically, and the
+    script still auto-locks despite quality_gate never running - the
+    script-lock auto-trigger's own parallel condition
+    (approved or is_intake_job) fix.
+    """
+
+    pipeline, _ = _pipeline()
+
+    job = pipeline.run_script_intake(
+        _job(target_duration_seconds=2), raw_text="Imported narration text."
+    )
+
+    job = pipeline.run_all(job)
+
+    assert job.continuity_bible is not None
+    assert job.scenes
+    assert job.sound_design_plan is not None
+
+    assert job.script_lock is not None
+    assert job.script_lock.provenance == ScriptProvenance.EXTERNAL
+    assert job.script_version_history is not None
+    assert job.script_version_history.is_locked is True
+
+    # Manual/auto content mode, part E, 2026-09-24: the real, missing
+    # end-to-end proof - a script-intake job must reach all the way
+    # through visual continuity -> shot planning -> cinematic prompt
+    # compilation too (the exact same chain
+    # test_run_all_generates_the_cinematic_prompt_chain_automatically
+    # already proves for a normal Auto Content job), not just stop at
+    # script-lock. This was previously only a "safe by reading each
+    # stage's own input signature" claim, never an actual run.
+    assert job.visual_continuity_bible is not None
+    assert job.cinematic_shot_plan is not None
+    assert job.cinematic_prompt_package is not None
+    assert len(job.cinematic_prompt_package.prompts) == len(job.scenes)
+
+
 def test_compute_production_handoff_status_is_blocked_without_a_lock() -> None:
     pipeline, _ = _pipeline()
 

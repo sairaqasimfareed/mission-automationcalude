@@ -9,6 +9,7 @@ from src.models.automation_status import AutomationStatus
 from src.models.clip_materialization import ClipMaterializationStatus
 from src.models.content_decision_record import DecisionCategory
 from src.models.editorial_profile import EditorialProfile
+from src.models.enums import ScriptOrigin
 from src.models.information_reveal_map import InformationRevealMap
 from src.models.production_handoff import (
     ProductionHandoffState,
@@ -843,12 +844,16 @@ class ContentIntelligencePipeline:
         Stage 8: independent editorial critique of the finished
         script - a separate pass from writing, per the same
         discipline sprint 6/7's hook and angle evaluators follow.
+
+        job.research is optional (manual/auto content intake,
+        2026-09-24) - a script-intake-originated job has no
+        ResearchResult at all, and EditorialCritiqueService.critique()
+        itself now tolerates that (judges pacing/tone/structure
+        without factual grounding, rather than refusing outright).
         """
 
-        if job.generated_script is None or job.research is None:
-            raise RuntimeError(
-                "Editorial critique requires a generated script and research."
-            )
+        if job.generated_script is None:
+            raise RuntimeError("Editorial critique requires a generated script.")
 
         editorial_profile = job.editorial_profile_snapshot or (
             self.resolve_editorial_profile(job)
@@ -1146,6 +1151,15 @@ class ContentIntelligencePipeline:
             topic=job.topic, script=result.script
         )
         job.script_intake_result = result
+        # Manual/auto content mode, locked plan part D, 2026-09-24: a
+        # defensive safety net, not the primary path (the GUI's own
+        # "Content mode" toggle - content_studio_view.py's Project
+        # settings card - is meant to set this explicitly, before a
+        # script is even pasted) - set here too so job.script_origin
+        # and job.script_intake_result can never disagree once intake
+        # has actually happened, regardless of how run_script_intake()
+        # was reached.
+        job.script_origin = ScriptOrigin.EXTERNAL
         job.editorial_critique = None
         job.script_quality_report = None
         job.script_lock = None
@@ -1718,66 +1732,100 @@ class ContentIntelligencePipeline:
         field here is reset to None by whatever invalidates it (see
         run_revision), so "already set" and "still valid" coincide for
         them.
+
+        Manual/auto content mode, 2026-09-24 (locked plan, parts A-C):
+        a script-intake-originated job (job.script_intake_result is
+        not None - set atomically alongside job.generated_script by
+        run_script_intake(), so the two are never out of sync) skips
+        the ENTIRE upstream generation chain below (audience_promise
+        through the final script) - ScriptIntakeService already
+        produced job.generated_script directly from imported text, and
+        none of research/story_angles/story_blueprint/hooks/writing_
+        directives are fabricated to satisfy this method's own
+        presence checks (see ScriptIntakeService's own docstring: "no
+        fake Research/Hook/Beat artifacts are generated merely to
+        satisfy dependencies").
+
+        Editorial critique and quality gate (part B) also stop being
+        AUTOMATIC for an intake job - they remain real, safe, opt-in
+        MANUAL checks instead (EditorialCritiqueService.critique()'s
+        research param is now optional, so a GUI-triggered call no
+        longer crashes; run_all() simply chooses not to trigger them
+        itself). The script-lock auto-trigger below gets its own
+        parallel condition so an intake job still completes/locks
+        automatically despite quality_gate never running for it.
+
+        packaging_hypothesis (part C) is skipped outright for an
+        intake job, not made optional like critique/quality-gate - it
+        fundamentally needs job.selected_hook to build title/thumbnail
+        variants around, and an intake job has no hook-equivalent
+        concept to substitute.
         """
 
-        if job.audience_promise is None:
-            job = self.run_audience_promise(job)
-        if self.approval_gate_service.is_blocked(job, "content_strategy"):
-            return job
+        is_intake_job = job.script_intake_result is not None
 
-        if job.research_plan is None:
-            job = self.run_research_plan(job)
-        if self.approval_gate_service.is_blocked(job, "research_plan"):
-            return job
+        if not is_intake_job:
+            if job.audience_promise is None:
+                job = self.run_audience_promise(job)
+            if self.approval_gate_service.is_blocked(job, "content_strategy"):
+                return job
 
-        if job.research is None:
-            job = self.run_research(job)
-        if self.approval_gate_service.is_blocked(job, "research"):
-            return job
+            if job.research_plan is None:
+                job = self.run_research_plan(job)
+            if self.approval_gate_service.is_blocked(job, "research_plan"):
+                return job
 
-        if not job.story_angles:
-            job = self.run_story_angles(job)
-        if self.approval_gate_service.is_blocked(job, "story_angle"):
-            return job
+            if job.research is None:
+                job = self.run_research(job)
+            if self.approval_gate_service.is_blocked(job, "research"):
+                return job
 
-        if job.story_blueprint is None:
-            job = self.run_narrative_architecture(job)
-        if self.approval_gate_service.is_blocked(job, "narrative_architecture"):
-            return job
+            if not job.story_angles:
+                job = self.run_story_angles(job)
+            if self.approval_gate_service.is_blocked(job, "story_angle"):
+                return job
 
-        if job.retention_audit is None:
-            job = self.run_retention_audit(job)
-        if not job.hook_candidates:
-            job = self.run_hooks(job)
-        if self.approval_gate_service.is_blocked(job, "hook"):
-            return job
+            if job.story_blueprint is None:
+                job = self.run_narrative_architecture(job)
+            if self.approval_gate_service.is_blocked(job, "narrative_architecture"):
+                return job
 
-        if job.writing_directives is None:
-            job = self.run_writing_directives(job)
+            if job.retention_audit is None:
+                job = self.run_retention_audit(job)
+            if not job.hook_candidates:
+                job = self.run_hooks(job)
+            if self.approval_gate_service.is_blocked(job, "hook"):
+                return job
 
-        if job.generated_script is None:
-            job = self.run_script(job)
-        if self.approval_gate_service.is_blocked(job, "final_script"):
-            return job
+            if job.writing_directives is None:
+                job = self.run_writing_directives(job)
+
+            if job.generated_script is None:
+                job = self.run_script(job)
+            if self.approval_gate_service.is_blocked(job, "final_script"):
+                return job
 
         if job.continuity_bible is None:
             job = self.run_continuity_bible(job)
-        if job.editorial_critique is None:
-            job = self.run_editorial_critique(job)
-        if job.script_quality_report is None:
-            job = self.run_quality_gate(job)
 
-        needs_revision = (
-            job.script_quality_report is not None
-            and job.script_quality_report.status == ScriptQualityStatus.NEEDS_REVISION
-            and job.editorial_critique is not None
-            and bool(job.editorial_critique.findings)
-        )
+        if not is_intake_job:
+            if job.editorial_critique is None:
+                job = self.run_editorial_critique(job)
+            if job.script_quality_report is None:
+                job = self.run_quality_gate(job)
 
-        if needs_revision:
-            job = self.run_revision(job)
-            job = self.run_editorial_critique(job)
-            job = self.run_quality_gate(job)
+            needs_revision = (
+                job.script_quality_report is not None
+                and job.script_quality_report.status
+                == ScriptQualityStatus.NEEDS_REVISION
+                and job.editorial_critique is not None
+                and bool(job.editorial_critique.findings)
+            )
+
+            if needs_revision:
+                job = self.run_revision(job)
+                job = self.run_editorial_critique(job)
+                job = self.run_quality_gate(job)
 
         approved = (
             job.script_quality_report is not None
@@ -1786,7 +1834,7 @@ class ContentIntelligencePipeline:
         )
 
         if (
-            approved
+            (approved or is_intake_job)
             and job.script_version_history is not None
             and job.script_lock is None
         ):
@@ -1820,7 +1868,7 @@ class ContentIntelligencePipeline:
                     version_number=history_before_lock.current_version.version_number,
                 )
 
-        if job.packaging_hypothesis is None:
+        if not is_intake_job and job.packaging_hypothesis is None:
             job = self.run_packaging_hypothesis(job)
 
         if not job.scenes or self.invalidation_service.is_stale(job, "scenes"):

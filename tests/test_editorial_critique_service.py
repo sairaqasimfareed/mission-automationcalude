@@ -212,6 +212,30 @@ def test_critique_with_no_findings_returns_empty_findings_list() -> None:
     assert critique.findings == []
 
 
+def test_critique_succeeds_with_no_research_at_all() -> None:
+    """
+    Manual/auto content mode, 2026-09-24: a script-intake-originated
+    script has no ResearchResult - research is now optional, and the
+    prompt substitutes an explicit "no research available, judge on
+    its own merits" line rather than crashing or silently omitting
+    context the critic would otherwise expect.
+    """
+
+    stub = _StubLLMService(content=_SCORE_BLOCK)
+
+    service = EditorialCritiqueService(llm_service=stub)  # type: ignore[arg-type]
+
+    critique = service.critique(
+        script=_script(), research=None, editorial_profile=_mystery_profile()
+    )
+
+    assert critique.dimension_scores["factual_confidence"] == 75
+
+    assert stub.last_request is not None
+    assert "research summary: none available" in stub.last_request.prompt.lower()
+    assert "written or imported outside this pipeline" in stub.last_request.prompt
+
+
 def test_critique_raises_when_provider_fails() -> None:
     stub = _StubLLMService(content="", success=False)
 

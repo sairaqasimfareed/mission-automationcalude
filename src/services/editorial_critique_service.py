@@ -75,9 +75,19 @@ class EditorialCritiqueService:
         self,
         *,
         script: GeneratedScript,
-        research: ResearchResult,
+        research: ResearchResult | None = None,
         editorial_profile: EditorialProfile,
     ) -> EditorialCritique:
+        """
+        research is optional (manual/auto content intake, 2026-09-24):
+        a script-intake-originated script has no ResearchResult at
+        all, but is still a valid critique target - the critic simply
+        judges pacing/hook-strength/tone/structure without factual
+        grounding to check claims against (a real, disclosed
+        limitation - see _build_prompt's own None-handling), rather
+        than refusing to run at all.
+        """
+
         dimensions = _dimensions_to_score(editorial_profile)
 
         request = LLMRequest(
@@ -149,7 +159,7 @@ class EditorialCritiqueService:
     def _build_prompt(
         *,
         script: GeneratedScript,
-        research: ResearchResult,
+        research: ResearchResult | None,
         dimensions: list[QualityDimension],
     ) -> str:
         ordered_segments = sorted(
@@ -166,9 +176,21 @@ class EditorialCritiqueService:
         valid_severities = ", ".join(sorted(_VALID_SEVERITIES))
         valid_dimensions = ", ".join(_dimension_label(d) for d in dimensions)
 
+        research_line = (
+            f"Research summary: {research.research_summary}\n\n"
+            if research is not None
+            else (
+                "Research summary: none available - this script was "
+                "written or imported outside this pipeline. Judge it "
+                "on its own merits; do not penalize it for lacking "
+                "research-grounded claims you cannot verify either "
+                "way.\n\n"
+            )
+        )
+
         return (
             f"Topic: {script.topic}\n"
-            f"Research summary: {research.research_summary}\n\n"
+            f"{research_line}"
             f"Script segments:\n{segment_lines}\n\n"
             "First, return exactly one block with one score line per "
             f"dimension below:\n{score_label_lines}\n\n"
