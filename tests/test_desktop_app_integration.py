@@ -112,6 +112,9 @@ def _create_project(window: MainWindow, *, duration_seconds: int = 600) -> None:
     form._handle_create_clicked()
 
 
+_RENDER_HARD_JOIN_TIMEOUT_MS = 55_000
+
+
 def _wait_for_render(
     workspace: ProjectWorkspaceView,
     job_id: UUID,
@@ -127,19 +130,49 @@ def _wait_for_render(
     job state the pipeline mutates (render_result, scene_asset_states,
     video_clips, ...) must wait for that thread's finished/failed
     signal to actually be delivered on the main thread first.
+
+    Since real cancellation isn't possible, the only safe recovery is
+    a genuine, event-pump-interleaved join - a bare QThread.wait() can
+    never actually succeed for this app's QThread pattern (see
+    RenderWorkspaceView.wait_for_pending_renders's own docstring for
+    the real, second bug found and fixed diagnosing this: wait()
+    doesn't pump the calling thread's event loop, but the worker
+    thread's own termination depends on a queued signal that requires
+    exactly that pumping - a self-deadlock). A soft timeout now falls
+    through to that same method with a much larger hard bound - this
+    pause-for-missing-asset path does no real I/O and should be fast,
+    so taking longer than timeout_seconds under load is not itself a
+    pipeline bug, only evidence the machine was busy. A render that
+    still never finishes even after the hard bound is a real, genuine
+    hang, and surfaces as a clear, normal test failure instead of
+    corrupting later tests - the thread is safely joined either way
+    before this function ever returns control to the caller.
     """
 
     deadline = time.monotonic() + timeout_seconds
+    timed_out = False
 
     while job_id in workspace.render_workspace._render_threads:
         if time.monotonic() > deadline:
-            raise TimeoutError(
-                f"Render for job {job_id} did not complete within "
-                f"{timeout_seconds}s."
-            )
+            timed_out = True
+
+            break
 
         qapp.processEvents()
         time.sleep(0.01)
+
+    if timed_out:
+        joined = workspace.render_workspace.wait_for_pending_renders(
+            timeout_ms=_RENDER_HARD_JOIN_TIMEOUT_MS
+        )
+
+        if not joined:
+            raise TimeoutError(
+                f"Render for job {job_id} did not complete within "
+                f"{timeout_seconds + _RENDER_HARD_JOIN_TIMEOUT_MS / 1000:.0f}s "
+                "even after a forced join - a real hang, not load-related "
+                "slowness."
+            )
 
     qapp.processEvents()
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import time
 from collections.abc import Callable
 from pathlib import Path
 from uuid import UUID
@@ -8,6 +9,7 @@ from uuid import UUID
 from PySide6.QtCore import QObject, Qt, QThread, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -798,6 +800,79 @@ class RenderWorkspaceView(QWidget):
 
         if job_id is not None:
             self._render_threads.pop(job_id, None)
+
+    def has_pending_renders(self) -> bool:
+        """
+        Return whether any render QThread is still genuinely running.
+
+        Checks QThread.isFinished() directly rather than the
+        _render_threads dict's own membership - the dict entry is only
+        popped by _handle_render_thread_finished, itself delivered via
+        a queued thread.finished signal (see that method's own
+        docstring), so relying on dict membership alone would report
+        "still pending" even after a thread has actually stopped, for
+        as long as nothing has pumped the event loop since.
+        """
+
+        return any(
+            not thread.isFinished() for thread, _worker in self._render_threads.values()
+        )
+
+    def wait_for_pending_renders(self, *, timeout_ms: int = 60_000) -> bool:
+        """
+        Block until every in-flight render QThread has actually
+        stopped, or timeout_ms elapses - never abandon a still-running
+        one.
+
+        Real, previously-undiagnosed crash fix, 2026-09-24: nothing
+        called this before a MainWindow holding this view could be
+        destroyed - RenderOrchestratorService.execute() has no
+        cancellation path anywhere in its call chain, so a still-
+        running render QThread whose Python wrapper gets garbage
+        collected while its underlying OS thread is still actually
+        executing crashes hard at the Qt/C++ level (documented,
+        unsafe QThread teardown), not catchably. MainWindow.
+        closeEvent() now calls this before allowing the window to
+        close - see that method's own docstring. Also directly reused
+        by tests/test_desktop_app_integration.py's own _wait_for_render
+        helper, which hit exactly this crash under CI load before
+        being fixed the same way.
+
+        Real second bug found and fixed building THIS fix, 2026-09-24:
+        a bare QThread.wait() alone can never actually succeed for
+        this app's plain-QThread-plus-moveToThread pattern (see
+        _execute_render/_RenderWorker) - the worker thread's own event
+        loop (QThread::exec(), the DEFAULT run() implementation) only
+        terminates once thread.quit() actually executes, but that
+        reaches thread.quit() via the exact same cross-thread QUEUED
+        delivery documented on _RenderWorker (worker.finished ->
+        thread.quit, a bound QObject method, correctly auto-detected
+        as needing queued delivery) - which requires the CALLING
+        thread's own event loop to be pumped to ever be delivered.
+        QThread.wait() blocks that calling thread WITHOUT pumping its
+        event loop, so the two calls deadlock together: wait() never
+        sees the thread finish, because quit() never runs, because
+        nothing is pumping while wait() blocks. Interleaving short,
+        bounded thread.wait() calls with QApplication.processEvents()
+        (this method's own loop below) breaks that deadlock - proven
+        by a real, initially-failing test before this fix
+        (tests/test_render_workspace_view_pending_render_join.py).
+        """
+
+        app = QApplication.instance()
+        deadline = time.monotonic() + (timeout_ms / 1000.0)
+
+        while self.has_pending_renders():
+            if time.monotonic() > deadline:
+                return False
+
+            for thread, _worker in list(self._render_threads.values()):
+                thread.wait(20)
+
+            if app is not None:
+                app.processEvents()
+
+        return True
 
     def _current_job(self) -> VideoJob | None:
         if self._job_id is None:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QCloseEvent
 from PySide6.QtWidgets import QApplication, QMainWindow, QStackedWidget, QToolBar
 
 from src.desktop import services
@@ -21,6 +21,12 @@ from src.desktop.views.settings_view import SettingsView
 from src.desktop.views.voice_manager_view import VoiceManagerView
 from src.services.opening_title_card_service import OpeningTitleCardService
 from src.shared.logger import logger
+
+# See MainWindow.closeEvent's own docstring - bounds how long closing
+# the window will wait for an in-flight render before giving up and
+# closing anyway, rather than hanging the app's close action forever
+# on a genuine hang.
+_CLOSE_RENDER_WAIT_TIMEOUT_SECONDS = 60.0
 
 
 def _get_opening_title_card_service_or_none() -> OpeningTitleCardService | None:
@@ -207,6 +213,44 @@ class MainWindow(QMainWindow):
     def _open_project(self, job_id: UUID) -> None:
         self._detail_view.set_job(job_id)
         self._stack.setCurrentWidget(self._detail_view)
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        """
+        Real, previously-undiagnosed crash fix, 2026-09-24 (see
+        [[render_pause_test_crash]] memory): nothing here ever waited
+        for an in-flight render before allowing the window to close.
+        RenderOrchestratorService.execute() has no cancellation path
+        anywhere in its call chain, so a real user closing the window
+        mid-render let Python/Qt tear down a still-running QThread
+        wrapper - PySide6 documents this as unsafe, and it crashes the
+        process hard rather than failing gracefully (the exact crash a
+        real-QThread-render test in test_desktop_app_integration.py
+        hit reliably under CI load before being diagnosed and fixed
+        the same way this method fixes it for a real user).
+
+        Blocks briefly (pumping the event loop so the UI stays
+        responsive - see RenderWorkspaceView.wait_for_pending_renders's
+        own docstring for why that pumping has to happen at all)
+        rather than refusing to close outright - a real cancel-in-
+        progress-render UX is a separate, larger feature; this closes
+        the specific safety gap without inventing one.
+        """
+
+        render_workspace = self._detail_view.render_workspace
+
+        if render_workspace.has_pending_renders():
+            joined = render_workspace.wait_for_pending_renders(
+                timeout_ms=int(_CLOSE_RENDER_WAIT_TIMEOUT_SECONDS * 1000)
+            )
+
+            if not joined:
+                logger.warning(
+                    "Closing with a render still in progress after "
+                    f"{_CLOSE_RENDER_WAIT_TIMEOUT_SECONDS:.0f}s - waited as "
+                    "long as reasonably possible without hanging the app."
+                )
+
+        super().closeEvent(event)
 
     def _handle_theme_mode_changed(self, mode: ThemeMode) -> None:
         """
