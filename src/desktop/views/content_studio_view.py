@@ -325,7 +325,7 @@ class ContentStudioView(QWidget):
         self._activity_history_category_filter = "all"
         self._activity_history_stage_filter = "all"
 
-    def refresh(self, job: VideoJob) -> None:
+    def refresh(self, job: VideoJob, *, manage_scroll: bool = True) -> None:
         """
         Real-world finding: every action on this screen (selecting a
         topic, running a stage, saving an edit) calls this method,
@@ -362,22 +362,39 @@ class ContentStudioView(QWidget):
         genuinely settled (`maximum() > 0`) - falling back to the last
         value known to be trustworthy otherwise - propagates the real
         value through the whole burst instead.
+
+        Sixth pass, real-world finding, 2026-09-26: none of the above
+        actually covers every caller. `_handle_select_ci_stage()` calls
+        this method directly, on its own - the scenario every pass
+        above was built and tested against, and it works. But most
+        actions (Save settings, Run stage, ...) instead call
+        `self._on_change()`, which is `ProjectWorkspaceView.refresh()`
+        - a completely different path that tears down and rebuilds
+        *every* workspace tab (Content, Clips, Prompts, Audio,
+        Timeline, Render, Quality, Packaging) in one synchronous burst,
+        this view's own rebuild being only one of eight. That burst
+        reintroduces the exact class of interference the fifth pass
+        fixed within a single view's own repeated calls, except now
+        from *sibling* views' own layout work disturbing this one's
+        scroll-restore cycle - something no prior pass could have
+        caught, since none of them exercised more than this view
+        refreshing itself.
+
+        manage_scroll=False is how `ProjectWorkspaceView._refresh_all()`
+        opts this view out of managing its own restore during that
+        multi-workspace burst, taking over capture-before/restore-
+        after itself across the *whole* burst instead (see
+        `capture_scroll_position()`/`restore_scroll_position()` below)
+        - exactly one authority manages the scrollbar at a time,
+        instead of two independent mechanisms racing each other over
+        it. Capture (and this view's own bookkeeping) still always
+        happens regardless of the flag - only the restore is skipped -
+        so a later *direct* call (e.g. the next stage-tab click) still
+        sees accurate `_last_known_scroll_value`/`_last_refreshed_job_id`
+        state.
         """
 
-        is_same_job = job.id == self._last_refreshed_job_id
-
-        if is_same_job:
-            scroll_bar = self._scroll_area.verticalScrollBar()
-            scroll_value = (
-                scroll_bar.value()
-                if scroll_bar.maximum() > 0
-                else self._last_known_scroll_value
-            )
-        else:
-            scroll_value = 0
-
-        self._last_known_scroll_value = scroll_value
-        self._last_refreshed_job_id = job.id
+        scroll_value = self.capture_scroll_position(job.id)
 
         while self._layout.count():
             item = self._layout.takeAt(0)
@@ -403,7 +420,45 @@ class ContentStudioView(QWidget):
         self._build_originality_card(job)
         self._build_scenes_card(job)
 
-        self._schedule_scroll_restore(scroll_value)
+        if manage_scroll:
+            self.restore_scroll_position(scroll_value)
+
+    def capture_scroll_position(self, job_id: UUID) -> int:
+        """
+        The scroll position to preserve across the next rebuild for
+        this same job - 0 for a genuinely different job (switching
+        projects correctly starts at the top). Always updates this
+        view's own bookkeeping (`_last_known_scroll_value`/
+        `_last_refreshed_job_id`) regardless of who ends up calling
+        `restore_scroll_position()` with the result - see refresh()'s
+        own docstring for why capture and restore are split into two
+        public methods (`ProjectWorkspaceView`'s multi-workspace
+        refresh burst captures this view's position before the burst
+        and restores it only after every sibling workspace has
+        finished rebuilding too).
+        """
+
+        is_same_job = job_id == self._last_refreshed_job_id
+
+        if is_same_job:
+            scroll_bar = self._scroll_area.verticalScrollBar()
+            scroll_value = (
+                scroll_bar.value()
+                if scroll_bar.maximum() > 0
+                else self._last_known_scroll_value
+            )
+        else:
+            scroll_value = 0
+
+        self._last_known_scroll_value = scroll_value
+        self._last_refreshed_job_id = job_id
+
+        return scroll_value
+
+    def restore_scroll_position(self, value: int) -> None:
+        """Public wrapper - see capture_scroll_position()'s own docstring."""
+
+        self._schedule_scroll_restore(value)
 
     def _schedule_scroll_restore(self, value: int) -> None:
         """

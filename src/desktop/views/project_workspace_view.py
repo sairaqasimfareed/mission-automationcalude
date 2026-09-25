@@ -387,8 +387,33 @@ class ProjectWorkspaceView(QWidget):
         self._refresh_all(job)
 
     def _refresh_all(self, job: VideoJob) -> None:
-        for _, _, _, workspace in self._workspaces:
-            workspace.refresh(job)  # type: ignore[attr-defined]
+        """
+        Real-world finding, 2026-09-26: this loop rebuilds every
+        workspace tab in one synchronous burst - Content Studio's own
+        scroll-position-preserving refresh() was built and tested
+        against refreshing *itself* repeatedly, never against seven
+        sibling workspaces' own teardown/rebuild work happening in the
+        same burst, which turned out to disturb its restore cycle's
+        timing enough to reintroduce the exact "snaps back to the top"
+        bug that view's own refresh() otherwise fixes for its direct
+        callers (e.g. its own stage-tab clicks). Content Studio's
+        capture/restore is pulled out here and run once across the
+        whole burst instead of once per tab, so nothing sibling tabs
+        do while rebuilding can race it - see ContentStudioView.
+        refresh()'s own docstring for the full history.
+        """
+
+        content_studio_scroll_value = self.content_studio.capture_scroll_position(
+            job.id
+        )
+
+        for _, _, tab_name, workspace in self._workspaces:
+            if tab_name == "content_studio":
+                workspace.refresh(job, manage_scroll=False)  # type: ignore[attr-defined]
+            else:
+                workspace.refresh(job)  # type: ignore[attr-defined]
+
+        self.content_studio.restore_scroll_position(content_studio_scroll_value)
 
     def _current_job(self) -> VideoJob | None:
         if self._job_id is None:

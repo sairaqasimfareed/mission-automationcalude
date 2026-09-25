@@ -208,6 +208,146 @@ def test_refresh_preserves_scroll_position_for_the_same_job(
     assert view._scroll_area.verticalScrollBar().value() == scrolled_to  # noqa: SLF001
 
 
+def test_refresh_with_manage_scroll_false_does_not_restore_on_its_own(
+    qapp: QApplication,
+) -> None:
+    """
+    Sixth-pass fix: ProjectWorkspaceView's own multi-workspace refresh
+    burst passes manage_scroll=False so it can restore this view's
+    scroll position itself, once, after every sibling workspace has
+    also finished rebuilding - not race a second, independent restore
+    cycle this view would otherwise start on its own. With
+    manage_scroll=False, refresh() must capture (see the next test)
+    but never call restore_scroll_position() itself.
+
+    Asserted via a spy on restore_scroll_position() itself, not the
+    scrollbar's final value - a rebuild that happens to settle back at
+    the same range/value it started at would make "the value is
+    unchanged" look identical whether or not a restore actually ran,
+    proving nothing either way.
+    """
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    with patch.object(
+        view, "restore_scroll_position", wraps=view.restore_scroll_position
+    ) as restore_spy:
+        view.refresh(job, manage_scroll=False)
+
+    restore_spy.assert_not_called()
+
+
+def test_manage_scroll_false_still_updates_bookkeeping_for_the_next_direct_call(
+    qapp: QApplication,
+) -> None:
+    """
+    Capture (and this view's own _last_known_scroll_value/
+    _last_refreshed_job_id bookkeeping) must still happen even when
+    manage_scroll=False skips the restore - otherwise a later direct
+    call (e.g. the next stage-tab click) would work off stale state
+    left over from before the manage_scroll=False call.
+
+    Checked directly against the view's own internal bookkeeping
+    fields rather than inferred from the scrollbar's post-rebuild
+    value - a rebuild of unchanged content can coincidentally settle
+    back at the same value on its own (Qt doesn't reset an existing
+    scrollbar just because its child widgets were replaced), which
+    would make this pass even with a real capture bug.
+    """
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view.resize(400, 200)
+    view.show()
+    qapp.processEvents()
+
+    view._scroll_area.verticalScrollBar().setValue(321)  # noqa: SLF001
+
+    with patch(
+        "src.desktop.views.content_studio_view.QTimer.singleShot",
+        side_effect=_run_pending_timer,
+    ):
+        # Simulates ProjectWorkspaceView's own multi-workspace burst -
+        # this call itself must not restore (proven separately by
+        # test_refresh_with_manage_scroll_false_does_not_restore_on_its_own),
+        # but must still capture.
+        view.refresh(job, manage_scroll=False)
+
+    assert view._last_known_scroll_value == 321  # noqa: SLF001
+    assert view._last_refreshed_job_id == job.id  # noqa: SLF001
+
+
+def test_capture_and_restore_scroll_position_are_usable_from_outside(
+    qapp: QApplication,
+) -> None:
+    """
+    The exact public API ProjectWorkspaceView._refresh_all() uses:
+    capture before a rebuild, restore after - as two standalone calls,
+    not routed through refresh() at all.
+    """
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view.resize(400, 200)
+    view.show()
+    qapp.processEvents()
+
+    view._scroll_area.verticalScrollBar().setValue(456)  # noqa: SLF001
+    scrolled_to = view._scroll_area.verticalScrollBar().value()  # noqa: SLF001
+    assert scrolled_to > 0
+
+    captured = view.capture_scroll_position(job.id)
+    assert captured == scrolled_to
+
+    with patch(
+        "src.desktop.views.content_studio_view.QTimer.singleShot",
+        side_effect=_run_pending_timer,
+    ):
+        view.refresh(job, manage_scroll=False)
+        view.restore_scroll_position(captured)
+
+    assert view._scroll_area.verticalScrollBar().value() == scrolled_to  # noqa: SLF001
+
+
+def test_capture_scroll_position_returns_zero_for_a_different_job(
+    qapp: QApplication,
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+
+    view = _view(job_store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    view.resize(400, 200)
+    view.show()
+    qapp.processEvents()
+
+    view._scroll_area.verticalScrollBar().setValue(200)  # noqa: SLF001
+    assert view._scroll_area.verticalScrollBar().value() > 0  # noqa: SLF001
+
+    assert view.capture_scroll_position(uuid4()) == 0
+
+
 def test_scroll_restore_applies_via_range_changed(qapp: QApplication) -> None:
     """
     The primary mechanism, exercised directly - rangeChanged firing
