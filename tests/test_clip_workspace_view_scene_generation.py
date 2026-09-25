@@ -13,6 +13,11 @@ from PySide6.QtWidgets import QApplication, QPushButton  # noqa: E402
 
 from src.desktop.views.clip_workspace_view import ClipWorkspaceView  # noqa: E402
 from src.models.asset_index import AssetIndex  # noqa: E402
+from src.models.google_flow_generation import (  # noqa: E402
+    GoogleFlowGenerationAttempt,
+    GoogleFlowGenerationRequest,
+    GoogleFlowGenerationState,
+)
 from src.models.media_strategy import SceneSourceStatus, SceneSourceType  # noqa: E402
 from src.models.scene import Scene  # noqa: E402
 from src.models.video_clip import VideoClip, VideoClipStatus  # noqa: E402
@@ -57,6 +62,22 @@ def _job(*scene_numbers: int) -> VideoJob:
     return job
 
 
+def _stuck_attempt(scene_number: int) -> GoogleFlowGenerationAttempt:
+    request = GoogleFlowGenerationRequest(
+        scene_number=scene_number,
+        prompt="A prompt.",
+        prompt_version="v1",
+        profile_id="flow.primary",
+        idempotency_key=f"key-{scene_number}",
+    )
+    attempt = GoogleFlowGenerationAttempt(request=request, profile_id="flow.primary")
+
+    return attempt.with_transition(
+        GoogleFlowGenerationState.AUTH_REQUIRED,
+        detail="Flow shows no sign of an authenticated session.",
+    )
+
+
 class _FakeJobStore:
     def __init__(self, job: VideoJob) -> None:
         self._job = job
@@ -80,7 +101,32 @@ class _FakeSceneVideoGenerationService:
     def __init__(self, *, fail_on_scene: int | None = None) -> None:
         self.generate_one_calls: list[int] = []
         self.generate_all_calls = 0
+        self.retry_scene_after_auth_calls: list[int] = []
         self._fail_on_scene = fail_on_scene
+
+    def retry_scene_after_auth(self, job: VideoJob, scene_number: int) -> None:
+        self.retry_scene_after_auth_calls.append(scene_number)
+
+        # A resumed, now-successful attempt: attach a clip and drop the
+        # stuck ledger entry, same real end state generate_one() itself
+        # leaves behind on success.
+        job.video_clips = [
+            clip for clip in job.video_clips if clip.scene_number != scene_number
+        ] + [
+            VideoClip(
+                scene_number=scene_number,
+                source_type=SceneSourceType.AI_GENERATE,
+                duration_seconds=8,
+                local_file=f"downloads/scene_{scene_number}.mp4",
+                source_status=SceneSourceStatus.READY,
+                status=VideoClipStatus.READY,
+            )
+        ]
+        job.flow_generation_attempts = [
+            attempt
+            for attempt in job.flow_generation_attempts
+            if attempt.request.scene_number != scene_number
+        ]
 
     def generate_one(self, job: VideoJob, scene_number: int) -> None:
         if scene_number == self._fail_on_scene:
@@ -287,3 +333,53 @@ def test_generate_all_keeps_earlier_scene_progress_when_a_later_scene_fails(
     assert scene_numbers_seen == {1, 2}
 
     assert any("Simulated failure on scene 3" in error for error in job.errors)
+
+
+def test_shows_retry_after_login_for_a_scene_stuck_on_auth_required(
+    qapp: QApplication,
+) -> None:
+    job = _job(1, 2)
+    job.flow_generation_attempts = [_stuck_attempt(1)]
+    service = _FakeSceneVideoGenerationService()
+    view = _build_view(job, service=service)
+
+    buttons_by_text = [b.text() for b in _find_buttons(view)]
+
+    # Scene 1 (stuck) shows the recovery action, not the ordinary one;
+    # scene 2 (untouched) is unaffected.
+    assert buttons_by_text.count("Retry after login") == 1
+    assert buttons_by_text.count("Generate") == 1
+
+
+def test_clicking_retry_after_login_resumes_the_stuck_scene(
+    qapp: QApplication,
+) -> None:
+    job = _job(1)
+    job.flow_generation_attempts = [_stuck_attempt(1)]
+    service = _FakeSceneVideoGenerationService()
+    view = _build_view(job, service=service)
+
+    retry_button = next(
+        b for b in _find_buttons(view) if b.text() == "Retry after login"
+    )
+    retry_button.click()
+
+    thread, _worker = next(iter(view._generation_threads.values()))
+    thread.wait(2000)
+    for _ in range(20):
+        qapp.processEvents()
+
+    assert service.retry_scene_after_auth_calls == [1]
+    assert service.generate_one_calls == []  # the recovery path, not the normal one
+    assert job.video_clips
+    assert job.video_clips[0].scene_number == 1
+    assert job.flow_generation_attempts == []  # the stuck entry was cleared
+
+    # A fresh view built from this now-resolved job state (rather than
+    # reusing the existing one, whose old button widgets are only
+    # scheduled for deletion via Qt's deleteLater() and not reliably
+    # gone by the next processEvents() pump) shows no recovery button.
+    resolved_view = _build_view(job, service=service)
+    assert not any(
+        b.text() == "Retry after login" for b in _find_buttons(resolved_view)
+    )

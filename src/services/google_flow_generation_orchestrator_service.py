@@ -211,6 +211,57 @@ class GoogleFlowGenerationOrchestratorService:
 
         return result
 
+    def resume_after_auth(
+        self,
+        job: VideoJob,
+        attempt: GoogleFlowGenerationAttempt,
+    ) -> GoogleFlowGenerationAttempt:
+        """
+        Resume one attempt stuck at AUTH_REQUIRED, once the operator has
+        re-authenticated the account in the real Flow browser session.
+
+        Real-world finding, 2026-09-25: AUTH_REQUIRED is an interrupt
+        state (like SUBMISSION_UNCERTAIN/HUMAN_ACTION_REQUIRED/UI_CHANGED),
+        so this codebase's existing rule is "never auto-retry - call the
+        operator" (SceneVideoGenerationService's own docstring). Nothing
+        ever built the other half of that: once the operator has actually
+        fixed it, there was no way to resume - the account's single
+        in-flight slot (GoogleFlowAccountRouterService, max_in_flight_
+        per_account) stayed permanently occupied by the stuck attempt,
+        blocking every other scene on that account too.
+
+        Safe to resubmit in place (not abandon-and-start-fresh):
+        GoogleFlowRealUIAdapter.submit() is the only place that ever sets
+        AUTH_REQUIRED, and it does so before _preflight()/_drive_submission()
+        ever run - an attempt at AUTH_REQUIRED has therefore never crossed
+        the credit-sensitive SUBMITTING boundary, so replaying submit() on
+        it cannot risk a duplicate paid generation the way blindly retrying
+        a SUBMITTED/GENERATING attempt could.
+
+        Raises ValueError if the attempt isn't actually at AUTH_REQUIRED,
+        or RuntimeError if the account still shows no sign of an
+        authenticated session - never resubmits without a real, positive
+        health check first.
+        """
+
+        if attempt.state != GoogleFlowGenerationState.AUTH_REQUIRED:
+            raise ValueError(
+                "resume_after_auth() only applies to an attempt at "
+                f"AUTH_REQUIRED (this attempt is at {attempt.state.value})."
+            )
+
+        if not self._provider.check_profile_health(attempt.profile_id):
+            raise RuntimeError(
+                "This account still shows no sign of an authenticated "
+                "session - log back into Google in the Flow browser "
+                "profile, then retry."
+            )
+
+        result = self._provider.submit(attempt.request, attempt)
+        GoogleFlowGenerationLedgerService.replace_attempt(job, result)
+
+        return result
+
     def observe_attempt(
         self,
         job: VideoJob,

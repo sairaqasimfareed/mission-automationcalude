@@ -291,6 +291,52 @@ class SceneVideoGenerationService:
             entry for entry in report.entries if entry.scene_number == scene_number
         )
 
+    def retry_scene_after_auth(
+        self, job: VideoJob, scene_number: int
+    ) -> SceneCompletenessEntry:
+        """
+        Operator-triggered recovery for a scene whose Google Flow
+        attempt is stuck at AUTH_REQUIRED - see
+        GoogleFlowGenerationOrchestratorService.resume_after_auth's own
+        docstring for why this is safe to resume in place rather than
+        abandon-and-resubmit.
+
+        Searches every sub-clip index for this scene_number, not just
+        clip_sequence_index=0 - a Phase 5 split scene can have the
+        stuck attempt on any sub-clip. Once resumed, hands off to the
+        exact same generate_one() path any other scene uses (which
+        re-dispatches to the split-scene loop when needed) so a
+        multi-sub-clip scene correctly continues from wherever it left
+        off instead of restarting.
+        """
+
+        scene = next(
+            (s for s in job.scenes if s.scene_number == scene_number),
+            None,
+        )
+
+        if scene is None:
+            raise ValueError(f"Job has no scene numbered {scene_number}.")
+
+        stuck_attempt = next(
+            (
+                attempt
+                for attempt in job.flow_generation_attempts
+                if attempt.request.scene_number == scene_number
+                and attempt.state == GoogleFlowGenerationState.AUTH_REQUIRED
+            ),
+            None,
+        )
+
+        if stuck_attempt is None:
+            raise ValueError(
+                f"Scene {scene_number} has no attempt waiting on authentication."
+            )
+
+        self._orchestrator.resume_after_auth(job, stuck_attempt)
+
+        return self.generate_one(job, scene_number)
+
     def _drive_to_terminal(
         self,
         job: VideoJob,

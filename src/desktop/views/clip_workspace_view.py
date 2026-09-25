@@ -27,6 +27,10 @@ from src.desktop.widgets import (
 )
 from src.models.bulk_clip_ingestion import BulkClipIngestionEntryStatus
 from src.models.bulk_stock_assignment import BulkStockAssignmentEntryStatus
+from src.models.google_flow_generation import (
+    GoogleFlowGenerationAttempt,
+    GoogleFlowGenerationState,
+)
 from src.models.scene_completeness import SceneCompletenessStatus
 from src.models.video_clip import VideoClip
 from src.models.video_job import VideoJob
@@ -91,6 +95,7 @@ class _SceneVideoGenerationWorker(QObject):
         service: SceneVideoGenerationService,
         job: VideoJob,
         scene_number: int | None,
+        retry_after_auth: bool = False,
     ) -> None:
         super().__init__()
 
@@ -99,10 +104,14 @@ class _SceneVideoGenerationWorker(QObject):
         self.job = job
         self.job_id = job.id
         self.scene_number = scene_number
+        self._retry_after_auth = retry_after_auth
 
     def run(self) -> None:
         try:
-            if self.scene_number is None:
+            if self._retry_after_auth:
+                assert self.scene_number is not None  # only ever set together
+                self._service.retry_scene_after_auth(self._job, self.scene_number)
+            elif self.scene_number is None:
                 self._service.generate_all(
                     self._job,
                     on_scene_complete=self._handle_scene_complete,
@@ -324,22 +333,56 @@ class ClipWorkspaceView(QWidget):
                     )
                 )
 
-            scene_button = button(
-                "Regenerate"
-                if entry is not None and entry.status == SceneCompletenessStatus.READY
-                else "Generate"
-            )
-            scene_button.setEnabled(not is_generating)
-            scene_button.clicked.connect(
-                lambda checked=False, number=scene.scene_number: (
-                    self._handle_generate_scene_video(number)
+            stuck_on_auth = self._auth_required_attempt(job, scene.scene_number)
+
+            if stuck_on_auth is not None:
+                retry_button = button("Retry after login", variant="primary")
+                retry_button.setEnabled(not is_generating)
+                retry_button.clicked.connect(
+                    lambda checked=False, number=scene.scene_number: (
+                        self._handle_retry_scene_after_auth(number)
+                    )
                 )
-            )
-            row_layout.addWidget(scene_button, alignment=_LEFT)
+                row_layout.addWidget(retry_button, alignment=_LEFT)
+            else:
+                scene_button = button(
+                    "Regenerate"
+                    if entry is not None
+                    and entry.status == SceneCompletenessStatus.READY
+                    else "Generate"
+                )
+                scene_button.setEnabled(not is_generating)
+                scene_button.clicked.connect(
+                    lambda checked=False, number=scene.scene_number: (
+                        self._handle_generate_scene_video(number)
+                    )
+                )
+                row_layout.addWidget(scene_button, alignment=_LEFT)
 
             layout.addLayout(row_layout)
 
         self._layout.addWidget(frame)
+
+    @staticmethod
+    def _auth_required_attempt(
+        job: VideoJob, scene_number: int
+    ) -> GoogleFlowGenerationAttempt | None:
+        """
+        The scene's stuck AUTH_REQUIRED attempt, if any - checked
+        across every sub-clip index (a Phase 5 split scene's stuck
+        attempt need not be clip_sequence_index=0), not just via
+        SceneCompletenessService's own default-index lookup.
+        """
+
+        return next(
+            (
+                attempt
+                for attempt in job.flow_generation_attempts
+                if attempt.request.scene_number == scene_number
+                and attempt.state == GoogleFlowGenerationState.AUTH_REQUIRED
+            ),
+            None,
+        )
 
     def _handle_generate_scene_video(self, scene_number: int) -> None:
         job = self._current_job()
@@ -348,6 +391,16 @@ class ClipWorkspaceView(QWidget):
             return
 
         self._execute_scene_generation(job, scene_number=scene_number)
+
+    def _handle_retry_scene_after_auth(self, scene_number: int) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        self._execute_scene_generation(
+            job, scene_number=scene_number, retry_after_auth=True
+        )
 
     def _handle_generate_all_scene_videos(self) -> None:
         job = self._current_job()
@@ -358,7 +411,11 @@ class ClipWorkspaceView(QWidget):
         self._execute_scene_generation(job, scene_number=None)
 
     def _execute_scene_generation(
-        self, job: VideoJob, *, scene_number: int | None
+        self,
+        job: VideoJob,
+        *,
+        scene_number: int | None,
+        retry_after_auth: bool = False,
     ) -> None:
         service = self._scene_video_generation_service
 
@@ -375,6 +432,7 @@ class ClipWorkspaceView(QWidget):
             service=service,
             job=job,
             scene_number=scene_number,
+            retry_after_auth=retry_after_auth,
         )
         worker.moveToThread(thread)
 

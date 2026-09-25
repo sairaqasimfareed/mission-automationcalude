@@ -123,9 +123,11 @@ class _ScriptedProvider(ExternalUIGenerationProvider):
         *,
         observe_sequence: list[GoogleFlowGenerationState],
         profile_health: bool = True,
+        auth_required_first: bool = False,
     ) -> None:
         self._observe_sequence = list(observe_sequence)
         self._profile_health = profile_health
+        self._auth_required_first = auth_required_first
         self.observe_call_count = 0
         self.check_profile_health_calls: list[str] = []
         self.submitted_prompts: list[str] = []
@@ -160,6 +162,12 @@ class _ScriptedProvider(ExternalUIGenerationProvider):
     ) -> GoogleFlowGenerationAttempt:
         self.submitted_prompts.append(request.prompt)
         self.submitted_requests.append(request)
+
+        if self._auth_required_first and len(self.submitted_requests) == 1:
+            return attempt.with_transition(
+                GoogleFlowGenerationState.AUTH_REQUIRED,
+                detail="Flow shows no sign of an authenticated session.",
+            )
 
         current = attempt
         for state in (
@@ -770,6 +778,76 @@ def test_generate_one_polls_an_existing_submission_uncertain_attempt() -> None:
     assert provider.submitted_prompts == []  # never resubmitted
     assert provider.observe_call_count == 1  # but it WAS polled
     assert job.flow_generation_attempts[-1].state == GoogleFlowGenerationState.FAILED
+
+
+def test_retry_scene_after_auth_resumes_and_continues_to_ready(
+    tmp_path: Path,
+) -> None:
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            GoogleFlowGenerationState.GENERATING,
+            GoogleFlowGenerationState.READY_TO_DOWNLOAD,
+        ],
+        auth_required_first=True,
+    )
+    real_file = tmp_path / "scene.mp4"
+    real_file.write_bytes(b"fake but present video bytes")
+    provider.downloaded_file = str(real_file)
+
+    service = _service(provider)
+    job = _job(_scene(1))
+
+    stuck = service.generate_one(job, 1)
+    assert stuck.status == SceneCompletenessStatus.NEEDS_ATTENTION
+    assert job.flow_generation_attempts[0].state == (
+        GoogleFlowGenerationState.AUTH_REQUIRED
+    )
+    assert len(provider.submitted_prompts) == 1
+
+    entry = service.retry_scene_after_auth(job, 1)
+
+    assert entry.status == SceneCompletenessStatus.READY
+    assert len(provider.submitted_prompts) == 2  # resumed, not a fresh attempt
+    assert provider.check_profile_health_calls == ["flow.primary"]
+
+
+def test_retry_scene_after_auth_raises_when_scene_has_no_stuck_attempt() -> None:
+    provider = _ScriptedProvider(observe_sequence=[])
+    service = _service(provider)
+    job = _job(_scene(1))
+
+    with pytest.raises(ValueError, match="no attempt waiting on authentication"):
+        service.retry_scene_after_auth(job, 1)
+
+
+def test_retry_scene_after_auth_raises_for_an_unknown_scene_number() -> None:
+    provider = _ScriptedProvider(observe_sequence=[])
+    service = _service(provider)
+    job = _job(_scene(1))
+
+    with pytest.raises(ValueError, match="no scene numbered"):
+        service.retry_scene_after_auth(job, 99)
+
+
+def test_retry_scene_after_auth_still_refuses_while_unhealthy() -> None:
+    provider = _ScriptedProvider(
+        observe_sequence=[],
+        auth_required_first=True,
+        profile_health=False,
+    )
+    service = _service(provider)
+    job = _job(_scene(1))
+
+    stuck = service.generate_one(job, 1)
+    assert stuck.status == SceneCompletenessStatus.NEEDS_ATTENTION
+
+    with pytest.raises(RuntimeError, match="no sign of an authenticated session"):
+        service.retry_scene_after_auth(job, 1)
+
+    assert len(provider.submitted_prompts) == 1  # never resubmitted
+    assert job.flow_generation_attempts[0].state == (
+        GoogleFlowGenerationState.AUTH_REQUIRED
+    )
 
 
 def test_generate_one_raises_for_an_unknown_scene_number() -> None:

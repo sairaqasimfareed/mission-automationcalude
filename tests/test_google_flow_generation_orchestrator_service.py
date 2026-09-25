@@ -93,9 +93,18 @@ class FakeAdvancingProvider(ExternalUIGenerationProvider):
     against the real fixture in test_google_flow_adapter.py).
     """
 
-    def __init__(self, *, fail: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        fail: bool = False,
+        healthy: bool = True,
+        auth_required_first: bool = False,
+    ) -> None:
         self.fail = fail
+        self.healthy = healthy
+        self._auth_required_first = auth_required_first
         self.submit_calls: list[GoogleFlowGenerationRequest] = []
+        self.check_profile_health_calls: list[str] = []
 
     @property
     def provider_name(self) -> str:
@@ -115,7 +124,8 @@ class FakeAdvancingProvider(ExternalUIGenerationProvider):
         )
 
     def check_profile_health(self, profile_id: str) -> bool:
-        return True
+        self.check_profile_health_calls.append(profile_id)
+        return self.healthy
 
     def submit(
         self,
@@ -126,6 +136,12 @@ class FakeAdvancingProvider(ExternalUIGenerationProvider):
 
         if self.fail:
             raise RuntimeError("simulated adapter failure")
+
+        if self._auth_required_first and len(self.submit_calls) == 1:
+            return attempt.with_transition(
+                GoogleFlowGenerationState.AUTH_REQUIRED,
+                detail="Flow shows no sign of an authenticated session.",
+            )
 
         current = attempt
         for state in (
@@ -394,6 +410,53 @@ def test_download_attempt_persists_the_result() -> None:
     assert downloaded.state == GoogleFlowGenerationState.DOWNLOADED
     assert job.flow_generation_attempts[0].state == (
         GoogleFlowGenerationState.DOWNLOADED
+    )
+
+
+def test_resume_after_auth_resubmits_and_persists_once_healthy() -> None:
+    provider = FakeAdvancingProvider(auth_required_first=True)
+    orchestrator, _ = _orchestrator(provider=provider)
+    job = _job()
+
+    stuck = _submit(orchestrator, job)
+    assert stuck.state == GoogleFlowGenerationState.AUTH_REQUIRED
+
+    resumed = orchestrator.resume_after_auth(job, stuck)
+
+    assert resumed.state == GoogleFlowGenerationState.GENERATING
+    assert job.flow_generation_attempts == [resumed]
+    assert provider.check_profile_health_calls == ["flow.primary"]
+    assert len(provider.submit_calls) == 2
+
+
+def test_resume_after_auth_rejects_an_attempt_not_at_auth_required() -> None:
+    orchestrator, provider = _orchestrator()
+    job = _job()
+    generating = _submit(orchestrator, job)
+    assert generating.state == GoogleFlowGenerationState.GENERATING
+
+    with pytest.raises(ValueError, match="AUTH_REQUIRED"):
+        orchestrator.resume_after_auth(job, generating)
+
+    # Never even checked health or resubmitted for the wrong state.
+    assert provider.check_profile_health_calls == []
+    assert len(provider.submit_calls) == 1
+
+
+def test_resume_after_auth_refuses_to_resubmit_while_still_unhealthy() -> None:
+    provider = FakeAdvancingProvider(auth_required_first=True, healthy=False)
+    orchestrator, _ = _orchestrator(provider=provider)
+    job = _job()
+    stuck = _submit(orchestrator, job)
+    assert stuck.state == GoogleFlowGenerationState.AUTH_REQUIRED
+
+    with pytest.raises(RuntimeError, match="no sign of an authenticated session"):
+        orchestrator.resume_after_auth(job, stuck)
+
+    # Never resubmitted - the attempt is still exactly where it was.
+    assert len(provider.submit_calls) == 1
+    assert job.flow_generation_attempts[0].state == (
+        GoogleFlowGenerationState.AUTH_REQUIRED
     )
 
 
