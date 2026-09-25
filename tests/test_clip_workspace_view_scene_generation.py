@@ -5,6 +5,7 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from collections.abc import Callable, Iterator  # noqa: E402
+from pathlib import Path  # noqa: E402
 from unittest.mock import patch  # noqa: E402
 from uuid import UUID  # noqa: E402
 
@@ -25,9 +26,11 @@ from src.models.video_job import VideoJob  # noqa: E402
 from src.services.asset_decision_service import AssetDecisionService  # noqa: E402
 from src.services.asset_manager import AssetManager  # noqa: E402
 from src.services.asset_search_service import AssetSearchService  # noqa: E402
+from src.services.asset_storage_service import AssetStorageService  # noqa: E402
 from src.services.local_asset_search_service import (  # noqa: E402
     LocalAssetSearchService,
 )
+from src.services.manual_upload_service import ManualUploadService  # noqa: E402
 from src.services.scene_asset_workflow_service import (  # noqa: E402
     SceneAssetWorkflowService,
 )
@@ -172,15 +175,41 @@ def _asset_workflow_service() -> SceneAssetWorkflowService:
     )
 
 
+def _asset_workflow_service_with_manual_upload(
+    tmp_path: Path,
+) -> SceneAssetWorkflowService:
+    """
+    Same as _asset_workflow_service(), plus a real ManualUploadService -
+    needed only by the per-scene "Upload..." button tests, which
+    exercise the actual manual-upload path (apply_decision() fails
+    validation with no manual_upload_service configured at all).
+    """
+
+    index = AssetIndex()
+    storage_service = AssetStorageService(
+        storage_root=tmp_path / "project-assets", asset_index=index
+    )
+
+    return SceneAssetWorkflowService(
+        asset_manager=AssetManager(local_search_service=LocalAssetSearchService(index)),
+        decision_service=AssetDecisionService(),
+        asset_search_service=AssetSearchService(),
+        manual_upload_service=ManualUploadService(
+            storage_service=storage_service, maximum_file_size_bytes=10_000
+        ),
+    )
+
+
 def _build_view(
     job: VideoJob,
     *,
     service: _FakeSceneVideoGenerationService | None,
     job_store: _FakeJobStore | None = None,
+    asset_workflow_service: SceneAssetWorkflowService | None = None,
 ) -> ClipWorkspaceView:
     view = ClipWorkspaceView(
         job_store=job_store or _FakeJobStore(job),  # type: ignore[arg-type]
-        asset_workflow_service=_asset_workflow_service(),
+        asset_workflow_service=asset_workflow_service or _asset_workflow_service(),
         on_change=lambda: None,
         scene_video_generation_service=service,  # type: ignore[arg-type]
     )
@@ -333,6 +362,58 @@ def test_generate_all_keeps_earlier_scene_progress_when_a_later_scene_fails(
     assert scene_numbers_seen == {1, 2}
 
     assert any("Simulated failure on scene 3" in error for error in job.errors)
+
+
+def test_shows_upload_button_next_to_the_generate_button(qapp: QApplication) -> None:
+    job = _job(1, 2)
+    service = _FakeSceneVideoGenerationService()
+    view = _build_view(job, service=service)
+
+    upload_buttons = [b for b in _find_buttons(view) if b.text() == "Upload..."]
+    assert len(upload_buttons) == 2
+
+
+def test_clicking_upload_attaches_the_selected_file_to_that_scene(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    clip_file = tmp_path / "my_clip.mp4"
+    clip_file.write_bytes(b"clip-bytes")
+
+    monkeypatch.setattr(
+        "src.desktop.views.clip_workspace_view.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(clip_file), "Video files (*.mp4)"),
+    )
+
+    job = _job(1, 2)
+    service = _FakeSceneVideoGenerationService()
+    view = _build_view(
+        job,
+        service=service,
+        asset_workflow_service=_asset_workflow_service_with_manual_upload(tmp_path),
+    )
+
+    view._handle_upload_scene_clip(2)
+
+    assert len(job.video_clips) == 1
+    assert job.video_clips[0].scene_number == 2
+    assert job.video_clips[0].source_type == SceneSourceType.MANUAL_UPLOAD
+
+
+def test_clicking_upload_cancelled_is_a_noop(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "src.desktop.views.clip_workspace_view.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: ("", ""),
+    )
+
+    job = _job(1)
+    service = _FakeSceneVideoGenerationService()
+    view = _build_view(job, service=service)
+
+    view._handle_upload_scene_clip(1)
+
+    assert job.video_clips == []
 
 
 def test_shows_retry_after_login_for_a_scene_stuck_on_auth_required(

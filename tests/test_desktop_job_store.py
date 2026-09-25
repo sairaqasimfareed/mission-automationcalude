@@ -67,6 +67,23 @@ def test_list_all_returns_newest_first() -> None:
     assert [job.project_name for job in jobs] == ["Second", "First"]
 
 
+def test_delete_removes_a_job_from_the_in_memory_store() -> None:
+    store = InMemoryJobStore()
+    job = _job()
+    store.add(job)
+
+    store.delete(job.id)
+
+    assert store.get(job.id) is None
+    assert store.list_all() == []
+
+
+def test_delete_is_a_no_op_for_an_unknown_job_id() -> None:
+    store = InMemoryJobStore()
+
+    store.delete(uuid4())  # must not raise
+
+
 def test_seo_package_round_trip() -> None:
     store = InMemoryJobStore()
     job = _job()
@@ -550,6 +567,91 @@ def test_json_store_export_variant_with_platform_packaging_round_trips(
     assert reloaded is not None
     assert reloaded.variants[0].seo_package == seo_package
     assert reloaded.variants[0].thumbnail_artifact == thumbnail
+
+
+def test_json_store_delete_removes_the_job_and_every_artifact_file(
+    tmp_path: Path,
+) -> None:
+    store = JsonJobStore(storage_root=tmp_path)
+    job = _job()
+    store.add(job)
+
+    seo_package = SEOPackage(
+        video_job_id=job.id,
+        title_candidates=[TitleCandidate(text="Great Video")],
+        selected_title="Great Video",
+        description="A description.",
+        platform_metadata=SEOPlatformMetadata(platform=Platform.YOUTUBE),
+        prompt_version="seo_prompt_v1.0.0",
+    )
+    store.set_seo_package(job.id, seo_package)
+
+    thumbnail = ThumbnailArtifact(
+        video_job_id=job.id,
+        concept=ThumbnailConcept(
+            concept_summary="A summary.",
+            hook_text="HOOK",
+            visual_prompt="A prompt.",
+        ),
+        layout=ThumbnailLayout(width=1280, height=720),
+        image_source_type=ThumbnailImageSourceType.AI_GENERATED,
+        provider_name="dry_run",
+        file_path="dry-run://thumbnail/1280x720.png",
+        file_size_bytes=0,
+    )
+    store.set_thumbnail(job.id, thumbnail)
+
+    # Every artifact file genuinely exists on disk before deletion -
+    # otherwise this test would prove nothing about delete() actually
+    # removing them.
+    assert (tmp_path / f"{job.id}.json").exists()
+    assert (tmp_path / f"{job.id}.seo_package.json").exists()
+    assert (tmp_path / f"{job.id}.thumbnail.json").exists()
+
+    store.delete(job.id)
+
+    assert not (tmp_path / f"{job.id}.json").exists()
+    assert not (tmp_path / f"{job.id}.seo_package.json").exists()
+    assert not (tmp_path / f"{job.id}.thumbnail.json").exists()
+
+    assert store.get(job.id) is None
+    assert store.get_seo_package(job.id) is None
+    assert store.get_thumbnail(job.id) is None
+
+    # A fresh instance (a real restart) must not see the deleted
+    # project reappear from a stale on-disk file.
+    fresh_store = JsonJobStore(storage_root=tmp_path)
+    assert fresh_store.get(job.id) is None
+    assert fresh_store.list_all() == []
+
+
+def test_json_store_delete_is_idempotent(tmp_path: Path) -> None:
+    store = JsonJobStore(storage_root=tmp_path)
+    job = _job()
+    store.add(job)
+
+    store.delete(job.id)
+    store.delete(job.id)  # must not raise the second time
+
+
+def test_json_store_delete_is_a_no_op_for_an_unknown_job_id(tmp_path: Path) -> None:
+    store = JsonJobStore(storage_root=tmp_path)
+
+    store.delete(uuid4())  # must not raise
+
+
+def test_json_store_delete_leaves_other_projects_untouched(tmp_path: Path) -> None:
+    store = JsonJobStore(storage_root=tmp_path)
+    keep = _job("Keep me")
+    remove = _job("Delete me")
+    store.add(keep)
+    store.add(remove)
+
+    store.delete(remove.id)
+
+    assert store.get(remove.id) is None
+    assert store.get(keep.id) == keep
+    assert [job.id for job in store.list_all()] == [keep.id]
 
 
 def test_json_store_corrupt_job_file_raises(tmp_path: Path) -> None:

@@ -28,6 +28,8 @@ class JobStore(Protocol):
 
     def list_all(self) -> list[VideoJob]: ...
 
+    def delete(self, job_id: UUID) -> None: ...
+
     def set_seo_package(self, job_id: UUID, seo_package: SEOPackage) -> None: ...
 
     def get_seo_package(self, job_id: UUID) -> SEOPackage | None: ...
@@ -87,6 +89,14 @@ class InMemoryJobStore:
             key=lambda job: job.created_at,
             reverse=True,
         )
+
+    def delete(self, job_id: UUID) -> None:
+        self._jobs.pop(job_id, None)
+        self._seo_packages.pop(job_id, None)
+        self._thumbnails.pop(job_id, None)
+        self._render_results.pop(job_id, None)
+        self._final_exports.pop(job_id, None)
+        self._export_variants.pop(job_id, None)
 
     def set_seo_package(self, job_id: UUID, seo_package: SEOPackage) -> None:
         self._seo_packages[job_id] = seo_package
@@ -203,6 +213,40 @@ class JsonJobStore:
             key=lambda job: job.created_at,
             reverse=True,
         )
+
+    def delete(self, job_id: UUID) -> None:
+        """
+        Remove a project's record and every downstream artifact this
+        store owns (SEO package, thumbnail, render result, final
+        export, export variants) - the JSON metadata this class
+        writes, per its own per-concern file layout, never the actual
+        media files those records point at (rendered videos,
+        downloaded clips) - deleting large media silently would be a
+        far more destructive, harder-to-reverse action than removing a
+        project entry, and isn't this store's responsibility to begin
+        with.
+
+        Idempotent: deleting an already-absent or never-existing job
+        id is a no-op, not an error - safe to call more than once.
+        """
+
+        for path in (
+            self._job_path(job_id),
+            self._artifact_path(job_id, "seo_package"),
+            self._artifact_path(job_id, "thumbnail"),
+            self._artifact_path(job_id, "render_result"),
+            self._artifact_path(job_id, "final_export"),
+            self._artifact_path(job_id, "export_variants"),
+        ):
+            if path.exists():
+                path.unlink()
+
+        self._jobs.pop(job_id, None)
+        self._seo_packages.pop(job_id, None)
+        self._thumbnails.pop(job_id, None)
+        self._render_results.pop(job_id, None)
+        self._final_exports.pop(job_id, None)
+        self._export_variants.pop(job_id, None)
 
     def set_seo_package(self, job_id: UUID, seo_package: SEOPackage) -> None:
         self._seo_packages[job_id] = seo_package

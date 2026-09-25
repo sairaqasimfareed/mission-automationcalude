@@ -106,6 +106,55 @@ class BulkClipIngestionService:
             entries=entries, scenes_still_missing_a_file=scenes_still_missing
         )
 
+    def ingest_one(
+        self, *, job: VideoJob, scene_number: int, file_path: Path
+    ) -> BulkClipIngestionEntry:
+        """
+        Attach a single file to a single, explicitly-known scene - the
+        same validated manual-upload path ingest() uses per file,
+        without a whole folder scan or filename-based scene matching.
+        The natural companion to ingest()'s bulk workflow for
+        attaching just one scene's clip at a time (e.g. the Clip
+        Workspace's per-scene "Upload..." button, right next to that
+        scene's own Generate button) - the scene is already known from
+        which button was clicked, so this never needs to parse it back
+        out of the filename the way the bulk folder scan does.
+        """
+
+        scenes_by_number = {scene.scene_number: scene for scene in job.scenes}
+        states_by_number = {
+            state.scene_number: state for state in job.scene_asset_states
+        }
+
+        scene = scenes_by_number.get(scene_number)
+
+        if scene is None:
+            entry = BulkClipIngestionEntry(
+                file_name=file_path.name,
+                scene_number=scene_number,
+                status=BulkClipIngestionEntryStatus.NO_MATCHING_SCENE,
+                detail=f"No scene {scene_number} in this project.",
+            )
+        else:
+            entry = self._apply_upload(
+                file_path=file_path,
+                job=job,
+                scene=scene,
+                states_by_number=states_by_number,
+            )
+
+        job.scene_asset_states = list(states_by_number.values())
+        job.video_clips = self.video_clip_builder_service.build_clips(
+            scenes=job.scenes, states=job.scene_asset_states
+        )
+        self.invalidation_service.clear_stale(job, "scene_asset_states")
+        self.invalidation_service.clear_stale(job, "video_clips")
+
+        if entry.status == BulkClipIngestionEntryStatus.ASSIGNED:
+            self.invalidation_service.on_scene_replaced(job, scene_number=scene_number)
+
+        return entry
+
     def _ingest_one(
         self,
         *,
@@ -131,8 +180,21 @@ class BulkClipIngestionService:
                 detail=detail,
             )
 
-        # scene is matched, so its own scene_number (always int) is the
-        # authoritative key from here on - narrows away the Optional.
+        return self._apply_upload(
+            file_path=file_path,
+            job=job,
+            scene=scene,
+            states_by_number=states_by_number,
+        )
+
+    def _apply_upload(
+        self,
+        *,
+        file_path: Path,
+        job: VideoJob,
+        scene: Scene,
+        states_by_number: dict[int, SceneAssetState],
+    ) -> BulkClipIngestionEntry:
         scene_number = scene.scene_number
 
         if scene.source_locked:

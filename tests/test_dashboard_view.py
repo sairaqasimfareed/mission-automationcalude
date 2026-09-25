@@ -5,9 +5,10 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from collections.abc import Iterator  # noqa: E402
+from unittest.mock import patch  # noqa: E402
 
 import pytest  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
 from src.desktop.job_store import InMemoryJobStore  # noqa: E402
 from src.desktop.views.dashboard_view import DashboardView  # noqa: E402
@@ -122,6 +123,61 @@ def test_empty_job_store_shows_the_empty_state_not_the_table(
     # refresh() actually controls.
     assert dashboard._empty_label.isHidden() is False
     assert dashboard._table.isHidden() is True
+
+
+def test_delete_button_removes_the_selected_project_after_confirmation(
+    qapp: QApplication, tmp_path
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+    dashboard = _dashboard(tmp_path, job_store)
+    dashboard.refresh()
+    dashboard._table.selectRow(0)
+
+    with patch(
+        "src.desktop.views.dashboard_view.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.Yes,
+    ):
+        dashboard._handle_delete_clicked()
+
+    assert job_store.get(job.id) is None
+    assert dashboard._table.rowCount() == 0
+
+
+def test_delete_button_does_nothing_if_the_confirmation_is_declined(
+    qapp: QApplication, tmp_path
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+    dashboard = _dashboard(tmp_path, job_store)
+    dashboard.refresh()
+    dashboard._table.selectRow(0)
+
+    with patch(
+        "src.desktop.views.dashboard_view.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.No,
+    ):
+        dashboard._handle_delete_clicked()
+
+    assert job_store.get(job.id) == job
+    assert dashboard._table.rowCount() == 1
+
+
+def test_delete_button_does_nothing_without_a_selection(
+    qapp: QApplication, tmp_path
+) -> None:
+    job_store = InMemoryJobStore()
+    job = _job()
+    job_store.add(job)
+    dashboard = _dashboard(tmp_path, job_store)
+    dashboard.refresh()
+    # Deliberately no selectRow() call - nothing selected.
+
+    dashboard._handle_delete_clicked()  # must not raise
+
+    assert job_store.get(job.id) == job
 
 
 def test_double_clicking_a_row_opens_that_project(qapp: QApplication, tmp_path) -> None:

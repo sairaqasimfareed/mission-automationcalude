@@ -6,6 +6,7 @@ from uuid import UUID
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHeaderView,
+    QMessageBox,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -99,7 +100,11 @@ class DashboardView(QWidget):
             "Continue Production", variant="primary", icon_name="folder"
         )
         open_button.clicked.connect(self._handle_open_clicked)
-        layout.addLayout(row(open_button))
+
+        delete_button = button("Delete Project", variant="danger", icon_name="x-circle")
+        delete_button.clicked.connect(self._handle_delete_clicked)
+
+        layout.addLayout(row(open_button, delete_button))
 
         self._checkpoint_label = small_muted("")
         layout.addWidget(self._checkpoint_label)
@@ -149,6 +154,36 @@ class DashboardView(QWidget):
 
         if selected:
             self._open_row(selected[0].row())
+
+    def _handle_delete_clicked(self) -> None:
+        selected = self._table.selectionModel().selectedRows()
+
+        if not selected:
+            return
+
+        row_index = selected[0].row()
+
+        if not (0 <= row_index < len(self._job_ids)):
+            return
+
+        job_id = self._job_ids[row_index]
+        name_item = self._table.item(row_index, 0)
+        project_name = name_item.text() if name_item is not None else "this project"
+
+        confirmation = QMessageBox.question(
+            self,
+            "Delete project",
+            f"Permanently delete '{project_name}'? This removes the "
+            "project and its tracked artifacts (SEO package, "
+            "thumbnail, render/export records) but not any already-"
+            "rendered video files on disk. This cannot be undone.",
+        )
+
+        if confirmation != QMessageBox.StandardButton.Yes:
+            return
+
+        self._job_store.delete(job_id)
+        self.refresh()
 
     def _open_row(self, row_index: int) -> None:
         if 0 <= row_index < len(self._job_ids):

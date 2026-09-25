@@ -170,6 +170,81 @@ def test_ingest_processes_multiple_files_in_one_batch(tmp_path: Path) -> None:
     assert result.scenes_still_missing_a_file == []
 
 
+def test_ingest_one_assigns_a_file_to_the_given_scene_regardless_of_filename(
+    tmp_path: Path,
+) -> None:
+    file_path = tmp_path / "whatever-filename.mp4"
+    file_path.write_bytes(b"clip-bytes")
+
+    job = _job(_scene(1), _scene(2))
+    service = BulkClipIngestionService(
+        asset_workflow_service=_workflow_service(tmp_path)
+    )
+
+    entry = service.ingest_one(job=job, scene_number=2, file_path=file_path)
+
+    assert entry.status == BulkClipIngestionEntryStatus.ASSIGNED
+    assert entry.scene_number == 2
+    assert len(job.video_clips) == 1
+    assert job.video_clips[0].scene_number == 2
+
+
+def test_ingest_one_flags_an_unknown_scene_number(tmp_path: Path) -> None:
+    file_path = tmp_path / "clip.mp4"
+    file_path.write_bytes(b"clip-bytes")
+
+    job = _job(_scene(1))
+    service = BulkClipIngestionService(
+        asset_workflow_service=_workflow_service(tmp_path)
+    )
+
+    entry = service.ingest_one(job=job, scene_number=99, file_path=file_path)
+
+    assert entry.status == BulkClipIngestionEntryStatus.NO_MATCHING_SCENE
+    assert job.video_clips == []
+
+
+def test_ingest_one_skips_a_locked_scene(tmp_path: Path) -> None:
+    file_path = tmp_path / "clip.mp4"
+    file_path.write_bytes(b"clip-bytes")
+
+    job = _job(_scene(1, source_locked=True))
+    service = BulkClipIngestionService(
+        asset_workflow_service=_workflow_service(tmp_path)
+    )
+
+    entry = service.ingest_one(job=job, scene_number=1, file_path=file_path)
+
+    assert entry.status == BulkClipIngestionEntryStatus.FAILED_VALIDATION
+    assert "locked" in entry.detail.lower()
+    assert job.video_clips == []
+
+
+def test_ingest_one_does_not_disturb_an_already_assigned_scene(tmp_path: Path) -> None:
+    """
+    Calling ingest_one() for scene 2 must not touch scene 1's own,
+    already-ingested clip - proving job.video_clips is rebuilt from
+    every scene's real state, not just the one scene this call
+    targets.
+    """
+
+    first_file = tmp_path / "first.mp4"
+    first_file.write_bytes(b"clip-bytes-1")
+    second_file = tmp_path / "second.mp4"
+    second_file.write_bytes(b"clip-bytes-2")
+
+    job = _job(_scene(1), _scene(2))
+    service = BulkClipIngestionService(
+        asset_workflow_service=_workflow_service(tmp_path)
+    )
+
+    service.ingest_one(job=job, scene_number=1, file_path=first_file)
+    service.ingest_one(job=job, scene_number=2, file_path=second_file)
+
+    assert len(job.video_clips) == 2
+    assert {clip.scene_number for clip in job.video_clips} == {1, 2}
+
+
 def test_ingest_raises_when_source_directory_does_not_exist(tmp_path: Path) -> None:
     job = _job(_scene(1))
     service = BulkClipIngestionService(

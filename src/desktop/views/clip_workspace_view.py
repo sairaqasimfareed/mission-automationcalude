@@ -22,6 +22,7 @@ from src.desktop.widgets import (
     button,
     card,
     muted,
+    row,
     small_muted,
     status_label,
 )
@@ -336,28 +337,47 @@ class ClipWorkspaceView(QWidget):
             stuck_on_auth = self._auth_required_attempt(job, scene.scene_number)
 
             if stuck_on_auth is not None:
-                retry_button = button("Retry after login", variant="primary")
-                retry_button.setEnabled(not is_generating)
-                retry_button.clicked.connect(
+                primary_button = button("Retry after login", variant="primary")
+                primary_button.setEnabled(not is_generating)
+                primary_button.clicked.connect(
                     lambda checked=False, number=scene.scene_number: (
                         self._handle_retry_scene_after_auth(number)
                     )
                 )
-                row_layout.addWidget(retry_button, alignment=_LEFT)
             else:
-                scene_button = button(
+                primary_button = button(
                     "Regenerate"
                     if entry is not None
                     and entry.status == SceneCompletenessStatus.READY
                     else "Generate"
                 )
-                scene_button.setEnabled(not is_generating)
-                scene_button.clicked.connect(
+                primary_button.setEnabled(not is_generating)
+                primary_button.clicked.connect(
                     lambda checked=False, number=scene.scene_number: (
                         self._handle_generate_scene_video(number)
                     )
                 )
-                row_layout.addWidget(scene_button, alignment=_LEFT)
+
+            # Real-world finding, 2026-09-26: the only manual-upload
+            # path used to be the separate "Bulk external generation"
+            # card below (export every prompt, generate elsewhere,
+            # re-import a whole folder at once) - awkward for the
+            # actual live workflow of generating most scenes
+            # automatically and only a few manually (e.g. through a
+            # second provider). This button attaches one file to just
+            # this scene, right where the decision to generate it
+            # automatically is already being made.
+            upload_button = button("Upload...", icon_name="upload")
+            upload_button.setEnabled(not is_generating)
+            upload_button.clicked.connect(
+                lambda checked=False, number=scene.scene_number: (
+                    self._handle_upload_scene_clip(number)
+                )
+            )
+
+            row_layout.addLayout(
+                row(primary_button, upload_button, stretch_at_end=False)
+            )
 
             layout.addLayout(row_layout)
 
@@ -753,6 +773,37 @@ class ClipWorkspaceView(QWidget):
         QMessageBox.information(
             self, "Bulk ingestion complete", "\n".join(summary_lines)
         )
+        self._on_change()
+
+    def _handle_upload_scene_clip(self, scene_number: int) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        file_path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            f"Upload clip for scene {scene_number}",
+            "",
+            "Video files (*.mp4 *.mov *.mkv *.webm *.avi *.m4v)",
+        )
+
+        if not file_path:
+            return
+
+        entry = self._bulk_ingestion_service.ingest_one(
+            job=job, scene_number=scene_number, file_path=Path(file_path)
+        )
+
+        if entry.status != BulkClipIngestionEntryStatus.ASSIGNED:
+            self._record_error(
+                job,
+                f"Could not attach clip to scene {scene_number}: {entry.detail}",
+                on_retry=lambda: self._handle_upload_scene_clip(scene_number),
+            )
+
+            return
+
         self._on_change()
 
     def _handle_toggle_scene_selection(self, scene_number: int, checked: bool) -> None:
