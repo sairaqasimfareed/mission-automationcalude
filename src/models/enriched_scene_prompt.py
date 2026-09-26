@@ -22,6 +22,12 @@ class EnrichedScenePrompt(MissionBaseModel):
 
     scene_number: int
 
+    # Phase 5 (multi-clip scene splitting): mirrors
+    # ResolvedCinematicPrompt's own field of the same name - default 0
+    # means "the only entry for this scene", identical to every entry
+    # that existed before a scene could ever need splitting.
+    clip_sequence_index: int = Field(default=0, ge=0)
+
     base_prompt_text: str
 
     negative_constraints: list[str] = Field(default_factory=list)

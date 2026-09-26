@@ -416,6 +416,54 @@ def test_clicking_upload_cancelled_is_a_noop(
     assert job.video_clips == []
 
 
+def test_remove_button_is_disabled_without_a_resolved_clip(qapp: QApplication) -> None:
+    job = _job(1)
+    service = _FakeSceneVideoGenerationService()
+    view = _build_view(job, service=service)
+
+    remove_button = next(b for b in _find_buttons(view) if b.text() == "Remove")
+    assert remove_button.isEnabled() is False
+
+
+def test_remove_button_enabled_after_upload_and_clears_the_scene(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    clip_file = tmp_path / "my_clip.mp4"
+    clip_file.write_bytes(b"clip-bytes")
+
+    monkeypatch.setattr(
+        "src.desktop.views.clip_workspace_view.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(clip_file), "Video files (*.mp4)"),
+    )
+
+    job = _job(1)
+    service = _FakeSceneVideoGenerationService()
+    asset_workflow_service = _asset_workflow_service_with_manual_upload(tmp_path)
+    view = _build_view(
+        job, service=service, asset_workflow_service=asset_workflow_service
+    )
+
+    view._handle_upload_scene_clip(1)
+    assert job.video_clips  # sanity: the upload actually attached
+
+    # A fresh view built from this now-uploaded job state (rather than
+    # reusing the existing one, whose old button widgets are only
+    # scheduled for deletion via Qt's deleteLater() and not reliably
+    # gone by the next refresh) shows the Remove button enabled.
+    uploaded_view = _build_view(
+        job, service=service, asset_workflow_service=asset_workflow_service
+    )
+    remove_button = next(
+        b for b in _find_buttons(uploaded_view) if b.text() == "Remove"
+    )
+    assert remove_button.isEnabled() is True
+
+    view._handle_remove_scene_clip(1)
+
+    assert job.video_clips == []
+    assert job.scene_asset_states == []
+
+
 def test_shows_retry_after_login_for_a_scene_stuck_on_auth_required(
     qapp: QApplication,
 ) -> None:

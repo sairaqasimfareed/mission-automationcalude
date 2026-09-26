@@ -28,6 +28,12 @@ class ResolvedCinematicPrompt(MissionBaseModel):
     """
 
     scene_number: int = Field(ge=1)
+    # Phase 5 (multi-clip scene splitting): identity is the composite
+    # (scene_number, clip_sequence_index) - mirrors VideoClip's and
+    # GoogleFlowGenerationRequest's own field of the same name. Default
+    # 0 means "the only prompt for this scene", identical to every
+    # prompt that existed before a scene could ever need splitting.
+    clip_sequence_index: int = Field(default=0, ge=0)
     script_lock_hash: str = Field(min_length=1)
     prompt_text: str = Field(min_length=1)
     negative_constraints: list[str] = Field(default_factory=list)
@@ -100,12 +106,32 @@ class CinematicPromptPackage(MissionBaseModel):
     script_lock_hash: str = Field(min_length=1)
     prompts: list[ResolvedCinematicPrompt] = Field(default_factory=list)
 
-    def prompt_for_scene(self, scene_number: int) -> ResolvedCinematicPrompt | None:
+    def prompt_for_scene(
+        self, scene_number: int, *, clip_sequence_index: int = 0
+    ) -> ResolvedCinematicPrompt | None:
         for prompt in self.prompts:
-            if prompt.scene_number == scene_number:
+            if (
+                prompt.scene_number == scene_number
+                and prompt.clip_sequence_index == clip_sequence_index
+            ):
                 return prompt
 
         return None
+
+    def prompts_for_scene(self, scene_number: int) -> list[ResolvedCinematicPrompt]:
+        """
+        Every prompt for one scene, across every sub-clip index,
+        oldest/lowest clip_sequence_index first - the Phase 5
+        counterpart to prompt_for_scene()'s single-index lookup, for a
+        caller (e.g. the Prompts tab, or split-scene submission) that
+        needs to see every sub-clip a split scene compiled, not just
+        clip_sequence_index=0.
+        """
+
+        return sorted(
+            (prompt for prompt in self.prompts if prompt.scene_number == scene_number),
+            key=lambda prompt: prompt.clip_sequence_index,
+        )
 
     @property
     def blocked_prompts(self) -> list[ResolvedCinematicPrompt]:

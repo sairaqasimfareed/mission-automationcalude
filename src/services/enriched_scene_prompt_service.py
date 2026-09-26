@@ -4,6 +4,7 @@ from src.models.cinematic_prompt import ResolvedCinematicPrompt
 from src.models.enriched_scene_prompt import EnrichedScenePrompt
 from src.models.scene import Scene
 from src.models.video_job import VideoJob
+from src.services.scene_clip_split_planning_service import SceneClipSplitPlanningService
 from src.services.scene_video_generation_service import SceneVideoGenerationService
 
 
@@ -41,6 +42,77 @@ class EnrichedScenePromptService:
     ) -> EnrichedScenePrompt:
         resolved_prompt = self._resolved_prompt_for(job, scene)
 
+        return self._entry(
+            job=job,
+            scene=scene,
+            resolved_prompt=resolved_prompt,
+            duration_seconds=self._duration_seconds(scene),
+        )
+
+    def build_entries(
+        self,
+        *,
+        job: VideoJob,
+        scene: Scene,
+    ) -> list[EnrichedScenePrompt]:
+        """
+        Phase 5 (multi-clip scene splitting) counterpart to
+        build_entry(): a scene whose real narration exceeds Google
+        Flow's max single-clip duration compiles to several
+        sub-clip-specific prompts (see
+        CinematicPromptCompilationService.compile_sub_clip_prompts())
+        rather than one whole-scene prompt that silently loses
+        whatever narration falls past the clamp - this is the Prompts
+        tab's window onto that same split-aware compilation the
+        automated submission path
+        (SceneVideoGenerationService._resolve_sub_clip_prompts())
+        already uses, reused here rather than re-implemented so the
+        two paths can never drift apart.
+
+        A scene that does not need splitting returns a single-element
+        list (build_entry()'s own result) - the exact behavior every
+        scene had before Phase 5 existed.
+        """
+
+        duration_seconds = self._duration_seconds(scene)
+
+        if not SceneClipSplitPlanningService.needs_split(duration_seconds):
+            return [self.build_entry(job=job, scene=scene)]
+
+        if self._scene_video_generation_service is None:
+            return [self.build_entry(job=job, scene=scene)]
+
+        sub_clip_durations = SceneClipSplitPlanningService.plan(duration_seconds)
+
+        resolved_prompts = (
+            self._scene_video_generation_service._resolve_sub_clip_prompts(
+                job, scene, sub_clip_durations
+            )
+        )
+
+        if resolved_prompts is None:
+            return [self.build_entry(job=job, scene=scene)]
+
+        return [
+            self._entry(
+                job=job,
+                scene=scene,
+                resolved_prompt=resolved_prompt,
+                duration_seconds=sub_clip_durations[
+                    resolved_prompt.clip_sequence_index
+                ],
+            )
+            for resolved_prompt in resolved_prompts
+        ]
+
+    def _entry(
+        self,
+        *,
+        job: VideoJob,
+        scene: Scene,
+        resolved_prompt: ResolvedCinematicPrompt | None,
+        duration_seconds: float,
+    ) -> EnrichedScenePrompt:
         base_prompt_text = (
             resolved_prompt.prompt_text
             if resolved_prompt is not None
@@ -71,14 +143,13 @@ class EnrichedScenePromptService:
             else None
         )
 
-        duration_seconds = (
-            scene.real_narration_duration_seconds
-            if scene.real_narration_duration_seconds is not None
-            else float(scene.estimated_duration_seconds)
-        )
-
         return EnrichedScenePrompt(
             scene_number=scene.scene_number,
+            clip_sequence_index=(
+                resolved_prompt.clip_sequence_index
+                if resolved_prompt is not None
+                else 0
+            ),
             base_prompt_text=base_prompt_text,
             negative_constraints=(
                 list(resolved_prompt.negative_constraints)
@@ -130,6 +201,14 @@ class EnrichedScenePromptService:
             is_blocked=(
                 resolved_prompt.is_blocked if resolved_prompt is not None else None
             ),
+        )
+
+    @staticmethod
+    def _duration_seconds(scene: Scene) -> float:
+        return (
+            scene.real_narration_duration_seconds
+            if scene.real_narration_duration_seconds is not None
+            else float(scene.estimated_duration_seconds)
         )
 
     @staticmethod

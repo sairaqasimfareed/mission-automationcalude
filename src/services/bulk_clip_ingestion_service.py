@@ -48,6 +48,39 @@ class BulkClipIngestionService:
         )
         self.invalidation_service = invalidation_service or InvalidationService()
 
+    def remove_scene_clip(self, *, job: VideoJob, scene_number: int) -> None:
+        """
+        Detach whatever clip/asset-state a scene currently has,
+        resetting it to never-started - the undo counterpart to
+        ingest_one(), for when a manual upload or a completed AI
+        generation needs to be cleared so something else can be
+        attached instead.
+
+        Deliberately never touches the Google Flow ledger
+        (job.flow_generation_attempts): a terminal (READY/QC_FAILED/
+        FAILED) attempt there is never itself an obstacle to a fresh
+        regeneration - GoogleFlowGenerationLedgerService.create_attempt()'s
+        own in-flight guard only ever blocks a NON-terminal attempt -
+        so there is nothing to clean up there for a later Generate
+        click to work correctly.
+        """
+
+        job.scene_asset_states = [
+            state
+            for state in job.scene_asset_states
+            if state.scene_number != scene_number
+        ]
+        job.video_clips = self.video_clip_builder_service.build_clips(
+            scenes=job.scenes, states=job.scene_asset_states
+        )
+        self.invalidation_service.clear_stale(job, "scene_asset_states")
+        self.invalidation_service.clear_stale(job, "video_clips")
+        self.invalidation_service.on_scene_replaced(
+            job,
+            scene_number=scene_number,
+            reason=f"Scene {scene_number}'s asset was removed.",
+        )
+
     def ingest(
         self, *, job: VideoJob, source_directory: Path
     ) -> BulkClipIngestionResult:

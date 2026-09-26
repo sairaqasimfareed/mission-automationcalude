@@ -7,7 +7,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from collections.abc import Iterator  # noqa: E402
 
 import pytest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QPushButton, QTextEdit  # noqa: E402
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QTextEdit  # noqa: E402
 
 from src.desktop.job_store import InMemoryJobStore  # noqa: E402
 from src.desktop.views.compiled_prompt_view import CompiledPromptView  # noqa: E402
@@ -15,6 +15,7 @@ from src.models.cinematic_prompt import (  # noqa: E402
     CinematicPromptPackage,
     ResolvedCinematicPrompt,
 )
+from src.models.enriched_scene_prompt import EnrichedScenePrompt  # noqa: E402
 from src.models.media_strategy import SceneSourceStatus, SceneSourceType  # noqa: E402
 from src.models.scene import Scene  # noqa: E402
 from src.models.video_job import VideoJob  # noqa: E402
@@ -56,11 +57,39 @@ def _job(**overrides: object) -> VideoJob:
     return job
 
 
-def _view() -> CompiledPromptView:
+def _view(**overrides: object) -> CompiledPromptView:
     return CompiledPromptView(
         job_store=InMemoryJobStore(),
         on_change=lambda: None,
+        **overrides,  # type: ignore[arg-type]
     )
+
+
+class _FakeSplitEnrichedScenePromptService:
+    """
+    Phase 5 (multi-clip scene splitting): a scene that needs splitting
+    compiles to several sub-clip-specific entries rather than one
+    whole-scene entry - this double stands in for
+    EnrichedScenePromptService.build_entries() so the view's own
+    multi-row rendering can be verified without also standing up the
+    full shot-plan/continuity-bible/script-lock compilation stack that
+    a real split would require.
+    """
+
+    @staticmethod
+    def build_entries(*, job: VideoJob, scene: Scene) -> list[EnrichedScenePrompt]:
+        return [
+            EnrichedScenePrompt(
+                scene_number=scene.scene_number,
+                clip_sequence_index=0,
+                base_prompt_text="Part one text.",
+            ),
+            EnrichedScenePrompt(
+                scene_number=scene.scene_number,
+                clip_sequence_index=1,
+                base_prompt_text="Part two text.",
+            ),
+        ]
 
 
 def test_shows_a_message_when_no_scenes_are_planned(qapp: QApplication) -> None:
@@ -161,6 +190,35 @@ def test_copy_button_puts_the_full_prompt_text_on_the_clipboard(
     assert clipboard is not None
     assert "Copy-me prompt text." in clipboard.text()
     assert "no logos" in clipboard.text()
+
+
+def test_shows_one_row_per_sub_clip_for_a_scene_that_needs_splitting(
+    qapp: QApplication,
+) -> None:
+    job = _job(scenes=[_scene(scene_number=1)])
+
+    view = _view(
+        enriched_scene_prompt_service=_FakeSplitEnrichedScenePromptService(),
+    )
+
+    view._job_store.add(job)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    text_edits = view.findChildren(QTextEdit)
+
+    assert len(text_edits) == 2
+    assert "Part one text." in text_edits[0].toPlainText()
+    assert "Part two text." in text_edits[1].toPlainText()
+
+    headings = [
+        label
+        for label in view.findChildren(QLabel)
+        if label.property("role") == "subheading"
+    ]
+
+    assert any("Part 1 of 2" in label.text() for label in headings)
+    assert any("Part 2 of 2" in label.text() for label in headings)
 
 
 def test_refresh_clears_previous_rows_before_rebuilding(qapp: QApplication) -> None:

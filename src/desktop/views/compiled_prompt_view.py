@@ -105,34 +105,43 @@ class CompiledPromptView(QWidget):
             return
 
         for scene in sorted(job.scenes, key=lambda item: item.scene_number):
-            entry = self._enriched_scene_prompt_service.build_entry(
+            entries = self._enriched_scene_prompt_service.build_entries(
                 job=job, scene=scene
             )
+            total_entries = len(entries)
 
-            row = QFrame()
-            row.setProperty("sceneRow", True)
+            for entry in entries:
+                row = QFrame()
+                row.setProperty("sceneRow", True)
 
-            row_layout = QVBoxLayout(row)
-            row_layout.setContentsMargins(12, 8, 12, 8)
-            row_layout.setSpacing(4)
+                row_layout = QVBoxLayout(row)
+                row_layout.setContentsMargins(12, 8, 12, 8)
+                row_layout.setSpacing(4)
 
-            row_layout.addWidget(subheading(f"#{scene.scene_number} {scene.title}"))
+                heading_text = f"#{scene.scene_number} {scene.title}"
 
-            text_area = QTextEdit()
-            text_area.setReadOnly(True)
-            text_area.setPlainText(entry.full_text())
-            text_area.setMinimumHeight(160)
-            row_layout.addWidget(text_area)
+                if total_entries > 1:
+                    heading_text += (
+                        f" - Part {entry.clip_sequence_index + 1} of {total_entries}"
+                    )
 
-            copy_button = button("Copy prompt", icon_name="check")
-            copy_button.clicked.connect(
-                lambda _checked=False, prompt_entry=entry: (
-                    self._handle_copy(prompt_entry.full_text())
+                row_layout.addWidget(subheading(heading_text))
+
+                text_area = QTextEdit()
+                text_area.setReadOnly(True)
+                text_area.setPlainText(entry.full_text())
+                text_area.setMinimumHeight(160)
+                row_layout.addWidget(text_area)
+
+                copy_button = button("Copy prompt", icon_name="check")
+                copy_button.clicked.connect(
+                    lambda _checked=False, prompt_entry=entry: (
+                        self._handle_copy(prompt_entry.full_text())
+                    )
                 )
-            )
-            row_layout.addWidget(copy_button, alignment=_LEFT)
+                row_layout.addWidget(copy_button, alignment=_LEFT)
 
-            layout.addWidget(row)
+                layout.addWidget(row)
 
         self._layout.addWidget(frame)
 

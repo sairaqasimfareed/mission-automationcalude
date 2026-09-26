@@ -12,6 +12,7 @@ from typing import TypeVar
 
 from src.browser.flow_browser_worker import FlowOperationTimedOut
 from src.models.asset_state import AssetCandidate, AssetUserDecision, SceneAssetState
+from src.models.cinematic_prompt import ResolvedCinematicPrompt
 from src.models.google_flow_generation import (
     GoogleFlowExecutionSettings,
     GoogleFlowGenerationAttempt,
@@ -27,6 +28,7 @@ from src.models.scene import Scene
 from src.models.scene_completeness import (
     SceneCompletenessEntry,
     SceneCompletenessReport,
+    SceneCompletenessStatus,
 )
 from src.models.video_job import VideoJob
 from src.models.visual_continuity import CanonicalEntityType
@@ -36,6 +38,9 @@ from src.providers.google_flow.locators import (
     clamp_to_verified_duration,
 )
 from src.services.asset_storage_service import AssetStorageService
+from src.services.cinematic_prompt_compilation_service import (
+    CinematicPromptCompilationService,
+)
 from src.services.frame_extraction_service import FrameExtractionService
 from src.services.google_flow_generation_ledger_service import (
     GoogleFlowGenerationLedgerService,
@@ -196,6 +201,9 @@ class SceneVideoGenerationService:
         estimated_cost_usd_per_scene: float = 0.0,
         frame_extraction_service: FrameExtractionService | None = None,
         asset_storage_service: AssetStorageService | None = None,
+        cinematic_prompt_compilation_service: (
+            CinematicPromptCompilationService | None
+        ) = None,
     ) -> None:
         if poll_interval_seconds <= 0:
             raise ValueError("Poll interval must be positive.")
@@ -221,6 +229,9 @@ class SceneVideoGenerationService:
         # extraction, no reference population.
         self._frame_extraction_service = frame_extraction_service
         self._asset_storage_service = asset_storage_service
+        self._cinematic_prompt_compilation_service = (
+            cinematic_prompt_compilation_service or CinematicPromptCompilationService()
+        )
 
     def generate_all(
         self,
@@ -244,9 +255,33 @@ class SceneVideoGenerationService:
         end). This method still does not persist anything itself -
         that responsibility stays with the caller, matching every
         other generation service in this codebase.
+
+        Real-world finding, 2026-09-26: this used to call generate_one()
+        for every scene unconditionally, with no regard for whether a
+        scene was already done - generate_one()'s own "don't resubmit"
+        guard only ever checks the Google Flow ledger, which a
+        manually-uploaded scene never has an entry in at all, so it
+        looked exactly like a scene nothing had ever touched. Clicking
+        "Generate all scenes" after manually uploading some of them
+        would submit real, paid Flow generations for those scenes too,
+        then silently overwrite the manual upload once the unwanted
+        generation completed. Skipping any scene already READY - by
+        the same SceneCompletenessService both this method and the
+        GUI already trust, regardless of source (Flow-completed or
+        manually-uploaded) - fixes that at the one place a batch run
+        decides which scenes need work at all.
         """
 
+        already_ready = {
+            entry.scene_number
+            for entry in SceneCompletenessService().check(job).entries
+            if entry.status == SceneCompletenessStatus.READY
+        }
+
         for scene in sorted(job.scenes, key=lambda scene: scene.scene_number):
+            if scene.scene_number in already_ready:
+                continue
+
             self.generate_one(job, scene.scene_number)
 
             if on_scene_complete is not None:
@@ -345,6 +380,7 @@ class SceneVideoGenerationService:
         clip_sequence_index: int = 0,
         duration_override: float | None = None,
         extra_reference_assets: list[GoogleFlowReferenceAsset] | None = None,
+        prompt_override: str | None = None,
     ) -> GoogleFlowGenerationAttempt:
         """
         Drive one (scene_number, clip_sequence_index) sub-clip's real
@@ -358,6 +394,14 @@ class SceneVideoGenerationService:
         (_generate_split_scene) drives every sub-clip's attempt
         through the exact same, already-proven state machine rather
         than a second, parallel implementation.
+
+        prompt_override exists for that same split-scene caller: each
+        sub-clip needs its OWN prompt text (see
+        CinematicPromptCompilationService.compile_sub_clip_prompts),
+        not the single whole-scene prompt _submit() would otherwise
+        resolve from job.cinematic_prompt_package - every pre-Phase-5
+        caller omits it, reproducing this method's exact prior
+        behavior.
         """
 
         attempt = GoogleFlowGenerationLedgerService.latest_attempt_for_scene(
@@ -371,6 +415,7 @@ class SceneVideoGenerationService:
                 clip_sequence_index=clip_sequence_index,
                 duration_override=duration_override,
                 extra_reference_assets=extra_reference_assets,
+                prompt_override=prompt_override,
             )
         elif attempt.state in _POLLABLE_STATES:
             attempt = self._poll_until_settled(job, attempt)
@@ -459,12 +504,28 @@ class SceneVideoGenerationService:
         next generate_one() call resumes exactly where this left off,
         since every sub-clip's own attempt is independently tracked in
         the ledger by (scene_number, clip_sequence_index).
+
+        Real-world finding, 2026-09-26: every sub-clip used to submit
+        with the identical whole-scene compiled prompt (see _submit()'s
+        own docstring) - sub-clip 2 was never actually told to show
+        anything different from sub-clip 1. Each sub-clip's own prompt
+        is now compiled once, up front, from its real time window
+        (CinematicPromptCompilationService.compile_sub_clip_prompts) -
+        falling back to the single whole-scene prompt for every
+        sub-clip (this method's exact prior behavior) only when the
+        shot plan, visual continuity bible, or script lock genuinely
+        aren't available yet, matching every other graceful-fallback
+        seam in this codebase rather than raising.
         """
 
         real_duration = scene.real_narration_duration_seconds
         assert real_duration is not None  # narrowed by generate_one()'s own check
 
         durations = SceneClipSplitPlanningService.plan(real_duration)
+
+        sub_clip_prompt_texts = self._resolve_sub_clip_prompt_texts(
+            job, scene, durations
+        )
 
         successful_attempts: list[GoogleFlowGenerationAttempt] = []
         seam_reference_path: str | None = None
@@ -484,6 +545,11 @@ class SceneVideoGenerationService:
                 clip_sequence_index=index,
                 duration_override=duration,
                 extra_reference_assets=extra_references,
+                prompt_override=(
+                    sub_clip_prompt_texts[index]
+                    if sub_clip_prompt_texts is not None
+                    else None
+                ),
             )
 
             if attempt.state != GoogleFlowGenerationState.READY:
@@ -507,6 +573,52 @@ class SceneVideoGenerationService:
             entry
             for entry in report.entries
             if entry.scene_number == scene.scene_number
+        )
+
+    def _resolve_sub_clip_prompt_texts(
+        self, job: VideoJob, scene: Scene, durations: list[float]
+    ) -> list[str] | None:
+        """
+        One prompt per sub-clip, each describing only its own real
+        time window - None when the shot plan, visual continuity
+        bible, or script lock aren't available yet, signaling
+        _generate_split_scene() to fall back to the single whole-scene
+        prompt for every sub-clip instead (this class's exact
+        behavior before this method existed).
+        """
+
+        prompts = self._resolve_sub_clip_prompts(job, scene, durations)
+
+        return (
+            [prompt.prompt_text for prompt in prompts] if prompts is not None else None
+        )
+
+    def _resolve_sub_clip_prompts(
+        self, job: VideoJob, scene: Scene, durations: list[float]
+    ) -> list[ResolvedCinematicPrompt] | None:
+        """
+        The full resolved sub-clip prompts (not just their text) -
+        reused by _resolve_sub_clip_prompt_texts() above for the real
+        submission path, and by EnrichedScenePromptService.
+        build_entries() for the Prompts tab, so both consumers compile
+        against the exact same split-aware logic rather than two
+        implementations that could drift apart.
+        """
+
+        if (
+            job.cinematic_shot_plan is None
+            or job.visual_continuity_bible is None
+            or job.script_lock is None
+        ):
+            return None
+
+        return self._cinematic_prompt_compilation_service.compile_sub_clip_prompts(
+            scene=scene,
+            shot_plan=job.cinematic_shot_plan,
+            visual_continuity_bible=job.visual_continuity_bible,
+            production_semantic_brief=job.production_semantic_brief,
+            script_lock_hash=job.script_lock.script_content_hash,
+            sub_clip_durations=durations,
         )
 
     def _build_seam_reference_asset(
@@ -705,12 +817,27 @@ class SceneVideoGenerationService:
         clip_sequence_index: int = 0,
         duration_override: float | None = None,
         extra_reference_assets: list[GoogleFlowReferenceAsset] | None = None,
+        prompt_override: str | None = None,
     ) -> GoogleFlowGenerationAttempt:
         """
-        clip_sequence_index/duration_override/extra_reference_assets
-        exist for Phase 5 (multi-clip scene splitting) alone - every
-        pre-Phase-5 caller uses the defaults (0/None/None), reproducing
-        this method's exact prior behavior. duration_override, when
+        clip_sequence_index/duration_override/extra_reference_assets/
+        prompt_override exist for Phase 5 (multi-clip scene splitting)
+        alone - every pre-Phase-5 caller uses the defaults
+        (0/None/None/None), reproducing this method's exact prior
+        behavior.
+
+        prompt_override, when given, is used verbatim instead of
+        resolving job.cinematic_prompt_package's single, whole-scene
+        prompt - real-world finding, 2026-09-26: every sub-clip of a
+        split scene used to read that same whole-scene prompt
+        regardless of clip_sequence_index, so a later sub-clip was
+        never actually told to show anything different from the first
+        (only the trailing "Duration: Ns" text differed, patched
+        below). _generate_split_scene() now compiles one prompt PER
+        sub-clip up front (CinematicPromptCompilationService.
+        compile_sub_clip_prompts) and passes each one through here.
+
+        duration_override, when
         given, replaces the normal real-narration-vs-estimate
         computation outright (SceneClipSplitPlanningService has
         already decided this sub-clip's own duration) - but the
@@ -728,8 +855,12 @@ class SceneVideoGenerationService:
 
         self._self_heal_flow_account_health()
 
-        prompt = ScenePromptExportService._resolve_prompt_text(
-            scene, job.cinematic_prompt_package
+        prompt = (
+            prompt_override
+            if prompt_override is not None
+            else ScenePromptExportService._resolve_prompt_text(
+                scene, job.cinematic_prompt_package
+            )
         )
 
         if duration_override is not None:

@@ -375,9 +375,28 @@ class ClipWorkspaceView(QWidget):
                 )
             )
 
-            row_layout.addLayout(
-                row(primary_button, upload_button, stretch_at_end=False)
+            has_resolved_clip = (
+                entry is not None and entry.status == SceneCompletenessStatus.READY
             )
+            remove_button = button("Remove", variant="danger")
+            remove_button.setEnabled(not is_generating and has_resolved_clip)
+            remove_button.clicked.connect(
+                lambda checked=False, number=scene.scene_number: (
+                    self._handle_remove_scene_clip(number)
+                )
+            )
+
+            # stretch_at_end (row()'s own default, True) is what keeps
+            # these three compact and left-aligned - a real, found bug
+            # in the original per-scene Upload button pass: passing
+            # stretch_at_end=False here left nothing to absorb the
+            # row's leftover width, so Qt's own layout gave it to the
+            # buttons themselves instead, stretching them to fill the
+            # whole card - confirmed by comparison against the
+            # Dashboard's own "Continue Production"/"Delete Project"
+            # row, which already uses this same row() helper's default
+            # and renders compact.
+            row_layout.addLayout(row(primary_button, upload_button, remove_button))
 
             layout.addLayout(row_layout)
 
@@ -804,6 +823,17 @@ class ClipWorkspaceView(QWidget):
 
             return
 
+        self._on_change()
+
+    def _handle_remove_scene_clip(self, scene_number: int) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        self._bulk_ingestion_service.remove_scene_clip(
+            job=job, scene_number=scene_number
+        )
         self._on_change()
 
     def _handle_toggle_scene_selection(self, scene_number: int, checked: bool) -> None:

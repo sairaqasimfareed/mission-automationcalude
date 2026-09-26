@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from src.models.cinematic_prompt import CinematicPromptPackage, ResolvedCinematicPrompt
+from src.models.cinematic_prompt import (
+    CinematicPromptPackage,
+    ResolvedCinematicPrompt,
+)
 from src.models.enriched_scene_prompt import EnrichedScenePrompt
 from src.models.google_flow_generation import (
     GoogleFlowReferenceAsset,
@@ -8,6 +11,7 @@ from src.models.google_flow_generation import (
 )
 from src.models.media_strategy import SceneSourceStatus, SceneSourceType
 from src.models.scene import Scene
+from src.models.script_lock import ScriptLock, ScriptProvenance
 from src.models.shot_planning import (
     CinematicShotPlan,
     ShotAngle,
@@ -20,6 +24,9 @@ from src.models.visual_continuity import (
     ClipContinuityEntry,
     VisualContinuityBible,
     VisualState,
+)
+from src.services.cinematic_prompt_compilation_service import (
+    CinematicPromptCompilationService,
 )
 from src.services.enriched_scene_prompt_service import EnrichedScenePromptService
 
@@ -35,6 +42,7 @@ class _FakeSceneVideoGenerationService:
     ) -> None:
         self._reference_assets = reference_assets or []
         self._model_family = model_family
+        self._cinematic_prompt_compilation_service = CinematicPromptCompilationService()
 
     def _resolve_reference_assets(
         self, job: VideoJob, scene: Scene
@@ -43,6 +51,25 @@ class _FakeSceneVideoGenerationService:
 
     def _configured_model_family(self) -> str | None:
         return self._model_family
+
+    def _resolve_sub_clip_prompts(
+        self, job: VideoJob, scene: Scene, durations: list[float]
+    ) -> list[ResolvedCinematicPrompt] | None:
+        if (
+            job.cinematic_shot_plan is None
+            or job.visual_continuity_bible is None
+            or job.script_lock is None
+        ):
+            return None
+
+        return self._cinematic_prompt_compilation_service.compile_sub_clip_prompts(
+            scene=scene,
+            shot_plan=job.cinematic_shot_plan,
+            visual_continuity_bible=job.visual_continuity_bible,
+            production_semantic_brief=job.production_semantic_brief,
+            script_lock_hash=job.script_lock.script_content_hash,
+            sub_clip_durations=durations,
+        )
 
 
 def _scene(*, scene_number: int = 1) -> Scene:
@@ -327,3 +354,118 @@ def test_full_text_shows_not_yet_scored_when_no_scores_exist() -> None:
     text = entry.full_text()
 
     assert "not yet scored" in text
+
+
+def _split_shot_plan() -> CinematicShotPlan:
+    return CinematicShotPlan(
+        script_lock_hash=_SCRIPT_LOCK_HASH,
+        shots=[
+            ShotSpecification(
+                scene_number=1,
+                shot_size=ShotSize.MEDIUM,
+                shot_angle=ShotAngle.EYE_LEVEL,
+                movement=ShotMovement.STATIC,
+                lens="35mm",
+                composition="centered",
+                blocking="subject centered",
+                lighting="soft daylight",
+                action="The subject walks forward.",
+                transition_in="fade_black",
+                transition_out="cross_dissolve",
+                duration_seconds=13.0,
+            )
+        ],
+    )
+
+
+def _split_bible() -> VisualContinuityBible:
+    return VisualContinuityBible(
+        script_lock_hash=_SCRIPT_LOCK_HASH,
+        identities=[],
+        clip_entries=[
+            ClipContinuityEntry(
+                scene_number=1,
+                incoming_state=VisualState(location="a rainy street"),
+                shot_action="She hails a taxi.",
+                outgoing_state=VisualState(location="inside the taxi"),
+                entity_names=[],
+            )
+        ],
+    )
+
+
+def _split_script_lock() -> ScriptLock:
+    return ScriptLock(
+        script_version_number=1,
+        script_content_hash=_SCRIPT_LOCK_HASH,
+        provenance=ScriptProvenance.INTERNAL,
+    )
+
+
+def test_build_entries_returns_a_single_entry_for_a_scene_that_does_not_need_splitting() -> (
+    None
+):
+    service = EnrichedScenePromptService(
+        scene_video_generation_service=_FakeSceneVideoGenerationService(),  # type: ignore[arg-type]
+    )
+
+    entries = service.build_entries(job=_job(), scene=_scene())
+
+    assert len(entries) == 1
+    assert entries[0].clip_sequence_index == 0
+
+
+def test_build_entries_falls_back_to_a_single_entry_when_split_data_is_unavailable() -> (
+    None
+):
+    """
+    A scene whose real narration exceeds the max single-clip duration
+    but was planned before shot/continuity/lock data existed must
+    still produce one entry (the whole-scene fallback), never raise
+    and never silently drop the scene from the Prompts tab.
+    """
+
+    scene = _scene()
+    scene.real_narration_duration_seconds = 14.0
+
+    service = EnrichedScenePromptService()
+
+    entries = service.build_entries(job=_job(), scene=scene)
+
+    assert len(entries) == 1
+    assert entries[0].clip_sequence_index == 0
+
+
+def test_build_entries_splits_a_scene_whose_narration_exceeds_the_max_duration() -> (
+    None
+):
+    """
+    Real-world finding, 2026-09-26: the Prompts tab used to show one
+    whole-scene prompt even for a scene that would actually generate
+    as multiple sub-clips - this is the split-aware counterpart to
+    SceneVideoGenerationService's own _generate_split_scene(), reusing
+    the exact same compile_sub_clip_prompts() output so what the user
+    reads here matches what a real automated submission would send.
+    """
+
+    scene = _scene()
+    scene.real_narration_duration_seconds = 14.0
+
+    job = _job(
+        cinematic_shot_plan=_split_shot_plan(),
+        visual_continuity_bible=_split_bible(),
+        script_lock=_split_script_lock(),
+    )
+
+    service = EnrichedScenePromptService(
+        scene_video_generation_service=_FakeSceneVideoGenerationService(),  # type: ignore[arg-type]
+    )
+
+    entries = service.build_entries(job=job, scene=scene)
+
+    assert len(entries) == 2
+    assert [entry.clip_sequence_index for entry in entries] == [0, 1]
+    assert [entry.execution_duration_seconds for entry in entries] == [8.0, 8.0]
+    assert entries[0].base_prompt_text != entries[1].base_prompt_text
+    assert "part 1 of 2" in entries[0].base_prompt_text.lower()
+    assert "part 2 of 2" in entries[1].base_prompt_text.lower()
