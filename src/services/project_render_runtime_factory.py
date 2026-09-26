@@ -3,6 +3,7 @@ from __future__ import annotations
 from src.models.advanced_settings import AdvancedSettings
 from src.models.editing_directives import (
     SceneEditingDirectives,
+    SubtitleDirective,
 )
 from src.models.video_job import VideoJob
 from src.services.genre_voice_directive_generation_service import (
@@ -121,7 +122,28 @@ class ProjectRenderRuntimeFactory:
         Scene voice directives are generated from the prepared scenes,
         resolved into provider-independent voice blueprints, and passed
         into the existing render-workflow stage factory.
+
+        overrides_by_scene explicitly passed by the caller always wins.
+        When the caller leaves it unset, job.subtitle_style_override_
+        preset_id (the real per-project caption-style override) seeds
+        it instead - one uniform override applied to every scene, since
+        GenreEditingProfile.subtitle_preset_id is itself one fixed value
+        per genre, never scene-varying. None on the job (the default)
+        changes nothing here, reproducing every prior job's real
+        behavior of letting the genre's own default subtitle style
+        apply unmodified.
         """
+
+        if overrides_by_scene is None and job.subtitle_style_override_preset_id:
+            overrides_by_scene = {
+                scene.scene_number: SceneEditingDirectives(
+                    scene_number=scene.scene_number,
+                    subtitles=SubtitleDirective(
+                        preset_id=job.subtitle_style_override_preset_id
+                    ),
+                )
+                for scene in job.scenes
+            }
 
         directives = self._voice_directive_generation_service.generate_many(
             scenes=job.scenes,

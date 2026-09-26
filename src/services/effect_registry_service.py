@@ -1158,6 +1158,31 @@ class EffectRegistryService:
                 ],
             ),
             EffectPreset(
+                preset_id="subtitle.bold_punchy",
+                category=EffectCategory.SUBTITLE,
+                display_name="Bold Punchy Subtitle",
+                # Real-world finding, 2026-09-26: REQ-5 (genre-aware
+                # subtitle styling, video_filter_translation_service.py
+                # _subtitle_style()) added this style's real FFmpeg
+                # rendering and wired top10/reaction/comedy genre
+                # profiles to request it by ID - but never registered it
+                # here. EffectRegistryService.resolve() only matches a
+                # registered preset_id; an unregistered one silently
+                # falls back to the category default (subtitle.default),
+                # so every one of those genres has been rendering with
+                # the plain default style instead of the intended bold
+                # one, with only a soft "used a fallback preset" warning
+                # to notice it by.
+                fallback_preset_id=("subtitle.default"),
+                implementation={
+                    "style": "bold_punchy",
+                },
+                tags=[
+                    "bold",
+                    "punchy",
+                ],
+            ),
+            EffectPreset(
                 preset_id="genre.default",
                 category=EffectCategory.GENRE,
                 display_name="Default Genre",

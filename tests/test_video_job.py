@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pytest
+from pydantic import ValidationError
+
 from src.models.enums import (
     Platform,
     ProductionMode,
@@ -152,3 +155,41 @@ def test_video_job_pipeline_fields_default_to_none() -> None:
     assert job.script is None
     assert job.originality_review is None
     assert job.policy_report is None
+
+
+def test_video_job_subtitle_style_override_preset_id_defaults_to_none() -> None:
+    """None means "inherit the genre's own default" - every job's real
+    behavior before this field existed, same resolution-order pattern
+    as letterbox_enabled."""
+
+    job = VideoJob(
+        project_name="Test Project",
+        channel_name="Test Channel",
+        niche="test niche",
+        topic="Test topic",
+    )
+
+    assert job.subtitle_style_override_preset_id is None
+
+
+def test_video_job_subtitle_style_override_preset_id_accepts_a_real_preset() -> None:
+    job = VideoJob(
+        project_name="Test Project",
+        channel_name="Test Channel",
+        niche="test niche",
+        topic="Test topic",
+        subtitle_style_override_preset_id="subtitle.bold_punchy",
+    )
+
+    assert job.subtitle_style_override_preset_id == "subtitle.bold_punchy"
+
+
+def test_video_job_subtitle_style_override_preset_id_rejects_wrong_prefix() -> None:
+    with pytest.raises(ValidationError):
+        VideoJob(
+            project_name="Test Project",
+            channel_name="Test Channel",
+            niche="test niche",
+            topic="Test topic",
+            subtitle_style_override_preset_id="camera.slow_zoom_in",
+        )

@@ -583,6 +583,79 @@ def test_build_forwards_job_subtitles_enabled() -> None:
     assert stage_factory_default.calls[0][9] is True
 
 
+def test_build_leaves_overrides_by_scene_none_when_job_has_no_subtitle_override() -> (
+    None
+):
+    """job.subtitle_style_override_preset_id defaults to None - every
+    job's real behavior before this field existed - so build() must
+    leave overrides_by_scene untouched (None) rather than fabricating
+    one."""
+
+    stage_factory = RecordingStageFactory()
+
+    factory = _factory(stage_factory=stage_factory)
+
+    factory.build(job=_job(), genre_id="genre.documentary")
+
+    assert stage_factory.calls[0][3] is None
+
+
+def test_build_derives_overrides_by_scene_from_job_subtitle_style_override() -> None:
+    """Caption style manual override: when the caller leaves
+    overrides_by_scene unset, job.subtitle_style_override_preset_id (a
+    real per-project value) must seed one uniform override applied to
+    every scene - GenreEditingProfile.subtitle_preset_id is itself one
+    fixed value per genre, never scene-varying, so there is no
+    per-scene distinction to preserve here."""
+
+    stage_factory = RecordingStageFactory()
+
+    factory = _factory(stage_factory=stage_factory)
+
+    job = _job()
+    job.subtitle_style_override_preset_id = "subtitle.cinematic"
+
+    factory.build(job=job, genre_id="genre.documentary")
+
+    overrides_by_scene = stage_factory.calls[0][3]
+
+    assert overrides_by_scene is not None
+    assert set(overrides_by_scene) == {1, 2}
+
+    for scene_number, override in overrides_by_scene.items():
+        assert override.scene_number == scene_number
+        assert override.subtitles.preset_id == "subtitle.cinematic"
+
+
+def test_build_respects_explicit_overrides_by_scene_over_job_subtitle_override() -> (
+    None
+):
+    """An explicitly passed overrides_by_scene always wins over the
+    job's own subtitle_style_override_preset_id - the same "explicit
+    call-time argument beats a job-derived default" precedent every
+    other forwarded field in this factory already follows."""
+
+    stage_factory = RecordingStageFactory()
+
+    factory = _factory(stage_factory=stage_factory)
+
+    job = _job()
+    job.subtitle_style_override_preset_id = "subtitle.cinematic"
+
+    explicit_overrides = cast(
+        dict[int, SceneEditingDirectives],
+        {1: _dependency(SceneEditingDirectives)},
+    )
+
+    factory.build(
+        job=job,
+        genre_id="genre.documentary",
+        overrides_by_scene=explicit_overrides,
+    )
+
+    assert stage_factory.calls[0][3] is explicit_overrides
+
+
 def test_build_returns_render_orchestrator() -> None:
     orchestrator = _factory().build(
         job=_job(),

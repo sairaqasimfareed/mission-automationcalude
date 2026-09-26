@@ -308,6 +308,20 @@ class VideoJob(MissionBaseModel):
     # retroactively on an already-rendered video.
     subtitles_enabled: bool = True
 
+    # Caption style manual override, 2026-09-26: real per-project
+    # switch on top of the genre's own GenreEditingProfile.
+    # subtitle_preset_id - same "None inherits the genre default"
+    # resolution-order pattern as letterbox_enabled above. None (the
+    # default) means "use whatever the genre auto-selects," matching
+    # every job's real behavior before this field existed. When set,
+    # must be a real registered subtitle.* preset ID (see
+    # EffectRegistryService.list_by_category(EffectCategory.SUBTITLE))
+    # - applied to every scene uniformly via ProjectRenderRuntimeFactory.
+    # build()'s own overrides_by_scene construction, since
+    # GenreEditingProfile.subtitle_preset_id itself is one fixed value
+    # per genre, never scene-varying.
+    subtitle_style_override_preset_id: str | None = None
+
     # REQ-4 (opening title card), 2026-09-22: real per-project opt-in
     # - unlike letterboxing above, there is no genre default here, and
     # it defaults OFF. Genre doesn't decide whether to spend real,
@@ -400,6 +414,24 @@ class VideoJob(MissionBaseModel):
 
         if normalized == "genre.":
             raise ValueError("Genre ID requires a name.")
+
+        return normalized
+
+    @field_validator("subtitle_style_override_preset_id")
+    @classmethod
+    def validate_subtitle_style_override_preset_id(
+        cls, value: str | None
+    ) -> str | None:
+        if value is None:
+            return None
+
+        normalized = value.strip().lower()
+
+        if not normalized.startswith("subtitle."):
+            raise ValueError("Caption style override must start " "with 'subtitle.'.")
+
+        if normalized == "subtitle.":
+            raise ValueError("Caption style override requires a name.")
 
         return normalized
 

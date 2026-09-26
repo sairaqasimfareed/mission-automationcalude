@@ -101,6 +101,35 @@ assert len(camera_presets) >= 2
 assert all(preset.category == EffectCategory.CAMERA for preset in camera_presets)
 
 
+# Real-world finding, 2026-09-26: subtitle.bold_punchy (REQ-5, genre-
+# aware subtitle styling) has real FFmpeg rendering
+# (VideoFilterTranslationService._subtitle_style) and is the real
+# subtitle_preset_id default for top10/reaction/comedy genre profiles,
+# but was never registered here - every genre requesting it silently
+# fell back to subtitle.default instead (resolve()'s own exact-match-
+# only lookup), with just a soft "used a fallback preset" warning to
+# notice it by. Confirmed exact (not fallback) resolution now that
+# it's registered.
+bold_punchy_result = registry.resolve("subtitle.bold_punchy")
+
+assert bold_punchy_result.is_resolved is True
+assert bold_punchy_result.found_exact_match is True
+assert bold_punchy_result.used_fallback is False
+assert bold_punchy_result.resolved_preset_id == "subtitle.bold_punchy"
+
+
+subtitle_presets = registry.list_by_category(
+    EffectCategory.SUBTITLE,
+    active_only=True,
+)
+
+assert {preset.preset_id for preset in subtitle_presets} == {
+    "subtitle.default",
+    "subtitle.cinematic",
+    "subtitle.bold_punchy",
+}
+
+
 custom_preset = EffectPreset(
     preset_id="camera.pan_diagonal",
     category=EffectCategory.CAMERA,

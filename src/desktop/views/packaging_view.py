@@ -9,12 +9,16 @@ from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QFileDialog,
     QFormLayout,
     QFrame,
+    QHBoxLayout,
+    QLabel,
     QLineEdit,
+    QRadioButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
@@ -45,6 +49,7 @@ from src.models.thumbnail import (
 )
 from src.models.video_job import VideoJob
 from src.services.approval_gate_service import ApprovalGateService
+from src.services.caption_style_options_service import CaptionStyleOptionsService
 from src.services.export_variant_render_service import ExportVariantRenderService
 from src.services.final_export.final_export_service import FinalExportService
 from src.services.opening_title_card_service import OpeningTitleCardService
@@ -182,6 +187,7 @@ class PackagingView(QWidget):
         approval_gate_service: ApprovalGateService | None = None,
         export_variant_render_service: ExportVariantRenderService | None = None,
         opening_title_card_service: OpeningTitleCardService | None = None,
+        caption_style_options_service: CaptionStyleOptionsService | None = None,
     ) -> None:
         super().__init__()
 
@@ -191,6 +197,10 @@ class PackagingView(QWidget):
         self._final_export_service = final_export_service
         self._on_change = on_change
         self._approval_gate_service = approval_gate_service or ApprovalGateService()
+        self._caption_style_options_service = (
+            caption_style_options_service or CaptionStyleOptionsService()
+        )
+        self._caption_style_radio_by_preset_id: dict[str | None, QRadioButton] = {}
         self._export_variant_render_service = (
             export_variant_render_service or ExportVariantRenderService()
         )
@@ -237,6 +247,7 @@ class PackagingView(QWidget):
         self._build_seo_card(job)
         self._build_title_card_card(job)
         self._build_thumbnail_card(job)
+        self._build_caption_style_card(job)
         self._build_export_variants_card(job)
         self._build_final_export_card(job)
 
@@ -813,6 +824,127 @@ class PackagingView(QWidget):
         reject_button = button("Reject")
         reject_button.clicked.connect(on_reject)
         layout.addWidget(reject_button, alignment=_LEFT)
+
+    def _build_caption_style_card(self, job: VideoJob) -> None:
+        """
+        Manual override for which registered subtitle.* preset burns
+        into the final video, on top of GenreEditingProfile.
+        subtitle_preset_id's own auto-selection - same "None inherits
+        the genre default" resolution-order pattern as letterbox_
+        enabled/subtitles_enabled above. Each option's preview reuses
+        VideoFilterTranslationService's own real FFmpeg style dict (via
+        CaptionStyleOptionsService), never a second, approximate style
+        catalog - what you see here is the exact font/color/border a
+        real render actually burns in, not a guess.
+        """
+
+        frame, layout = card("Caption style", icon_name="script")
+
+        assert self._job_id is not None
+
+        options = self._caption_style_options_service.list_options(
+            genre_id=job.genre_id
+        )
+
+        genre_default = next(
+            (option for option in options if option.is_genre_default),
+            None,
+        )
+
+        genre_default_name = (
+            genre_default.display_name if genre_default is not None else "Default"
+        )
+
+        layout.addWidget(
+            small_muted(
+                "The genre auto-selects a style for every render - "
+                f'currently "{genre_default_name}". Override it here to '
+                "pin one specific style instead, or choose Auto to go "
+                "back to letting the genre decide. Applies to your NEXT "
+                "render, not retroactively."
+            )
+        )
+
+        button_group = QButtonGroup(frame)
+        self._caption_style_radio_by_preset_id = {}
+
+        auto_radio = QRadioButton("Auto (genre-selected)")
+        button_group.addButton(auto_radio)
+        layout.addWidget(auto_radio)
+        self._caption_style_radio_by_preset_id[None] = auto_radio
+
+        for option in options:
+            option_row = QWidget()
+            option_row_layout = QHBoxLayout(option_row)
+            option_row_layout.setContentsMargins(0, 0, 0, 0)
+
+            label_text = option.display_name
+
+            if option.is_genre_default:
+                label_text += " (genre default)"
+
+            radio = QRadioButton(label_text)
+            button_group.addButton(radio)
+            option_row_layout.addWidget(radio)
+
+            preview = QLabel("Sample caption text")
+            preview.setStyleSheet(self._caption_preview_stylesheet(option.style))
+            option_row_layout.addWidget(preview, stretch=1)
+
+            layout.addWidget(option_row)
+            self._caption_style_radio_by_preset_id[option.preset_id] = radio
+
+        selected_radio = self._caption_style_radio_by_preset_id.get(
+            job.subtitle_style_override_preset_id,
+            auto_radio,
+        )
+        selected_radio.setChecked(True)
+
+        save_button = button("Save caption style", icon_name="check")
+        save_button.clicked.connect(self._handle_save_caption_style)
+        layout.addWidget(save_button, alignment=_LEFT)
+
+        self._layout.addWidget(frame)
+
+    @staticmethod
+    def _caption_preview_stylesheet(style: dict[str, str]) -> str:
+        fontcolor = style.get("fontcolor", "white")
+        borderw = style.get("borderw", "1")
+        bordercolor = style.get("bordercolor", "black")
+
+        # FFmpeg's own point sizes render far larger on screen than a
+        # small Qt preview swatch needs - scaled down (never below
+        # 14px) so every option's relative size difference still reads
+        # clearly without one preview overflowing its row.
+        try:
+            scaled_size = max(14, int(int(style.get("fontsize", "24")) * 0.4))
+        except ValueError:
+            scaled_size = 18
+
+        return (
+            f"color: {fontcolor}; background-color: #1a1a1a; "
+            f"font-size: {scaled_size}px; font-weight: bold; "
+            f"border: {borderw}px solid {bordercolor}; "
+            "padding: 6px 10px; border-radius: 4px;"
+        )
+
+    def _handle_save_caption_style(self) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        selected_preset_id = next(
+            (
+                preset_id
+                for preset_id, radio in self._caption_style_radio_by_preset_id.items()
+                if radio.isChecked()
+            ),
+            None,
+        )
+
+        job.subtitle_style_override_preset_id = selected_preset_id
+        self._on_change()
 
     def _build_export_variants_card(self, job: VideoJob) -> None:
         """
