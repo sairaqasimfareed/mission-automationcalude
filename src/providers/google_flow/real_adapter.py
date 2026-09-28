@@ -560,14 +560,14 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
             # from a real screenshot of two scenes' identical
             # captions), and relied on a <flow-video-tile> tag that a
             # real DevTools inspection then showed does not exist at
-            # all. _completed_batches() (real <flow-batch-info>
+            # all. _current_batch_if_complete() (real <flow-batch-info>
             # elements, newest first) is what real inspection actually
-            # found - see its own docstring for why topmost is always
-            # correct here, not a guess.
-            batches = self._completed_batches(page)
-            batch_count = batches.count()
+            # found - see its own docstring for why the topmost tile
+            # is always this attempt's own, and why completeness must
+            # be checked on that exact tile, never a different one.
+            batch = self._current_batch_if_complete(page)
 
-            if batch_count == 0:
+            if batch is None:
                 # Not rendered yet - keep polling rather than falsely
                 # reporting ready.
                 return attempt
@@ -642,25 +642,39 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
             # DevTools inspection found the actual real control -
             # <flow-batch-info>, one per completed batch, each with its
             # own always-visible "Download batch" button. No hover, no
-            # submenu; see _completed_batches()'s own docstring for why
-            # the topmost one is always this attempt's own batch, not a
-            # guess.
-            batches = self._completed_batches(page)
-            batch_count = batches.count()
+            # submenu; see _current_batch_if_complete()'s own docstring
+            # for why the topmost tile is always this attempt's own,
+            # and why completeness must be checked on that exact tile,
+            # never a different one - this normally only runs once
+            # observe() has already confirmed readiness, but re-checks
+            # here too in case anything changed in between.
+            batch = self._current_batch_if_complete(page)
 
-            if batch_count == 0:
+            if batch is None:
                 return attempt.with_transition(
                     GoogleFlowGenerationState.UI_CHANGED,
                     detail=(
-                        "Could not find any completed batch on the All "
-                        "media view - refusing to guess which video to "
-                        "download."
+                        "This attempt's own tile is not on the All media "
+                        "view, or has not finished rendering yet - "
+                        "refusing to guess which video to download."
                     ),
                 )
 
-            download_button = batches.first.get_by_role(
+            download_button = batch.get_by_role(
                 "button", name=self._names.download_batch_button
             )
+
+            # Real-world symptom observed, 2026-09-28: a real download
+            # attempt timed out waiting for Playwright's "download"
+            # event even though generation itself finished quickly.
+            # The original hypothesis here (the batch tile appearing in
+            # the DOM not meaning the file is actually ready to stream
+            # yet) turned out NOT to be the real cause - the real cause
+            # was _current_batch_if_complete()'s own predecessor
+            # grabbing the wrong tile entirely (see its docstring).
+            # Left in place as a cheap, harmless extra settle margin
+            # before the click, not because it's confirmed to matter.
+            page.wait_for_timeout(1500)
 
             with page.expect_download(
                 timeout=self._operation_timeout_seconds * 1000
@@ -1095,33 +1109,75 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
         # never observed.
         page.keyboard.press("Escape")
 
-    def _completed_batches(self, page: Page) -> Locator:
+    def _current_batch_if_complete(self, page: Page) -> Locator | None:
         """
-        Return every completed batch/tile on the current "All media"
-        view, newest first - real Flow renders one real
-        <flow-batch-info> element per completed batch (confirmed
-        directly via a real DevTools inspection, 2026-09-14), each
-        holding that batch's own "Download batch"/"Reuse prompt"/
-        "Trash batch" buttons. Real Flow prepends new tiles to the top
-        of the grid (docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md section 5),
-        so `.first` here is always the most recently completed batch.
+        Return this attempt's own batch/tile on the current "All
+        media" view - the topmost <flow-batch-info> element, by real
+        Flow's own newest-first tile ordering (confirmed directly via
+        a real DevTools inspection, 2026-09-14) - but ONLY once it has
+        actually finished rendering. None when there is no tile at all
+        yet, or when the topmost one exists but is still generating.
 
-        Deliberately NOT matched by prompt content (a prior real
-        approach, since replaced): every scene in one job shares the
-        same "Identity: ..." continuity preamble, which is all Flow's
-        own caption display shows before truncating (confirmed
-        directly from a real screenshot of two different scenes'
-        visibly identical captions) - content can narrow to "this
-        job" but never to "this scene". Position is used instead:
+        Real-world finding, 2026-09-28, corrected same day: an earlier
+        version of this method filtered `flow-batch-info` down to
+        "batches that already carry a Trash batch button" (confirmed
+        via DevTools to appear only once a batch is done) and took
+        `.first` of THAT filtered set. That is wrong: once ANY earlier
+        scene has ever completed, an older, unrelated completed batch
+        always exists in "All media" ("a real project routinely holds
+        more than one completed batch... this job's own earlier
+        scenes, still sitting in All media" - the very reason position
+        was chosen over content-matching in the first place) - so
+        filter-then-first can return a genuinely DIFFERENT, older
+        scene's already-processed video while the current attempt's
+        own tile (topmost overall, but still generating) is skipped
+        past entirely. Confirmed live: a real download attached the
+        wrong clip to a scene while that scene's own real generation
+        was still visibly at 17% in the real Flow UI.
+
+        The correct check is position FIRST, completeness SECOND, on
+        that exact same tile - never falling through to a different,
+        older one just because it happens to already be done. Position
+        alone (`.first` on the unfiltered locator) still correctly
+        identifies which tile is this attempt's own -
         GoogleFlowGenerationLedgerService.create_attempt()'s own
-        in-flight guard (one non-terminal attempt per profile per job,
-        enforced at submission) guarantees at most one of this job's
-        own batches can genuinely still be pending at once, so the
-        newest (topmost) completed batch is always the one the
-        current attempt actually produced, not a guess.
+        in-flight guard (one non-terminal attempt per profile per job)
+        guarantees at most one of this job's own batches can genuinely
+        still be pending at once, and real Flow prepends a new tile
+        the moment a generation STARTS (confirmed directly: a live
+        "14%" tile sat above an already-completed one), so the topmost
+        tile overall is always this attempt's own, whether or not it
+        has finished yet. Only after confirming THAT tile carries a
+        "Trash batch" button (present once done, absent while still
+        generating) is it treated as ready - the caller polls again
+        (real backoff already built into _poll_until_settled) rather
+        than guessing at any other tile in the meantime.
+
+        Deliberately still NOT matched by prompt content: every scene
+        in one job shares the same "Identity: ..." continuity
+        preamble, which is all Flow's own caption display shows before
+        truncating (confirmed directly from a real screenshot of two
+        different scenes' visibly identical captions) - content can
+        narrow to "this job" but never to "this scene".
         """
 
-        return page.locator("flow-batch-info")
+        all_batches = page.locator("flow-batch-info")
+
+        if all_batches.count() == 0:
+            return None
+
+        topmost = all_batches.first
+
+        if (
+            topmost.get_by_role("button", name=self._names.trash_batch_button).count()
+            == 0
+        ):
+            # Our own tile exists but has not finished rendering yet -
+            # not some other tile's problem to solve. Keep polling
+            # this exact one.
+            return None
+
+        return topmost
 
     def _click_radio(self, page: Page, name: str, *, dimension: str) -> None:
         radio = page.get_by_role("radio", name=name)

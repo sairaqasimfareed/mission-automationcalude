@@ -31,12 +31,16 @@ from src.models.bulk_stock_assignment import BulkStockAssignmentEntryStatus
 from src.models.google_flow_generation import (
     GoogleFlowGenerationAttempt,
     GoogleFlowGenerationState,
+    is_terminal_state,
 )
 from src.models.scene_completeness import SceneCompletenessStatus
 from src.models.video_clip import VideoClip
 from src.models.video_job import VideoJob
 from src.services.bulk_clip_ingestion_service import BulkClipIngestionService
 from src.services.bulk_stock_assignment_service import BulkStockAssignmentService
+from src.services.google_flow_generation_orchestrator_service import (
+    GoogleFlowAttemptCreditSensitiveError,
+)
 from src.services.scene_asset_workflow_service import SceneAssetWorkflowService
 from src.services.scene_completeness_service import SceneCompletenessService
 from src.services.scene_prompt_export_service import ScenePromptExportService
@@ -335,6 +339,11 @@ class ClipWorkspaceView(QWidget):
                 )
 
             stuck_on_auth = self._auth_required_attempt(job, scene.scene_number)
+            stuck_other = (
+                self._other_stuck_attempt(job, scene.scene_number)
+                if stuck_on_auth is None
+                else None
+            )
 
             if stuck_on_auth is not None:
                 primary_button = button("Retry after login", variant="primary")
@@ -342,6 +351,14 @@ class ClipWorkspaceView(QWidget):
                 primary_button.clicked.connect(
                     lambda checked=False, number=scene.scene_number: (
                         self._handle_retry_scene_after_auth(number)
+                    )
+                )
+            elif stuck_other is not None:
+                primary_button = button("Abandon attempt", variant="danger")
+                primary_button.setEnabled(not is_generating)
+                primary_button.clicked.connect(
+                    lambda checked=False, number=scene.scene_number: (
+                        self._handle_abandon_stuck_attempt(number)
                     )
                 )
             else:
@@ -423,6 +440,29 @@ class ClipWorkspaceView(QWidget):
             None,
         )
 
+    @staticmethod
+    def _other_stuck_attempt(
+        job: VideoJob, scene_number: int
+    ) -> GoogleFlowGenerationAttempt | None:
+        """
+        A scene's stuck non-terminal attempt that ISN'T AUTH_REQUIRED
+        (which already has its own "Retry after login" recovery path
+        above) - e.g. UI_CHANGED, or a PLANNED attempt that never
+        actually started. Checked across every sub-clip index, same
+        reasoning as _auth_required_attempt.
+        """
+
+        return next(
+            (
+                attempt
+                for attempt in job.flow_generation_attempts
+                if attempt.request.scene_number == scene_number
+                and not is_terminal_state(attempt.state)
+                and attempt.state != GoogleFlowGenerationState.AUTH_REQUIRED
+            ),
+            None,
+        )
+
     def _handle_generate_scene_video(self, scene_number: int) -> None:
         job = self._current_job()
 
@@ -440,6 +480,40 @@ class ClipWorkspaceView(QWidget):
         self._execute_scene_generation(
             job, scene_number=scene_number, retry_after_auth=True
         )
+
+    def _handle_abandon_stuck_attempt(
+        self, scene_number: int, *, force: bool = False
+    ) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        service = self._scene_video_generation_service
+
+        if service is None:
+            return
+
+        try:
+            service.abandon_stuck_attempt(job, scene_number, force=force)
+        except GoogleFlowAttemptCreditSensitiveError as error:
+            confirmation = QMessageBox.question(
+                self,
+                "Abandon stuck generation attempt",
+                f"{error}\n\nAbandon anyway?",
+            )
+
+            if confirmation == QMessageBox.StandardButton.Yes:
+                self._handle_abandon_stuck_attempt(scene_number, force=True)
+
+            return
+        except ValueError as error:
+            QMessageBox.warning(self, "Could not abandon attempt", str(error))
+
+            return
+
+        self._job_store.add(job)
+        self._on_change()
 
     def _handle_generate_all_scene_videos(self) -> None:
         job = self._current_job()

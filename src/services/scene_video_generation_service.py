@@ -21,6 +21,7 @@ from src.models.google_flow_generation import (
     GoogleFlowQCResult,
     GoogleFlowReferenceAsset,
     GoogleFlowReferenceRole,
+    is_terminal_state,
 )
 from src.models.media_strategy import SceneSourceType
 from src.models.provider_profile import ProviderCategory, ProviderHealthStatus
@@ -31,7 +32,7 @@ from src.models.scene_completeness import (
     SceneCompletenessStatus,
 )
 from src.models.video_job import VideoJob
-from src.models.visual_continuity import CanonicalEntityType
+from src.models.visual_continuity import CanonicalEntityIdentity, CanonicalEntityType
 from src.providers.external_ui_generation_provider import ExternalUIGenerationProvider
 from src.providers.google_flow.locators import (
     VERIFIED_DURATIONS_SECONDS,
@@ -372,6 +373,48 @@ class SceneVideoGenerationService:
 
         return self.generate_one(job, scene_number)
 
+    def abandon_stuck_attempt(
+        self,
+        job: VideoJob,
+        scene_number: int,
+        *,
+        force: bool = False,
+    ) -> GoogleFlowGenerationAttempt:
+        """
+        Operator-triggered escape hatch for a scene whose Google Flow
+        attempt is stuck at a non-terminal state with no automated
+        recovery path (e.g. UI_CHANGED, or a PLANNED attempt whose real
+        submission never actually started) - see
+        GoogleFlowGenerationOrchestratorService.abandon_attempt's own
+        docstring for the credit-sensitive-state safety gate (may raise
+        GoogleFlowAttemptCreditSensitiveError, letting a GUI caller
+        confirm before retrying with force=True).
+
+        Searches every sub-clip index for this scene_number, not just
+        clip_sequence_index=0, matching retry_scene_after_auth's own
+        reasoning - a Phase 5 split scene's stuck attempt need not be
+        clip_sequence_index=0. Marks the attempt FAILED (terminal) so
+        a fresh Generate click can start a brand-new attempt for this
+        scene - does not itself start one.
+        """
+
+        stuck_attempt = next(
+            (
+                attempt
+                for attempt in job.flow_generation_attempts
+                if attempt.request.scene_number == scene_number
+                and not is_terminal_state(attempt.state)
+            ),
+            None,
+        )
+
+        if stuck_attempt is None:
+            raise ValueError(
+                f"Scene {scene_number} has no non-terminal attempt to abandon."
+            )
+
+        return self._orchestrator.abandon_attempt(job, stuck_attempt, force=force)
+
     def _drive_to_terminal(
         self,
         job: VideoJob,
@@ -408,7 +451,61 @@ class SceneVideoGenerationService:
             job, scene.scene_number, clip_sequence_index=clip_sequence_index
         )
 
-        if attempt is None:
+        # Real-world finding, 2026-09-28: a scene whose latest attempt
+        # already failed (FAILED/QC_FAILED - e.g. abandoned via
+        # abandon_attempt(), or a real generation that genuinely
+        # failed) used to fall through this whole if/elif silently -
+        # neither branch ever ran, since a failed attempt is not None
+        # and is not in _POLLABLE_STATES either. generate_one() then
+        # returned that same stale failed attempt completely
+        # unchanged: no new ledger entry, no error, no real Flow call
+        # at all - a true silent no-op a real click on Generate could
+        # never actually recover from. create_attempt() (called via
+        # _submit() below) is explicitly documented as safe to call
+        # again for a scene with an existing terminal attempt - "the
+        # regeneration mechanism" - so this is reusing an
+        # already-correct capability, not adding a new one.
+        #
+        # Deliberately excludes READY *while the scene still has the
+        # attempt attached*: test_generate_one_does_not_resubmit_a_
+        # scene_already_at_ready already locks in, with its own real
+        # reasoning, that a successfully completed attempt must not
+        # silently resubmit just because generate_one() was called
+        # again - a real "Regenerate" capability for an already-READY,
+        # still-attached scene is a separate, unreported question this
+        # fix does not touch.
+        #
+        # Real-world finding, 2026-09-28 (found live the same day as
+        # the fix above): remove_scene_clip() clears the scene's
+        # SceneAssetState (job.scene_asset_states) but, by its own
+        # documented design, deliberately never touches this ledger -
+        # so a READY attempt from before the removal survives, and a
+        # later Generate click found it here, still READY, and
+        # silently re-attached the same already-downloaded file
+        # without ever calling Flow again. A READY attempt only
+        # represents "nothing to do" for a scene that still has a
+        # SceneAssetState referencing it; once removed, it is an
+        # orphaned record of a past generation, not evidence the
+        # current scene has anything attached - it should be treated
+        # exactly like a FAILED/QC_FAILED attempt (create a fresh one)
+        # rather than an already-satisfied one to skip.
+        orphaned_ready = attempt is not None and (
+            attempt.state == GoogleFlowGenerationState.READY
+            and not any(
+                state.scene_number == scene.scene_number
+                for state in job.scene_asset_states
+            )
+        )
+
+        if (
+            attempt is None
+            or orphaned_ready
+            or attempt.state
+            in (
+                GoogleFlowGenerationState.FAILED,
+                GoogleFlowGenerationState.QC_FAILED,
+            )
+        ):
             attempt = self._submit(
                 job,
                 scene,
@@ -645,6 +742,64 @@ class SceneVideoGenerationService:
             role=GoogleFlowReferenceRole.FIRST_FRAME,
         )
 
+    def _sync_extracted_frame_asset_index(self, job: VideoJob) -> None:
+        """
+        Real-world finding, 2026-09-28: AssetIndex is explicitly
+        in-memory only (see its own docstring), and this class used to
+        be constructed with one shared, process-lifetime AssetIndex
+        (get_extracted_frame_asset_storage_service() in desktop/
+        services.py) - every reference frame's file was correctly
+        persisted to disk, but the record of which asset id maps to
+        which file was not, so every app restart silently lost every
+        reference recorded so far. Confirmed live: a scene's reference
+        image attached correctly on the first two real generations,
+        then silently stopped on the third (a restart happened in
+        between). VideoJob.extracted_frame_asset_index is now the real
+        store - point the shared AssetStorageService at THIS job's own
+        index before it stores or resolves anything, so a freshly
+        loaded job's already-recorded references keep working, and
+        anything newly extracted is recorded somewhere that survives
+        the next restart instead of only this process's lifetime.
+        """
+
+        if self._asset_storage_service is not None:
+            self._asset_storage_service.asset_index = job.extracted_frame_asset_index
+
+    def _has_valid_reference(
+        self, job: VideoJob, identity: CanonicalEntityIdentity
+    ) -> bool:
+        """
+        Real-world finding, 2026-09-29: a job created before
+        VideoJob.extracted_frame_asset_index existed had its
+        identities' reference_asset_ids already populated with an id
+        from the OLD, process-lifetime-only index - that id was never
+        going to resolve again once the real, persisted index started
+        life empty, but _extract_reference_for_new_identities's own
+        "only extract for an identity with no reference_asset_ids at
+        all" guard treated "has a (now-dangling) id" as "already has a
+        reference," so it silently refused to ever extract a fresh one
+        - confirmed live: a real job stuck permanently reusing a
+        dangling reference id across several real regenerations, with
+        the index staying empty the entire time (0 assets) even after
+        a genuinely successful new generation. An identity only counts
+        as having a reference if at least one of its ids still
+        resolves to a real, existing file right now - the exact same
+        check _resolve_reference_assets already applies per id, reused
+        here as the trigger for "does this identity need a fresh
+        extraction," not just what to skip when attaching.
+        """
+
+        if self._asset_storage_service is None:
+            return bool(identity.reference_asset_ids)
+
+        for asset_id in identity.reference_asset_ids:
+            asset = self._asset_storage_service.asset_index.get(asset_id)
+
+            if asset is not None and Path(asset.file_path).exists():
+                return True
+
+        return False
+
     def _extract_seam_reference(
         self,
         job: VideoJob,
@@ -660,6 +815,8 @@ class SceneVideoGenerationService:
         docstring: a failure here is a continuity enhancement lost,
         never a reason to fail this scene's own generation.
         """
+
+        self._sync_extracted_frame_asset_index(job)
 
         if (
             self._frame_extraction_service is None
@@ -1120,6 +1277,8 @@ class SceneVideoGenerationService:
         _self_heal_flow_account_health).
         """
 
+        self._sync_extracted_frame_asset_index(job)
+
         if (
             self._frame_extraction_service is None
             or self._asset_storage_service is None
@@ -1136,14 +1295,17 @@ class SceneVideoGenerationService:
         if entry is None or not entry.entity_names:
             return
 
-        # Only identities this scene features AND that have no
-        # reference yet at all - i.e. this is their first appearance
-        # in the job. An identity that already has one is left alone;
-        # later scenes just keep reusing it.
+        # Identities this scene features that either have no reference
+        # yet at all (first appearance) OR whose existing reference_
+        # asset_ids are all stale (dangling - see _has_valid_reference's
+        # own docstring for the real-world finding this covers).
+        # An identity with at least one still-valid reference is left
+        # alone; later scenes just keep reusing it.
         new_identities = [
             identity
             for identity in bible.identities
-            if identity.name in entry.entity_names and not identity.reference_asset_ids
+            if identity.name in entry.entity_names
+            and not self._has_valid_reference(job, identity)
         ]
 
         if not new_identities:
@@ -1204,7 +1366,7 @@ class SceneVideoGenerationService:
             return
 
         for identity in new_identities:
-            identity.reference_asset_ids.append(str(result.asset.id))
+            identity.reference_asset_ids = [str(result.asset.id)]
 
     def _resolve_reference_assets(
         self, job: VideoJob, scene: Scene
@@ -1233,6 +1395,8 @@ class SceneVideoGenerationService:
         no entry for this scene, or no featured identity has a
         reference yet - e.g. every identity's own first appearance).
         """
+
+        self._sync_extracted_frame_asset_index(job)
 
         if self._asset_storage_service is None:
             return []

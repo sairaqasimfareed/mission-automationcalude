@@ -10,7 +10,7 @@ from unittest.mock import patch  # noqa: E402
 from uuid import UUID  # noqa: E402
 
 import pytest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QPushButton  # noqa: E402
+from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton  # noqa: E402
 
 from src.desktop.views.clip_workspace_view import ClipWorkspaceView  # noqa: E402
 from src.models.asset_index import AssetIndex  # noqa: E402
@@ -27,6 +27,9 @@ from src.services.asset_decision_service import AssetDecisionService  # noqa: E4
 from src.services.asset_manager import AssetManager  # noqa: E402
 from src.services.asset_search_service import AssetSearchService  # noqa: E402
 from src.services.asset_storage_service import AssetStorageService  # noqa: E402
+from src.services.google_flow_generation_orchestrator_service import (  # noqa: E402
+    GoogleFlowAttemptCreditSensitiveError,
+)
 from src.services.local_asset_search_service import (  # noqa: E402
     LocalAssetSearchService,
 )
@@ -81,6 +84,22 @@ def _stuck_attempt(scene_number: int) -> GoogleFlowGenerationAttempt:
     )
 
 
+def _ui_changed_stuck_attempt(scene_number: int) -> GoogleFlowGenerationAttempt:
+    request = GoogleFlowGenerationRequest(
+        scene_number=scene_number,
+        prompt="A prompt.",
+        prompt_version="v1",
+        profile_id="flow.primary",
+        idempotency_key=f"key-{scene_number}",
+    )
+    attempt = GoogleFlowGenerationAttempt(request=request, profile_id="flow.primary")
+
+    return attempt.with_transition(
+        GoogleFlowGenerationState.UI_CHANGED,
+        detail="Flow's real UI no longer matches expectations.",
+    )
+
+
 class _FakeJobStore:
     def __init__(self, job: VideoJob) -> None:
         self._job = job
@@ -101,11 +120,18 @@ class _FakeSceneVideoGenerationService:
     without a real Google Flow provider or any real waiting.
     """
 
-    def __init__(self, *, fail_on_scene: int | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        fail_on_scene: int | None = None,
+        raise_credit_sensitive_on_scene: int | None = None,
+    ) -> None:
         self.generate_one_calls: list[int] = []
         self.generate_all_calls = 0
         self.retry_scene_after_auth_calls: list[int] = []
+        self.abandon_stuck_attempt_calls: list[tuple[int, bool]] = []
         self._fail_on_scene = fail_on_scene
+        self._raise_credit_sensitive_on_scene = raise_credit_sensitive_on_scene
 
     def retry_scene_after_auth(self, job: VideoJob, scene_number: int) -> None:
         self.retry_scene_after_auth_calls.append(scene_number)
@@ -125,6 +151,25 @@ class _FakeSceneVideoGenerationService:
                 status=VideoClipStatus.READY,
             )
         ]
+        job.flow_generation_attempts = [
+            attempt
+            for attempt in job.flow_generation_attempts
+            if attempt.request.scene_number != scene_number
+        ]
+
+    def abandon_stuck_attempt(
+        self, job: VideoJob, scene_number: int, *, force: bool = False
+    ) -> None:
+        self.abandon_stuck_attempt_calls.append((scene_number, force))
+
+        if self._raise_credit_sensitive_on_scene == scene_number and not force:
+            stuck = next(
+                attempt
+                for attempt in job.flow_generation_attempts
+                if attempt.request.scene_number == scene_number
+            )
+            raise GoogleFlowAttemptCreditSensitiveError(stuck)
+
         job.flow_generation_attempts = [
             attempt
             for attempt in job.flow_generation_attempts
@@ -512,3 +557,102 @@ def test_clicking_retry_after_login_resumes_the_stuck_scene(
     assert not any(
         b.text() == "Retry after login" for b in _find_buttons(resolved_view)
     )
+
+
+def test_shows_abandon_attempt_for_a_scene_stuck_on_ui_changed(
+    qapp: QApplication,
+) -> None:
+    """Real-world finding, 2026-09-28: a scene stuck at UI_CHANGED has
+    no automated recovery path the way AUTH_REQUIRED does - the
+    "Abandon attempt" button is the only way to unstick it."""
+
+    job = _job(1, 2)
+    job.flow_generation_attempts = [_ui_changed_stuck_attempt(1)]
+    service = _FakeSceneVideoGenerationService()
+    view = _build_view(job, service=service)
+
+    buttons_by_text = [b.text() for b in _find_buttons(view)]
+
+    assert buttons_by_text.count("Abandon attempt") == 1
+    assert buttons_by_text.count("Generate") == 1  # scene 2, untouched
+
+
+def test_abandon_attempt_never_shown_for_a_scene_stuck_on_auth_required(
+    qapp: QApplication,
+) -> None:
+    """AUTH_REQUIRED already has its own real recovery path - it must
+    keep showing "Retry after login", not "Abandon attempt"."""
+
+    job = _job(1)
+    job.flow_generation_attempts = [_stuck_attempt(1)]
+    service = _FakeSceneVideoGenerationService()
+    view = _build_view(job, service=service)
+
+    buttons_by_text = [b.text() for b in _find_buttons(view)]
+
+    assert "Retry after login" in buttons_by_text
+    assert "Abandon attempt" not in buttons_by_text
+
+
+def test_clicking_abandon_attempt_clears_the_stuck_scene(qapp: QApplication) -> None:
+    job = _job(1)
+    job.flow_generation_attempts = [_ui_changed_stuck_attempt(1)]
+    service = _FakeSceneVideoGenerationService()
+    view = _build_view(job, service=service)
+
+    abandon_button = next(
+        b for b in _find_buttons(view) if b.text() == "Abandon attempt"
+    )
+    abandon_button.click()
+
+    assert service.abandon_stuck_attempt_calls == [(1, False)]
+    assert job.flow_generation_attempts == []
+
+    resolved_view = _build_view(job, service=service)
+    assert not any(b.text() == "Abandon attempt" for b in _find_buttons(resolved_view))
+
+
+def test_clicking_abandon_attempt_confirms_before_forcing_a_credit_sensitive_case(
+    qapp: QApplication,
+) -> None:
+    job = _job(1)
+    job.flow_generation_attempts = [_ui_changed_stuck_attempt(1)]
+    service = _FakeSceneVideoGenerationService(raise_credit_sensitive_on_scene=1)
+    view = _build_view(job, service=service)
+
+    abandon_button = next(
+        b for b in _find_buttons(view) if b.text() == "Abandon attempt"
+    )
+
+    with patch(
+        "src.desktop.views.clip_workspace_view.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.Yes,
+    ):
+        abandon_button.click()
+
+    # First call refused (force=False), confirmed, then retried with
+    # force=True - never silently forced without asking.
+    assert service.abandon_stuck_attempt_calls == [(1, False), (1, True)]
+    assert job.flow_generation_attempts == []
+
+
+def test_declining_the_confirmation_leaves_the_stuck_attempt_untouched(
+    qapp: QApplication,
+) -> None:
+    job = _job(1)
+    job.flow_generation_attempts = [_ui_changed_stuck_attempt(1)]
+    service = _FakeSceneVideoGenerationService(raise_credit_sensitive_on_scene=1)
+    view = _build_view(job, service=service)
+
+    abandon_button = next(
+        b for b in _find_buttons(view) if b.text() == "Abandon attempt"
+    )
+
+    with patch(
+        "src.desktop.views.clip_workspace_view.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.No,
+    ):
+        abandon_button.click()
+
+    assert service.abandon_stuck_attempt_calls == [(1, False)]
+    assert len(job.flow_generation_attempts) == 1  # never forced

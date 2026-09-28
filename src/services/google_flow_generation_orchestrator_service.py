@@ -61,6 +61,54 @@ class GoogleFlowAgentConfirmationRequiredError(RuntimeError):
         )
 
 
+# Real-world finding, 2026-09-28: a scene stuck at UI_CHANGED (or any
+# non-terminal state with no defined forward transition - see
+# GoogleFlowGenerationState's own _FORWARD_TRANSITIONS, empty for
+# UI_CHANGED) has no automated recovery path the way AUTH_REQUIRED
+# does (resume_after_auth() above). Left stuck, it permanently
+# occupies its account's single in-flight slot
+# (GoogleFlowAccountRouterService's own max_in_flight_per_account),
+# blocking every other scene on that account too - confirmed live: two
+# stuck attempts (one at PLANNED, one at UI_CHANGED) on the only two
+# configured accounts left every remaining scene unable to generate at
+# all ("Every usable Google Flow account is already at its in-flight
+# attempt limit.").
+_CREDIT_SENSITIVE_STATES = frozenset(
+    {
+        GoogleFlowGenerationState.SUBMITTING,
+        GoogleFlowGenerationState.SUBMISSION_UNCERTAIN,
+        GoogleFlowGenerationState.SUBMITTED,
+        GoogleFlowGenerationState.GENERATING,
+        GoogleFlowGenerationState.READY_TO_DOWNLOAD,
+        GoogleFlowGenerationState.DOWNLOADED,
+    }
+)
+
+
+class GoogleFlowAttemptCreditSensitiveError(RuntimeError):
+    """
+    Raised by abandon_attempt() when the stuck attempt's own history
+    shows it reached a credit-sensitive state before getting stuck -
+    abandoning it and starting a fresh attempt risks a duplicate,
+    billed generation if the original submission actually went
+    through. Carries the attempt so a caller (a GUI confirmation
+    dialog) can show the operator what state was reached and let them
+    decide, rather than silently blocking or silently allowing.
+    """
+
+    def __init__(self, attempt: GoogleFlowGenerationAttempt) -> None:
+        self.attempt = attempt
+
+        super().__init__(
+            "This Google Flow attempt's own history shows it reached a "
+            "real, credit-sensitive submission state before getting "
+            f"stuck at {attempt.state.value} - it may already be a real, "
+            "billed generation in progress or complete. Verify in the "
+            "real Google Flow account before abandoning; pass force=True "
+            "once confirmed safe. See .attempt for details."
+        )
+
+
 class GoogleFlowGenerationOrchestratorService:
     """
     Google Flow External UI Automation, GF-11/GF-12: the one real
@@ -258,6 +306,74 @@ class GoogleFlowGenerationOrchestratorService:
             )
 
         result = self._provider.submit(attempt.request, attempt)
+        GoogleFlowGenerationLedgerService.replace_attempt(job, result)
+
+        return result
+
+    def abandon_attempt(
+        self,
+        job: VideoJob,
+        attempt: GoogleFlowGenerationAttempt,
+        *,
+        force: bool = False,
+    ) -> GoogleFlowGenerationAttempt:
+        """
+        Mark a stuck, non-terminal attempt FAILED so a fresh Generate
+        click can start a brand-new attempt for its scene - the
+        general escape hatch for a non-terminal state with no defined
+        automated recovery path (UI_CHANGED today - see
+        GoogleFlowGenerationState's own _FORWARD_TRANSITIONS, which
+        maps it to an empty set - or any other stuck attempt an
+        operator has otherwise given up on).
+
+        FAILED is already a structurally valid destination from any
+        non-terminal state (is_valid_transition()'s own "any
+        non-terminal state may always fall into one of the interrupt
+        states" rule), so this needs no new state-machine rule -
+        reuses GoogleFlowGenerationAttempt.with_transition() exactly
+        like every other real transition in this codebase.
+
+        Refuses by default (force=False) when the attempt's own
+        state_history shows it ever reached a credit-sensitive state
+        (SUBMITTING or later) before getting stuck - unlike
+        AUTH_REQUIRED (which resume_after_auth()'s own docstring
+        proves can only ever be set before that boundary), an
+        interrupt state like UI_CHANGED can genuinely occur at any
+        point in the flow, so a stuck attempt might already be a real,
+        billed generation in progress or complete. Raises
+        GoogleFlowAttemptCreditSensitiveError in that case rather than
+        silently allowing or silently blocking - the operator decides,
+        after verifying in the real Flow account, by passing
+        force=True.
+
+        Does not itself start a new attempt - matches the existing
+        Remove-then-Generate two-step pattern elsewhere in this
+        workflow (BulkClipIngestionService.remove_scene_clip()) rather
+        than chaining an automatic regeneration onto a safety-gated
+        action.
+        """
+
+        if is_terminal_state(attempt.state):
+            raise ValueError(
+                "Only a non-terminal attempt can be abandoned (this "
+                f"attempt is already at {attempt.state.value})."
+            )
+
+        reached_credit_sensitive_state = any(
+            transition.state in _CREDIT_SENSITIVE_STATES
+            for transition in attempt.state_history
+        )
+
+        if reached_credit_sensitive_state and not force:
+            raise GoogleFlowAttemptCreditSensitiveError(attempt)
+
+        result = attempt.with_transition(
+            GoogleFlowGenerationState.FAILED,
+            detail=(
+                "Abandoned by operator: stuck at "
+                f"{attempt.state.value} with no automated recovery path."
+            ),
+        )
         GoogleFlowGenerationLedgerService.replace_attempt(job, result)
 
         return result

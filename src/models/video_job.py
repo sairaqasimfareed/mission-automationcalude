@@ -4,6 +4,7 @@ from pydantic import Field, field_validator, model_validator
 
 from src.models.approval import ApprovalPolicyConfig
 from src.models.artifact_lifecycle import ArtifactVersionRecord
+from src.models.asset_index import AssetIndex
 from src.models.asset_state import SceneAssetState
 from src.models.audience_promise import AudiencePromise
 from src.models.audio_inclusion_preferences import AudioInclusionPreferences
@@ -237,6 +238,21 @@ class VideoJob(MissionBaseModel):
     # by a separate evaluation pass and may be absent even once the
     # package itself exists.
     cinematic_prompt_package: CinematicPromptPackage | None = None
+
+    # Real-world finding, 2026-09-28: visual-continuity reference
+    # frames this codebase extracts itself (see
+    # SceneVideoGenerationService._extract_reference_for_new_identities/
+    # _extract_seam_reference) used to be registered only in a
+    # process-lifetime AssetIndex singleton (get_extracted_frame_
+    # asset_storage_service() in desktop/services.py) - the real files
+    # were persisted correctly, but the index recording which asset id
+    # maps to which file was not, so every app restart silently lost
+    # every reference recorded so far even though the files themselves
+    # were still on disk. This field is the real fix: the index now
+    # lives on VideoJob itself, so it round-trips through JsonJobStore
+    # exactly like scene_asset_states/flow_generation_attempts already
+    # do - one canonical persistence layer, no second store.
+    extracted_frame_asset_index: AssetIndex = Field(default_factory=AssetIndex)
 
     content_decisions: list[ContentDecisionRecord] = Field(default_factory=list)
     stale_artifacts: list[StaleArtifact] = Field(default_factory=list)

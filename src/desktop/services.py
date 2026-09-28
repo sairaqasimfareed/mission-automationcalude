@@ -795,21 +795,27 @@ def get_frame_extraction_service() -> FrameExtractionService:
 @lru_cache
 def get_extracted_frame_asset_storage_service() -> AssetStorageService:
     """
-    Shared, process-lifetime storage for frames this codebase extracts
-    itself from already-generated clips (visual continuity self-
-    consistency references - see SceneVideoGenerationService's own
+    Shared storage wrapper for frames this codebase extracts itself
+    from already-generated clips (visual continuity self-consistency
+    references - see SceneVideoGenerationService's own
     _extract_reference_for_new_identities/_extract_seam_reference).
 
-    Deliberately a SEPARATE AssetStorageService/AssetIndex from
+    Deliberately a SEPARATE AssetStorageService from
     get_asset_workflow_service()'s own manual-upload/stock one - these
     are never user-provided assets (IndexedAssetSource.GENERATED, not
-    MANUAL_UPLOAD) and have no reason to share that index. Must be
-    cached, not built fresh per call: a reference extracted while
-    generating scene 1 has to still be resolvable when scene 2
-    generates later, in a separate get_scene_video_generation_service()
-    call - AssetIndex is explicitly in-memory only (see its own
-    docstring), so the same instance has to persist across those
-    calls for the whole desktop process lifetime.
+    MANUAL_UPLOAD) and have no reason to share that index.
+
+    Real-world finding, 2026-09-28: the AssetIndex constructed here is
+    just a placeholder now, not the real store - SceneVideoGeneration
+    Service._sync_extracted_frame_asset_index() repoints this shared
+    instance's own .asset_index at the CURRENT job's own
+    VideoJob.extracted_frame_asset_index before every store/resolve
+    call, since that field (unlike this process-lifetime singleton) is
+    what actually survives an app restart. Cached here purely so
+    get_scene_video_generation_service()'s otherwise-fresh-per-call
+    instances share one real AssetStorageService object to repoint,
+    not because this factory's own AssetIndex is itself load-bearing
+    any more.
     """
 
     return AssetStorageService(
@@ -831,9 +837,12 @@ def get_scene_video_generation_service() -> SceneVideoGenerationService:
     equivalent to a cached one, and matches
     get_google_flow_generation_orchestrator_service()'s own choice not
     to cache. frame_extraction_service/asset_storage_service ARE their
-    own cached singletons (see their own factories above) precisely so
-    that real, cross-scene continuity state survives across these
-    otherwise-fresh instances.
+    own cached singletons (see their own factories above) so these
+    otherwise-fresh instances share one real AssetStorageService
+    object - but the real cross-scene (and cross-restart) continuity
+    state itself now lives on VideoJob.extracted_frame_asset_index,
+    not on this cached service (see _sync_extracted_frame_asset_
+    index()'s own docstring).
     """
 
     return SceneVideoGenerationService(

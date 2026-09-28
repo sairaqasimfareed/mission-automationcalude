@@ -226,21 +226,37 @@ class _FakeBatch:
     """
     Minimal stand-in for one real <flow-batch-info> element - supports
     get_by_role() the same way a real Playwright locator scoped to one
-    batch does, for its own "Download batch" button (confirmed real
-    via a real DevTools inspection, 2026-09-14 - see
-    _completed_batches()'s own docstring in real_adapter.py).
+    batch does, for its own "Download batch"/"Trash batch" buttons
+    (confirmed real via a real DevTools inspection, 2026-09-14 and
+    2026-09-28 - see _current_batch_if_complete()'s own docstring in
+    real_adapter.py).
+
+    has_trash_button defaults to True (a genuinely completed batch,
+    matching every test written before the 2026-09-28 fix, which all
+    modeled a completed batch already) - set it to False to model a
+    still-generating tile, whose real toolbar has "Download batch"/
+    "Reuse prompt" but not yet "Trash batch".
     """
 
-    def __init__(self, *, download_button: _FakeLocator | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        download_button: _FakeLocator | None = None,
+        has_trash_button: bool = True,
+    ) -> None:
         self._download_button = (
             download_button if download_button is not None else _FakeLocator()
         )
+        self.has_trash_button = has_trash_button
 
     def get_by_role(
         self, role: str, name: str | None = None, exact: bool = False
     ) -> _FakeLocator:
         if (role, name) == ("button", "Download batch"):
             return self._download_button
+
+        if (role, name) == ("button", "Trash batch") and self.has_trash_button:
+            return _FakeLocator()
 
         return _MISSING
 
@@ -250,8 +266,8 @@ class _FakeBatchSet:
     Stands in for page.locator("flow-batch-info") - a simple, ordered
     (newest-first, matching real Flow prepending new tiles to the top)
     collection with no content filtering, since the real adapter no
-    longer matches by prompt content (see _completed_batches()'s own
-    docstring for why position is now what's trusted, not a guess).
+    longer matches by prompt content (see _current_batch_if_complete()'s
+    own docstring for why position is now what's trusted, not a guess).
     """
 
     def __init__(self, batches: list[_FakeBatch]) -> None:
@@ -332,6 +348,7 @@ class _FakePage:
     def __init__(self, *, raise_on_goto: bool = False) -> None:
         self.url_history: list[str] = []
         self.action_log: list[str] = []
+        self.wait_for_timeout_calls: list[float] = []
         self.keyboard = _FakeKeyboard(action_log=self.action_log)
         self._by_role: dict[tuple[str, str], _FakeLocator] = {}
         self._by_css: dict[str, _FakeLocator] = {}
@@ -362,7 +379,7 @@ class _FakePage:
         return self._by_text.get(text, _MISSING)
 
     def wait_for_timeout(self, ms: float) -> None:
-        pass
+        self.wait_for_timeout_calls.append(ms)
 
     def expect_download(self, timeout: float | None = None) -> _FakeDownloadContext:
         return _FakeDownloadContext(self._download)
@@ -1436,6 +1453,127 @@ def test_download_takes_the_topmost_batch_when_several_exist(
     assert downloaded.state == GoogleFlowGenerationState.DOWNLOADED
     assert newest_download_button.click_calls == 1
     assert older_download_button.click_calls == 0
+
+
+def test_observe_never_falls_through_to_an_older_completed_tile(
+    tmp_path: Path,
+) -> None:
+    """
+    Real-world finding, 2026-09-28: a real download attached the WRONG
+    clip to scene 2 while scene 2's own generation was genuinely still
+    at 17% - confirmed live via a real screenshot showing a "14%"
+    progress tile sitting above an already-completed one. An earlier
+    fix here filtered <flow-batch-info> down to "any tile with a Trash
+    batch button" and took the first of THOSE, which is wrong: once
+    any earlier scene has completed, an older completed tile always
+    exists in "All media," so filter-then-first silently grabs that
+    unrelated tile while the current attempt's own (still-generating)
+    tile is skipped past. Position (the topmost tile) always identifies
+    THIS attempt's own tile, by construction of create_attempt()'s
+    in-flight guard - completeness must be checked on that exact tile,
+    never searched for among older ones. observe() must keep reporting
+    GENERATING, and download() must refuse (UI_CHANGED) rather than
+    grab the older, unrelated completed tile.
+    """
+
+    page = _authenticated_page()
+    adapter = GoogleFlowRealUIAdapter(
+        worker=_FakeWorker(page),  # type: ignore[arg-type]
+        base_url="https://flow.google.com/project/test-project",
+        operation_timeout_seconds=5.0,
+        download_root=tmp_path,
+        profile_directory_resolver=lambda profile_id: Path("unused") / profile_id,
+    )
+    request = _request()
+    submitted = adapter.submit(request, _attempt(request))
+
+    page.register_text("All media", _FakeLocator())
+    older_download_button = _FakeLocator()
+    # Newest-first, matching real Flow prepending a tile the moment
+    # THIS attempt's own generation starts - not yet complete, no
+    # Trash button - sitting above an older, unrelated scene's already
+    # -completed batch.
+    tile_set: Any = _FakeBatchSet(
+        [
+            _FakeBatch(has_trash_button=False),
+            _FakeBatch(download_button=older_download_button),
+        ]
+    )
+    page.register_css("flow-batch-info", tile_set)
+
+    observed = adapter.observe(submitted)
+    assert observed.state == GoogleFlowGenerationState.GENERATING
+
+    downloaded = adapter.download(observed)
+
+    assert downloaded.state == GoogleFlowGenerationState.UI_CHANGED
+    assert older_download_button.click_calls == 0
+
+
+def test_observe_keeps_polling_while_only_a_still_generating_tile_exists() -> None:
+    """The still-generating-only case must not be mistaken for
+    READY_TO_DOWNLOAD just because a <flow-batch-info> element exists
+    on the page at all."""
+
+    page = _authenticated_page()
+    adapter = GoogleFlowRealUIAdapter(
+        worker=_FakeWorker(page),  # type: ignore[arg-type]
+        base_url="https://flow.google.com/project/test-project",
+        operation_timeout_seconds=5.0,
+        download_root=Path("unused"),
+        profile_directory_resolver=lambda profile_id: Path("unused") / profile_id,
+    )
+    request = _request()
+    submitted = adapter.submit(request, _attempt(request))
+
+    page.register_text("All media", _FakeLocator())
+    tile_set: Any = _FakeBatchSet([_FakeBatch(has_trash_button=False)])
+    page.register_css("flow-batch-info", tile_set)
+
+    result = adapter.observe(submitted)
+
+    assert result.state == GoogleFlowGenerationState.GENERATING
+
+
+def test_download_settles_before_clicking_the_download_button(
+    tmp_path: Path,
+) -> None:
+    """
+    Real-world symptom observed, 2026-09-28: a real download attempt
+    timed out waiting for Playwright's "download" event even though
+    generation itself finished quickly - a batch tile appearing in the
+    DOM does not necessarily mean the underlying file is actually
+    ready to stream yet. download() now waits for the batch to settle
+    before clicking its download button, not just before searching for
+    it.
+    """
+
+    page = _authenticated_page()
+    adapter = GoogleFlowRealUIAdapter(
+        worker=_FakeWorker(page),  # type: ignore[arg-type]
+        base_url="https://flow.google.com/project/test-project",
+        operation_timeout_seconds=5.0,
+        download_root=tmp_path,
+        profile_directory_resolver=lambda profile_id: Path("unused") / profile_id,
+    )
+    request = _request()
+    submitted = adapter.submit(request, _attempt(request))
+
+    controls = _register_download_flow(page)
+
+    ready = adapter.observe(submitted)
+    assert ready.state == GoogleFlowGenerationState.READY_TO_DOWNLOAD
+
+    calls_before_download = len(page.wait_for_timeout_calls)
+    assert controls.download_button.click_calls == 0  # not clicked yet
+
+    adapter.download(ready)
+
+    # A real settle wait happened during download() itself - not just
+    # reusing whatever observe() already did earlier - and it happened
+    # before the click, not after.
+    assert len(page.wait_for_timeout_calls) > calls_before_download
+    assert controls.download_button.click_calls == 1
 
 
 def test_download_is_ui_changed_when_no_tile_matches_at_all(tmp_path: Path) -> None:

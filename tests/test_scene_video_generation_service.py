@@ -46,6 +46,7 @@ from src.services.google_flow_generation_ledger_service import (
     GoogleFlowGenerationLedgerService,
 )
 from src.services.google_flow_generation_orchestrator_service import (
+    GoogleFlowAttemptCreditSensitiveError,
     GoogleFlowGenerationOrchestratorService,
 )
 from src.services.local_asset_search_service import LocalAssetSearchService
@@ -698,6 +699,135 @@ def test_generate_one_does_not_resubmit_a_scene_already_at_ready(
     assert len(provider.submitted_prompts) == 1
 
 
+def test_generate_one_resubmits_a_ready_scene_once_its_clip_was_removed(
+    tmp_path: Path,
+) -> None:
+    """
+    Real-world finding, 2026-09-28: BulkClipIngestionService.remove_
+    scene_clip() clears the scene's SceneAssetState but, by its own
+    documented design, deliberately never touches the Google Flow
+    ledger - so the scene's latest attempt stayed READY. A later
+    Generate click found that same READY attempt here and silently
+    re-attached its already-downloaded file, never calling Flow again
+    - confirmed live: removing scene 2's clip and clicking Generate
+    re-attached the identical old file instead of generating a fresh
+    one. Once the scene has no SceneAssetState referencing it, a READY
+    attempt is an orphaned record of a past generation, not evidence
+    there is nothing left to do - it must be resubmitted exactly like
+    a FAILED/QC_FAILED one.
+    """
+
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            GoogleFlowGenerationState.GENERATING,
+            GoogleFlowGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    first_file = tmp_path / "scene_first.mp4"
+    first_file.write_bytes(b"fake but present video bytes")
+    provider.downloaded_file = str(first_file)
+
+    service = _service(provider)
+    job = _job(_scene(1))
+
+    entry = service.generate_one(job, 1)
+    assert entry.status == SceneCompletenessStatus.READY
+    assert len(provider.submitted_prompts) == 1
+
+    # Simulate remove_scene_clip(): clear the scene's SceneAssetState,
+    # deliberately leaving the Flow ledger's READY attempt untouched -
+    # exactly what BulkClipIngestionService.remove_scene_clip() does.
+    job.scene_asset_states = [
+        state for state in job.scene_asset_states if state.scene_number != 1
+    ]
+
+    second_file = tmp_path / "scene_second.mp4"
+    second_file.write_bytes(b"a genuinely different fresh clip")
+    provider.downloaded_file = str(second_file)
+    provider._observe_sequence = [
+        GoogleFlowGenerationState.GENERATING,
+        GoogleFlowGenerationState.READY_TO_DOWNLOAD,
+    ]
+
+    entry = service.generate_one(job, 1)
+
+    assert entry.status == SceneCompletenessStatus.READY
+    assert len(provider.submitted_prompts) == 2  # a real, fresh submission happened
+    assert len(job.flow_generation_attempts) == 2
+    assert job.flow_generation_attempts[-1].downloaded_file == str(second_file)
+
+
+def test_generate_one_submits_a_fresh_attempt_after_the_prior_one_failed(
+    tmp_path: Path,
+) -> None:
+    """
+    Real-world finding, 2026-09-28: a scene whose latest attempt
+    already failed (e.g. abandoned via abandon_stuck_attempt() after
+    getting stuck at UI_CHANGED with no automated recovery path) used
+    to make every later Generate click a silent no-op - the same
+    is-not-None-and-not-pollable gap READY's own test above locks in
+    on purpose, but wrongly also caught FAILED, which has no reason to
+    stay untouched. A real click must submit a genuinely new attempt.
+    """
+
+    provider = _ScriptedProvider(observe_sequence=[])
+    service = _service(provider)
+    job = _job(_scene(1))
+
+    planned = _planned_attempt(job)
+    stuck = planned.with_transition(GoogleFlowGenerationState.UI_CHANGED)
+    GoogleFlowGenerationLedgerService.replace_attempt(job, stuck)
+
+    service.abandon_stuck_attempt(job, 1)
+    assert job.flow_generation_attempts[0].state == GoogleFlowGenerationState.FAILED
+
+    real_file = tmp_path / "scene.mp4"
+    real_file.write_bytes(b"fake but present video bytes")
+    provider.downloaded_file = str(real_file)
+    provider._observe_sequence = [
+        GoogleFlowGenerationState.GENERATING,
+        GoogleFlowGenerationState.READY_TO_DOWNLOAD,
+    ]
+
+    entry = service.generate_one(job, 1)
+
+    assert entry.status == SceneCompletenessStatus.READY
+    assert len(provider.submitted_prompts) == 1  # a real, fresh submission happened
+    assert len(job.flow_generation_attempts) == 2
+    assert job.flow_generation_attempts[-1].profile_id == "flow.primary"
+
+
+def test_generate_one_submits_a_fresh_attempt_after_a_qc_failure(
+    tmp_path: Path,
+) -> None:
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            GoogleFlowGenerationState.GENERATING,
+            GoogleFlowGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    real_file = tmp_path / "too_short.mp4"
+    real_file.write_bytes(b"short")
+    provider.downloaded_file = str(real_file)
+
+    service = _service(provider, probe_output=_TOO_SHORT_PROBE)
+    job = _job(_scene(1))
+
+    service.generate_one(job, 1)
+    assert job.flow_generation_attempts[-1].state == GoogleFlowGenerationState.QC_FAILED
+    assert len(provider.submitted_prompts) == 1
+
+    provider._observe_sequence = [
+        GoogleFlowGenerationState.GENERATING,
+        GoogleFlowGenerationState.READY_TO_DOWNLOAD,
+    ]
+
+    service.generate_one(job, 1)
+
+    assert len(provider.submitted_prompts) == 2  # a real, fresh submission happened
+    assert len(job.flow_generation_attempts) == 2
+
+
 def test_generate_one_polls_an_existing_in_flight_attempt_without_resubmitting(
     tmp_path: Path,
 ) -> None:
@@ -848,6 +978,118 @@ def test_retry_scene_after_auth_still_refuses_while_unhealthy() -> None:
     assert job.flow_generation_attempts[0].state == (
         GoogleFlowGenerationState.AUTH_REQUIRED
     )
+
+
+def _planned_attempt(
+    job: VideoJob, *, scene_number: int = 1
+) -> GoogleFlowGenerationAttempt:
+    """
+    A bare PLANNED attempt, never submitted - built directly via the
+    ledger rather than through any provider, so its state_history is
+    guaranteed to contain nothing past the credit-sensitive SUBMITTING
+    boundary. Matches the real live bug this was built for: a scene
+    whose attempt went straight planned -> ui_changed, never through
+    submit()'s own advancing logic at all.
+    """
+
+    request = GoogleFlowGenerationRequest(
+        scene_number=scene_number,
+        prompt="seed",
+        prompt_version="v1",
+        profile_id="flow.primary",
+        idempotency_key=f"seed-key-{scene_number}",
+    )
+
+    return GoogleFlowGenerationLedgerService.create_attempt(job, request)
+
+
+def test_abandon_stuck_attempt_marks_a_ui_changed_attempt_failed() -> None:
+    """Real-world finding, 2026-09-28: a scene stuck at UI_CHANGED (or
+    any non-terminal state with no automated recovery path) has no way
+    to unstick short of this - AUTH_REQUIRED's own retry path doesn't
+    apply, and Remove deliberately never touches the ledger."""
+
+    provider = _ScriptedProvider(observe_sequence=[])
+    service = _service(provider)
+    job = _job(_scene(1))
+
+    planned = _planned_attempt(job)
+    stuck = planned.with_transition(
+        GoogleFlowGenerationState.UI_CHANGED, detail="test setup"
+    )
+    GoogleFlowGenerationLedgerService.replace_attempt(job, stuck)
+
+    abandoned = service.abandon_stuck_attempt(job, 1)
+
+    assert abandoned.state == GoogleFlowGenerationState.FAILED
+    assert job.flow_generation_attempts[0].state == GoogleFlowGenerationState.FAILED
+
+
+def test_abandon_stuck_attempt_allows_a_fresh_attempt_afterwards() -> None:
+    provider = _ScriptedProvider(observe_sequence=[])
+    service = _service(provider)
+    job = _job(_scene(1))
+
+    planned = _planned_attempt(job)
+    stuck = planned.with_transition(GoogleFlowGenerationState.UI_CHANGED)
+    GoogleFlowGenerationLedgerService.replace_attempt(job, stuck)
+
+    service.abandon_stuck_attempt(job, 1)
+
+    # create_attempt()'s in-flight guard no longer blocks scene 1 -
+    # a fresh attempt can be submitted through the exact same
+    # orchestrator this service uses internally.
+    fresh = service._orchestrator.submit_new_attempt(
+        job,
+        scene_number=1,
+        prompt="fresh",
+        prompt_version="v1",
+        idempotency_key="fresh-key",
+    )
+
+    # The point: this didn't raise "already has an in-flight attempt" -
+    # the in-flight guard genuinely no longer blocks scene 1.
+    assert fresh.state != GoogleFlowGenerationState.UI_CHANGED
+    assert len(job.flow_generation_attempts) == 2
+
+
+def test_abandon_stuck_attempt_raises_when_scene_has_no_non_terminal_attempt() -> None:
+    provider = _ScriptedProvider(observe_sequence=[])
+    service = _service(provider)
+    job = _job(_scene(1))
+
+    with pytest.raises(ValueError, match="no non-terminal attempt"):
+        service.abandon_stuck_attempt(job, 1)
+
+
+def test_abandon_stuck_attempt_force_forwards_to_the_orchestrator() -> None:
+    """A stuck attempt whose history already reached GENERATING is
+    credit-sensitive - abandon_stuck_attempt must surface the
+    orchestrator's own refusal, and only override it when force=True
+    is passed through explicitly."""
+
+    provider = _ScriptedProvider(observe_sequence=[])
+    service = _service(provider)
+    job = _job(_scene(1))
+
+    seed_provider = _ScriptedProvider(observe_sequence=[])
+    seed_orchestrator = _orchestrator(seed_provider)
+    seeded = seed_orchestrator.submit_new_attempt(
+        job,
+        scene_number=1,
+        prompt="seed",
+        prompt_version="v1",
+        idempotency_key="seed-key",
+    )
+    generating = seeded.with_transition(GoogleFlowGenerationState.GENERATING)
+    stuck = generating.with_transition(GoogleFlowGenerationState.UI_CHANGED)
+    GoogleFlowGenerationLedgerService.replace_attempt(job, stuck)
+
+    with pytest.raises(GoogleFlowAttemptCreditSensitiveError):
+        service.abandon_stuck_attempt(job, 1)
+
+    abandoned = service.abandon_stuck_attempt(job, 1, force=True)
+    assert abandoned.state == GoogleFlowGenerationState.FAILED
 
 
 def test_generate_one_raises_for_an_unknown_scene_number() -> None:
@@ -1119,12 +1361,118 @@ def test_generate_one_extracts_and_stores_a_reference_for_a_first_appearance(
     assert Path(stored_asset.file_path).exists()
 
 
-def test_generate_one_does_not_re_extract_for_an_identity_that_already_has_one(
+def test_generate_one_resolves_a_reference_recorded_before_a_restart(
     tmp_path: Path,
 ) -> None:
-    """An identity that already has a reference (from an earlier
-    scene) must be left alone - later scenes just keep reusing it,
-    never re-extracting or overwriting it."""
+    """
+    Real-world finding, 2026-09-28: a reference frame extracted and
+    stored in an earlier session used to become unresolvable the
+    moment the app restarted - get_extracted_frame_asset_storage_
+    service() rebuilt a brand-new, empty AssetIndex on every process
+    start, even though the real file and VisualContinuityBible's
+    reference_asset_ids both still pointed at it correctly. Confirmed
+    live: a scene's reference image attached correctly on the first
+    two real generations, then silently stopped on the third attempt
+    (a restart happened in between). Simulates exactly that: a job
+    whose extracted_frame_asset_index already has the reference (as
+    if just loaded from a persisted job), passed to a service wired
+    with a freshly constructed, otherwise-EMPTY AssetStorageService
+    (as if freshly built by a just-restarted process) - resolution
+    must still succeed, purely from the job's own persisted index.
+    """
+
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            GoogleFlowGenerationState.GENERATING,
+            GoogleFlowGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    provider.downloaded_file = str(_real_video_file(tmp_path))
+
+    scene = _scene(2)
+    scene.real_narration_duration_seconds = 2.5
+    job = _job(scene)
+    asset_id = _stored_reference_asset(job, tmp_path)
+    job.visual_continuity_bible = _continuity_bible(
+        reference_asset_ids=[asset_id], scene_numbers=[2]
+    )
+
+    # A brand-new AssetStorageService with its own empty AssetIndex -
+    # exactly what get_extracted_frame_asset_storage_service() builds
+    # on every fresh process start, unrelated to job.
+    # extracted_frame_asset_index above.
+    fresh_process_asset_storage = AssetStorageService(
+        storage_root=tmp_path / "fresh_process_storage", asset_index=AssetIndex()
+    )
+    assert fresh_process_asset_storage.asset_index.get(asset_id) is None
+
+    service = _service(provider, asset_storage_service=fresh_process_asset_storage)
+
+    service.generate_one(job, 2)
+
+    request = provider.submitted_requests[0]
+    assert len(request.reference_assets) == 1
+    assert request.reference_assets[0].role == GoogleFlowReferenceRole.CHARACTER
+
+
+def test_generate_one_does_not_re_extract_for_an_identity_with_a_valid_reference(
+    tmp_path: Path,
+) -> None:
+    """An identity that already has a reference which still resolves
+    to a real, existing file (from an earlier scene) must be left
+    alone - later scenes just keep reusing it, never re-extracting or
+    overwriting it."""
+
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            GoogleFlowGenerationState.GENERATING,
+            GoogleFlowGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    provider.downloaded_file = str(_real_video_file(tmp_path))
+
+    frame_extraction, commands = _frame_extraction_service()
+    asset_storage = AssetStorageService(
+        storage_root=tmp_path / "storage", asset_index=AssetIndex()
+    )
+
+    service = _service(
+        provider,
+        frame_extraction_service=frame_extraction,
+        asset_storage_service=asset_storage,
+    )
+    job = _job(_scene(2))
+    asset_id = _stored_reference_asset(job, tmp_path)
+    job.visual_continuity_bible = _continuity_bible(
+        reference_asset_ids=[asset_id],
+        scene_numbers=[2],
+    )
+
+    service.generate_one(job, 2)
+
+    assert commands == []
+    assert job.visual_continuity_bible.identities[0].reference_asset_ids == [asset_id]
+
+
+def test_generate_one_re_extracts_for_an_identity_whose_reference_has_gone_stale(
+    tmp_path: Path,
+) -> None:
+    """
+    Real-world finding, 2026-09-29: a job created before VideoJob.
+    extracted_frame_asset_index existed had its identities' reference_
+    asset_ids already populated with an id from the OLD, process-
+    lifetime-only index - that id can never resolve again once the
+    real, persisted index starts life empty, but the "only extract for
+    an identity with no reference_asset_ids at all" guard used to treat
+    "has a (now-dangling) id" as "already has a reference" and refused
+    to ever extract a fresh one. Confirmed live: a real job stuck
+    permanently reusing a dangling reference id across several real
+    regenerations, with the index staying empty (0 assets) the entire
+    time. An identity whose EVERY reference_asset_id is dangling (never
+    stored, or its file no longer exists) must be treated the same as
+    an identity with no reference at all - re-extracted, and its stale
+    id(s) replaced with the fresh, valid one.
+    """
 
     provider = _ScriptedProvider(
         observe_sequence=[
@@ -1152,10 +1500,15 @@ def test_generate_one_does_not_re_extract_for_an_identity_that_already_has_one(
 
     service.generate_one(job, 2)
 
-    assert commands == []
-    assert job.visual_continuity_bible.identities[0].reference_asset_ids == [
-        "11111111-1111-1111-1111-111111111111"
-    ]
+    assert len(commands) == 1
+
+    identity = job.visual_continuity_bible.identities[0]
+    assert identity.reference_asset_ids != ["11111111-1111-1111-1111-111111111111"]
+    assert len(identity.reference_asset_ids) == 1
+
+    stored_asset = job.extracted_frame_asset_index.get(identity.reference_asset_ids[0])
+    assert stored_asset is not None
+    assert Path(stored_asset.file_path).exists()
 
 
 def test_generate_one_skips_reference_extraction_without_a_continuity_bible(
@@ -1303,15 +1656,29 @@ def test_generate_one_reproduces_exact_prior_behavior_without_the_new_services(
     assert job.visual_continuity_bible.identities[0].reference_asset_ids == []
 
 
-def _stored_reference_asset(asset_storage: AssetStorageService, tmp_path: Path) -> str:
-    """Pre-store one real reference asset (a real file on disk,
-    registered in the asset index) - simulating a reference an earlier
-    scene's own extraction already produced. Returns its asset id."""
+def _stored_reference_asset(job: VideoJob, tmp_path: Path) -> str:
+    """
+    Pre-store one real reference asset (a real file on disk,
+    registered in the JOB's own persisted asset index) - simulating a
+    reference an earlier scene's own extraction already produced,
+    whether earlier in this same run or in an earlier session before a
+    real app restart. Storing onto job.extracted_frame_asset_index
+    (rather than some separately-constructed AssetStorageService's own
+    index) matches the real 2026-09-28 fix: that field, not the
+    process-lifetime service singleton, is what actually survives a
+    restart - see SceneVideoGenerationService._sync_extracted_frame_
+    asset_index()'s own docstring. Returns its asset id.
+    """
+
+    storage = AssetStorageService(
+        storage_root=tmp_path / "storage",
+        asset_index=job.extracted_frame_asset_index,
+    )
 
     source = tmp_path / "pre_existing_reference.jpg"
     source.write_bytes(b"real reference frame bytes")
 
-    result = asset_storage.store_extracted_frame(
+    result = storage.store_extracted_frame(
         source_path=source,
         project_id="test-project",
         scene_number=1,
@@ -1346,13 +1713,12 @@ def test_generate_one_attaches_a_resolved_reference_and_forces_max_duration(
     asset_storage = AssetStorageService(
         storage_root=tmp_path / "storage", asset_index=AssetIndex()
     )
-    asset_id = _stored_reference_asset(asset_storage, tmp_path)
-
     service = _service(provider, asset_storage_service=asset_storage)
 
     scene = _scene(2)
     scene.real_narration_duration_seconds = 2.5
     job = _job(scene)
+    asset_id = _stored_reference_asset(job, tmp_path)
     job.visual_continuity_bible = _continuity_bible(
         reference_asset_ids=[asset_id], scene_numbers=[2]
     )
@@ -1362,7 +1728,7 @@ def test_generate_one_attaches_a_resolved_reference_and_forces_max_duration(
     assert len(provider.submitted_requests) == 1
 
     request = provider.submitted_requests[0]
-    stored_asset = asset_storage.asset_index.get(asset_id)
+    stored_asset = job.extracted_frame_asset_index.get(asset_id)
     assert stored_asset is not None
 
     assert len(request.reference_assets) == 1
@@ -1431,16 +1797,16 @@ def test_generate_one_skips_a_reference_whose_file_no_longer_exists(
     asset_storage = AssetStorageService(
         storage_root=tmp_path / "storage", asset_index=AssetIndex()
     )
-    asset_id = _stored_reference_asset(asset_storage, tmp_path)
-    stored_asset = asset_storage.asset_index.get(asset_id)
-    assert stored_asset is not None
-    Path(stored_asset.file_path).unlink()
-
     service = _service(provider, asset_storage_service=asset_storage)
 
     scene = _scene(2)
     scene.real_narration_duration_seconds = 2.5
     job = _job(scene)
+    asset_id = _stored_reference_asset(job, tmp_path)
+    stored_asset = job.extracted_frame_asset_index.get(asset_id)
+    assert stored_asset is not None
+    Path(stored_asset.file_path).unlink()
+
     job.visual_continuity_bible = _continuity_bible(
         reference_asset_ids=[asset_id], scene_numbers=[2]
     )
@@ -1504,12 +1870,11 @@ def test_generate_one_resolves_a_location_identity_as_location_role(
     asset_storage = AssetStorageService(
         storage_root=tmp_path / "storage", asset_index=AssetIndex()
     )
-    asset_id = _stored_reference_asset(asset_storage, tmp_path)
-
     service = _service(provider, asset_storage_service=asset_storage)
 
     scene = _scene(2)
     job = _job(scene)
+    asset_id = _stored_reference_asset(job, tmp_path)
     job.visual_continuity_bible = VisualContinuityBible(
         script_lock_hash="a" * 64,
         identities=[

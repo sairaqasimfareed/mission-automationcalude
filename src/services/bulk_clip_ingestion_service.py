@@ -58,11 +58,20 @@ class BulkClipIngestionService:
 
         Deliberately never touches the Google Flow ledger
         (job.flow_generation_attempts): a terminal (READY/QC_FAILED/
-        FAILED) attempt there is never itself an obstacle to a fresh
-        regeneration - GoogleFlowGenerationLedgerService.create_attempt()'s
-        own in-flight guard only ever blocks a NON-terminal attempt -
-        so there is nothing to clean up there for a later Generate
-        click to work correctly.
+        FAILED) attempt there is never itself an obstacle to
+        GoogleFlowGenerationLedgerService.create_attempt() starting a
+        fresh one - its own in-flight guard only ever blocks a
+        NON-terminal attempt.
+
+        Real-world finding, 2026-09-28: this method's own removal of
+        the scene's SceneAssetState (just below) IS load-bearing for a
+        later Generate click, though - a READY attempt left behind
+        here is exactly what SceneVideoGenerationService._drive_to_
+        terminal() now checks for (an "orphaned READY": still READY,
+        but the scene has no SceneAssetState referencing it any more)
+        to tell "already attached, nothing to do" apart from "was
+        attached, now removed, needs a fresh Flow call." Clearing
+        scene_asset_states here is what makes that check fire.
         """
 
         job.scene_asset_states = [

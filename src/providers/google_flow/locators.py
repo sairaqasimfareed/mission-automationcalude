@@ -254,6 +254,23 @@ class GoogleFlowRealAccessibleNames(BaseModel):
     # fires a real download on one click.
     download_batch_button: str = "Download batch"
 
+    # Real-world finding, 2026-09-28: confirmed via a real DevTools
+    # inspection that a still-generating batch's own <flow-batch-info>
+    # only carries "Download batch"/"Reuse prompt" - no "Trash batch"
+    # button yet, unlike a genuinely completed one, which has all
+    # three. Real Flow prepends a new tile to the grid the moment
+    # generation STARTS, not once it finishes (confirmed directly: a
+    # real tile showing a live "14%" progress overlay sat above an
+    # already-completed one). This button's presence is the real,
+    # positive evidence the CURRENT attempt's own tile (still always
+    # identified by position - topmost overall) has actually finished
+    # - see real_adapter.py's _current_batch_if_complete() for the
+    # real-world correction on how this is used (position first,
+    # completeness checked on that same tile - never search-then-
+    # filter for any completed batch, which can return an older,
+    # unrelated one instead).
+    trash_batch_button: str = "Trash batch"
+
     # Agent settings (docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md section 4a):
     # confirmed to be the SAME "Settings trigger" popover, showing this
     # content instead of the normal per-generation controls once Agent

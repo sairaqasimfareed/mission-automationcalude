@@ -34,6 +34,7 @@ from src.services.google_flow_generation_ledger_service import (
 )
 from src.services.google_flow_generation_orchestrator_service import (
     GoogleFlowAgentConfirmationRequiredError,
+    GoogleFlowAttemptCreditSensitiveError,
     GoogleFlowGenerationOrchestratorService,
 )
 from src.services.media_technical_validation_service import (
@@ -458,6 +459,110 @@ def test_resume_after_auth_refuses_to_resubmit_while_still_unhealthy() -> None:
     assert job.flow_generation_attempts[0].state == (
         GoogleFlowGenerationState.AUTH_REQUIRED
     )
+
+
+def _planned_attempt(
+    job: VideoJob, *, scene_number: int = 1
+) -> GoogleFlowGenerationAttempt:
+    """
+    A bare PLANNED attempt, never submitted - built directly via the
+    ledger rather than through the orchestrator/provider, so its
+    state_history is guaranteed to contain nothing past the
+    credit-sensitive SUBMITTING boundary.
+    """
+
+    request = GoogleFlowGenerationRequest(
+        scene_number=scene_number,
+        prompt="A lighthouse at dusk.",
+        prompt_version="v1",
+        profile_id="flow.primary",
+        idempotency_key=f"req-{scene_number}",
+    )
+
+    return GoogleFlowGenerationLedgerService.create_attempt(job, request)
+
+
+def test_abandon_attempt_marks_a_never_submitted_attempt_failed() -> None:
+    orchestrator, _ = _orchestrator()
+    job = _job()
+    planned = _planned_attempt(job)
+    assert planned.state == GoogleFlowGenerationState.PLANNED
+
+    abandoned = orchestrator.abandon_attempt(job, planned)
+
+    assert abandoned.state == GoogleFlowGenerationState.FAILED
+    assert job.flow_generation_attempts[0].state == GoogleFlowGenerationState.FAILED
+    assert "Abandoned by operator" in (abandoned.state_history[-1].detail or "")
+
+
+def test_abandon_attempt_allows_a_fresh_attempt_afterwards() -> None:
+    """The real point of abandoning: create_attempt()'s in-flight
+    guard must no longer block a new attempt for this scene."""
+
+    orchestrator, _ = _orchestrator()
+    job = _job()
+    planned = _planned_attempt(job)
+    orchestrator.abandon_attempt(job, planned)
+
+    fresh = _submit(orchestrator, job, idempotency_key="req-fresh")
+
+    assert fresh.state == GoogleFlowGenerationState.GENERATING
+    assert len(job.flow_generation_attempts) == 2
+
+
+def test_abandon_attempt_refuses_a_stuck_ui_changed_that_never_submitted() -> None:
+    """A UI_CHANGED reached straight from PLANNED (never through
+    SUBMITTING) is safe to abandon without force - matches the real
+    live case this was built for (scene stuck planned -> ui_changed)."""
+
+    orchestrator, _ = _orchestrator()
+    job = _job()
+    planned = _planned_attempt(job)
+    stuck = planned.with_transition(GoogleFlowGenerationState.UI_CHANGED)
+    GoogleFlowGenerationLedgerService.replace_attempt(job, stuck)
+
+    abandoned = orchestrator.abandon_attempt(job, stuck)
+
+    assert abandoned.state == GoogleFlowGenerationState.FAILED
+
+
+def test_abandon_attempt_refuses_by_default_once_generation_actually_started() -> None:
+    orchestrator, _ = _orchestrator()
+    job = _job()
+    submitted = _submit(orchestrator, job)
+    assert submitted.state == GoogleFlowGenerationState.GENERATING
+    stuck = submitted.with_transition(GoogleFlowGenerationState.UI_CHANGED)
+    GoogleFlowGenerationLedgerService.replace_attempt(job, stuck)
+
+    with pytest.raises(GoogleFlowAttemptCreditSensitiveError) as excinfo:
+        orchestrator.abandon_attempt(job, stuck)
+
+    assert excinfo.value.attempt.id == stuck.id
+    # Never actually changed - refused before touching the ledger.
+    assert job.flow_generation_attempts[0].state == GoogleFlowGenerationState.UI_CHANGED
+
+
+def test_abandon_attempt_force_overrides_the_credit_sensitive_refusal() -> None:
+    orchestrator, _ = _orchestrator()
+    job = _job()
+    submitted = _submit(orchestrator, job)
+    stuck = submitted.with_transition(GoogleFlowGenerationState.UI_CHANGED)
+    GoogleFlowGenerationLedgerService.replace_attempt(job, stuck)
+
+    abandoned = orchestrator.abandon_attempt(job, stuck, force=True)
+
+    assert abandoned.state == GoogleFlowGenerationState.FAILED
+
+
+def test_abandon_attempt_rejects_an_already_terminal_attempt() -> None:
+    orchestrator, _ = _orchestrator()
+    job = _job()
+    planned = _planned_attempt(job)
+    failed = planned.with_transition(GoogleFlowGenerationState.FAILED)
+    GoogleFlowGenerationLedgerService.replace_attempt(job, failed)
+
+    with pytest.raises(ValueError, match="non-terminal attempt"):
+        orchestrator.abandon_attempt(job, failed)
 
 
 def test_in_flight_counts_exclude_terminal_attempts() -> None:
