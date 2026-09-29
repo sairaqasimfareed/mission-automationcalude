@@ -14,6 +14,7 @@ from src.desktop.views.dashboard_view import DashboardView
 from src.desktop.views.google_flow_provider_panel_view import (
     GoogleFlowProviderPanelView,
 )
+from src.desktop.views.muse_provider_panel_view import MuseProviderPanelView
 from src.desktop.views.project_form_view import ProjectFormView
 from src.desktop.views.project_workspace_view import ProjectWorkspaceView
 from src.desktop.views.provider_manager_view import ProviderManagerView
@@ -113,6 +114,10 @@ class MainWindow(QMainWindow):
             scene_video_generation_service=(
                 services.get_scene_video_generation_service()
             ),
+            scene_generation_dispatch_service=(
+                services.get_scene_generation_dispatch_service()
+            ),
+            provider_registry=services.get_infrastructure().provider_registry,
             opening_title_card_service=_get_opening_title_card_service_or_none(),
             on_back=self.show_dashboard,
         )
@@ -132,6 +137,11 @@ class MainWindow(QMainWindow):
             browser_worker=services.get_google_flow_browser_worker(),
         )
 
+        self._muse_provider_panel_view = MuseProviderPanelView(
+            management_service=services.get_provider_profile_management_service(),
+            browser_worker=services.get_muse_browser_worker(),
+        )
+
         self._voice_manager_view = VoiceManagerView(
             voice_provider_mapping_service=(
                 services.get_voice_provider_mapping_service()
@@ -148,6 +158,7 @@ class MainWindow(QMainWindow):
             self._settings_view,
             self._provider_manager_view,
             self._google_flow_provider_panel_view,
+            self._muse_provider_panel_view,
             self._voice_manager_view,
         ):
             self._stack.addWidget(view)
@@ -178,6 +189,10 @@ class MainWindow(QMainWindow):
         google_flow_action.triggered.connect(self.show_google_flow_provider_panel)
         toolbar.addAction(google_flow_action)
 
+        muse_action = QAction(primary_icon("shield"), "Muse", self)
+        muse_action.triggered.connect(self.show_muse_provider_panel)
+        toolbar.addAction(muse_action)
+
         voice_manager_action = QAction(primary_icon("audio"), "Voices", self)
         voice_manager_action.triggered.connect(self.show_voice_manager)
         toolbar.addAction(voice_manager_action)
@@ -205,6 +220,10 @@ class MainWindow(QMainWindow):
     def show_google_flow_provider_panel(self) -> None:
         self._google_flow_provider_panel_view.refresh()
         self._stack.setCurrentWidget(self._google_flow_provider_panel_view)
+
+    def show_muse_provider_panel(self) -> None:
+        self._muse_provider_panel_view.refresh()
+        self._stack.setCurrentWidget(self._muse_provider_panel_view)
 
     def show_voice_manager(self) -> None:
         self._voice_manager_view.refresh()
@@ -250,7 +269,37 @@ class MainWindow(QMainWindow):
                     "long as reasonably possible without hanging the app."
                 )
 
+        self._shutdown_browser_workers()
+
         super().closeEvent(event)
+
+    @staticmethod
+    def _shutdown_browser_workers() -> None:
+        """
+        Real-world finding, 2026-09-29: neither Google Flow's nor
+        Muse's real-browser Playwright worker was ever shut down on
+        window close - the Node driver process each one owns was
+        simply abandoned to the Python process's own exit rather than
+        cleanly stopped, which is what produced a recurring "EPIPE:
+        broken pipe" crash trace from the orphaned Node process,
+        unrelated-looking but caused directly by this gap (see
+        FlowBrowserWorker._close_everything's own docstring for the
+        other half of this fix). Best-effort and non-fatal: a failure
+        shutting down a browser worker must never block the window
+        from actually closing.
+        """
+
+        for shutdown in (
+            services.get_google_flow_browser_worker().shutdown,
+            services.get_muse_browser_worker().shutdown,
+        ):
+            try:
+                shutdown()
+            except Exception:  # noqa: BLE001 - best-effort, never block close
+                logger.warning(
+                    "A browser worker did not shut down cleanly on close.",
+                    exc_info=True,
+                )
 
     def _handle_theme_mode_changed(self, mode: ThemeMode) -> None:
         """

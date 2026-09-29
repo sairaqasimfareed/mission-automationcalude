@@ -416,13 +416,38 @@ class FlowBrowserWorker:
         self._executor.shutdown(wait=wait)
 
     def _close_everything(self) -> None:
+        """
+        Real-world finding, 2026-09-29: a raise from any one context's
+        close() (a context already dead - see
+        evict_context_from_worker_thread's own docstring for why that
+        is expected and safe to ignore) used to abort this whole loop
+        early, skipping every remaining context AND the playwright.stop()
+        call below entirely. That leaves the underlying Playwright
+        Node driver process never cleanly stopped - orphaned rather
+        than terminated - which is what produced a recurring, unrelated-
+        looking "EPIPE: broken pipe" crash trace from the orphaned Node
+        process later, once the Python process that owned its pipe
+        exited. Each context now gets its own best-effort close, same
+        discipline as evict_context_from_worker_thread already uses,
+        and playwright.stop() always runs (and _playwright is always
+        cleared) regardless of what happened above it.
+        """
+
         for profile_id in list(self._contexts):
             context = self._contexts.pop(profile_id)
-            context.close()
+
+            try:
+                context.close()
+            except Exception:  # noqa: BLE001 - already gone, discard and move on
+                pass
 
         if self._playwright is not None:
-            self._playwright.stop()
-            self._playwright = None
+            try:
+                self._playwright.stop()
+            except Exception:  # noqa: BLE001 - best-effort, same reasoning above
+                pass
+            finally:
+                self._playwright = None
 
     def _ensure_playwright(self) -> Playwright:
         """Must only ever be called from inside the worker thread."""

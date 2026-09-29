@@ -7,6 +7,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import time  # noqa: E402
 from collections.abc import Iterator  # noqa: E402
 from pathlib import Path  # noqa: E402
+from unittest.mock import patch  # noqa: E402
 from uuid import UUID  # noqa: E402
 
 import pytest  # noqa: E402
@@ -204,6 +205,52 @@ def test_main_window_constructs_and_navigates(
 
     window.show_dashboard()
     assert window._stack.currentWidget() is window._dashboard_view
+
+
+class _FakeBrowserWorker:
+    """Duck-typed stand-in recording whether shutdown() was called -
+    a real FlowBrowserWorker's own shutdown() lazily starts a real
+    Playwright driver if one was never opened, which this test has no
+    need to actually exercise."""
+
+    def __init__(self) -> None:
+        self.shutdown_calls = 0
+
+    def shutdown(self, *, wait: bool = True) -> None:
+        self.shutdown_calls += 1
+
+
+def test_close_event_shuts_down_both_browser_workers(
+    qapp: QApplication,
+    no_blocking_dialogs: None,
+) -> None:
+    """
+    Real-world finding, 2026-09-29: neither Google Flow's nor Muse's
+    real-browser Playwright worker was ever shut down on window close -
+    each one's Node driver process was simply abandoned to the Python
+    process's own exit instead of cleanly stopped, which is what
+    produced a recurring, unrelated-looking "EPIPE: broken pipe" crash
+    trace from the orphaned driver process later. MainWindow.closeEvent
+    now shuts both down explicitly.
+    """
+
+    fake_flow_worker = _FakeBrowserWorker()
+    fake_muse_worker = _FakeBrowserWorker()
+
+    with (
+        patch(
+            "src.desktop.services.get_google_flow_browser_worker",
+            return_value=fake_flow_worker,
+        ),
+        patch(
+            "src.desktop.services.get_muse_browser_worker",
+            return_value=fake_muse_worker,
+        ),
+    ):
+        MainWindow._shutdown_browser_workers()
+
+    assert fake_flow_worker.shutdown_calls == 1
+    assert fake_muse_worker.shutdown_calls == 1
 
 
 def test_create_project_runs_workflow_steps_and_generates_seo(

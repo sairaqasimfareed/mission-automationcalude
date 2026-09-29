@@ -205,6 +205,44 @@ def test_shutdown_without_ever_opening_anything_does_not_raise() -> None:
     worker.shutdown()
 
 
+class _RaisingContext:
+    """A context already dead (matches evict_context_from_worker_
+    thread's own documented real-world case) - close() raises."""
+
+    def close(self) -> None:
+        raise RuntimeError("Target page, context or browser has been closed")
+
+
+class _RecordingContext:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_shutdown_closes_every_context_even_when_one_raises() -> None:
+    """
+    Real-world finding, 2026-09-29: one dead context raising on
+    close() used to abort the whole shutdown loop early, skipping
+    every remaining context - a real live-testing session that hits
+    TargetClosedError-class staleness (already a documented, expected
+    real occurrence elsewhere in this class) would leave every OTHER
+    open context, and playwright.stop() itself, never actually called.
+    """
+
+    worker = FlowBrowserWorker()
+    dead = _RaisingContext()
+    alive = _RecordingContext()
+    worker._contexts["dead"] = dead  # type: ignore[assignment]  # noqa: SLF001
+    worker._contexts["alive"] = alive  # type: ignore[assignment]  # noqa: SLF001
+
+    worker.shutdown()
+
+    assert alive.closed is True
+    assert worker._contexts == {}  # noqa: SLF001
+
+
 # --- submit_with_recovery() ---
 
 
