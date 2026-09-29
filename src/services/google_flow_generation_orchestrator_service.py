@@ -176,6 +176,7 @@ class GoogleFlowGenerationOrchestratorService:
         negative_constraints: list[str] | None = None,
         locked_script_hash: str | None = None,
         estimated_cost_usd: float = 0.0,
+        preferred_profile_id: str | None = None,
     ) -> GoogleFlowGenerationAttempt:
         """
         Route to an eligible account, gate on budget, create the
@@ -194,6 +195,12 @@ class GoogleFlowGenerationOrchestratorService:
         reservation already made is released if the adapter's own
         submit() call raises an exception this orchestrator did not
         expect - never left stranded reserved-but-unspent.
+
+        preferred_profile_id: threaded straight through to
+        GoogleFlowAccountRouterService.select_account()'s own
+        parameter of the same name (Scene.preferred_profile_id, the
+        per-scene manual account picker) - None means Auto, unchanged
+        from every existing caller's behavior.
         """
 
         if execution_settings is not None and execution_settings.agent_mode:
@@ -212,6 +219,7 @@ class GoogleFlowGenerationOrchestratorService:
         profile = self._account_router.select_account(
             in_flight_counts=in_flight_counts,
             max_in_flight_per_account=self._max_in_flight_per_account,
+            preferred_profile_id=preferred_profile_id,
         )
 
         request = GoogleFlowGenerationRequest(

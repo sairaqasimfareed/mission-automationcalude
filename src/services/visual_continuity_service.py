@@ -26,6 +26,7 @@ _REQUIRED_LABELS = (
     "VEHICLES",
     "SHOT_ACTION",
     "ENTITIES_PRESENT",
+    "ON_SCREEN_ENTITIES",
 )
 
 _DRY_RUN_RESPONSE = "\n---\n".join(
@@ -42,7 +43,8 @@ _DRY_RUN_RESPONSE = "\n---\n".join(
             "VEHICLES: none\n"
             "SHOT_ACTION: Dry-run shot action for development and "
             "testing purposes only.\n"
-            "ENTITIES_PRESENT: Dry-run character"
+            "ENTITIES_PRESENT: Dry-run character\n"
+            "ON_SCREEN_ENTITIES: Dry-run character"
         ),
     ]
 )
@@ -205,14 +207,25 @@ class VisualContinuityService:
             "this scene, in your own words>\n"
             "ENTITIES_PRESENT: <comma-separated names from the known "
             "people/locations list who/that appear in this scene, or "
-            "'none'>"
+            "'none'>\n"
+            "ON_SCREEN_ENTITIES: <comma-separated names, a SUBSET of "
+            "ENTITIES_PRESENT, who/that are actually VISIBLE in this "
+            "scene's own shot - not merely mentioned, referenced, or "
+            "narrating over other visuals. A first-person narrator "
+            "whose voice-over plays under an unrelated graphic, data "
+            "visualization, or other footage that never shows them is "
+            "present but NOT on screen for that scene. A location is "
+            "on screen only if the shot is actually set there, not "
+            "merely referenced in narration. Use 'none' if nothing "
+            "from ENTITIES_PRESENT is actually visible in the shot "
+            "itself.>"
         )
 
     @staticmethod
     def _parse_outgoing_states(
         content: str,
-    ) -> dict[int, tuple[VisualState, str, list[str]]]:
-        outgoing_by_scene: dict[int, tuple[VisualState, str, list[str]]] = {}
+    ) -> dict[int, tuple[VisualState, str, list[str], list[str]]]:
+        outgoing_by_scene: dict[int, tuple[VisualState, str, list[str], list[str]]] = {}
 
         for block in split_blocks(content):
             fields = {
@@ -252,10 +265,21 @@ class VisualContinuityService:
                 vehicles=_list_field(fields["VEHICLES"]),
             )
 
+            entity_names = _list_field(fields["ENTITIES_PRESENT"])
+            # Defensive subset guarantee - never trust the LLM's own
+            # ON_SCREEN_ENTITIES list to have actually honored the
+            # "must be a subset of ENTITIES_PRESENT" instruction.
+            on_screen_entity_names = [
+                name
+                for name in _list_field(fields["ON_SCREEN_ENTITIES"])
+                if name in entity_names
+            ]
+
             outgoing_by_scene[scene_number] = (
                 state,
                 fields["SHOT_ACTION"] or "",
-                _list_field(fields["ENTITIES_PRESENT"]),
+                entity_names,
+                on_screen_entity_names,
             )
 
         return outgoing_by_scene
@@ -263,7 +287,7 @@ class VisualContinuityService:
     @staticmethod
     def _build_clip_entries(
         scenes: list[Scene],
-        outgoing_by_scene: dict[int, tuple[VisualState, str, list[str]]],
+        outgoing_by_scene: dict[int, tuple[VisualState, str, list[str], list[str]]],
     ) -> list[ClipContinuityEntry]:
         entries: list[ClipContinuityEntry] = []
         previous_outgoing = VisualState()
@@ -280,8 +304,11 @@ class VisualContinuityService:
                 outgoing_state = previous_outgoing
                 shot_action = scene.camera_direction or scene.narration
                 entity_names: list[str] = []
+                on_screen_entity_names: list[str] = []
             else:
-                outgoing_state, shot_action, entity_names = parsed
+                outgoing_state, shot_action, entity_names, on_screen_entity_names = (
+                    parsed
+                )
 
             entries.append(
                 ClipContinuityEntry(
@@ -290,6 +317,7 @@ class VisualContinuityService:
                     shot_action=shot_action or scene.narration,
                     outgoing_state=outgoing_state,
                     entity_names=entity_names,
+                    on_screen_entity_names=on_screen_entity_names,
                 )
             )
 

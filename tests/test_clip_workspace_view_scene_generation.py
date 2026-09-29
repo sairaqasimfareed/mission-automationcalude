@@ -10,7 +10,13 @@ from unittest.mock import patch  # noqa: E402
 from uuid import UUID  # noqa: E402
 
 import pytest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton  # noqa: E402
+from PySide6.QtWidgets import (  # noqa: E402
+    QApplication,
+    QComboBox,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+)
 
 from src.desktop.views.clip_workspace_view import ClipWorkspaceView  # noqa: E402
 from src.models.asset_index import AssetIndex  # noqa: E402
@@ -20,6 +26,16 @@ from src.models.google_flow_generation import (  # noqa: E402
     GoogleFlowGenerationState,
 )
 from src.models.media_strategy import SceneSourceStatus, SceneSourceType  # noqa: E402
+from src.models.muse_generation import (  # noqa: E402
+    MuseGenerationAttempt,
+    MuseGenerationRequest,
+    MuseGenerationState,
+)
+from src.models.provider_profile import (  # noqa: E402
+    ProviderCategory,
+    ProviderHealthStatus,
+    ProviderProfile,
+)
 from src.models.scene import Scene  # noqa: E402
 from src.models.video_clip import VideoClip, VideoClipStatus  # noqa: E402
 from src.models.video_job import VideoJob  # noqa: E402
@@ -34,6 +50,7 @@ from src.services.local_asset_search_service import (  # noqa: E402
     LocalAssetSearchService,
 )
 from src.services.manual_upload_service import ManualUploadService  # noqa: E402
+from src.services.registry.provider_registry import ProviderRegistry  # noqa: E402
 from src.services.scene_asset_workflow_service import (  # noqa: E402
     SceneAssetWorkflowService,
 )
@@ -100,6 +117,74 @@ def _ui_changed_stuck_attempt(scene_number: int) -> GoogleFlowGenerationAttempt:
     )
 
 
+def _split_scene_attempts(scene_number: int) -> list[GoogleFlowGenerationAttempt]:
+    """Two sub-clip attempts for the same scene, distinguished by
+    clip_sequence_index - both terminal via a one-hop interrupt-state
+    transition, matching _stuck_attempt/_ui_changed_stuck_attempt's own
+    simple construction pattern (no need for the full forward chain a
+    READY/GENERATING state would require)."""
+
+    attempts = []
+
+    for index, state in (
+        (0, GoogleFlowGenerationState.FAILED),
+        (1, GoogleFlowGenerationState.UI_CHANGED),
+    ):
+        request = GoogleFlowGenerationRequest(
+            scene_number=scene_number,
+            clip_sequence_index=index,
+            prompt="A prompt.",
+            prompt_version="v1",
+            profile_id="flow.primary",
+            idempotency_key=f"key-{scene_number}-{index}",
+        )
+        attempt = GoogleFlowGenerationAttempt(
+            request=request, profile_id="flow.primary"
+        ).with_transition(state, detail="Simulated for the split-scene test.")
+        attempts.append(attempt)
+
+    return attempts
+
+
+def _muse_planned_orphan_attempt(scene_number: int) -> MuseGenerationAttempt:
+    """
+    A Muse attempt that never got past PLANNED - the real shape
+    submit() leaves behind when it raises before ever reaching
+    replace_attempt() (e.g. the TargetClosedError bug this session
+    found and fixed). Real-world finding, 2026-09-29: before this
+    scene's _other_stuck_attempt() checked job.muse_generation_attempts
+    too, a scene stuck like this showed a plain "Generate" button that
+    silently did nothing - the same recovery path only ever worked for
+    a stuck job.flow_generation_attempts entry.
+    """
+
+    request = MuseGenerationRequest(
+        scene_number=scene_number,
+        prompt="A prompt.",
+        prompt_version="v1",
+        profile_id="muse.primary",
+        idempotency_key=f"muse-key-{scene_number}",
+    )
+
+    return MuseGenerationAttempt(request=request, profile_id="muse.primary")
+
+
+def _muse_auth_required_attempt(scene_number: int) -> MuseGenerationAttempt:
+    request = MuseGenerationRequest(
+        scene_number=scene_number,
+        prompt="A prompt.",
+        prompt_version="v1",
+        profile_id="muse.primary",
+        idempotency_key=f"muse-key-{scene_number}",
+    )
+    attempt = MuseGenerationAttempt(request=request, profile_id="muse.primary")
+
+    return attempt.with_transition(
+        MuseGenerationState.AUTH_REQUIRED,
+        detail="Muse shows no sign of an authenticated session.",
+    )
+
+
 class _FakeJobStore:
     def __init__(self, job: VideoJob) -> None:
         self._job = job
@@ -128,6 +213,7 @@ class _FakeSceneVideoGenerationService:
     ) -> None:
         self.generate_one_calls: list[int] = []
         self.generate_all_calls = 0
+        self.generate_all_forced_profile_id: str | None = None
         self.retry_scene_after_auth_calls: list[int] = []
         self.abandon_stuck_attempt_calls: list[tuple[int, bool]] = []
         self._fail_on_scene = fail_on_scene
@@ -199,9 +285,11 @@ class _FakeSceneVideoGenerationService:
         self,
         job: VideoJob,
         *,
+        forced_profile_id: str | None = None,
         on_scene_complete: Callable[[VideoJob, int], None] | None = None,
     ) -> None:
         self.generate_all_calls += 1
+        self.generate_all_forced_profile_id = forced_profile_id
 
         for scene in job.scenes:
             self.generate_one(job, scene.scene_number)
@@ -251,12 +339,14 @@ def _build_view(
     service: _FakeSceneVideoGenerationService | None,
     job_store: _FakeJobStore | None = None,
     asset_workflow_service: SceneAssetWorkflowService | None = None,
+    provider_registry: ProviderRegistry | None = None,
 ) -> ClipWorkspaceView:
     view = ClipWorkspaceView(
         job_store=job_store or _FakeJobStore(job),  # type: ignore[arg-type]
         asset_workflow_service=asset_workflow_service or _asset_workflow_service(),
         on_change=lambda: None,
         scene_video_generation_service=service,  # type: ignore[arg-type]
+        provider_registry=provider_registry,
     )
     view.set_job(job.id)
     view.refresh(job)
@@ -266,6 +356,35 @@ def _build_view(
 
 def _find_buttons(view: ClipWorkspaceView) -> list[QPushButton]:
     return view.findChildren(QPushButton)
+
+
+def _find_combos(view: ClipWorkspaceView) -> list[QComboBox]:
+    return view.findChildren(QComboBox)
+
+
+def _registry_with_both_providers() -> ProviderRegistry:
+    return ProviderRegistry(
+        profiles=[
+            ProviderProfile(
+                profile_id="flow.primary",
+                display_name="flow.primary",
+                provider_name="Google Flow",
+                category=ProviderCategory.EXTERNAL_UI_VIDEO,
+                enabled=True,
+                health_status=ProviderHealthStatus.HEALTHY,
+                browser_profile_reference="flow_profiles/flow.primary",
+            ),
+            ProviderProfile(
+                profile_id="muse.primary",
+                display_name="muse.primary",
+                provider_name="Muse",
+                category=ProviderCategory.EXTERNAL_UI_VIDEO,
+                enabled=True,
+                health_status=ProviderHealthStatus.HEALTHY,
+                browser_profile_reference="muse_profiles/muse.primary",
+            ),
+        ]
+    )
 
 
 def test_shows_not_configured_message_without_a_service(qapp: QApplication) -> None:
@@ -577,6 +696,74 @@ def test_shows_abandon_attempt_for_a_scene_stuck_on_ui_changed(
     assert buttons_by_text.count("Generate") == 1  # scene 2, untouched
 
 
+def test_shows_a_per_sub_clip_status_breakdown_for_a_split_scene(
+    qapp: QApplication,
+) -> None:
+    """
+    Multi-clip scene splitting (2026-09-29): a split scene's own
+    aggregate status line reports only its most recent sub-clip's
+    state - this breakdown gives the operator visibility into which
+    specific sub-clip is stuck, mirroring the Prompts tab's own
+    "Part X of Y" labeling for the same feature. Read-only: no extra
+    buttons, matching the confirmed scope.
+    """
+
+    job = _job(1, 2)
+    job.flow_generation_attempts = _split_scene_attempts(1)
+    service = _FakeSceneVideoGenerationService()
+    view = _build_view(job, service=service)
+
+    labels = [w.text() for w in view.findChildren(QLabel)]
+
+    assert any("Part 1 of 2: needs_attention - failed" in text for text in labels)
+    assert any("Part 2 of 2: needs_attention - ui_changed" in text for text in labels)
+    # Scene 2 (an ordinary, unsplit scene) gets no breakdown at all -
+    # exactly the 2 "Part" labels above, nothing more.
+    assert sum(text.startswith("Part ") for text in labels) == 2
+
+
+def test_shows_abandon_attempt_for_a_scene_stuck_on_a_muse_planned_orphan(
+    qapp: QApplication,
+) -> None:
+    """
+    Real-world finding, 2026-09-29: a Muse attempt orphaned at PLANNED
+    (submit() raised before ever reaching replace_attempt()) used to
+    fall through to a plain "Generate" button, since the button-
+    visibility check only ever looked at job.flow_generation_attempts.
+    Clicking that "Generate" button was a silent no-op - PLANNED is
+    neither terminal nor pollable, so _drive_to_terminal() just
+    returned the same stuck attempt unchanged with zero new log lines.
+    """
+
+    job = _job(1, 2)
+    job.muse_generation_attempts = [_muse_planned_orphan_attempt(1)]
+    service = _FakeSceneVideoGenerationService()
+    view = _build_view(
+        job, service=service, provider_registry=_registry_with_both_providers()
+    )
+
+    buttons_by_text = [b.text() for b in _find_buttons(view)]
+
+    assert buttons_by_text.count("Abandon attempt") == 1
+    assert buttons_by_text.count("Generate") == 1  # scene 2, untouched
+
+
+def test_shows_retry_after_login_for_a_scene_stuck_on_muse_auth_required(
+    qapp: QApplication,
+) -> None:
+    job = _job(1, 2)
+    job.muse_generation_attempts = [_muse_auth_required_attempt(1)]
+    service = _FakeSceneVideoGenerationService()
+    view = _build_view(
+        job, service=service, provider_registry=_registry_with_both_providers()
+    )
+
+    buttons_by_text = [b.text() for b in _find_buttons(view)]
+
+    assert buttons_by_text.count("Retry after login") == 1
+    assert buttons_by_text.count("Generate") == 1  # scene 2, untouched
+
+
 def test_abandon_attempt_never_shown_for_a_scene_stuck_on_auth_required(
     qapp: QApplication,
 ) -> None:
@@ -656,3 +843,86 @@ def test_declining_the_confirmation_leaves_the_stuck_attempt_untouched(
 
     assert service.abandon_stuck_attempt_calls == [(1, False)]
     assert len(job.flow_generation_attempts) == 1  # never forced
+
+
+def test_per_scene_account_combo_lists_both_providers_and_defaults_to_auto(
+    qapp: QApplication,
+) -> None:
+    job = _job(1)
+    service = _FakeSceneVideoGenerationService()
+    view = _build_view(
+        job, service=service, provider_registry=_registry_with_both_providers()
+    )
+
+    combos = _find_combos(view)
+    assert len(combos) == 2  # one "Generate all" combo + one per-scene combo
+
+    # combos[0] is the Generate-all combo, combos[1] is scene 1's own.
+    scene_combo = combos[1]
+    labels = [scene_combo.itemText(i) for i in range(scene_combo.count())]
+
+    assert labels[0] == "Auto"
+    assert any("Google Flow" in label for label in labels)
+    assert any("Muse" in label for label in labels)
+    assert scene_combo.currentText() == "Auto"
+
+
+def test_selecting_an_account_sets_the_scenes_preferred_profile_id(
+    qapp: QApplication,
+) -> None:
+    job = _job(1)
+    service = _FakeSceneVideoGenerationService()
+    store = _FakeJobStore(job)
+    view = _build_view(
+        job,
+        service=service,
+        job_store=store,
+        provider_registry=_registry_with_both_providers(),
+    )
+
+    # combos[0] is the Generate-all combo (built before any per-scene
+    # combo, so it's always the first match); combos[1] is scene 1's
+    # own combo.
+    combos = _find_combos(view)
+    scene_combo = combos[1]
+
+    muse_index = scene_combo.findData("muse.primary")
+    assert muse_index >= 0
+    scene_combo.setCurrentIndex(muse_index)
+
+    assert job.scenes[0].preferred_profile_id == "muse.primary"
+    assert store.added == [job]
+
+
+def test_generate_all_passes_the_chosen_account_as_forced_profile_id(
+    qapp: QApplication,
+) -> None:
+    job = _job(1, 2)
+    service = _FakeSceneVideoGenerationService()
+    view = _build_view(
+        job, service=service, provider_registry=_registry_with_both_providers()
+    )
+
+    # The Generate-all combo is built (and thus added to the layout)
+    # before any per-scene combo, so it's always the first match.
+    combos = _find_combos(view)
+    all_combo = combos[0]
+
+    muse_index = all_combo.findData("muse.primary")
+    assert muse_index >= 0
+    all_combo.setCurrentIndex(muse_index)
+
+    generate_all_button = next(
+        b for b in _find_buttons(view) if b.text() == "Generate all scenes"
+    )
+    generate_all_button.click()
+
+    # The worker runs on a real QThread - pump the event loop until its
+    # queued finished signal (and the resulting refresh) is delivered,
+    # same pattern every other real-click test in this file uses.
+    thread, _worker = next(iter(view._generation_threads.values()))
+    thread.wait(2000)
+    for _ in range(20):
+        qapp.processEvents()
+
+    assert service.generate_all_forced_profile_id == "muse.primary"

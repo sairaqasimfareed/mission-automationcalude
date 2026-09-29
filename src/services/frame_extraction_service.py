@@ -103,3 +103,55 @@ class FrameExtractionService:
             )
 
         return str(destination.resolve())
+
+    def trim_to_duration(
+        self,
+        *,
+        video_path: str,
+        target_duration_seconds: float,
+        output_path: str,
+    ) -> str:
+        """
+        Trim a real video file down to at most target_duration_seconds.
+
+        Built for Muse's fixed ~10s clip length: Muse's own agent can
+        already execute a "trim to N seconds" instruction embedded in
+        its own prompt (confirmed live, 2026-09-29 - a real "trim 10
+        seconds video to only 7 seconds video" instruction produced a
+        genuinely ~7s clip), but that is an LLM-driven agent following
+        an instruction, not a deterministic operation - this is the
+        verified safety-net correction for whenever it isn't exact,
+        never the primary trimming mechanism.
+
+        `-t` placed AFTER `-i` (not a fast `-ss`-before-`-i` seek) so
+        ffmpeg decodes and re-encodes precisely up to the target
+        duration rather than only being able to cut on an input
+        keyframe boundary - correctness matters more than speed here
+        for a short safety-net correction on an already-short clip.
+        """
+
+        if target_duration_seconds <= 0.0:
+            raise ValueError("Trim requires a positive target duration.")
+
+        destination = Path(output_path)
+
+        destination.parent.mkdir(parents=True, exist_ok=True)
+
+        command = [
+            self._ffmpeg_path,
+            "-y",
+            "-i",
+            str(Path(video_path).resolve()),
+            "-t",
+            f"{target_duration_seconds:.3f}",
+            str(destination.resolve()),
+        ]
+
+        self._runner(command)
+
+        if not destination.exists():
+            raise RuntimeError(
+                f"ffmpeg reported success but no trimmed file was written to {destination}."
+            )
+
+        return str(destination.resolve())

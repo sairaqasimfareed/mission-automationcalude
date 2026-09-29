@@ -104,6 +104,15 @@ class Scene(MissionBaseModel):
     image_prompt: str | None = None
     selected_asset_path: str | None = None
 
+    # Per-scene manual override of which EXTERNAL_UI_VIDEO account
+    # generates this scene (Google Flow or Muse - both share
+    # ProviderCategory.EXTERNAL_UI_VIDEO, and a ProviderProfile's own
+    # profile_id already uniquely identifies both which provider and
+    # which account) - None means "Auto" (priority-based selection via
+    # GoogleFlowAccountRouterService/MuseAccountRouterService, the
+    # existing default), preserving every existing scene's behavior.
+    preferred_profile_id: str | None = None
+
     fallback_sources: list[SceneSourceType] = Field(default_factory=list)
 
     estimated_cost: float = 0.0

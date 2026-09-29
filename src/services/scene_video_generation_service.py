@@ -1136,6 +1136,7 @@ class SceneVideoGenerationService:
                     else None
                 ),
                 estimated_cost_usd=self._estimated_cost_usd_per_scene,
+                preferred_profile_id=scene.preferred_profile_id,
             ),
         )
 
@@ -1292,7 +1293,7 @@ class SceneVideoGenerationService:
 
         entry = bible.entry_for_scene(scene.scene_number)
 
-        if entry is None or not entry.entity_names:
+        if entry is None or not entry.on_screen_entity_names:
             return
 
         # Identities this scene features that either have no reference
@@ -1300,11 +1301,16 @@ class SceneVideoGenerationService:
         # asset_ids are all stale (dangling - see _has_valid_reference's
         # own docstring for the real-world finding this covers).
         # An identity with at least one still-valid reference is left
-        # alone; later scenes just keep reusing it.
+        # alone; later scenes just keep reusing it. Gated on
+        # on_screen_entity_names, not entity_names - see
+        # ClipContinuityEntry's own docstring for the 2026-09-29
+        # real-world finding this distinction fixes (extracting a
+        # "reference" frame from a scene that never actually shows the
+        # identity would poison every later scene's reference).
         new_identities = [
             identity
             for identity in bible.identities
-            if identity.name in entry.entity_names
+            if identity.name in entry.on_screen_entity_names
             and not self._has_valid_reference(job, identity)
         ]
 
@@ -1408,13 +1414,14 @@ class SceneVideoGenerationService:
 
         entry = bible.entry_for_scene(scene.scene_number)
 
-        if entry is None or not entry.entity_names:
+        if entry is None or not entry.on_screen_entity_names:
             return []
 
         featured_identities = [
             identity
             for identity in bible.identities
-            if identity.name in entry.entity_names and identity.reference_asset_ids
+            if identity.name in entry.on_screen_entity_names
+            and identity.reference_asset_ids
         ]
 
         resolved: list[GoogleFlowReferenceAsset] = []

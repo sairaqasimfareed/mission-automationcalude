@@ -16,6 +16,7 @@ from src.providers.dry_run_thumbnail_image_provider import (
 from src.providers.dry_run_voice_provider import DryRunVoiceProvider
 from src.providers.elevenlabs_voice_search_client import ElevenLabsVoiceSearchClient
 from src.providers.google_flow.real_adapter import GoogleFlowRealUIAdapter
+from src.providers.muse.real_adapter import MuseRealUIAdapter
 from src.services.application_infrastructure_factory import (
     ApplicationInfrastructure,
 )
@@ -34,6 +35,13 @@ from src.services.google_flow_generation_orchestrator_service import (
     GoogleFlowGenerationOrchestratorService,
 )
 from src.services.media_generation_pipeline import MediaGenerationPipeline
+from src.services.muse_account_router_service import MuseAccountRouterService
+from src.services.muse_generation_orchestrator_service import (
+    MuseGenerationOrchestratorService,
+)
+from src.services.muse_scene_video_generation_service import (
+    MuseSceneVideoGenerationService,
+)
 from src.services.opening_title_card_service import OpeningTitleCardService
 from src.services.pipeline_checkpoint_storage_service import (
     PipelineCheckpointStorageService,
@@ -66,6 +74,9 @@ from src.services.scene_asset_and_timeline_infrastructure_factory import (
 )
 from src.services.scene_asset_workflow_service import (
     SceneAssetWorkflowService,
+)
+from src.services.scene_generation_dispatch_service import (
+    SceneGenerationDispatchService,
 )
 from src.services.scene_video_generation_service import SceneVideoGenerationService
 from src.services.secrets.keyring_secret_store import KeyringSecretStore
@@ -853,6 +864,101 @@ def get_scene_video_generation_service() -> SceneVideoGenerationService:
         profile_management_service=get_provider_profile_management_service(),
         frame_extraction_service=get_frame_extraction_service(),
         asset_storage_service=get_extracted_frame_asset_storage_service(),
+    )
+
+
+def get_muse_account_router_service() -> MuseAccountRouterService:
+    """Same reasoning as get_google_flow_account_router_service() -
+    routes against the same shared provider_registry."""
+
+    return MuseAccountRouterService(get_infrastructure().provider_registry)
+
+
+@lru_cache
+def get_muse_browser_worker() -> FlowBrowserWorker:
+    """
+    A SEPARATE FlowBrowserWorker instance from get_google_flow_
+    browser_worker() - despite the shared (generic, despite its
+    filename) class, Muse and Google Flow are two unrelated real
+    products; sharing one worker's page/context cache across both
+    would mean one provider's profile_id could theoretically collide
+    with the other's in the same dict, and conflates two independent
+    real browser sessions that have no reason to coordinate.
+    """
+
+    return FlowBrowserWorker()
+
+
+@lru_cache
+def get_muse_real_ui_adapter() -> MuseRealUIAdapter:
+    """
+    The one shared, real-product Muse adapter for the whole desktop
+    process - built from a live, screenshot-verified walkthrough
+    2026-09-29 (see locators.py's own docstring for which selectors
+    are still best-effort/pending further verification).
+
+    A fixed base_url (unlike Google Flow's per-account
+    base_url_resolver) - confirmed live that Muse has no per-project
+    URL concept the way Flow does; every account uses the same
+    muse.ai chat surface.
+    """
+
+    return MuseRealUIAdapter(
+        worker=get_muse_browser_worker(),
+        base_url="https://muse.ai",
+        # Same real-world reasoning as Google Flow's own adapter
+        # factory: an operator needs to see what's happening (this
+        # account's real login/OTP step is manual, never automated).
+        headless=False,
+    )
+
+
+@lru_cache
+def get_muse_generation_orchestrator_service() -> MuseGenerationOrchestratorService:
+    """Same reasoning as get_google_flow_generation_orchestrator_
+    service() - no budget_service wired yet, same disclosed, safe gap."""
+
+    return MuseGenerationOrchestratorService(
+        provider=get_muse_real_ui_adapter(),
+        account_router=get_muse_account_router_service(),
+    )
+
+
+def get_muse_scene_video_generation_service() -> MuseSceneVideoGenerationService:
+    """
+    Return the real submit/poll/download/attach loop driving Muse
+    generation across every planned scene - same reasoning as
+    get_scene_video_generation_service() (not cached; frame_extraction_
+    service/asset_storage_service ARE their own cached singletons,
+    and are the SAME shared instances Google Flow's own service uses -
+    reference frames extracted via either provider are visible to
+    both, since the real continuity state lives on VideoJob.
+    extracted_frame_asset_index, not on either cached service).
+    """
+
+    return MuseSceneVideoGenerationService(
+        orchestrator=get_muse_generation_orchestrator_service(),
+        asset_workflow_service=get_asset_workflow_service(),
+        frame_extraction_service=get_frame_extraction_service(),
+        asset_storage_service=get_extracted_frame_asset_storage_service(),
+    )
+
+
+def get_scene_generation_dispatch_service() -> SceneGenerationDispatchService:
+    """
+    Return the per-scene account picker's own dispatch layer, tying
+    Google Flow's and Muse's fully independent scene-video-generation
+    services together for the GUI - see
+    SceneGenerationDispatchService's own docstring for why a scene's
+    Scene.preferred_profile_id decides which one actually drives it.
+    Not cached, matching both underlying services' own choice not to
+    cache (this class holds no per-call state either).
+    """
+
+    return SceneGenerationDispatchService(
+        registry=get_infrastructure().provider_registry,
+        flow_service=get_scene_video_generation_service(),
+        muse_service=get_muse_scene_video_generation_service(),
     )
 
 

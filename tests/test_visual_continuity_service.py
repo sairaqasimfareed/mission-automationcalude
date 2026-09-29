@@ -191,6 +191,96 @@ def test_build_raises_on_provider_failure() -> None:
         )
 
 
+def test_on_screen_entity_names_is_parsed_from_its_own_label() -> None:
+    stub = _StubLLMService(
+        content=(
+            "SCENE: 1\n"
+            "WARDROBE: Captain's uniform.\n"
+            "CONDITION: Calm.\n"
+            "LOCATION: The deck.\n"
+            "TIME_OF_DAY: Morning.\n"
+            "WEATHER: Clear.\n"
+            "LIGHTING: Bright daylight.\n"
+            "PROPS: compass\n"
+            "VEHICLES: none\n"
+            "SHOT_ACTION: Captain Briggs surveys the horizon.\n"
+            "ENTITIES_PRESENT: Captain Briggs, The Mary Celeste\n"
+            "ON_SCREEN_ENTITIES: Captain Briggs"
+        )
+    )
+    service = VisualContinuityService(llm_service=stub)  # type: ignore[arg-type]
+
+    bible = service.build(
+        scenes=[_scene(1, "The captain surveys.")],
+        continuity_bible=_continuity_bible(),
+        script_lock_hash="hash123",
+    )
+
+    entry = bible.entry_for_scene(1)
+    assert entry is not None
+    assert entry.entity_names == ["Captain Briggs", "The Mary Celeste"]
+    assert entry.on_screen_entity_names == ["Captain Briggs"]
+
+
+def test_on_screen_entity_names_is_forced_to_a_subset_of_entities_present() -> None:
+    """
+    Real-world finding, 2026-09-29: a purely-narrated scene must not
+    get its off-screen narrator's reference photo attached (see
+    ClipContinuityEntry's own docstring). Defends against the LLM not
+    honoring the "must be a subset of ENTITIES_PRESENT" instruction -
+    a name in ON_SCREEN_ENTITIES that isn't in ENTITIES_PRESENT is
+    dropped rather than trusted.
+    """
+
+    stub = _StubLLMService(
+        content=(
+            "SCENE: 1\n"
+            "WARDROBE: Captain's uniform.\n"
+            "CONDITION: Calm.\n"
+            "LOCATION: The deck.\n"
+            "TIME_OF_DAY: Morning.\n"
+            "WEATHER: Clear.\n"
+            "LIGHTING: Bright daylight.\n"
+            "PROPS: compass\n"
+            "VEHICLES: none\n"
+            "SHOT_ACTION: Captain Briggs surveys the horizon.\n"
+            "ENTITIES_PRESENT: The Mary Celeste\n"
+            "ON_SCREEN_ENTITIES: Captain Briggs"
+        )
+    )
+    service = VisualContinuityService(llm_service=stub)  # type: ignore[arg-type]
+
+    bible = service.build(
+        scenes=[_scene(1, "The captain surveys.")],
+        continuity_bible=_continuity_bible(),
+        script_lock_hash="hash123",
+    )
+
+    entry = bible.entry_for_scene(1)
+    assert entry is not None
+    assert entry.on_screen_entity_names == []  # "Captain Briggs" was never present
+
+
+def test_on_screen_entity_names_defaults_empty_without_its_own_label() -> None:
+    """Backward compatible: a response written before ON_SCREEN_ENTITIES
+    existed (only ENTITIES_PRESENT) must not be treated as if every
+    present entity were also on screen."""
+
+    stub = _StubLLMService(content=_VALID_RESPONSE)  # no ON_SCREEN_ENTITIES at all
+    service = VisualContinuityService(llm_service=stub)  # type: ignore[arg-type]
+
+    bible = service.build(
+        scenes=[_scene(1, "The captain surveys.")],
+        continuity_bible=_continuity_bible(),
+        script_lock_hash="hash123",
+    )
+
+    entry = bible.entry_for_scene(1)
+    assert entry is not None
+    assert entry.entity_names == ["Captain Briggs", "The Mary Celeste"]
+    assert entry.on_screen_entity_names == []
+
+
 def test_negative_estimated_cost_is_rejected() -> None:
     with pytest.raises(ValueError, match="cannot be negative"):
         VisualContinuityService(

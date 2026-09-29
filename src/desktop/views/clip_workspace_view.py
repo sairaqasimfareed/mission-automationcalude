@@ -7,6 +7,7 @@ from uuid import UUID
 from PySide6.QtCore import QObject, Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QFileDialog,
     QFrame,
     QMessageBox,
@@ -33,6 +34,9 @@ from src.models.google_flow_generation import (
     GoogleFlowGenerationState,
     is_terminal_state,
 )
+from src.models.muse_generation import MuseGenerationAttempt, MuseGenerationState
+from src.models.muse_generation import is_terminal_state as muse_is_terminal_state
+from src.models.provider_profile import ProviderCategory
 from src.models.scene_completeness import SceneCompletenessStatus
 from src.models.video_clip import VideoClip
 from src.models.video_job import VideoJob
@@ -41,10 +45,16 @@ from src.services.bulk_stock_assignment_service import BulkStockAssignmentServic
 from src.services.google_flow_generation_orchestrator_service import (
     GoogleFlowAttemptCreditSensitiveError,
 )
+from src.services.muse_generation_orchestrator_service import (
+    MuseAttemptCreditSensitiveError,
+)
+from src.services.registry.provider_registry import ProviderRegistry
 from src.services.scene_asset_workflow_service import SceneAssetWorkflowService
 from src.services.scene_completeness_service import SceneCompletenessService
+from src.services.scene_generation_dispatch_service import (
+    SceneGenerationDispatchService,
+)
 from src.services.scene_prompt_export_service import ScenePromptExportService
-from src.services.scene_video_generation_service import SceneVideoGenerationService
 
 _LEFT = Qt.AlignmentFlag.AlignLeft
 
@@ -54,6 +64,24 @@ _COMPLETENESS_STATUS_ROLE = {
     SceneCompletenessStatus.NEEDS_ATTENTION: "error",
     SceneCompletenessStatus.NOT_STARTED: "warning",
 }
+
+
+def _sub_clip_status_role(status_text: str) -> str:
+    """
+    Same color convention as _COMPLETENESS_STATUS_ROLE, applied to
+    SceneCompletenessService.sub_clip_statuses' own plain-text labels
+    (not a SceneCompletenessStatus enum, since a sub-clip's own state
+    is a raw provider state string, not a full completeness judgment -
+    see that method's own docstring for why).
+    """
+
+    if status_text.startswith("needs_attention"):
+        return "error"
+
+    if status_text == "ready":
+        return "success"
+
+    return "warning"
 
 
 class _SceneVideoGenerationWorker(QObject):
@@ -97,10 +125,11 @@ class _SceneVideoGenerationWorker(QObject):
     def __init__(
         self,
         *,
-        service: SceneVideoGenerationService,
+        service: SceneGenerationDispatchService,
         job: VideoJob,
         scene_number: int | None,
         retry_after_auth: bool = False,
+        forced_profile_id: str | None = None,
     ) -> None:
         super().__init__()
 
@@ -110,6 +139,7 @@ class _SceneVideoGenerationWorker(QObject):
         self.job_id = job.id
         self.scene_number = scene_number
         self._retry_after_auth = retry_after_auth
+        self._forced_profile_id = forced_profile_id
 
     def run(self) -> None:
         try:
@@ -119,6 +149,7 @@ class _SceneVideoGenerationWorker(QObject):
             elif self.scene_number is None:
                 self._service.generate_all(
                     self._job,
+                    forced_profile_id=self._forced_profile_id,
                     on_scene_complete=self._handle_scene_complete,
                 )
             else:
@@ -162,7 +193,8 @@ class ClipWorkspaceView(QWidget):
         job_store: JobStore,
         asset_workflow_service: SceneAssetWorkflowService,
         on_change: Callable[[], None],
-        scene_video_generation_service: SceneVideoGenerationService | None = None,
+        scene_video_generation_service: SceneGenerationDispatchService | None = None,
+        provider_registry: ProviderRegistry | None = None,
     ) -> None:
         super().__init__()
 
@@ -170,6 +202,13 @@ class ClipWorkspaceView(QWidget):
         self._on_change = on_change
         self._job_id: UUID | None = None
         self._selected_scene_numbers: set[int] = set()
+        self._provider_registry = provider_registry
+        # Holds the "Generate all scenes" account dropdown's current
+        # combo box - rebuilt on every refresh() (matching this
+        # view's own "no widgets survive a refresh" convention), so
+        # _handle_generate_all_scene_videos() reads whatever the
+        # operator currently has selected.
+        self._generate_all_account_combo: QComboBox | None = None
 
         self._prompt_export_service = ScenePromptExportService()
         self._bulk_ingestion_service = BulkClipIngestionService(
@@ -292,7 +331,8 @@ class ClipWorkspaceView(QWidget):
 
         is_generating = job.id in self._generating_job_ids
 
-        report = SceneCompletenessService().check(job)
+        completeness_service = SceneCompletenessService()
+        report = completeness_service.check(job)
         entries_by_scene = {entry.scene_number: entry for entry in report.entries}
 
         ready_count = sum(
@@ -317,7 +357,13 @@ class ClipWorkspaceView(QWidget):
         )
         all_button.setEnabled(not is_generating and ready_count < len(report.entries))
         all_button.clicked.connect(self._handle_generate_all_scene_videos)
-        layout.addWidget(all_button, alignment=_LEFT)
+
+        account_combo = QComboBox()
+        account_combo.setEnabled(not is_generating)
+        self._populate_account_combo(account_combo, selected_profile_id=None)
+        self._generate_all_account_combo = account_combo
+
+        layout.addLayout(row(all_button, account_combo))
 
         for scene in sorted(job.scenes, key=lambda scene: scene.scene_number):
             entry = entries_by_scene.get(scene.scene_number)
@@ -335,6 +381,27 @@ class ClipWorkspaceView(QWidget):
                     status_label(
                         f"{entry.status.value} - {entry.detail}",
                         role=_COMPLETENESS_STATUS_ROLE[entry.status],
+                    )
+                )
+
+            # Multi-clip scene splitting (2026-09-29): a split scene's
+            # entry above reports only its MOST RECENT sub-clip's
+            # state - this breakdown gives an operator visibility into
+            # which specific sub-clip is stuck, mirroring the Prompts
+            # tab's own "Part X of Y" labeling for the same feature.
+            # Read-only by design: Generate/Abandon/Retry below still
+            # act on the whole scene, since generate_one() already
+            # resumes a split scene from wherever it left off.
+            sub_clip_statuses = completeness_service.sub_clip_statuses(
+                job, scene.scene_number
+            )
+
+            for index, sub_clip_status in sub_clip_statuses:
+                row_layout.addWidget(
+                    status_label(
+                        f"Part {index + 1} of {len(sub_clip_statuses)}: "
+                        f"{sub_clip_status}",
+                        role=_sub_clip_status_role(sub_clip_status),
                     )
                 )
 
@@ -403,6 +470,25 @@ class ClipWorkspaceView(QWidget):
                 )
             )
 
+            # Per-scene account picker (locked design, generalized to
+            # both providers once Muse existed): "Auto" (None) keeps
+            # today's priority-based routing unchanged; picking a
+            # specific account routes that scene's next Generate click
+            # through SceneGenerationDispatchService to whichever
+            # provider that account actually belongs to.
+            account_combo = QComboBox()
+            account_combo.setEnabled(not is_generating)
+            self._populate_account_combo(
+                account_combo, selected_profile_id=scene.preferred_profile_id
+            )
+            account_combo.currentIndexChanged.connect(
+                lambda index, combo=account_combo, number=scene.scene_number: (
+                    self._handle_scene_preferred_profile_changed(
+                        number, combo.itemData(index)
+                    )
+                )
+            )
+
             # stretch_at_end (row()'s own default, True) is what keeps
             # these three compact and left-aligned - a real, found bug
             # in the original per-scene Upload button pass: passing
@@ -413,7 +499,9 @@ class ClipWorkspaceView(QWidget):
             # Dashboard's own "Continue Production"/"Delete Project"
             # row, which already uses this same row() helper's default
             # and renders compact.
-            row_layout.addLayout(row(primary_button, upload_button, remove_button))
+            row_layout.addLayout(
+                row(primary_button, upload_button, remove_button, account_combo)
+            )
 
             layout.addLayout(row_layout)
 
@@ -422,15 +510,22 @@ class ClipWorkspaceView(QWidget):
     @staticmethod
     def _auth_required_attempt(
         job: VideoJob, scene_number: int
-    ) -> GoogleFlowGenerationAttempt | None:
+    ) -> GoogleFlowGenerationAttempt | MuseGenerationAttempt | None:
         """
         The scene's stuck AUTH_REQUIRED attempt, if any - checked
         across every sub-clip index (a Phase 5 split scene's stuck
         attempt need not be clip_sequence_index=0), not just via
         SceneCompletenessService's own default-index lookup.
+
+        Real-world finding, 2026-09-29: this used to check only
+        job.flow_generation_attempts - once Muse existed as a second
+        provider, a scene stuck on Muse's own AUTH_REQUIRED never got
+        a "Retry after login" button at all. Checked across both
+        ledgers now, same reasoning as
+        SceneCompletenessService._latest_attempt_for_scene.
         """
 
-        return next(
+        flow_attempt = next(
             (
                 attempt
                 for attempt in job.flow_generation_attempts
@@ -440,19 +535,41 @@ class ClipWorkspaceView(QWidget):
             None,
         )
 
+        if flow_attempt is not None:
+            return flow_attempt
+
+        return next(
+            (
+                attempt
+                for attempt in job.muse_generation_attempts
+                if attempt.request.scene_number == scene_number
+                and attempt.state == MuseGenerationState.AUTH_REQUIRED
+            ),
+            None,
+        )
+
     @staticmethod
     def _other_stuck_attempt(
         job: VideoJob, scene_number: int
-    ) -> GoogleFlowGenerationAttempt | None:
+    ) -> GoogleFlowGenerationAttempt | MuseGenerationAttempt | None:
         """
         A scene's stuck non-terminal attempt that ISN'T AUTH_REQUIRED
         (which already has its own "Retry after login" recovery path
         above) - e.g. UI_CHANGED, or a PLANNED attempt that never
         actually started. Checked across every sub-clip index, same
         reasoning as _auth_required_attempt.
+
+        Real-world finding, 2026-09-29: this used to check only
+        job.flow_generation_attempts - a scene whose latest attempt
+        was a stuck, never-progressed Muse PLANNED attempt (submit()
+        raised before ever reaching replace_attempt()) showed a plain
+        "Generate" button instead of "Abandon attempt", and clicking
+        it was a silent no-op (_drive_to_terminal only resubmits a
+        None/orphaned-READY/FAILED/QC_FAILED attempt - a lone PLANNED
+        attempt is none of those). Checked across both ledgers now.
         """
 
-        return next(
+        flow_attempt = next(
             (
                 attempt
                 for attempt in job.flow_generation_attempts
@@ -462,6 +579,58 @@ class ClipWorkspaceView(QWidget):
             ),
             None,
         )
+
+        if flow_attempt is not None:
+            return flow_attempt
+
+        return next(
+            (
+                attempt
+                for attempt in job.muse_generation_attempts
+                if attempt.request.scene_number == scene_number
+                and not muse_is_terminal_state(attempt.state)
+                and attempt.state != MuseGenerationState.AUTH_REQUIRED
+            ),
+            None,
+        )
+
+    def _populate_account_combo(
+        self, combo: QComboBox, *, selected_profile_id: str | None
+    ) -> None:
+        """
+        Fill an account-picker combo with "Auto" plus every ENABLED
+        EXTERNAL_UI_VIDEO account across both providers (Google Flow
+        and Muse) - enabled_only, not usable_only, so a temporarily
+        unhealthy/cooldown account still appears and is selectable,
+        surfacing a clear error at Generate time (SceneGenerationDispatchService
+        -> the account router's own preferred_profile_id validation)
+        rather than silently disappearing from the list.
+
+        Each item's data is the real profile_id (or None for "Auto") -
+        read back via currentData()/itemData(), never the display
+        text, so renaming a provider's own display_name can never
+        silently change which account gets selected.
+        """
+
+        combo.clear()
+        combo.addItem("Auto", None)
+
+        if self._provider_registry is None:
+            return
+
+        for profile in self._provider_registry.list_by_category(
+            ProviderCategory.EXTERNAL_UI_VIDEO, enabled_only=True
+        ):
+            combo.addItem(
+                f"{profile.provider_name} — {profile.display_name}",
+                profile.profile_id,
+            )
+
+        if selected_profile_id is not None:
+            index = combo.findData(selected_profile_id)
+
+            if index >= 0:
+                combo.setCurrentIndex(index)
 
     def _handle_generate_scene_video(self, scene_number: int) -> None:
         job = self._current_job()
@@ -496,7 +665,10 @@ class ClipWorkspaceView(QWidget):
 
         try:
             service.abandon_stuck_attempt(job, scene_number, force=force)
-        except GoogleFlowAttemptCreditSensitiveError as error:
+        except (
+            GoogleFlowAttemptCreditSensitiveError,
+            MuseAttemptCreditSensitiveError,
+        ) as error:
             confirmation = QMessageBox.question(
                 self,
                 "Abandon stuck generation attempt",
@@ -515,13 +687,43 @@ class ClipWorkspaceView(QWidget):
         self._job_store.add(job)
         self._on_change()
 
+    def _handle_scene_preferred_profile_changed(
+        self, scene_number: int, profile_id: object
+    ) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        scene = next((s for s in job.scenes if s.scene_number == scene_number), None)
+
+        if scene is None:
+            return
+
+        # QComboBox.itemData() is typed Any at the Qt binding level -
+        # this combo's own items only ever carry None or a str (see
+        # _populate_account_combo), so this narrows it back for mypy
+        # without changing behavior.
+        scene.preferred_profile_id = profile_id if isinstance(profile_id, str) else None
+
+        self._job_store.add(job)
+        self._on_change()
+
     def _handle_generate_all_scene_videos(self) -> None:
         job = self._current_job()
 
         if job is None:
             return
 
-        self._execute_scene_generation(job, scene_number=None)
+        forced_profile_id: str | None = None
+
+        if self._generate_all_account_combo is not None:
+            data = self._generate_all_account_combo.currentData()
+            forced_profile_id = data if isinstance(data, str) else None
+
+        self._execute_scene_generation(
+            job, scene_number=None, forced_profile_id=forced_profile_id
+        )
 
     def _execute_scene_generation(
         self,
@@ -529,6 +731,7 @@ class ClipWorkspaceView(QWidget):
         *,
         scene_number: int | None,
         retry_after_auth: bool = False,
+        forced_profile_id: str | None = None,
     ) -> None:
         service = self._scene_video_generation_service
 
@@ -546,6 +749,7 @@ class ClipWorkspaceView(QWidget):
             job=job,
             scene_number=scene_number,
             retry_after_auth=retry_after_auth,
+            forced_profile_id=forced_profile_id,
         )
         worker.moveToThread(thread)
 

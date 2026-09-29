@@ -173,6 +173,109 @@ def test_ignores_non_flow_provider_categories() -> None:
     assert selected.profile_id == "flow.primary"
 
 
+def test_ignores_a_different_provider_sharing_external_ui_video_category() -> None:
+    """
+    Real-world finding, 2026-09-29: ProviderCategory.EXTERNAL_UI_VIDEO
+    covers any browser-driven video provider, not Google Flow
+    exclusively - a Muse account profile registers under this same
+    category. Without a provider_name filter, this router would return
+    a Muse profile as a valid "Flow" candidate.
+    """
+
+    muse_profile = ProviderProfile(
+        profile_id="muse.primary",
+        display_name="Muse Primary",
+        provider_name="Muse",
+        category=ProviderCategory.EXTERNAL_UI_VIDEO,
+        enabled=True,
+        browser_profile_reference="muse_profiles/muse.primary",
+    )
+    registry = ProviderRegistry(
+        profiles=[muse_profile, _flow_profile("flow.primary", priority=1)]
+    )
+    router = GoogleFlowAccountRouterService(registry)
+
+    selected = router.select_account()
+
+    assert selected.profile_id == "flow.primary"
+
+
+def test_raises_when_only_a_different_external_ui_video_provider_is_registered() -> (
+    None
+):
+    muse_profile = ProviderProfile(
+        profile_id="muse.primary",
+        display_name="Muse Primary",
+        provider_name="Muse",
+        category=ProviderCategory.EXTERNAL_UI_VIDEO,
+        enabled=True,
+        browser_profile_reference="muse_profiles/muse.primary",
+    )
+    registry = ProviderRegistry(profiles=[muse_profile])
+    router = GoogleFlowAccountRouterService(registry)
+
+    with pytest.raises(NoEligibleGoogleFlowAccountError, match="No usable"):
+        router.select_account()
+
+
+def test_preferred_profile_id_selects_that_exact_account() -> None:
+    registry = ProviderRegistry(
+        profiles=[
+            _flow_profile("flow.primary", priority=1),
+            _flow_profile("flow.backup", priority=2),
+        ]
+    )
+    router = GoogleFlowAccountRouterService(registry)
+
+    selected = router.select_account(preferred_profile_id="flow.backup")
+
+    assert selected.profile_id == "flow.backup"
+
+
+def test_preferred_profile_id_raises_a_clear_error_when_unregistered() -> None:
+    router = GoogleFlowAccountRouterService(ProviderRegistry())
+
+    with pytest.raises(NoEligibleGoogleFlowAccountError, match="not registered"):
+        router.select_account(preferred_profile_id="flow.ghost")
+
+
+def test_preferred_profile_id_raises_when_it_belongs_to_a_different_provider() -> None:
+    muse_profile = ProviderProfile(
+        profile_id="muse.primary",
+        display_name="Muse Primary",
+        provider_name="Muse",
+        category=ProviderCategory.EXTERNAL_UI_VIDEO,
+        enabled=True,
+        browser_profile_reference="muse_profiles/muse.primary",
+    )
+    registry = ProviderRegistry(profiles=[muse_profile])
+    router = GoogleFlowAccountRouterService(registry)
+
+    with pytest.raises(NoEligibleGoogleFlowAccountError, match="not a Google Flow"):
+        router.select_account(preferred_profile_id="muse.primary")
+
+
+def test_preferred_profile_id_raises_when_not_usable() -> None:
+    registry = ProviderRegistry(
+        profiles=[_flow_profile("flow.disabled", enabled=False)]
+    )
+    router = GoogleFlowAccountRouterService(registry)
+
+    with pytest.raises(NoEligibleGoogleFlowAccountError, match="not currently usable"):
+        router.select_account(preferred_profile_id="flow.disabled")
+
+
+def test_preferred_profile_id_raises_when_at_its_in_flight_ceiling() -> None:
+    registry = ProviderRegistry(profiles=[_flow_profile("flow.primary")])
+    router = GoogleFlowAccountRouterService(registry)
+
+    with pytest.raises(NoEligibleGoogleFlowAccountError, match="in-flight attempt"):
+        router.select_account(
+            preferred_profile_id="flow.primary",
+            in_flight_counts={"flow.primary": 1},
+        )
+
+
 def test_rejects_a_ceiling_below_one() -> None:
     router = GoogleFlowAccountRouterService(ProviderRegistry())
 

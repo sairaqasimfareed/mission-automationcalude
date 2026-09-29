@@ -37,6 +37,7 @@ from src.models.media_strategy import (
     VoiceStatus,
     VoiceStrategy,
 )
+from src.models.muse_generation import MuseGenerationAttempt
 from src.models.originality import OriginalityResult
 from src.models.packaging_hypothesis import PackagingHypothesis
 from src.models.policy import PolicyComplianceReport
@@ -413,6 +414,14 @@ class VideoJob(MissionBaseModel):
     flow_generation_attempts: list[GoogleFlowGenerationAttempt] = Field(
         default_factory=list
     )
+
+    # Muse (muse.ai) External UI Automation - a second, parallel
+    # EXTERNAL_UI_VIDEO provider ledger, deliberately its own list
+    # rather than merged into flow_generation_attempts above (that
+    # would type-confuse two providers' concrete attempt models into
+    # one list). Same append-only convention;
+    # MuseGenerationLedgerService is the only intended writer.
+    muse_generation_attempts: list[MuseGenerationAttempt] = Field(default_factory=list)
 
     policy_report: PolicyComplianceReport | None = None
 

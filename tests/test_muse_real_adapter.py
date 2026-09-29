@@ -1,0 +1,820 @@
+from __future__ import annotations
+
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+import pytest
+from playwright.sync_api import Error as PlaywrightError
+
+from src.models.muse_generation import (
+    MuseGenerationAttempt,
+    MuseGenerationRequest,
+    MuseGenerationState,
+    MuseReferenceAsset,
+    MuseReferenceRole,
+)
+from src.providers.muse.real_adapter import MuseRealUIAdapter
+from src.providers.muse_ui_provider import (
+    MuseUIOperation,
+    MuseUIOperationNotSupportedError,
+)
+
+# Same testing philosophy as test_google_flow_real_adapter.py: this
+# adapter drives the REAL Muse product, with no local fixture standing
+# in for it. These tests verify the adapter's own LOGIC/sequencing
+# against small, controlled Playwright-shaped fakes - genuinely
+# testing what's testable without a real account, not a substitute for
+# real-account verification (still pending - see real_adapter.py's own
+# locators.py docstring on which selectors are best-effort).
+
+
+class _ImmediateFuture:
+    def __init__(self, value: Any) -> None:
+        self._value = value
+
+    def result(self, timeout: float | None = None) -> Any:
+        return self._value
+
+
+class _FakeContext:
+    def __init__(self, page: _FakePage) -> None:
+        self.pages: list[_FakePage] = []
+        self._page = page
+
+    def new_page(self) -> _FakePage:
+        self.pages.append(self._page)
+        return self._page
+
+
+class _FakeWorker:
+    """Stands in for FlowBrowserWorker - runs submit() synchronously
+    (no real thread, no real Playwright) and always hands back the
+    same fake page for a given profile."""
+
+    def __init__(self, page: _FakePage) -> None:
+        self._page = page
+
+    def submit(self, fn: Callable[[], Any]) -> _ImmediateFuture:
+        return _ImmediateFuture(fn())
+
+    def submit_with_recovery(
+        self, fn: Callable[[], Any], *, timeout: float, label: str = ""
+    ) -> Any:
+        return fn()
+
+    def open_persistent_context_from_worker_thread(
+        self, profile_id: str, profile_directory: Path, *, headless: bool
+    ) -> _FakeContext:
+        return _FakeContext(self._page)
+
+    def evict_context_from_worker_thread(self, profile_id: str) -> None:
+        pass
+
+
+class _FakeLocator:
+    """
+    srcs (2026-09-30): the video-selector fake needs to represent
+    MULTIPLE distinct real elements, each with its own `src` attribute
+    - real_adapter.py now identifies "this attempt's own video" by src
+    identity, not position/count (see _latest_assistant_video's own
+    docstring). None (the default) keeps every OTHER existing fake
+    locator (buttons, message box, etc.) working exactly as before -
+    .nth() still returns a usable scoped view, and .get_attribute
+    ("src") falls back to a stable, per-object-and-index synthetic
+    value so a test that only mutates `_count` (the original, simpler
+    "a new video appeared" simulation) still produces a genuinely NEW
+    value for each newly-added index, without that test needing to
+    know about srcs at all.
+    """
+
+    def __init__(
+        self,
+        *,
+        count: int = 1,
+        input_value: str = "",
+        srcs: list[str | None] | None = None,
+    ) -> None:
+        self._count = count
+        self._input_value = input_value
+        self.click_calls = 0
+        self.hover_calls = 0
+        self._srcs = srcs
+        self._nth_index: int | None = None
+        # Stable across every .nth() call on THIS SAME registered
+        # locator (propagated, never reset, in .nth() below) - so two
+        # separate .nth(0) calls (e.g. once at submit-time, once later
+        # when resolving) produce the SAME synthetic src, matching a
+        # real, unchanged video staying unchanged across polls.
+        self._owner_id = id(self)
+
+    @property
+    def first(self) -> _FakeLocator:
+        return self
+
+    @property
+    def last(self) -> _FakeLocator:
+        return self
+
+    def count(self) -> int:
+        return len(self._srcs) if self._srcs is not None else self._count
+
+    def nth(self, index: int) -> _FakeLocator:
+        scoped = _FakeLocator(count=1, input_value=self._input_value)
+        scoped._srcs = self._srcs
+        scoped._nth_index = index
+        scoped._owner_id = self._owner_id
+
+        return scoped
+
+    def get_attribute(self, name: str) -> str | None:
+        if name != "src" or self._nth_index is None:
+            return None
+
+        if self._srcs is not None:
+            return self._srcs[self._nth_index]
+
+        return f"fake-src-{self._owner_id}-{self._nth_index}"
+
+    def click(self, timeout: float | None = None) -> None:
+        if self.count() == 0:
+            raise AssertionError("clicked a locator that should not exist")
+
+        self.click_calls += 1
+
+    def hover(self, timeout: float | None = None) -> None:
+        if self.count() == 0:
+            raise AssertionError("hovered a locator that should not exist")
+
+        self.hover_calls += 1
+
+    def input_value(self) -> str:
+        return self._input_value
+
+
+_MISSING = _FakeLocator(count=0)
+
+
+class _FakeFileChooser:
+    def __init__(self) -> None:
+        self.set_files_calls: list[str] = []
+
+    def set_files(self, files: str) -> None:
+        self.set_files_calls.append(files)
+
+
+class _FakeFileChooserInfo:
+    def __init__(self, file_chooser: _FakeFileChooser | None = None) -> None:
+        self._file_chooser = file_chooser or _FakeFileChooser()
+
+    @property
+    def value(self) -> _FakeFileChooser:
+        return self._file_chooser
+
+
+class _FakeFileChooserContext:
+    def __init__(self, info: _FakeFileChooserInfo) -> None:
+        self._info = info
+
+    def __enter__(self) -> _FakeFileChooserInfo:
+        return self._info
+
+    def __exit__(self, *exc_info: object) -> None:
+        return None
+
+
+class _FakeDownload:
+    def __init__(self, *, suggested_filename: str = "scene.mp4") -> None:
+        self.suggested_filename = suggested_filename
+        self.saved_to: Path | None = None
+
+    def save_as(self, path: str) -> None:
+        self.saved_to = Path(path)
+        self.saved_to.write_bytes(b"fake real video bytes")
+
+
+class _FakeDownloadInfo:
+    def __init__(self, download: _FakeDownload) -> None:
+        self.value = download
+
+
+class _FakeDownloadContext:
+    def __init__(self, download: _FakeDownload) -> None:
+        self._download = download
+
+    def __enter__(self) -> _FakeDownloadInfo:
+        return _FakeDownloadInfo(self._download)
+
+    def __exit__(self, *exc_info: object) -> None:
+        return None
+
+
+class _FakeKeyboard:
+    def __init__(self) -> None:
+        self.typed: list[str] = []
+        self.pressed: list[str] = []
+
+    def type(self, text: str, delay: float | None = None) -> None:
+        self.typed.append(text)
+
+    def press(self, key: str) -> None:
+        self.pressed.append(key)
+
+
+class _FakePage:
+    def __init__(
+        self, *, raise_on_goto: bool = False, raise_on_locator: bool = False
+    ) -> None:
+        self.url_history: list[str] = []
+        self.wait_for_timeout_calls: list[float] = []
+        self.keyboard = _FakeKeyboard()
+        self._by_placeholder: dict[str, _FakeLocator] = {}
+        self._by_role: dict[tuple[str, str], _FakeLocator] = {}
+        self._by_css: dict[str, _FakeLocator] = {}
+        self._download = _FakeDownload()
+        self._file_chooser_info = _FakeFileChooserInfo()
+        self.closed = False
+        self._raise_on_goto = raise_on_goto
+        self._raise_on_locator = raise_on_locator
+
+    def goto(self, url: str, timeout: float | None = None) -> None:
+        if self._raise_on_goto:
+            raise PlaywrightError("Target page, context or browser has been closed")
+
+        self.url_history.append(url)
+
+    def is_closed(self) -> bool:
+        return self.closed
+
+    def get_by_placeholder(self, text: str) -> _FakeLocator:
+        return self._by_placeholder.get(text, _MISSING)
+
+    def get_by_role(
+        self, role: str, name: str | None = None, exact: bool = False
+    ) -> _FakeLocator:
+        return self._by_role.get((role, name or ""), _MISSING)
+
+    def locator(self, selector: str) -> _FakeLocator:
+        if self._raise_on_locator:
+            raise PlaywrightError("Target page, context or browser has been closed")
+
+        if selector in self._by_css:
+            return self._by_css[selector]
+
+        # A src-scoped re-location (e.g. "video:not(...)[src='...']",
+        # composed by _latest_assistant_video once an attempt's own
+        # video has already been resolved once) reuses whatever was
+        # registered for the base video selector it was built from -
+        # tests register the base selector once and never need to
+        # predict the exact resolved src value themselves. Requires
+        # the queried selector to continue with "[src=" specifically
+        # (not just any shared string prefix) - "video" must NOT match
+        # a query for "video:not([aria-hidden='true'])" just because
+        # one happens to start with the other.
+        for registered_selector, locator in self._by_css.items():
+            if registered_selector and selector.startswith(
+                f"{registered_selector}[src="
+            ):
+                return locator
+
+        return _MISSING
+
+    def wait_for_timeout(self, ms: float) -> None:
+        self.wait_for_timeout_calls.append(ms)
+
+    def expect_download(self, timeout: float | None = None) -> _FakeDownloadContext:
+        return _FakeDownloadContext(self._download)
+
+    def expect_file_chooser(
+        self, timeout: float | None = None
+    ) -> _FakeFileChooserContext:
+        return _FakeFileChooserContext(self._file_chooser_info)
+
+    # --- test setup helpers ---
+
+    def register_placeholder(self, text: str, locator: _FakeLocator) -> None:
+        self._by_placeholder[text] = locator
+
+    def register_role(self, role: str, name: str, locator: _FakeLocator) -> None:
+        self._by_role[(role, name)] = locator
+
+    def register_css(self, selector: str, locator: _FakeLocator) -> None:
+        self._by_css[selector] = locator
+
+
+def _authenticated_page() -> _FakePage:
+    page = _FakePage()
+    page.register_placeholder("Message", _FakeLocator())
+
+    return page
+
+
+def _request(**overrides: object) -> MuseGenerationRequest:
+    defaults: dict[str, object] = {
+        "scene_number": 1,
+        "prompt": "A lighthouse at dusk, waves crashing below.",
+        "prompt_version": "v1",
+        "profile_id": "muse.primary",
+        "idempotency_key": "req-1",
+    }
+    defaults.update(overrides)
+    return MuseGenerationRequest(**defaults)  # type: ignore[arg-type]
+
+
+def _attempt(request: MuseGenerationRequest) -> MuseGenerationAttempt:
+    return MuseGenerationAttempt(request=request, profile_id=request.profile_id)
+
+
+def _adapter(page: _FakePage, *, tmp_path: Path) -> MuseRealUIAdapter:
+    return MuseRealUIAdapter(
+        worker=_FakeWorker(page),  # type: ignore[arg-type]
+        base_url="https://muse.ai",
+        operation_timeout_seconds=5.0,
+        download_root=tmp_path,
+    )
+
+
+# --- supported_operations / ensure_supported ---
+
+
+def test_cancel_or_abandon_is_not_a_declared_supported_operation() -> None:
+    page = _authenticated_page()
+    adapter = _adapter(page, tmp_path=Path("unused"))
+
+    assert MuseUIOperation.CANCEL_OR_ABANDON not in adapter.supported_operations
+
+
+# --- check_profile_health ---
+
+
+def test_check_profile_health_true_when_message_box_present() -> None:
+    page = _authenticated_page()
+    adapter = _adapter(page, tmp_path=Path("unused"))
+
+    assert adapter.check_profile_health("muse.primary") is True
+
+
+def test_check_profile_health_false_without_message_box() -> None:
+    page = _FakePage()
+    adapter = _adapter(page, tmp_path=Path("unused"))
+
+    assert adapter.check_profile_health("muse.primary") is False
+
+
+# --- submit ---
+
+
+def test_submit_happy_path_types_prompt_and_reaches_generating(
+    tmp_path: Path,
+) -> None:
+    page = _authenticated_page()
+    adapter = _adapter(page, tmp_path=tmp_path)
+    request = _request()
+
+    result = adapter.submit(request, _attempt(request))
+
+    assert result.state == MuseGenerationState.GENERATING
+    assert page.keyboard.typed == [request.prompt]
+    assert page.keyboard.pressed == ["Enter"]
+
+
+def test_submit_reports_ui_changed_when_the_page_is_stale_and_closed(
+    tmp_path: Path,
+) -> None:
+    """
+    Real-world finding, 2026-09-29: confirmed live -
+    "muse.submit | scene=8 | failed after 0.1s | TargetClosedError".
+    A cached page can raise on the very first real use (goto()) even
+    though nothing here detected it as closed yet - this used to
+    happen OUTSIDE submit()'s own try/except (navigation ran before
+    the try block even started), so the real exception escaped
+    completely uncaught and left the ledger entry frozen at PLANNED
+    with zero recorded transitions. It must now be reported as a
+    clean, recoverable UI_CHANGED instead.
+    """
+
+    page = _FakePage(raise_on_goto=True)
+    adapter = _adapter(page, tmp_path=tmp_path)
+    request = _request()
+
+    result = adapter.submit(request, _attempt(request))
+
+    assert result.state == MuseGenerationState.UI_CHANGED
+
+
+def test_submit_reports_auth_required_when_not_authenticated(tmp_path: Path) -> None:
+    page = _FakePage()  # no message box registered - not authenticated
+    adapter = _adapter(page, tmp_path=tmp_path)
+    request = _request()
+
+    result = adapter.submit(request, _attempt(request))
+
+    assert result.state == MuseGenerationState.AUTH_REQUIRED
+
+
+def test_submit_reports_submission_uncertain_when_message_box_still_has_text(
+    tmp_path: Path,
+) -> None:
+    page = _FakePage()
+    page.register_placeholder("Message", _FakeLocator(input_value="still here"))
+    adapter = _adapter(page, tmp_path=tmp_path)
+    request = _request()
+
+    result = adapter.submit(request, _attempt(request))
+
+    assert result.state == MuseGenerationState.SUBMISSION_UNCERTAIN
+
+
+def test_submit_attaches_a_reference_image_via_native_file_chooser(
+    tmp_path: Path,
+) -> None:
+    page = _authenticated_page()
+    page.register_css('[data-pel-click="chat_tap_attachment"]', _FakeLocator())
+    adapter = _adapter(page, tmp_path=tmp_path)
+
+    reference_source = tmp_path / "reference.jpg"
+    reference_source.write_bytes(b"fake reference image bytes")
+    request = _request(
+        reference_assets=[
+            MuseReferenceAsset(
+                source_path=str(reference_source),
+                checksum="abc123",
+                role=MuseReferenceRole.CHARACTER,
+            )
+        ]
+    )
+
+    result = adapter.submit(request, _attempt(request))
+
+    assert result.state == MuseGenerationState.GENERATING
+    file_chooser = page._file_chooser_info.value
+    assert file_chooser.set_files_calls == [str(reference_source)]
+
+
+def test_submit_reports_ui_changed_when_attach_button_is_missing(
+    tmp_path: Path,
+) -> None:
+    page = _authenticated_page()  # no attach-button selector registered
+    adapter = _adapter(page, tmp_path=tmp_path)
+
+    reference_source = tmp_path / "reference.jpg"
+    reference_source.write_bytes(b"fake reference image bytes")
+    request = _request(
+        reference_assets=[
+            MuseReferenceAsset(
+                source_path=str(reference_source),
+                checksum="abc123",
+                role=MuseReferenceRole.CHARACTER,
+            )
+        ]
+    )
+
+    result = adapter.submit(request, _attempt(request))
+
+    assert result.state == MuseGenerationState.UI_CHANGED
+    assert page.keyboard.typed == []  # never proceeded to type the prompt
+
+
+# --- observe ---
+
+
+def test_observe_keeps_polling_while_no_video_exists(tmp_path: Path) -> None:
+    page = _authenticated_page()
+    adapter = _adapter(page, tmp_path=tmp_path)
+    request = _request()
+    submitted = adapter.submit(request, _attempt(request))
+
+    result = adapter.observe(submitted)
+
+    assert result.state == MuseGenerationState.GENERATING
+
+
+def test_observe_reports_ready_to_download_once_a_video_appears(
+    tmp_path: Path,
+) -> None:
+    page = _authenticated_page()
+    adapter = _adapter(page, tmp_path=tmp_path)
+    request = _request()
+    submitted = adapter.submit(request, _attempt(request))
+
+    page.register_css("video:not([aria-hidden='true'])", _FakeLocator())
+
+    result = adapter.observe(submitted)
+
+    assert result.state == MuseGenerationState.READY_TO_DOWNLOAD
+
+
+def test_observe_does_not_report_ready_from_a_previous_scenes_leftover_video(
+    tmp_path: Path,
+) -> None:
+    """
+    Real-world finding, 2026-09-29: Muse reuses one continuous chat
+    thread across every scene - a previous scene's own completed reply
+    video is still on the page, unchanged, while a new scene's prompt
+    is generating. The very first poll after submitting must not treat
+    that leftover video as this attempt's own reply just because it is
+    still "the last video on the page" - only a video count that has
+    grown PAST what existed right before this prompt was sent counts.
+    """
+
+    page = _authenticated_page()
+    adapter = _adapter(page, tmp_path=tmp_path)
+
+    # A previous scene's reply video is already on the page BEFORE
+    # this attempt is even submitted.
+    leftover_video = _FakeLocator(count=1)
+    page.register_css("video:not([aria-hidden='true'])", leftover_video)
+
+    request = _request()
+    submitted = adapter.submit(request, _attempt(request))
+
+    result = adapter.observe(submitted)
+
+    assert result.state == MuseGenerationState.GENERATING  # not fooled
+
+
+def test_observe_reports_ready_once_a_new_video_appears_past_the_baseline(
+    tmp_path: Path,
+) -> None:
+    page = _authenticated_page()
+    adapter = _adapter(page, tmp_path=tmp_path)
+
+    leftover_video = _FakeLocator(count=1)
+    page.register_css("video:not([aria-hidden='true'])", leftover_video)
+
+    request = _request()
+    submitted = adapter.submit(request, _attempt(request))
+
+    # This attempt's own reply has now actually rendered - the video
+    # count on the page has grown past the pre-submit baseline of 1.
+    leftover_video._count = 2  # noqa: SLF001
+
+    result = adapter.observe(submitted)
+
+    assert result.state == MuseGenerationState.READY_TO_DOWNLOAD
+
+
+def test_observe_does_not_report_ready_for_a_video_still_missing_its_src(
+    tmp_path: Path,
+) -> None:
+    """
+    Real-world finding, 2026-09-30: under a slow network connection, a
+    genuinely NEW <video> element can exist in the DOM (so a naive
+    count-based check alone would already see "a new video") while its
+    own content is still loading - visually "a picture box without a
+    download button", confirmed directly in a real Generate All run.
+    A video whose own src is still empty/unset must never be treated
+    as this attempt's own ready reply, even though the count already
+    grew past the submit-time baseline.
+    """
+
+    page = _authenticated_page()
+    adapter = _adapter(page, tmp_path=tmp_path)
+
+    videos = _FakeLocator(srcs=["blob:https://muse.ai/older-video"])
+    page.register_css("video:not([aria-hidden='true'])", videos)
+
+    request = _request()
+    submitted = adapter.submit(request, _attempt(request))
+
+    # A new <video> element has appeared (count grew from 1 to 2), but
+    # its own src is still unset - Muse has not finished loading it.
+    videos._srcs = ["blob:https://muse.ai/older-video", None]  # noqa: SLF001
+
+    result = adapter.observe(submitted)
+
+    assert result.state == MuseGenerationState.GENERATING  # not fooled
+
+
+def test_observe_reports_ready_once_the_placeholder_video_gets_a_real_src(
+    tmp_path: Path,
+) -> None:
+    page = _authenticated_page()
+    adapter = _adapter(page, tmp_path=tmp_path)
+
+    videos = _FakeLocator(srcs=["blob:https://muse.ai/older-video"])
+    page.register_css("video:not([aria-hidden='true'])", videos)
+
+    request = _request()
+    submitted = adapter.submit(request, _attempt(request))
+
+    # Still loading on the first poll...
+    videos._srcs = ["blob:https://muse.ai/older-video", None]  # noqa: SLF001
+    still_generating = adapter.observe(submitted)
+    assert still_generating.state == MuseGenerationState.GENERATING
+
+    # ...and has now genuinely finished loading.
+    videos._srcs = [  # noqa: SLF001
+        "blob:https://muse.ai/older-video",
+        "blob:https://muse.ai/this-attempts-own-video",
+    ]
+    result = adapter.observe(still_generating)
+
+    assert result.state == MuseGenerationState.READY_TO_DOWNLOAD
+
+
+def test_download_reuses_the_resolved_video_even_if_more_videos_appear_later(
+    tmp_path: Path,
+) -> None:
+    """
+    Once observe() has confidently identified this attempt's own video
+    (by its stable src), download() must re-locate that EXACT same
+    element - never re-guess "the last one" - even if yet another,
+    even newer video has appeared on the page in between (e.g. a
+    different scene's own reply arriving out of order, or the DOM
+    reordering after a real Chromium crash+restore).
+    """
+
+    page = _authenticated_page()
+    adapter = _adapter(page, tmp_path=tmp_path)
+
+    videos = _FakeLocator(srcs=["blob:https://muse.ai/older-video"])
+    page.register_css("video:not([aria-hidden='true'])", videos)
+    page.register_role("button", "Download", _FakeLocator())
+
+    request = _request()
+    submitted = adapter.submit(request, _attempt(request))
+
+    videos._srcs = [  # noqa: SLF001
+        "blob:https://muse.ai/older-video",
+        "blob:https://muse.ai/this-attempts-own-video",
+    ]
+    ready = adapter.observe(submitted)
+    assert ready.state == MuseGenerationState.READY_TO_DOWNLOAD
+
+    # A THIRD, even newer video shows up before download() runs - must
+    # not confuse which one this attempt's own reply actually is.
+    videos._srcs = [  # noqa: SLF001
+        "blob:https://muse.ai/older-video",
+        "blob:https://muse.ai/this-attempts-own-video",
+        "blob:https://muse.ai/a-later-unrelated-scenes-video",
+    ]
+
+    downloaded = adapter.download(ready)
+
+    assert downloaded.state == MuseGenerationState.DOWNLOADED
+
+
+def test_download_refuses_a_previous_scenes_leftover_video(tmp_path: Path) -> None:
+    page = _authenticated_page()
+    adapter = _adapter(page, tmp_path=tmp_path)
+
+    leftover_video = _FakeLocator(count=1)
+    page.register_css("video:not([aria-hidden='true'])", leftover_video)
+
+    request = _request()
+    submitted = adapter.submit(request, _attempt(request))
+
+    result = adapter.download(submitted)
+
+    assert result.state == MuseGenerationState.UI_CHANGED
+    assert leftover_video.hover_calls == 0  # never touched the wrong video
+
+
+def test_observe_reports_ui_changed_when_the_page_goes_stale_mid_poll(
+    tmp_path: Path,
+) -> None:
+    """Same TargetClosedError-class real-world finding as submit()'s
+    own test - a cached page can go stale BETWEEN a successful submit
+    and a later poll, not only during submit() itself."""
+
+    page = _authenticated_page()
+    adapter = _adapter(page, tmp_path=tmp_path)
+    request = _request()
+    submitted = adapter.submit(request, _attempt(request))
+
+    page._raise_on_locator = True  # noqa: SLF001
+
+    result = adapter.observe(submitted)
+
+    assert result.state == MuseGenerationState.UI_CHANGED
+
+
+def test_observe_ignores_a_decorative_avatar_video_elsewhere_on_the_page(
+    tmp_path: Path,
+) -> None:
+    """
+    Real-world finding, 2026-09-29: Muse's own UI renders a decorative,
+    aria-hidden <video> (avatar chrome, unrelated to any chat message)
+    that an unscoped "video" locator's .last could pick over the real
+    reply video once it happened to sit later in DOM order - reported
+    READY_TO_DOWNLOAD, but download()'s later .hover() on it timed out
+    since it is never actually visible. Registering only the
+    old, unscoped "video" key (simulating just the decorative element
+    being present) must NOT be treated as a real video.
+    """
+
+    page = _authenticated_page()
+    adapter = _adapter(page, tmp_path=tmp_path)
+    request = _request()
+    submitted = adapter.submit(request, _attempt(request))
+
+    page.register_css("video", _FakeLocator())  # the decorative element only
+
+    result = adapter.observe(submitted)
+
+    assert result.state == MuseGenerationState.GENERATING  # still not found
+
+
+def test_observe_ignores_an_attempt_not_awaiting_generation(tmp_path: Path) -> None:
+    page = _authenticated_page()
+    adapter = _adapter(page, tmp_path=tmp_path)
+    # Populate the adapter's page cache first (matching a real caller,
+    # which always submits/checks health before ever observing) so
+    # the "no open page for this profile" branch doesn't fire before
+    # the actual state check this test targets.
+    adapter.check_profile_health("muse.primary")
+    request = _request()
+    attempt = _attempt(request)  # still PLANNED
+
+    result = adapter.observe(attempt)
+
+    assert result is attempt
+
+
+# --- download ---
+
+
+def test_download_happy_path_saves_the_file(tmp_path: Path) -> None:
+    page = _authenticated_page()
+    adapter = _adapter(page, tmp_path=tmp_path)
+    request = _request()
+    submitted = adapter.submit(request, _attempt(request))
+
+    page.register_css("video:not([aria-hidden='true'])", _FakeLocator())
+    page.register_role("button", "Download", _FakeLocator())
+
+    ready = adapter.observe(submitted)
+    downloaded = adapter.download(ready)
+
+    assert downloaded.state == MuseGenerationState.DOWNLOADED
+    assert downloaded.downloaded_file is not None
+    assert Path(downloaded.downloaded_file).exists()
+
+
+def test_download_reports_ui_changed_when_no_video_is_present(tmp_path: Path) -> None:
+    page = _authenticated_page()
+    adapter = _adapter(page, tmp_path=tmp_path)
+    request = _request()
+    submitted = adapter.submit(request, _attempt(request))
+
+    result = adapter.download(submitted)
+
+    assert result.state == MuseGenerationState.UI_CHANGED
+
+
+def test_download_reports_ui_changed_when_the_page_goes_stale(tmp_path: Path) -> None:
+    """Same TargetClosedError-class real-world finding as submit()'s/
+    observe()'s own tests - a cached page can go stale before
+    download() ever gets to use it."""
+
+    page = _authenticated_page()
+    adapter = _adapter(page, tmp_path=tmp_path)
+    request = _request()
+    submitted = adapter.submit(request, _attempt(request))
+
+    page.register_css("video:not([aria-hidden='true'])", _FakeLocator())
+    ready = adapter.observe(submitted)
+
+    page._raise_on_locator = True  # noqa: SLF001
+
+    result = adapter.download(ready)
+
+    assert result.state == MuseGenerationState.UI_CHANGED
+
+
+def test_download_reports_ui_changed_when_hover_reveals_no_download_control(
+    tmp_path: Path,
+) -> None:
+    page = _authenticated_page()
+    adapter = _adapter(page, tmp_path=tmp_path)
+    request = _request()
+    submitted = adapter.submit(request, _attempt(request))
+
+    page.register_css("video:not([aria-hidden='true'])", _FakeLocator())
+    # No "Download" button registered.
+
+    result = adapter.download(submitted)
+
+    assert result.state == MuseGenerationState.UI_CHANGED
+
+
+# --- cancel_or_abandon ---
+
+
+def test_cancel_or_abandon_is_never_supported(tmp_path: Path) -> None:
+    """
+    Matches Google Flow's real adapter exactly: cancel_or_abandon is
+    deliberately excluded from supported_operations, since
+    MuseGenerationOrchestratorService.abandon_attempt() marks a stuck
+    attempt FAILED directly on the ledger and never calls through to
+    the provider at all.
+    """
+
+    page = _authenticated_page()
+    adapter = _adapter(page, tmp_path=tmp_path)
+    request = _request()
+    submitted = adapter.submit(request, _attempt(request))
+
+    with pytest.raises(MuseUIOperationNotSupportedError):
+        adapter.cancel_or_abandon(submitted)

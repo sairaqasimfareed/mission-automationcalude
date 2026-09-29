@@ -1278,6 +1278,7 @@ def _continuity_bible(
                 shot_action="Surveys the field.",
                 outgoing_state=VisualState(),
                 entity_names=[identity_name],
+                on_screen_entity_names=[identity_name],
             )
             for scene_number in scenes
         ],
@@ -1359,6 +1360,127 @@ def test_generate_one_extracts_and_stores_a_reference_for_a_first_appearance(
 
     assert stored_asset is not None
     assert Path(stored_asset.file_path).exists()
+
+
+def test_generate_one_does_not_extract_a_reference_for_an_off_screen_identity(
+    tmp_path: Path,
+) -> None:
+    """
+    Real-world finding, 2026-09-29: a first-person narrator "present"
+    (mentioned) in a purely-narrated graphic scene, but never actually
+    shown on screen, must not have a "reference" frame extracted from
+    that scene's own clip - it would show whatever the graphic/b-roll
+    actually was, poisoning every later scene's reference. Gated on
+    on_screen_entity_names, not entity_names (see ClipContinuityEntry's
+    own docstring).
+    """
+
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            GoogleFlowGenerationState.GENERATING,
+            GoogleFlowGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    provider.downloaded_file = str(_real_video_file(tmp_path))
+
+    frame_extraction, commands = _frame_extraction_service()
+    asset_storage = AssetStorageService(
+        storage_root=tmp_path / "storage", asset_index=AssetIndex()
+    )
+
+    service = _service(
+        provider,
+        frame_extraction_service=frame_extraction,
+        asset_storage_service=asset_storage,
+    )
+    job = _job(_scene(1))
+    job.visual_continuity_bible = VisualContinuityBible(
+        script_lock_hash="a" * 64,
+        identities=[
+            CanonicalEntityIdentity(
+                entity_type=CanonicalEntityType.PERSON,
+                name="The narrator",
+                canonical_description="An unnamed first-person narrator.",
+            )
+        ],
+        clip_entries=[
+            ClipContinuityEntry(
+                scene_number=1,
+                incoming_state=VisualState(),
+                shot_action="A graphic animation of a ladder numbered 0 to 10.",
+                outgoing_state=VisualState(),
+                entity_names=["The narrator"],
+                on_screen_entity_names=[],
+            )
+        ],
+    )
+
+    service.generate_one(job, 1)
+
+    assert commands == []
+    assert job.visual_continuity_bible.identities[0].reference_asset_ids == []
+
+
+def test_generate_one_does_not_attach_a_reference_for_an_off_screen_identity(
+    tmp_path: Path,
+) -> None:
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            GoogleFlowGenerationState.GENERATING,
+            GoogleFlowGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    provider.downloaded_file = str(_real_video_file(tmp_path))
+
+    asset_storage = AssetStorageService(
+        storage_root=tmp_path / "storage", asset_index=AssetIndex()
+    )
+    service = _service(provider, asset_storage_service=asset_storage)
+
+    scene = _scene(2)
+    job = _job(scene)
+
+    job_scoped_storage = AssetStorageService(
+        storage_root=tmp_path / "storage",
+        asset_index=job.extracted_frame_asset_index,
+    )
+    source = tmp_path / "pre_existing_reference.jpg"
+    source.write_bytes(b"real reference frame bytes")
+    result = job_scoped_storage.store_extracted_frame(
+        source_path=source,
+        project_id="test-project",
+        scene_number=1,
+        title="Pre-existing reference",
+    )
+    assert result.success and result.asset is not None
+    asset_id = str(result.asset.id)
+
+    job.visual_continuity_bible = VisualContinuityBible(
+        script_lock_hash="a" * 64,
+        identities=[
+            CanonicalEntityIdentity(
+                entity_type=CanonicalEntityType.PERSON,
+                name="The narrator",
+                canonical_description="An unnamed first-person narrator.",
+                reference_asset_ids=[asset_id],
+            )
+        ],
+        clip_entries=[
+            ClipContinuityEntry(
+                scene_number=2,
+                incoming_state=VisualState(),
+                shot_action="A graphic animation of a ladder numbered 0 to 10.",
+                outgoing_state=VisualState(),
+                entity_names=["The narrator"],
+                on_screen_entity_names=[],
+            )
+        ],
+    )
+
+    service.generate_one(job, 2)
+
+    assert len(provider.submitted_requests) == 1
+    assert provider.submitted_requests[0].reference_assets == []
 
 
 def test_generate_one_resolves_a_reference_recorded_before_a_restart(
@@ -1892,6 +2014,7 @@ def test_generate_one_resolves_a_location_identity_as_location_role(
                 shot_action="Establishing shot of the farmhouse.",
                 outgoing_state=VisualState(),
                 entity_names=["The old farmhouse"],
+                on_screen_entity_names=["The old farmhouse"],
             )
         ],
     )
@@ -2040,3 +2163,51 @@ def test_generate_one_stops_a_split_scene_when_a_sub_clip_never_reaches_ready(
     assert entry.status != SceneCompletenessStatus.READY
     assert len(refusing_provider.submitted_requests) == 1
     assert job.video_clips == []
+
+
+def test_generate_one_routes_to_the_scenes_preferred_profile_id(
+    tmp_path: Path,
+) -> None:
+    """
+    Real-world finding, 2026-09-29 (per-scene account picker): a scene
+    with Scene.preferred_profile_id set must route to that EXACT
+    account, not whichever one auto-priority would otherwise pick -
+    the whole point of an explicit per-scene override.
+    """
+
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            GoogleFlowGenerationState.GENERATING,
+            GoogleFlowGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    provider.downloaded_file = str(_real_video_file(tmp_path))
+
+    def _profile(profile_id: str, *, priority: int) -> ProviderProfile:
+        return ProviderProfile(
+            profile_id=profile_id,
+            display_name=profile_id,
+            provider_name="Google Flow",
+            category=ProviderCategory.EXTERNAL_UI_VIDEO,
+            enabled=True,
+            priority=priority,
+            health_status=ProviderHealthStatus.HEALTHY,
+            browser_profile_reference=f"flow_profiles/{profile_id}",
+        )
+
+    registry = ProviderRegistry(
+        profiles=[
+            _profile("flow.primary", priority=1),
+            _profile("flow.backup", priority=2),
+        ]
+    )
+    service = _service(provider, registry=registry)
+
+    scene = _scene(1)
+    scene.preferred_profile_id = "flow.backup"
+    job = _job(scene)
+
+    entry = service.generate_one(job, 1)
+
+    assert entry.status == SceneCompletenessStatus.READY
+    assert provider.submitted_requests[0].profile_id == "flow.backup"

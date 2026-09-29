@@ -89,3 +89,51 @@ class TestPlan:
         plan = SceneClipSplitPlanningService.plan(narration_seconds)
 
         assert all(duration in (4.0, 6.0, 8.0) for duration in plan)
+
+
+class TestPlanForAnotherProvider:
+    """
+    Muse (2026-09-29) has no discrete "verified duration" grid the way
+    Flow does - it always generates a fixed ~10s clip, and its trim
+    mechanism (prompt instruction + FFmpeg safety-net) can already hit
+    any sub-10s target exactly. A caller passing max_single_clip_seconds
+    and an identity clamp gets Muse's own splitting behavior without a
+    second, near-duplicate planning service.
+    """
+
+    @staticmethod
+    def _identity(seconds: float) -> float:
+        return seconds
+
+    def test_narration_under_the_provider_max_does_not_need_a_split(self) -> None:
+        assert (
+            SceneClipSplitPlanningService.needs_split(9.0, max_single_clip_seconds=10.0)
+            is False
+        )
+
+    def test_narration_past_the_provider_max_needs_a_split(self) -> None:
+        assert (
+            SceneClipSplitPlanningService.needs_split(
+                13.0, max_single_clip_seconds=10.0
+            )
+            is True
+        )
+
+    def test_thirteen_seconds_plans_two_exact_sub_clips_with_no_rounding(self) -> None:
+        # ceil(13 / 10) = 2 sub-clips; 13 / 2 = 6.5 each, unrounded -
+        # this is exactly scene 10's real case that prompted this fix.
+        plan = SceneClipSplitPlanningService.plan(
+            13.0, max_single_clip_seconds=10.0, clamp=self._identity
+        )
+
+        assert plan == [6.5, 6.5]
+        assert sum(plan) == 13.0  # exact, no overshoot needed
+
+    def test_a_narration_under_the_provider_max_plans_a_single_unrounded_clip(
+        self,
+    ) -> None:
+        plan = SceneClipSplitPlanningService.plan(
+            7.0, max_single_clip_seconds=10.0, clamp=self._identity
+        )
+
+        assert plan == [7.0]

@@ -94,6 +94,23 @@ class ClipContinuityEntry(MissionBaseModel):
     outgoing_state: VisualState
     entity_names: list[str] = Field(default_factory=list)
 
+    # Real-world finding, 2026-09-29: a purely-narrated scene (e.g. a
+    # data-graphic shot with a first-person narrator's voice-over)
+    # always listed that narrator in entity_names, since she is
+    # "present" in the narrative sense every single scene - but a
+    # reference-image-attachment consumer that treats entity_names as
+    # "show this identity's photo" hijacked scenes that never actually
+    # show her on camera (Muse's own model reasonably prioritized the
+    # attached photo over the described graphic, since that's what
+    # attaching a reference signals). entity_names stays broad
+    # (used for embedding an identity's own text description into a
+    # scene's prompt, which is correct for every scene she narrates,
+    # on-screen or not); this narrower field is the one reference-
+    # photo attachment must gate on instead - always a subset of
+    # entity_names, populated by the same VisualContinuityService LLM
+    # call, no separate pass or manual marking needed.
+    on_screen_entity_names: list[str] = Field(default_factory=list)
+
     @field_validator("shot_action")
     @classmethod
     def clean_shot_action(cls, value: str) -> str:
