@@ -233,9 +233,18 @@ class ProjectWorkspaceView(QWidget):
 
         self._workspaces: list[tuple[str, str, str, QWidget]] = [
             ("Content", "research", "content_studio", self.content_studio),
+            # Real-world finding, 2026-09-30: a scene's real, measured
+            # narration duration - set only by real voice generation,
+            # never by the pre-generation estimate - is what both
+            # correct clip duration sizing and multi-clip scene
+            # splitting (SceneClipSplitPlanningService) actually need.
+            # Audio now comes before Clips so the natural left-to-right
+            # workflow order matches this real data dependency, rather
+            # than inviting an operator to generate clips first and
+            # silently fall back to the estimate the whole time.
+            ("Audio", "audio", "production_audio", self.production_audio),
             ("Clips", "clapper", "clip_workspace", self.clip_workspace),
             ("Prompts", "tag", "compiled_prompts", self.compiled_prompts),
-            ("Audio", "audio", "production_audio", self.production_audio),
             ("Timeline", "timeline", "editing_timeline", self.editing_timeline),
             ("Render", "play", "render_workspace", self.render_workspace),
             ("Quality", "shield", "quality_center", self.quality_center),

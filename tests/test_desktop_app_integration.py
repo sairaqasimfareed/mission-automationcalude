@@ -207,6 +207,28 @@ def test_main_window_constructs_and_navigates(
     assert window._stack.currentWidget() is window._dashboard_view
 
 
+def test_audio_tab_comes_before_clips_in_workspace_navigation(
+    qapp: QApplication,
+    no_blocking_dialogs: None,
+) -> None:
+    """
+    Real-world finding, 2026-09-30: a scene's real, measured narration
+    duration - set only by real voice generation, never by the pre-
+    generation estimate - is what both correct clip duration sizing
+    and multi-clip scene splitting actually need. Generating clips
+    before running voice silently falls back to the estimate every
+    time (a real user hit this directly). Audio now comes before Clips
+    in the workspace sidebar so the natural left-to-right order
+    matches this real data dependency.
+    """
+
+    window = MainWindow(job_store=InMemoryJobStore())
+
+    tab_labels = [label for label, _, _, _ in window._detail_view._workspaces]
+
+    assert tab_labels.index("Audio") < tab_labels.index("Clips")
+
+
 class _FakeBrowserWorker:
     """Duck-typed stand-in recording whether shutdown() was called -
     a real FlowBrowserWorker's own shutdown() lazily starts a real
