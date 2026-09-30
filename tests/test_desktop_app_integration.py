@@ -25,6 +25,10 @@ from src.models.google_flow_generation import (  # noqa: E402
     GoogleFlowGenerationRequest,
     GoogleFlowGenerationState,
 )
+from src.models.muse_generation import (  # noqa: E402
+    MuseGenerationRequest,
+    MuseGenerationState,
+)
 from src.models.render_orchestration_result import (  # noqa: E402
     RenderOrchestrationResult,
 )
@@ -36,6 +40,9 @@ from src.models.video_job import VideoJob  # noqa: E402
 from src.services.approval_gate_service import ApprovalGateService  # noqa: E402
 from src.services.google_flow_generation_ledger_service import (  # noqa: E402
     GoogleFlowGenerationLedgerService,
+)
+from src.services.muse_generation_ledger_service import (  # noqa: E402
+    MuseGenerationLedgerService,
 )
 from src.services.render_orchestrator_service import (  # noqa: E402
     RenderOrchestratorService,
@@ -1056,6 +1063,56 @@ def test_reopening_a_project_reconciles_a_flow_attempt_stuck_at_submitting(
     assert reopened is not None
     assert reopened.flow_generation_attempts[0].state == (
         GoogleFlowGenerationState.SUBMISSION_UNCERTAIN
+    )
+
+
+def test_reopening_a_project_reconciles_a_muse_attempt_stuck_at_submitting(
+    qapp: QApplication,
+    no_blocking_dialogs: None,
+) -> None:
+    """
+    Real-world finding, 2026-09-30: MuseGenerationLedgerService.
+    reconcile_on_restart() - built to the exact same contract as
+    Google Flow's own, and just as fully tested in isolation - had the
+    identical gap the test above already fixed for Flow: nothing in
+    the real application ever called it either, since
+    ProjectWorkspaceView.set_job() only ever reconciled Flow's own
+    ledger even after Muse existed as a second provider. A project
+    reopened after an interruption mid-Muse-submission would show that
+    attempt stuck at SUBMITTING forever.
+    """
+
+    window = MainWindow(job_store=InMemoryJobStore())
+
+    _create_project(window)
+    job = window._job_store.list_all()[0]
+
+    request = MuseGenerationRequest(
+        scene_number=1,
+        prompt="A lighthouse at dusk, waves crashing below.",
+        prompt_version="v1",
+        profile_id="muse.primary",
+        idempotency_key="req-1",
+    )
+    attempt = MuseGenerationLedgerService.create_attempt(job, request)
+    MuseGenerationLedgerService.record_transition(
+        job, attempt.id, MuseGenerationState.SUBMITTING
+    )
+
+    window._job_store.add(job)
+    assert (
+        window._job_store.get(job.id).muse_generation_attempts[0].state  # type: ignore[union-attr]
+        == MuseGenerationState.SUBMITTING
+    )
+
+    # Simulates the app having been closed and reopened to this same
+    # project - the real path a restart takes, not a direct service call.
+    window._open_project(job.id)
+
+    reopened = window._job_store.get(job.id)
+    assert reopened is not None
+    assert reopened.muse_generation_attempts[0].state == (
+        MuseGenerationState.SUBMISSION_UNCERTAIN
     )
 
 

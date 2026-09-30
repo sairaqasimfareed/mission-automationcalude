@@ -424,7 +424,24 @@ class MuseRealUIAdapter(MuseUIProvider):
                     )
 
                 video.hover(timeout=self._action_timeout_ms)
-                download_button = page.get_by_role(
+
+                # Real-world finding, 2026-09-30: this used to search
+                # the WHOLE page for a "Download"-named button - if
+                # more than one such button was ever simultaneously
+                # query-able (confirmed real Muse messages are each
+                # wrapped in their own [data-message-item] container,
+                # one per chat turn, each with its own react/reply/
+                # download icon trio), the wrong message's own button
+                # could get clicked instead of this video's own one.
+                # Scoping to the nearest ancestor that shares this
+                # video's own message container guarantees the button
+                # clicked always belongs to the SAME reply as the video
+                # already confirmed to be this attempt's own (see
+                # _latest_assistant_video's own src-based identity).
+                message_container = video.locator(
+                    "xpath=ancestor::*[@data-message-item][1]"
+                )
+                download_button = message_container.get_by_role(
                     "button", name=self._names.download_icon_name
                 ).last
 

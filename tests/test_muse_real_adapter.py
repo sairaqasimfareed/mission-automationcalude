@@ -107,6 +107,14 @@ class _FakeLocator:
         # when resolving) produce the SAME synthetic src, matching a
         # real, unchanged video staying unchanged across polls.
         self._owner_id = id(self)
+        # Set by _FakePage.register_*() at registration time, and
+        # propagated through .nth() below - lets a resolved video
+        # locator's own .locator()/.get_by_role() chain (2026-09-30,
+        # scoping the download button to this video's own message
+        # container) reach back to the same page-level registries
+        # every other lookup already uses, without the fake needing to
+        # actually model real DOM containment.
+        self._page: _FakePage | None = None
 
     @property
     def first(self) -> _FakeLocator:
@@ -124,6 +132,7 @@ class _FakeLocator:
         scoped._srcs = self._srcs
         scoped._nth_index = index
         scoped._owner_id = self._owner_id
+        scoped._page = self._page
 
         return scoped
 
@@ -135,6 +144,29 @@ class _FakeLocator:
             return self._srcs[self._nth_index]
 
         return f"fake-src-{self._owner_id}-{self._nth_index}"
+
+    def locator(self, selector: str) -> _FakeLocator:
+        """
+        2026-09-30: real_adapter.py's download() now scopes the
+        download-button search to the video's own message container
+        via video.locator("xpath=ancestor::..."). This fake does not
+        model real DOM containment - it just returns itself, so a
+        chained .get_by_role() below can reach back to the SAME
+        page-level button registrations every other lookup already
+        uses, matching this fake's own established "verify the
+        adapter's calls, not real Playwright selector semantics"
+        philosophy.
+        """
+
+        return self
+
+    def get_by_role(
+        self, role: str, name: str | None = None, exact: bool = False
+    ) -> _FakeLocator:
+        if self._page is None:
+            return _MISSING
+
+        return self._page.get_by_role(role, name=name, exact=exact)
 
     def click(self, timeout: float | None = None) -> None:
         if self.count() == 0:
@@ -293,12 +325,15 @@ class _FakePage:
     # --- test setup helpers ---
 
     def register_placeholder(self, text: str, locator: _FakeLocator) -> None:
+        locator._page = self  # noqa: SLF001
         self._by_placeholder[text] = locator
 
     def register_role(self, role: str, name: str, locator: _FakeLocator) -> None:
+        locator._page = self  # noqa: SLF001
         self._by_role[(role, name)] = locator
 
     def register_css(self, selector: str, locator: _FakeLocator) -> None:
+        locator._page = self  # noqa: SLF001
         self._by_css[selector] = locator
 
 
