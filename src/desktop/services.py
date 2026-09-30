@@ -4,6 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from src.browser.flow_browser_worker import FlowBrowserWorker
+from src.config.settings import settings as default_settings
 from src.desktop.job_store import JsonJobStore
 from src.desktop.theme_preference_store import ThemePreferenceStore
 from src.entrypoint import build_production_runtime
@@ -205,6 +206,25 @@ def get_production_runtime() -> ProductionApplicationRuntime:
 
     desktop_profiles = _get_provider_profile_repository().load_all()
 
+    # Real financial-risk fix, 2026-09-30: every override below this
+    # point (LLM provider_profiles, voice/music/sound-effect providers,
+    # the real stock-search asset workflow, the ElevenLabs dynamic
+    # voice-search client, and the post-build provider_registry.
+    # register() loop) used to unconditionally prefer whatever real,
+    # keyring-backed adapters were configured through Provider Manager,
+    # with zero regard for Settings.MISSION_AUTOMATION_DRY_RUN -
+    # RuntimeConfigurationLoader's own dry-run-aware fallbacks (used by
+    # every other caller) were built only to be silently thrown away by
+    # this desktop composition root. That gap caused two real incidents
+    # in one session: a real Anthropic call (real credits spent) and a
+    # real ElevenLabs call (HTTP 401) during ordinary pytest runs that
+    # construct a real MainWindow, purely because this machine already
+    # has real provider profiles configured. dry_run is now this
+    # function's own hard override for every real-provider axis;
+    # outside dry-run, every line below is byte-for-byte the prior
+    # behavior.
+    dry_run = default_settings.MISSION_AUTOMATION_DRY_RUN
+
     secret_store = KeyringSecretStore()
 
     secret_manager = ProviderSecretManager(secret_store=secret_store)
@@ -226,13 +246,17 @@ def get_production_runtime() -> ProductionApplicationRuntime:
     # function. None when no real, enabled ElevenLabs voice provider
     # is configured yet - dynamic selection then simply never fires,
     # reproducing prior behavior exactly.
-    voice_search_client = _build_elevenlabs_voice_search_client(
-        voice_profiles=[
-            profile
-            for profile in desktop_profiles
-            if profile.category == ProviderCategory.VOICE
-        ],
-        secret_manager=secret_manager,
+    voice_search_client = (
+        None
+        if dry_run
+        else _build_elevenlabs_voice_search_client(
+            voice_profiles=[
+                profile
+                for profile in desktop_profiles
+                if profile.category == ProviderCategory.VOICE
+            ],
+            secret_manager=secret_manager,
+        )
     )
 
     runtime = build_production_runtime(
@@ -251,7 +275,7 @@ def get_production_runtime() -> ProductionApplicationRuntime:
         # silently skipping them. `or None` on a fresh install with no
         # profiles configured yet falls back to the loader's own
         # dry-run placeholder, exactly like every other override here.
-        provider_profiles=desktop_profiles or None,
+        provider_profiles=(None if dry_run else (desktop_profiles or None)),
         # Real bug found and fixed 2026-09-23: this comment's own
         # stated intent ("falls back to the loader's own dry-run
         # placeholder") only actually happens when dry_run=True -
@@ -273,14 +297,20 @@ def get_production_runtime() -> ProductionApplicationRuntime:
         # generation then correctly degrades to placeholder behavior
         # until the user re-configures the failing profile via
         # Provider Manager, instead of the whole app being unusable.
-        voice_providers=(report.voice_providers or [DryRunVoiceProvider()]),
-        music_providers=report.music_providers or None,
-        sound_effect_providers=report.sound_effect_providers or None,
+        voice_providers=(
+            [DryRunVoiceProvider()]
+            if dry_run
+            else (report.voice_providers or [DryRunVoiceProvider()])
+        ),
+        music_providers=(None if dry_run else (report.music_providers or None)),
+        sound_effect_providers=(
+            None if dry_run else (report.sound_effect_providers or None)
+        ),
         asset_workflow_service=(
             SceneAssetAndTimelineInfrastructureFactory(
                 stock_search_providers=report.stock_video_providers or None,
             ).build_scene_asset_workflow_service()
-            if report.stock_video_providers
+            if (not dry_run and report.stock_video_providers)
             else None
         ),
         # 2026-09-11 real fix, found live while verifying dynamic voice
@@ -353,7 +383,7 @@ def get_production_runtime() -> ProductionApplicationRuntime:
         thumbnail_image_provider=DryRunThumbnailImageProvider(),
     )
 
-    for profile in desktop_profiles:
+    for profile in ([] if dry_run else desktop_profiles):
         runtime.infrastructure.provider_registry.register(profile, replace=True)
 
     return runtime

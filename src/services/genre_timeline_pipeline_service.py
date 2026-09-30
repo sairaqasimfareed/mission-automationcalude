@@ -46,8 +46,6 @@ class GenreTimelinePipelineService:
     -> strict render-readiness validation
     """
 
-    TIME_TOLERANCE_SECONDS = 0.001
-
     def __init__(
         self,
         *,
@@ -229,24 +227,21 @@ class GenreTimelinePipelineService:
 
             raise ValueError("Video clips reference unknown " f"scenes: {extra_text}")
 
-        scene_duration_by_number = {
-            scene.scene_number: float(scene.estimated_duration_seconds)
-            for scene in scenes
-        }
-
-        for clip in clips:
-            expected_duration = scene_duration_by_number[clip.scene_number]
-
-            actual_duration = float(clip.duration_seconds)
-
-            if abs(expected_duration - actual_duration) > self.TIME_TOLERANCE_SECONDS:
-                raise ValueError(
-                    "Scene and clip durations must "
-                    "match before timeline generation. "
-                    f"Scene {clip.scene_number}: "
-                    f"scene={expected_duration}, "
-                    f"clip={actual_duration}."
-                )
+        # A clip's real duration is deliberately allowed to diverge from
+        # the scene's planned estimate - SceneAssetVideoClipBuilderService
+        # (2026-09-14) intentionally sizes every clip from its acquired
+        # asset's own real, probed duration rather than the scene's
+        # word-count-based plan, precisely because stock/manual footage
+        # is never that precise and TimelineBuilderService already sizes
+        # each timeline slot from the clip's real duration, not the
+        # scene's estimate. A hard equality check here (previously
+        # TIME_TOLERANCE_SECONDS = 0.001) predates that fix and blocked
+        # every real-world stock/manual scene whose asset wasn't an
+        # exact-second match - found live via a resumed render.
+        # DurationMismatchPolicyService is this codebase's real,
+        # designed-for-purpose tool for flagging a severe mismatch;
+        # this validator's job is limited to scene/clip identity, not
+        # duration.
 
     @staticmethod
     def _collect_warnings(

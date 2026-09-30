@@ -223,22 +223,25 @@ else:
     raise AssertionError("Every scene must have a video clip.")
 
 
-try:
-    pipeline.build(
-        scenes=scenes,
-        clips=[
-            build_clip(
-                scene_number=1,
-                duration_seconds=7,
-            ),
-            clips[1],
-        ],
-        genre_id="genre.horror",
-    )
-except ValueError:
-    print("Duration mismatch successfully blocked.")
-else:
-    raise AssertionError("Scene and clip durations must match.")
+mismatched_duration_result = pipeline.build(
+    scenes=scenes,
+    clips=[
+        build_clip(
+            scene_number=1,
+            duration_seconds=7,
+        ),
+        clips[1],
+    ],
+    genre_id="genre.horror",
+)
+
+assert mismatched_duration_result.is_successful is True
+assert mismatched_duration_result.is_render_ready is True
+
+print(
+    "Scene/clip duration mismatch no longer blocks the render "
+    "(real-duration-driven clip sizing)."
+)
 
 
 try:
