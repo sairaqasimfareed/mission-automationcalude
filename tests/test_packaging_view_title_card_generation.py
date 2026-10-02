@@ -39,6 +39,9 @@ from src.models.video_timeline import VideoTimeline  # noqa: E402
 from src.services.final_export.final_export_service import (  # noqa: E402
     FinalExportService,
 )
+from src.services.render_result_resolution_service import (  # noqa: E402
+    replace_orchestration_render_result,
+)
 
 
 class _FakeOpeningTitleCardService:
@@ -851,3 +854,89 @@ def test_without_a_clip_or_image_the_apply_button_is_still_hidden(
         if b.text()
         in {"Add my clip to the render", "Generate title card onto the render"}
     ]
+
+
+def test_applying_the_title_card_again_builds_from_the_original_render(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    """
+    Real-world regression, 2026-10-03: after one successful apply the
+    stored render result points at the with-title-card file. Applying
+    again (e.g. after correcting the title) used THAT as its input and
+    stacked a second card on the first. It must always start from the
+    original, card-free render (VideoJob.render_result).
+    """
+
+    fake_service = _FakeOpeningTitleCardService(
+        result=RenderResult(
+            success=True,
+            output_file="outputs/main_render_with_title_card.mp4",
+            render_engine="ffmpeg",
+            duration_seconds=63,
+            status=RenderStatus.COMPLETED,
+        )
+    )
+    view = _view(tmp_path=tmp_path, opening_title_card_service=fake_service)
+    job = _job(title_card_enabled=True)
+    job.title_card_image_path = "C:/Users/Test/background.jpg"
+    job.scenes = [
+        Scene(
+            scene_number=1,
+            title="Scene 1",
+            narration="Narration.",
+            visual_prompt="Visual.",
+            estimated_duration_seconds=8,
+        )
+    ]
+    job.voice_file = "dry-run://voice/test.mp3"
+    job.audio_timeline = AudioTimeline()
+    job.video_clips = [
+        VideoClip(
+            scene_number=1,
+            source_type=SceneSourceType.MANUAL_UPLOAD,
+            duration_seconds=8,
+            local_file="/data/manual_uploads/scene_1.mp4",
+        )
+    ]
+    job.video_timeline = VideoTimeline()
+    # The original, card-free render the job itself carries...
+    original_render = _successful_render_result(job).render_result
+    job.render_result = original_render
+
+    # ...while the store already holds the result of a previous apply.
+    base_orchestration = RenderOrchestrationResult(
+        success=True,
+        status=JobStatus.COMPLETED,
+        current_stage=WorkflowStage.READY_FOR_UPLOAD,
+        job=job,
+        render_result=original_render,
+    )
+    already_applied = replace_orchestration_render_result(
+        base_orchestration,
+        RenderResult(
+            success=True,
+            output_file="outputs/main_render_with_title_card.mp4",
+            render_engine="ffmpeg",
+            duration_seconds=63,
+            status=RenderStatus.COMPLETED,
+        ),
+    )
+    view._job_store.add(job)
+    view._job_store.set_render_result(job.id, already_applied)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    generate_button = _generate_button(view)
+    assert generate_button is not None
+    generate_button.click()
+    _wait_for_generation(view, qapp)
+
+    call = fake_service.calls[0]
+
+    assert call["main_video_file"] == "outputs/main_render.mp4"
+    assert (
+        str(call["output_file"])
+        .replace("\\", "/")
+        .endswith("main_render_with_title_card.mp4")
+    )
+    assert "with_title_card_with_title_card" not in str(call["output_file"])

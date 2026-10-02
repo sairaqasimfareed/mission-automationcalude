@@ -783,6 +783,21 @@ class PackagingView(QWidget):
         if render_result is None or render_result.output_file is None:
             return
 
+        # Real-world finding, 2026-10-03: a successful apply replaces the
+        # stored render result with the with-title-card file, so applying
+        # again (e.g. after fixing the title) used THAT file as its
+        # input and stacked a second card on the first. VideoJob.
+        # render_result is never touched by title card generation, so it
+        # is always the original, card-free render - build from it.
+        if (
+            job.render_result is not None
+            and job.render_result.success
+            and job.render_result.output_file is not None
+        ):
+            render_result = job.render_result
+
+        assert render_result.output_file is not None
+
         seo_package = self._job_store.get_seo_package(self._job_id)
 
         main_video_path = Path(render_result.output_file)
