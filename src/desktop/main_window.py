@@ -269,6 +269,23 @@ class MainWindow(QMainWindow):
                     "long as reasonably possible without hanging the app."
                 )
 
+        # Export-variant/title-card generation (Packaging) run on their
+        # own QThreads too, but - unlike the main render - have real
+        # cancellation support, so closing cancels them first and then
+        # joins, instead of waiting out a long FFmpeg pass.
+        packaging = self._detail_view.packaging
+
+        if packaging.has_pending_generations():
+            packaging.cancel_pending_generations()
+
+            if not packaging.wait_for_pending_generations(
+                timeout_ms=int(_CLOSE_RENDER_WAIT_TIMEOUT_SECONDS * 1000)
+            ):
+                logger.warning(
+                    "Closing with a Packaging generation still stopping after "
+                    f"{_CLOSE_RENDER_WAIT_TIMEOUT_SECONDS:.0f}s."
+                )
+
         self._shutdown_browser_workers()
 
         super().closeEvent(event)

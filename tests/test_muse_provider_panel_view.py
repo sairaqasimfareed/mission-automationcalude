@@ -140,6 +140,7 @@ def test_selecting_an_account_populates_the_detail_panel(qapp: QApplication) -> 
             enabled=True,
             priority=5,
             browser_profile_reference="muse_profiles/muse.primary",
+            metadata={"muse_url": "https://example.invalid/muse"},
         )
     )
 
@@ -150,6 +151,28 @@ def test_selecting_an_account_populates_the_detail_panel(qapp: QApplication) -> 
     assert view._detail_frame.isEnabled() is True  # noqa: SLF001
     assert view._priority_input.value() == 5  # noqa: SLF001
     assert view._enabled_checkbox.isChecked() is True  # noqa: SLF001
+    assert view._muse_url_input.text() == "https://example.invalid/muse"  # noqa: SLF001
+
+
+def test_selecting_an_account_with_no_saved_url_prefills_the_real_default(
+    qapp: QApplication,
+) -> None:
+    """A newly added account with no muse_url saved yet starts from the
+    one real muse.ai base URL, though it stays fully editable."""
+
+    view, _service = _muse_view_with_account(qapp)
+
+    assert view._muse_url_input.text() == "https://muse.ai"  # noqa: SLF001
+
+
+def test_save_persists_the_muse_url(qapp: QApplication) -> None:
+    view, service = _muse_view_with_account(qapp)
+
+    view._muse_url_input.setText("https://example.invalid/muse")  # noqa: SLF001
+    view._handle_save_clicked()  # noqa: SLF001
+
+    saved = service.get_profile("muse.primary")
+    assert saved.metadata.get("muse_url") == "https://example.invalid/muse"
 
 
 def test_save_persists_priority_and_enabled(qapp: QApplication) -> None:
@@ -201,6 +224,18 @@ def test_open_login_launches_real_chrome_for_manual_sign_in(
     assert "Real Chrome opened" in view._status.text()  # noqa: SLF001
 
 
+def test_open_login_without_a_muse_url_shows_a_warning(qapp: QApplication) -> None:
+    view, _service = _muse_view_with_account(qapp)
+
+    view._muse_url_input.clear()  # noqa: SLF001
+
+    with patch("src.desktop.views.muse_provider_panel_view.subprocess.Popen") as popen:
+        view._handle_open_login_clicked()  # noqa: SLF001
+
+    popen.assert_not_called()
+    assert "Set the Muse URL" in view._status.text()  # noqa: SLF001
+
+
 def test_open_login_without_chrome_installed_shows_a_warning(
     qapp: QApplication,
 ) -> None:
@@ -237,6 +272,36 @@ def test_open_login_reports_a_chrome_launch_failure(qapp: QApplication) -> None:
         view._handle_open_login_clicked()  # noqa: SLF001
 
     assert "Could not launch Chrome" in view._status.text()  # noqa: SLF001
+
+
+def test_check_connection_without_a_muse_url_shows_a_warning(
+    qapp: QApplication,
+) -> None:
+    view, _service = _muse_view_with_account(qapp, worker=MagicMock())
+
+    view._muse_url_input.clear()  # noqa: SLF001
+
+    with patch(
+        "src.desktop.views.muse_provider_panel_view.MuseRealUIAdapter"
+    ) as adapter_class:
+        view._handle_check_connection_clicked()  # noqa: SLF001
+
+    adapter_class.assert_not_called()
+    assert "Set the Muse URL" in view._status.text()  # noqa: SLF001
+
+
+def test_check_connection_uses_the_configured_muse_url(qapp: QApplication) -> None:
+    view, _service = _muse_view_with_account(qapp, worker=MagicMock())
+
+    view._muse_url_input.setText("https://example.invalid/muse")  # noqa: SLF001
+
+    with patch(
+        "src.desktop.views.muse_provider_panel_view.MuseRealUIAdapter"
+    ) as adapter_class:
+        adapter_class.return_value.check_profile_health.return_value = True
+        view._handle_check_connection_clicked()  # noqa: SLF001
+
+    assert adapter_class.call_args.kwargs["base_url"] == "https://example.invalid/muse"
 
 
 def test_check_connection_reports_healthy(qapp: QApplication) -> None:

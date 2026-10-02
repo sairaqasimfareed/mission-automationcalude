@@ -15,6 +15,7 @@ from src.models.render_orchestration_result import RenderOrchestrationResult
 from src.models.seo import SEOPackage
 from src.models.thumbnail import ThumbnailArtifact
 from src.models.video_job import VideoJob
+from src.shared.logger import logger
 
 _ModelT = TypeVar("_ModelT", bound=MissionBaseModel)
 
@@ -281,12 +282,30 @@ class JsonJobStore:
         self._write(self._artifact_path(job_id, "render_result"), render_result)
 
     def get_render_result(self, job_id: UUID) -> RenderOrchestrationResult | None:
-        return self._get_cached(
-            self._render_results,
-            job_id,
-            self._artifact_path(job_id, "render_result"),
-            RenderOrchestrationResult,
-        )
+        try:
+            return self._get_cached(
+                self._render_results,
+                job_id,
+                self._artifact_path(job_id, "render_result"),
+                RenderOrchestrationResult,
+            )
+        except JobStoreError as error:
+            # Real-world finding, 2026-10-02: an invalid render_result
+            # file (a title-card save had persisted a result that failed
+            # its own "must match VideoJob render result" check on
+            # reload) made every attempt to open that project crash.
+            # This artifact is a GUI-level cache of a result that
+            # VideoJob.render_result also carries - see
+            # resolve_effective_render_result - so an unreadable copy
+            # degrades to "no cached result" instead of making the whole
+            # project unopenable. Logged, never silent.
+            logger.warning(
+                "Ignoring unreadable render result for job %s: %s",
+                job_id,
+                error,
+            )
+
+            return None
 
     def set_final_export(
         self,

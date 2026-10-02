@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
 from uuid import uuid4
 
 from src.models.enums import Platform
 from src.models.genre_profile import GenreSEOProfile, GenreThumbnailProfile
+from src.models.media_technical_validation import MediaTechnicalValidationResult
 from src.models.music_generation import MusicGenerationResult, MusicGenerationStatus
 from src.models.render_result import RenderResult, RenderStatus
 from src.models.thumbnail import ThumbnailTextPosition
@@ -250,6 +252,86 @@ def test_music_generation_failure_falls_back_to_a_silent_card_not_a_failure() ->
     assert render_call["music_file"] is None
 
 
+def test_dry_run_music_placeholder_falls_back_to_a_silent_card_not_a_crash() -> None:
+    """
+    Real-world finding, 2026-09-30: confirmed live - under dry-run,
+    music generation reports success=True with a fake
+    "dry-run://music/..." placeholder path (not a real file). Feeding
+    that straight to a real ffmpeg -i input crashed with "Protocol not
+    found" - it must be treated the same as a real generation failure
+    (silent card), not passed through.
+    """
+
+    image_service = _FakeImageGenerationService(image_file="/tmp/image.png")
+    music_service = _FakeMusicGenerationService(
+        result=_music_success(output_file="dry-run://music/a_sting.mp3")
+    )
+    render_service = _FakeRenderService(result=_render_success())
+    prepend_service = _FakePrependService(result=_prepend_success())
+
+    service = OpeningTitleCardService(
+        image_generation_service=image_service,  # type: ignore[arg-type]
+        music_generation_service=music_service,  # type: ignore[arg-type]
+        render_service=render_service,  # type: ignore[arg-type]
+        prepend_service=prepend_service,  # type: ignore[arg-type]
+        genre_profile_registry=GenreProfileRegistryService.with_default_profiles(),
+    )
+
+    result = service.build(
+        seo_context=_seo_context(),
+        genre_id="genre.documentary",
+        channel_name="Mission Automation",
+        topic="A short documentary about lighthouse keepers.",
+        main_video_file="/tmp/main.mp4",
+        main_video_duration_seconds=60.0,
+        output_file="/tmp/final.mp4",
+    )
+
+    assert result.success is True
+
+    render_call = render_service.calls[0]
+    assert render_call["music_file"] is None
+
+
+def test_dry_run_image_placeholder_fails_clearly_instead_of_crashing_ffmpeg() -> None:
+    """
+    Same real finding, the image half: unlike music, a title card has
+    no usable fallback for a missing background image, so this fails
+    clearly and early with an actionable message instead of ever
+    reaching ffmpeg with an unusable "dry-run://..." -i input.
+    """
+
+    image_service = _FakeImageGenerationService(
+        image_file="dry-run://thumbnail/1920x1080.png"
+    )
+    music_service = _FakeMusicGenerationService(result=_music_success())
+    render_service = _FakeRenderService(result=_render_success())
+    prepend_service = _FakePrependService(result=_prepend_success())
+
+    service = OpeningTitleCardService(
+        image_generation_service=image_service,  # type: ignore[arg-type]
+        music_generation_service=music_service,  # type: ignore[arg-type]
+        render_service=render_service,  # type: ignore[arg-type]
+        prepend_service=prepend_service,  # type: ignore[arg-type]
+        genre_profile_registry=GenreProfileRegistryService.with_default_profiles(),
+    )
+
+    result = service.build(
+        seo_context=_seo_context(),
+        genre_id="genre.documentary",
+        channel_name="Mission Automation",
+        topic="A short documentary about lighthouse keepers.",
+        main_video_file="/tmp/main.mp4",
+        main_video_duration_seconds=60.0,
+        output_file="/tmp/final.mp4",
+    )
+
+    assert result.success is False
+    assert result.error_message is not None
+    assert "background image" in result.error_message
+    assert render_service.calls == []
+
+
 def test_position_override_is_forwarded_and_default_is_center() -> None:
     image_service = _FakeImageGenerationService(image_file="/tmp/image.png")
     music_service = _FakeMusicGenerationService(result=_music_success())
@@ -326,3 +408,134 @@ def test_render_failure_short_circuits_before_prepend_is_ever_called() -> None:
 
     assert result.success is False
     assert prepend_service.calls == []
+
+
+class _FakeClipProbe:
+    def __init__(
+        self,
+        *,
+        clip_readable: bool = True,
+        clip_has_audio: bool = True,
+        main_size: tuple[int, int] | None = (1280, 720),
+    ) -> None:
+        self._clip_readable = clip_readable
+        self._clip_has_audio = clip_has_audio
+        self._main_size = main_size
+
+    def validate(self, file_path: object) -> MediaTechnicalValidationResult:
+        if Path(str(file_path)).name.startswith("my_title"):
+            if not self._clip_readable:
+                return MediaTechnicalValidationResult(
+                    is_readable=False, issues=["not a video"]
+                )
+
+            return MediaTechnicalValidationResult(
+                is_readable=True,
+                duration_seconds=3.5,
+                has_video_stream=True,
+                has_audio_stream=self._clip_has_audio,
+            )
+
+        width, height = self._main_size or (None, None)
+
+        return MediaTechnicalValidationResult(
+            is_readable=True,
+            duration_seconds=60.0,
+            width=width,
+            height=height,
+            has_video_stream=True,
+            has_audio_stream=True,
+        )
+
+
+def _service_for_uploaded_clip(
+    probe: _FakeClipProbe,
+) -> tuple[
+    OpeningTitleCardService,
+    _FakeImageGenerationService,
+    _FakeMusicGenerationService,
+    _FakeRenderService,
+    _FakePrependService,
+]:
+    image = _FakeImageGenerationService(image_file="/tmp/bg.png")
+    music = _FakeMusicGenerationService(result=_music_success())
+    render = _FakeRenderService(result=_render_success())
+    prepend = _FakePrependService(result=_prepend_success())
+
+    service = OpeningTitleCardService(
+        image_generation_service=image,  # type: ignore[arg-type]
+        music_generation_service=music,  # type: ignore[arg-type]
+        render_service=render,  # type: ignore[arg-type]
+        prepend_service=prepend,  # type: ignore[arg-type]
+        media_validation_service=probe,  # type: ignore[arg-type]
+    )
+
+    return service, image, music, render, prepend
+
+
+def _build_with_clip(service: OpeningTitleCardService) -> RenderResult:
+    return service.build(
+        seo_context=_seo_context(),
+        genre_id="genre.documentary",
+        channel_name="Test Channel",
+        topic="A topic",
+        main_video_file="/renders/main.mp4",
+        main_video_duration_seconds=60.0,
+        output_file="/renders/final.mp4",
+        title_clip_override="/uploads/my_title.mp4",
+    )
+
+
+def test_an_uploaded_clip_skips_every_generation_step() -> None:
+    service, image, music, render, prepend = _service_for_uploaded_clip(
+        _FakeClipProbe()
+    )
+
+    result = _build_with_clip(service)
+
+    assert result.success is True
+    assert image.calls == []
+    assert music.calls == []
+    assert render.calls == []
+    assert len(prepend.calls) == 1
+
+
+def test_an_uploaded_clip_is_joined_fitted_to_the_main_videos_real_frame() -> None:
+    service, _image, _music, _render, prepend = _service_for_uploaded_clip(
+        _FakeClipProbe(main_size=(1280, 720), clip_has_audio=False)
+    )
+
+    _build_with_clip(service)
+
+    call = prepend.calls[0]
+
+    assert call["title_card_file"] == "/uploads/my_title.mp4"
+    assert call["fit_title_card_to"] == (1280, 720)
+    assert call["title_card_duration_seconds"] == 3.5
+    assert call["title_card_has_audio"] is False
+
+
+def test_an_unprobeable_main_video_falls_back_to_the_requested_frame_size() -> None:
+    service, _image, _music, _render, prepend = _service_for_uploaded_clip(
+        _FakeClipProbe(main_size=None)
+    )
+
+    _build_with_clip(service)
+
+    assert prepend.calls[0]["fit_title_card_to"] == (1920, 1080)
+
+
+def test_an_unreadable_uploaded_clip_fails_clearly_without_generating_anything() -> (
+    None
+):
+    service, image, music, render, prepend = _service_for_uploaded_clip(
+        _FakeClipProbe(clip_readable=False)
+    )
+
+    result = _build_with_clip(service)
+
+    assert result.success is False
+    assert result.error_message is not None
+    assert "not a readable video" in result.error_message
+    assert image.calls == [] and music.calls == [] and render.calls == []
+    assert prepend.calls == []

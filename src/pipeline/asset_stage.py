@@ -15,6 +15,9 @@ from src.pipeline.pipeline_stage import (
 )
 from src.pipeline.stage_context import StageContext
 from src.pipeline.stage_result import StageResult
+from src.services.clip_duration_reconciliation_service import (
+    ClipDurationReconciliationService,
+)
 from src.services.scene_asset_video_clip_builder_service import (
     SceneAssetVideoClipBuilderService,
 )
@@ -67,11 +70,18 @@ class AssetPipelineStage(BasePipelineStage):
         *,
         asset_workflow_service: SceneAssetWorkflowService,
         video_clip_builder_service: SceneAssetVideoClipBuilderService | None = None,
+        clip_duration_reconciliation_service: (
+            ClipDurationReconciliationService | None
+        ) = None,
     ) -> None:
         self._asset_workflow_service = asset_workflow_service
 
         self._video_clip_builder_service = (
             video_clip_builder_service or SceneAssetVideoClipBuilderService()
+        )
+
+        self._clip_duration_reconciliation_service = (
+            clip_duration_reconciliation_service or ClipDurationReconciliationService()
         )
 
     @property
@@ -165,12 +175,32 @@ class AssetPipelineStage(BasePipelineStage):
             states=states,
         )
 
+        reconciliation = self._clip_duration_reconciliation_service.reconcile(
+            scenes=scenes,
+            clips=context.job.video_clips,
+        )
+
+        context.job.video_clips = reconciliation.clips
+
+        all_warnings = warnings + reconciliation.warnings
+
+        if reconciliation.errors:
+            return StageResult(
+                stage=self.stage_name,
+                status=(PipelineStageStatus.FAILED),
+                duration_seconds=(time.perf_counter() - started_at),
+                progress_percent=100,
+                warnings=all_warnings,
+                errors=reconciliation.errors,
+                metadata=metadata,
+            )
+
         return StageResult(
             stage=self.stage_name,
             status=(PipelineStageStatus.COMPLETED),
             duration_seconds=(time.perf_counter() - started_at),
             progress_percent=100,
-            warnings=warnings,
+            warnings=all_warnings,
             errors=[],
             metadata=metadata,
         )

@@ -12,6 +12,7 @@ from src.services.ffmpeg_execution_service import (
     FFmpegExecutionService,
     ProgressCallback,
 )
+from src.services.join_segments_filter import JoinSegment, build_join_filter
 from src.services.production_render_service import ProductionRenderService
 from src.services.title_card_render_service import TOTAL_DURATION_SECONDS
 
@@ -50,12 +51,24 @@ class TitleCardPrependService:
         main_video_file: str,
         output_file: str,
         main_video_duration_seconds: float,
+        title_card_duration_seconds: float | None = None,
+        title_card_has_audio: bool = True,
+        fit_title_card_to: tuple[int, int] | None = None,
         progress_callback: ProgressCallback | None = None,
         cancellation_check: CancellationCheck | None = None,
     ) -> RenderResult:
         """
         Produce one final file: title_card_file's own real content,
         immediately followed by main_video_file's own real content.
+
+        By default title_card_file is TitleCardRenderService's own
+        output, built to match the main video exactly, so the segments
+        are concatenated as-is. An operator-uploaded clip can be any
+        size, frame rate or audio layout: passing fit_title_card_to
+        (the main video's width, height) letterboxes it into that frame
+        and normalises both segments' frame rate and audio format
+        first; title_card_duration_seconds/title_card_has_audio then
+        describe that clip (a silent clip gets matching silence).
         """
 
         cleaned_output_file = output_file.strip()
@@ -80,23 +93,53 @@ class TitleCardPrependService:
         for segment_file in segment_files:
             arguments.extend(["-i", Path(segment_file).resolve().as_posix()])
 
-        concat_stream_labels = "".join(
-            f"[{index}:v:0][{index}:a:0]" for index in range(len(segment_files))
+        title_card_seconds = (
+            title_card_duration_seconds
+            if title_card_duration_seconds is not None
+            else TOTAL_DURATION_SECONDS
         )
 
-        filter_complex = (
-            f"{concat_stream_labels}concat="
-            f"n={len(segment_files)}:v=1:a=1[concat_v][concat_a]"
-        )
+        if fit_title_card_to is not None:
+            join_clauses, joined_video, joined_audio = build_join_filter(
+                [
+                    JoinSegment(
+                        video_label="0:v:0",
+                        audio_label="0:a:0" if title_card_has_audio else None,
+                        duration_seconds=title_card_seconds,
+                        fit_to_frame=True,
+                    ),
+                    JoinSegment(
+                        video_label="1:v:0",
+                        audio_label="1:a:0",
+                        duration_seconds=main_video_duration_seconds,
+                    ),
+                ],
+                width=fit_title_card_to[0],
+                height=fit_title_card_to[1],
+            )
+            filter_complex = ";".join(join_clauses)
+            concat_video_label = joined_video
+            concat_audio_label = joined_audio
+        else:
+            concat_stream_labels = "".join(
+                f"[{index}:v:0][{index}:a:0]" for index in range(len(segment_files))
+            )
+
+            filter_complex = (
+                f"{concat_stream_labels}concat="
+                f"n={len(segment_files)}:v=1:a=1[concat_v][concat_a]"
+            )
+            concat_video_label = "concat_v"
+            concat_audio_label = "concat_a"
 
         arguments.extend(
             [
                 "-filter_complex",
                 filter_complex,
                 "-map",
-                "[concat_v]",
+                f"[{concat_video_label}]",
                 "-map",
-                "[concat_a]",
+                f"[{concat_audio_label}]",
                 "-c:v",
                 resolved_config.selected_video_codec,
             ]
@@ -121,13 +164,13 @@ class TitleCardPrependService:
             executable=resolved_config.capabilities.ffmpeg_path or "ffmpeg",
             input_plan=FFmpegInputPlan(),
             filter_complex=filter_complex,
-            video_output_label="concat_v",
-            audio_output_label="concat_a",
+            video_output_label=concat_video_label,
+            audio_output_label=concat_audio_label,
             output_file=staging_output_file,
             arguments=arguments,
         )
 
-        total_duration_seconds = TOTAL_DURATION_SECONDS + main_video_duration_seconds
+        total_duration_seconds = title_card_seconds + main_video_duration_seconds
 
         try:
             execution_result = self._execution_service.execute(

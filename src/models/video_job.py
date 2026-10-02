@@ -374,6 +374,25 @@ class VideoJob(MissionBaseModel):
     # directly instead, skipping image generation entirely.
     title_card_image_path: str | None = None
 
+    # An operator-supplied finished clip used as the title card INSTEAD
+    # of a generated one (2026-10-02). When set it wins over
+    # title_card_image_path and no card is generated at all; the
+    # title text/position overrides do not apply to it.
+    title_card_clip_path: str | None = None
+
+    # Export-variant branding uploads, 2026-10-02. Both are optional and
+    # independent; None (the default) keeps ExportVariantRenderService's
+    # own existing generated output unchanged. They only ever affect
+    # export variants made for a platform - never the main render.
+    #
+    # A real image used as the persistent watermark instead of the
+    # generated text watermark.
+    cta_watermark_image_path: str | None = None
+
+    # A real short clip appended after the content instead of the
+    # generated text end-card (no end-card is built when this is set).
+    cta_end_clip_path: str | None = None
+
     # REQ-12 (top10 countdown rank cards), 2026-09-23: set at project
     # creation time (New Project form, only shown for genre.top10) -
     # same "None means auto-generate, a real path means use this

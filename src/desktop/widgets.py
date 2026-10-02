@@ -93,12 +93,22 @@ def separator() -> QFrame:
     return line
 
 
-def card(title: str, *, icon_name: str | None = None) -> tuple[QFrame, QVBoxLayout]:
+def card(
+    title: str,
+    *,
+    icon_name: str | None = None,
+    header_widget: QWidget | None = None,
+) -> tuple[QFrame, QVBoxLayout]:
     """
     Build one bordered card with a title row.
 
     Returns the frame (add it to a parent layout) and the inner
     layout (add the card's own content to that).
+
+    header_widget, when given, is placed at the far right of the title
+    row (after the stretch) - e.g. a collapse/expand toggle for a card
+    whose full content can get tall (ProjectWorkspaceView's own
+    "Project status" card).
     """
 
     frame = QFrame()
@@ -120,6 +130,9 @@ def card(title: str, *, icon_name: str | None = None) -> tuple[QFrame, QVBoxLayo
 
     header.addWidget(subheading(title))
     header.addStretch()
+
+    if header_widget is not None:
+        header.addWidget(header_widget)
 
     layout.addLayout(header)
 

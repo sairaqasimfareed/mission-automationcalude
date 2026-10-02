@@ -6,6 +6,9 @@ from src.models.render_result import RenderResult, RenderStatus
 from src.models.thumbnail import ThumbnailTextPosition
 from src.services.ffmpeg_execution_service import CancellationCheck, ProgressCallback
 from src.services.genre_profile_registry_service import GenreProfileRegistryService
+from src.services.media_technical_validation_service import (
+    MediaTechnicalValidationService,
+)
 from src.services.seo.seo_context_builder import SEOContext
 from src.services.title_card_image_generation_service import (
     TitleCardImageGenerationService,
@@ -24,6 +27,7 @@ from src.services.title_card_text_resolution_service import (
 from src.services.title_card_text_style_resolution_service import (
     resolve_title_card_text_style,
 )
+from src.shared.dry_run_placeholder import is_dry_run_placeholder
 
 _DEFAULT_POSITION = ThumbnailTextPosition.CENTER
 
@@ -61,11 +65,15 @@ class OpeningTitleCardService:
         render_service: TitleCardRenderService | None = None,
         prepend_service: TitleCardPrependService | None = None,
         genre_profile_registry: GenreProfileRegistryService | None = None,
+        media_validation_service: MediaTechnicalValidationService | None = None,
     ) -> None:
         self._image_generation_service = image_generation_service
         self._music_generation_service = music_generation_service
         self._render_service = render_service or TitleCardRenderService()
         self._prepend_service = prepend_service or TitleCardPrependService()
+        self._media_validation_service = (
+            media_validation_service or MediaTechnicalValidationService()
+        )
 
         self._genre_profile_registry = (
             genre_profile_registry
@@ -86,6 +94,7 @@ class OpeningTitleCardService:
         selected_seo_title: str | None = None,
         position_override: ThumbnailTextPosition | None = None,
         image_override: str | None = None,
+        title_clip_override: str | None = None,
         width: int = 1920,
         height: int = 1080,
         frame_rate: float = 30.0,
@@ -96,7 +105,23 @@ class OpeningTitleCardService:
         """
         Build a real title card and prepend it onto main_video_file,
         producing the final video at output_file.
+
+        title_clip_override: an operator-supplied finished clip used
+        INSTEAD of a generated card - no image, music or card render is
+        built at all (title/position/image overrides are irrelevant to
+        it); the clip is just normalised and joined onto the front.
         """
+
+        if title_clip_override:
+            return self._prepend_uploaded_clip(
+                clip_file=title_clip_override,
+                main_video_file=main_video_file,
+                main_video_duration_seconds=main_video_duration_seconds,
+                output_file=output_file,
+                fallback_size=(width, height),
+                progress_callback=progress_callback,
+                cancellation_check=cancellation_check,
+            )
 
         genre_resolution = self._genre_profile_registry.resolve(genre_id)
 
@@ -133,6 +158,30 @@ class OpeningTitleCardService:
             )
         )
 
+        # Real-world finding, 2026-09-30: confirmed live - under
+        # dry-run, an auto-generated image is DryRunThumbnailImage
+        # Provider's own placeholder URI ("dry-run://thumbnail/...").
+        # Feeding that to a REAL ffmpeg pass as an -i input fails with
+        # "Protocol not found" ("dry-run" is not a real ffmpeg
+        # protocol) - there is no usable silent/blank fallback for a
+        # title card's own required background image the way there is
+        # for optional music below, so this fails clearly and early
+        # instead of letting ffmpeg's own cryptic error surface.
+        if is_dry_run_placeholder(image_file):
+            return RenderResult(
+                success=False,
+                output_file=None,
+                render_engine="ffmpeg",
+                duration_seconds=0,
+                status=RenderStatus.FAILED,
+                error_message=(
+                    "No real background image is available (dry-run mode "
+                    "has no real image-generation provider configured) - "
+                    "upload your own background image above before "
+                    "generating a title card."
+                ),
+            )
+
         music_result = self._music_generation_service.generate(
             genre_music_preset_id=music_preset_id,
             topic=topic,
@@ -140,7 +189,18 @@ class OpeningTitleCardService:
             provider_name=music_provider_name,
         )
 
-        music_file = music_result.output_file if music_result.success else None
+        # Same real finding, the music half: a dry-run placeholder
+        # music file is just as unusable as a real ffmpeg audio input,
+        # but unlike the image, a title card has a genuinely usable
+        # fallback - render silent. Degrades gracefully instead of
+        # crashing, rather than failing the whole generation over an
+        # optional piece.
+        music_file = (
+            music_result.output_file
+            if music_result.success
+            and not is_dry_run_placeholder(music_result.output_file)
+            else None
+        )
 
         staging_dir = Path(output_file).resolve().parent
 
@@ -181,6 +241,60 @@ class OpeningTitleCardService:
             main_video_file=main_video_file,
             output_file=output_file,
             main_video_duration_seconds=main_video_duration_seconds,
+            progress_callback=progress_callback,
+            cancellation_check=cancellation_check,
+        )
+
+    def _prepend_uploaded_clip(
+        self,
+        *,
+        clip_file: str,
+        main_video_file: str,
+        main_video_duration_seconds: float,
+        output_file: str,
+        fallback_size: tuple[int, int],
+        progress_callback: ProgressCallback | None,
+        cancellation_check: CancellationCheck | None,
+    ) -> RenderResult:
+        clip_probe = self._media_validation_service.validate(Path(clip_file))
+
+        if (
+            not clip_probe.is_readable
+            or not clip_probe.has_video_stream
+            or not clip_probe.duration_seconds
+        ):
+            return RenderResult(
+                success=False,
+                output_file=None,
+                render_engine="ffmpeg",
+                duration_seconds=0,
+                status=RenderStatus.FAILED,
+                error_message=(
+                    f"The uploaded title clip is not a readable video: "
+                    f"{clip_file}. Upload a different file or remove it to "
+                    "generate a title card instead."
+                ),
+            )
+
+        # Fit the clip to the main video's real frame, not an assumed
+        # 1080p - a render at another resolution would otherwise get a
+        # clip of the wrong size stitched on.
+        main_probe = self._media_validation_service.validate(Path(main_video_file))
+
+        frame_size = (
+            (main_probe.width, main_probe.height)
+            if main_probe.width and main_probe.height
+            else fallback_size
+        )
+
+        return self._prepend_service.prepend(
+            title_card_file=clip_file,
+            main_video_file=main_video_file,
+            output_file=output_file,
+            main_video_duration_seconds=main_video_duration_seconds,
+            title_card_duration_seconds=float(clip_probe.duration_seconds),
+            title_card_has_audio=clip_probe.has_audio_stream,
+            fit_title_card_to=frame_size,
             progress_callback=progress_callback,
             cancellation_check=cancellation_check,
         )

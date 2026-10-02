@@ -15,11 +15,19 @@ from src.desktop.views.packaging_view import PackagingView
 from src.desktop.views.production_audio_view import ProductionAudioView
 from src.desktop.views.quality_center_view import QualityCenterView
 from src.desktop.views.render_workspace_view import RenderWorkspaceView
-from src.desktop.widgets import button, heading, muted, small_muted, status_label
+from src.desktop.widgets import button, card, heading, muted, small_muted, status_label
+from src.models.final_export import FinalExportPackage
 from src.models.production_readiness import ReadinessState
+from src.models.seo import SEOPackage
+from src.models.thumbnail import ThumbnailArtifact
 from src.models.video_job import VideoJob
 from src.services.content_intelligence_pipeline import ContentIntelligencePipeline
 from src.services.content_pipeline import ContentPipeline
+from src.services.content_studio_journey_service import (
+    JOURNEY_STATUS_LABEL,
+    JOURNEY_STATUS_ROLE,
+    JourneyCheckpointStatus,
+)
 from src.services.enriched_scene_prompt_service import EnrichedScenePromptService
 from src.services.fact_check_service import FactCheckService
 from src.services.final_export.final_export_service import FinalExportService
@@ -31,6 +39,9 @@ from src.services.muse_generation_ledger_service import MuseGenerationLedgerServ
 from src.services.opening_title_card_service import OpeningTitleCardService
 from src.services.production_readiness_service import ProductionReadinessService
 from src.services.project_header_service import ProjectHeaderService
+from src.services.project_production_journey_service import (
+    ProjectProductionJourneyService,
+)
 from src.services.project_render_runtime_factory import ProjectRenderRuntimeFactory
 from src.services.registry.provider_registry import ProviderRegistry
 from src.services.reviewer_service import ReviewerService
@@ -89,6 +100,14 @@ _READINESS_HEADER_ROLE = {
     "ready for final export": "warning",
     "completed": "success",
 }
+
+# How many status-card checkpoints share one row before wrapping to
+# the next - purely a layout choice (no flow-layout widget exists in
+# this app today), tuned so the full 16-checkpoint journey (8 content
+# + Scene Planning/Assets/Voice & Audio/Timeline/Render/SEO/Thumbnail/
+# Final Export) reads as a few short rows rather than one very long
+# horizontal strip or a single cramped one.
+_STATUS_CARD_ITEMS_PER_ROW = 5
 
 _LEFT = Qt.AlignmentFlag.AlignLeft
 
@@ -151,6 +170,15 @@ class ProjectWorkspaceView(QWidget):
         self._job_id: UUID | None = None
         self._project_header_service = ProjectHeaderService()
         self._readiness_service = ProductionReadinessService()
+        self._journey_service = ProjectProductionJourneyService()
+        # Real-world finding, 2026-09-30: expanded by default, the
+        # full 16-checkpoint status card ate enough vertical space to
+        # crowd out the actual workspace tab beneath it (confirmed
+        # live). Collapsed by default instead - a pure GUI display
+        # preference, not a fact about the video (AGENTS.md rule 4),
+        # so it's fine to keep as plain view state rather than
+        # persisting it on VideoJob.
+        self._status_card_expanded = False
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(24, 20, 24, 20)
@@ -175,6 +203,20 @@ class ProjectWorkspaceView(QWidget):
         self._header_row_layout.setContentsMargins(0, 0, 0, 0)
         self._header_row_layout.setSpacing(16)
         outer.addWidget(self._header_row_container)
+
+        # Persistent, cross-tab "everything and its status" card
+        # (ProjectProductionJourneyService) - the user's own explicit
+        # ask, 2026-09-30, after the header's "Stage" field turned out
+        # to be misleading for a real project: one place that lists
+        # every real production step (content through packaging) with
+        # its own status, visible on every tab rather than only inside
+        # Content Studio. Rebuilt fresh alongside the header row on
+        # every refresh() - same "never trust a stale verdict"
+        # convention the journey service itself follows.
+        self._status_card_container = QWidget()
+        self._status_card_container_layout = QVBoxLayout(self._status_card_container)
+        self._status_card_container_layout.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(self._status_card_container)
 
         self._missing_label = muted("Project not found.")
         self._missing_label.setVisible(False)
@@ -383,7 +425,21 @@ class ProjectWorkspaceView(QWidget):
     def _refresh_header_row(self, job: VideoJob) -> None:
         self._clear_header_row()
 
-        summary = self._project_header_service.summarize(job)
+        # SEO package / thumbnail / final export live in JobStore, not
+        # on VideoJob itself - fetched once here and reused for both
+        # the header's Stage field and the full status card below, so
+        # a project that has already packaged doesn't show either one
+        # as "Not started".
+        seo_package = self._job_store.get_seo_package(job.id)
+        thumbnail = self._job_store.get_thumbnail(job.id)
+        final_export = self._job_store.get_final_export(job.id)
+
+        summary = self._project_header_service.summarize(
+            job,
+            seo_package=seo_package,
+            thumbnail=thumbnail,
+            final_export=final_export,
+        )
 
         fields = [
             ("Mode", summary.production_mode),
@@ -410,7 +466,85 @@ class ProjectWorkspaceView(QWidget):
         run_resume_button.clicked.connect(self._handle_run_resume)
         self._header_row_layout.addWidget(run_resume_button)
 
+        self._refresh_status_card(
+            job,
+            seo_package=seo_package,
+            thumbnail=thumbnail,
+            final_export=final_export,
+        )
+
         self._refresh_all(job)
+
+    def _refresh_status_card(
+        self,
+        job: VideoJob,
+        *,
+        seo_package: SEOPackage | None,
+        thumbnail: ThumbnailArtifact | None,
+        final_export: FinalExportPackage | None,
+    ) -> None:
+        while self._status_card_container_layout.count():
+            item = self._status_card_container_layout.takeAt(0)
+
+            if item is None:
+                continue
+
+            widget = item.widget()
+
+            if widget is not None:
+                widget.deleteLater()
+
+        checkpoints = self._journey_service.compute(
+            job,
+            seo_package=seo_package,
+            thumbnail=thumbnail,
+            final_export=final_export,
+        )
+
+        approved_count = sum(
+            1
+            for checkpoint in checkpoints
+            if checkpoint.status == JourneyCheckpointStatus.APPROVED
+        )
+
+        toggle_button = button(
+            "Hide details" if self._status_card_expanded else "Show details"
+        )
+        toggle_button.clicked.connect(self._handle_toggle_status_card)
+
+        frame, layout = card(
+            f"Project status ({approved_count}/{len(checkpoints)} approved)",
+            icon_name="dashboard",
+            header_widget=toggle_button,
+        )
+
+        if self._status_card_expanded:
+            for start in range(0, len(checkpoints), _STATUS_CARD_ITEMS_PER_ROW):
+                row_layout = QHBoxLayout()
+                row_layout.setSpacing(10)
+
+                for checkpoint in checkpoints[
+                    start : start + _STATUS_CARD_ITEMS_PER_ROW
+                ]:
+                    role = JOURNEY_STATUS_ROLE[checkpoint.status]
+                    text = (
+                        f"{checkpoint.label}: "
+                        f"{JOURNEY_STATUS_LABEL[checkpoint.status]}"
+                    )
+
+                    if role is None:
+                        row_layout.addWidget(small_muted(text))
+                    else:
+                        row_layout.addWidget(status_label(text, role=role))
+
+                row_layout.addStretch()
+                layout.addLayout(row_layout)
+
+        self._status_card_container_layout.addWidget(frame)
+
+    def _handle_toggle_status_card(self) -> None:
+        self._status_card_expanded = not self._status_card_expanded
+        self.refresh()
 
     def _refresh_all(self, job: VideoJob) -> None:
         """

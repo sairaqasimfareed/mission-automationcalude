@@ -270,6 +270,54 @@ fixed from this point on.
 | MRA-PRE-8: Performance and stability baseline | Done | First real, directly-measured performance/stability baseline for this codebase. New test runs the real ContentIntelligencePipeline chain twice - standard 600s project, then 3600s (6x longer) - recording real wall-clock timing: 6.0s vs 2.4s, no pathological slowdown, `target_duration_seconds` correctly propagates at scale. Genuine, disclosed finding (not a defect): scene count does not scale with duration in dry-run mode - traced to `StoryBlueprintGenerationService`'s fixed, hardcoded dry-run stub response, confirmed by that class's own docstring to be a deliberate stand-in for what the real LLM call would compute - a real boundary of dry-run testing, not silently glossed over. Re-confirmed the known full-suite pytest hang (GUI-8's own finding) is still present via a fresh full `--collect-only` count (2449 items, up from GUI-8's 2,389, zero collection errors) - not re-diagnosed here, remains MRA-PRE-9's own gate | None new | Not applicable - a test/documentation phase, no GUI change | New `test_content_intelligence_pipeline_scales_to_a_long_duration_project`, plus a purely-additive optional `duration_seconds` keyword on `_create_project()`/`_run_content_intelligence_pipeline_to_scene_planning()` (defaults preserve every existing caller's behavior, confirmed via a passing re-run of the existing baseline test). black/ruff clean | `docs/MRA_PRE_8_PERFORMANCE_STABILITY_BASELINE.md` is the deliverable - 2 findings. Live-provider load/latency/rate-limit behavior remains untested (no real API keys), honestly disclosed as out of reach for this phase |
 | MRA-PRE-9: Pre-installer certification | Done | Synthesis phase compiling MRA-PRE-0 through 8's own results into one final, honest go/no-go verdict. 9 real, teeth-verified defects were found and fixed across the audit (genre-drift staleness, Google Flow restart reconciliation, scene-duration/narration mismatch, Windows MAX_PATH stock-acquisition failure, SEO/thumbnail generation unreachable, post-lock genre drift, unreachable UPLOADED stage, Google Flow attempt-state GUI invisibility). 6 real, disclosed items remain unresolved as ordinary follow-on work (the 142-file module-level-assert test pattern, the "long content"/error-state GUI sweep, the Content Studio scroll bug, test-data contamination, the job.scenes dual-writer risk, untested live-provider behavior). **Same-day follow-up**: the 7th item, the full-suite pytest hang (GUI-8's own finding), was root-caused via `py-spy dump` against a live, reproduced stall and fixed - no GUI test anywhere ever closed its `MainWindow`, so top-level widgets accumulated without bound on the shared `QApplication` singleton, and `setStyleSheet()`/`setStyle()`'s own style-repolish pass over all of them is what actually blocked. Fixed with a new `autouse` cleanup fixture in `tests/conftest.py` using `QTest.qWait()`; verified via two full, real, non-artificial runs of the exact original GUI-8 repro (52 passed, 0 failed, 0 errors). **Second same-day follow-up**: the Content Studio scroll-position bug (carried forward from MRA-PRE-0's baseline, four prior fix passes, user-confirmed still broken) was also root-caused and fixed - a fifth pass, via direct instrumented reproduction of a real multi-stage "Run automation" burst against a real `MainWindow`. Real cause: `refresh()`'s card-rebuild transiently collapses the scroll area's own range to 0 (Qt's own behavior, independent of the restore code), and the very next `refresh()` call in the same burst read that transient 0 as ground truth, permanently losing the real position. Fixed by having `refresh()` trust a live scrollbar read only when `scroll_bar.maximum() > 0`, falling back to a new `self._last_known_scroll_value` otherwise | None new | Not applicable - a synthesis/documentation phase | New `_close_leftover_qt_top_level_widgets` autouse fixture in `tests/conftest.py`. Verified via `test_desktop_app_integration.py` alone (15 passed) and the full GUI-8 2-file repro (52 passed). mypy/ruff/black clean. Scroll fix: new `test_refresh_falls_back_to_the_last_known_value_when_the_range_has_collapsed` plus a `_cancel()` idempotency fix (a second, independently-found `RuntimeWarning` leak) regression-tested via `recwarn`; full 134-test file green, teeth-verified, mypy/ruff/black clean | `docs/MRA_PRE_9_PRE_INSTALLER_CERTIFICATION.md` (updated with a same-day fix note) plus `docs/MRA_PRE_9_FOLLOWUP_PYTEST_HANG_FIX.md` are the deliverables - the verdict is now **CERTIFIED for installer packaging** with respect to the pytest-hang gate; one disclosed, lower-probability residual risk (a deeper native-level Qt/PySide interaction, not reproduced in either real verification run) is recorded, not treated as blocking. The scroll-position bug is closed out in `docs/MRA_PRE_0_BASELINE.md` section 7 and `PROJECT_PROGRESS.md`'s matching entry |
 
+## Live-testing fixes, 2026-09-30 to 2026-10-02
+
+Real bugs found by running the desktop app against real projects, all
+fixed with regression tests. Source of truth for each is the code; this
+section records what changed and why so a later session does not undo it.
+
+- **Render result fallback** - `render_result_resolution_service.py`.
+  `JobStore`'s render-result cache is only written by GUI button
+  handlers; Render/Quality/Packaging now fall back to
+  `VideoJob.render_result`.
+- **Render result persistence** - `replace_orchestration_render_result()`
+  updates the nested `render_result` AND the embedded `job` snapshot
+  together. A bare `model_copy(update=...)` skips validation and wrote a
+  file that failed to load on the next launch, making the project
+  unopenable. `JsonJobStore.get_render_result()` now treats an unreadable
+  file as "no cached result" (logged) instead of crashing the project open.
+- **Title card** - uploaded background image is wired through; dry-run
+  placeholder image/music no longer reach FFmpeg; the saved title text and
+  position (`VideoJob.title_card_text`/`title_card_text_position`) are now
+  actually passed to the service (they were ignored before).
+- **Export variants / title card run in the background** with progress
+  (percentage, speed) and a Stop button; closing the app cancels and joins
+  them. Variant end-card timing probes the real file duration.
+- **Subtitles toggle and style picker live on the Render tab only**
+  (`render_workspace_view.py`). Subtitles are burned into the main render
+  and variants are made from that file, so the choice only takes effect at
+  render time. Style options show only while subtitles are enabled and
+  save immediately; the old controls were removed from Packaging.
+- **Clip duration reconciliation** and **Muse URL field** - see their
+  service/view tests.
+
+- **Branding uploads (all optional; empty keeps the generated default).**
+  `VideoJob.title_card_clip_path`, `cta_watermark_image_path`,
+  `cta_end_clip_path`. Title card section: "Upload my own clip..." beside
+  the image button, one source at a time (clip / image / auto), title and
+  position greyed out for a clip, and no image/music/card is generated.
+  Export variants card: watermark image (overlaid on the content, never on
+  the CTA clip) and CTA clip (replaces the generated 5s end-card) with a
+  "Save CTA settings" button. A set-but-missing/unreadable file raises a
+  clear error rather than silently using the default. Segment joining is
+  one shared helper, `src/services/join_segments_filter.py`, used by both
+  `ExportVariantRenderService` and `TitleCardPrependService`. Real-FFmpeg
+  tests cover duration, audio sync, clip pixels and watermark corners.
+
+Deferred by the user (not built): separate "render video without audio" /
+"render with audio" buttons and a chunk-length control on the Render tab
+(see `docs/REMAINING_GAPS.md`).
+
 ## How this document is maintained
 
 Every phase of the production-hardening work (see `docs/ARCHITECTURE.md`

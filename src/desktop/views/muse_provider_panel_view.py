@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QFormLayout,
     QInputDialog,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
@@ -41,12 +42,22 @@ from src.services.provider_profile_management_service import (
 
 # Muse (muse.ai) External UI Automation - same real, screenshot-
 # verified structure as GoogleFlowProviderPanelView, simplified for
-# what Muse's real UI actually has: no per-account project URL (a
-# fixed base_url, unlike Flow's per-project URLs), no settings panel
-# to pick a model family from, and no "Confirm before generating"
-# account-level toggle to expose a separate button for - none of that
-# has been found to exist on the real product (see locators.py's own
-# docstring), so nothing here fabricates a control for it.
+# what Muse's real UI actually has: no settings panel to pick a model
+# family from, and no "Confirm before generating" account-level toggle
+# to expose a separate button for - neither has been found to exist on
+# the real product (see locators.py's own docstring), so nothing here
+# fabricates a control for either.
+#
+# 2026-09-30: an editable "Muse URL" field was added for parity with
+# Google Flow's own per-account URL field, even though muse.ai itself
+# has no per-account/per-project URL the way Flow does - every real
+# Muse account lands at the same https://muse.ai. Every account
+# defaults to that same real URL and most operators will never need to
+# change it; the field stays editable per-account (mirroring Flow's
+# own pattern exactly, including Open Login/Check Connection both
+# requiring it to be set) for the same reasons Flow's is: a staging URL
+# during troubleshooting, or a future muse.ai workspace/subdomain this
+# app hasn't seen yet.
 #
 # Same real-world finding as Google Flow's own panel: Muse's login is
 # Meta Account + email OTP - never automated. "Open Login" launches
@@ -71,6 +82,7 @@ class MuseProviderPanelView(QWidget):
         self._browser_worker = browser_worker
         self._profiles: list[ProviderProfileSummary] = []
         self._selected_profile_id: str | None = None
+        self._muse_urls: dict[str, str] = {}
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(24, 20, 24, 20)
@@ -123,6 +135,10 @@ class MuseProviderPanelView(QWidget):
 
         self._display_name_value = muted("")
         form.addRow("Account", self._display_name_value)
+
+        self._muse_url_input = QLineEdit()
+        self._muse_url_input.setPlaceholderText(_MUSE_BASE_URL)
+        form.addRow("Muse URL", self._muse_url_input)
 
         self._priority_input = QSpinBox()
         self._priority_input.setRange(1, 1000)
@@ -218,6 +234,11 @@ class MuseProviderPanelView(QWidget):
         )
         self._priority_input.setValue(profile.priority)
         self._enabled_checkbox.setChecked(profile.enabled)
+        self._muse_url_input.setText(
+            self._muse_urls.get(profile_id)
+            or profile.metadata.get("muse_url")
+            or _MUSE_BASE_URL
+        )
         self._health_badge.setText(profile.health_status.value)
 
     def _handle_add_clicked(self) -> None:
@@ -267,6 +288,8 @@ class MuseProviderPanelView(QWidget):
 
         profile_id = self._selected_profile_id
         profile = next(p for p in self._profiles if p.profile_id == profile_id)
+        muse_url = self._muse_url_input.text().strip()
+        self._muse_urls[profile_id] = muse_url
 
         try:
             self._service.upsert_profile(
@@ -278,7 +301,10 @@ class MuseProviderPanelView(QWidget):
                     enabled=self._enabled_checkbox.isChecked(),
                     priority=self._priority_input.value(),
                     browser_profile_reference=profile.browser_profile_reference,
-                    metadata=dict(profile.metadata),
+                    metadata={
+                        **profile.metadata,
+                        "muse_url": muse_url,
+                    },
                 )
             )
         except ValueError as error:
@@ -310,6 +336,15 @@ class MuseProviderPanelView(QWidget):
         if self._selected_profile_id is None:
             return
 
+        muse_url = self._muse_url_input.text().strip()
+
+        if not muse_url:
+            self._show_status(
+                "Set the Muse URL above and Save before opening login.",
+                role="warning",
+            )
+            return
+
         profile_id = self._selected_profile_id
         # .resolve() is required here, not cosmetic - same real-world
         # finding as Google Flow's own Open Login: a relative user-
@@ -336,14 +371,14 @@ class MuseProviderPanelView(QWidget):
             )
             return
 
-        command = manual_sign_in_command(chrome_executable, directory, _MUSE_BASE_URL)
+        command = manual_sign_in_command(chrome_executable, directory, muse_url)
         clipboard = QApplication.clipboard()
 
         if clipboard is not None:
             clipboard.setText(command)
 
         try:
-            self._launch_real_chrome(chrome_executable, directory)
+            self._launch_real_chrome(chrome_executable, directory, muse_url)
         except OSError as error:
             self._show_status(
                 f"Could not launch Chrome automatically ({error}) - the "
@@ -378,7 +413,9 @@ class MuseProviderPanelView(QWidget):
             role="success",
         )
 
-    def _launch_real_chrome(self, chrome_executable: str, directory: Path) -> None:
+    def _launch_real_chrome(
+        self, chrome_executable: str, directory: Path, muse_url: str
+    ) -> None:
         """
         Launch the operator's own, already-installed Chrome - never
         Playwright's Chromium - against the given profile directory.
@@ -394,7 +431,7 @@ class MuseProviderPanelView(QWidget):
                 f"--user-data-dir={directory}",
                 "--no-first-run",
                 "--no-default-browser-check",
-                _MUSE_BASE_URL,
+                muse_url,
             ]
         )
 
@@ -402,9 +439,15 @@ class MuseProviderPanelView(QWidget):
         if self._selected_profile_id is None:
             return
 
+        muse_url = self._muse_url_input.text().strip()
+
+        if not muse_url:
+            self._show_status("Set the Muse URL above first.", role="warning")
+            return
+
         adapter = MuseRealUIAdapter(
             worker=self._browser_worker,
-            base_url=_MUSE_BASE_URL,
+            base_url=muse_url,
             headless=False,
         )
 

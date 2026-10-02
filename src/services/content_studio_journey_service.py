@@ -32,6 +32,27 @@ class JourneyCheckpoint:
         self.status = status
 
 
+# Shared GUI rendering vocabulary for a JourneyCheckpointStatus - kept
+# here, next to the enum itself, rather than duplicated per view.
+# ContentStudioView's own "Production journey" card and
+# ProjectWorkspaceView's cross-tab status card both render from these
+# same two maps, so a status always looks and reads identically
+# wherever a checkpoint is shown.
+JOURNEY_STATUS_ROLE: dict[JourneyCheckpointStatus, str | None] = {
+    JourneyCheckpointStatus.NOT_STARTED: None,
+    JourneyCheckpointStatus.WAITING: "warning",
+    JourneyCheckpointStatus.NEEDS_REVISION: "warning",
+    JourneyCheckpointStatus.APPROVED: "success",
+}
+
+JOURNEY_STATUS_LABEL: dict[JourneyCheckpointStatus, str] = {
+    JourneyCheckpointStatus.NOT_STARTED: "Not started",
+    JourneyCheckpointStatus.WAITING: "Waiting",
+    JourneyCheckpointStatus.NEEDS_REVISION: "Needs revision",
+    JourneyCheckpointStatus.APPROVED: "Approved",
+}
+
+
 class ContentStudioJourneyService:
     """
     Computes the Content Studio Redesign's Phase 3 "production

@@ -10,11 +10,16 @@ from PySide6.QtCore import QObject, Qt, QThread, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
+    QButtonGroup,
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QFrame,
+    QHBoxLayout,
+    QLabel,
     QLineEdit,
     QProgressBar,
+    QRadioButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
@@ -36,9 +41,13 @@ from src.models.render_orchestration_result import RenderOrchestrationResult
 from src.models.render_progress import RenderProgress
 from src.models.scene import Scene
 from src.models.video_job import VideoJob
+from src.services.caption_style_options_service import CaptionStyleOptionsService
 from src.services.policy_service import PolicyService
 from src.services.project_render_runtime_factory import ProjectRenderRuntimeFactory
 from src.services.render_orchestrator_service import RenderOrchestratorService
+from src.services.render_result_resolution_service import (
+    resolve_effective_render_orchestration_result,
+)
 from src.services.scene_asset_workflow_service import SceneAssetWorkflowService
 
 _LEFT = Qt.AlignmentFlag.AlignLeft
@@ -151,9 +160,13 @@ class RenderWorkspaceView(QWidget):
         render_runtime_factory: ProjectRenderRuntimeFactory,
         asset_workflow_service: SceneAssetWorkflowService,
         on_change: Callable[[], None],
+        caption_style_options_service: CaptionStyleOptionsService | None = None,
     ) -> None:
         super().__init__()
 
+        self._caption_style_options_service = (
+            caption_style_options_service or CaptionStyleOptionsService()
+        )
         self._job_store = job_store
         self._render_runtime_factory = render_runtime_factory
         self._asset_workflow_service = asset_workflow_service
@@ -224,6 +237,7 @@ class RenderWorkspaceView(QWidget):
             return
 
         self._build_output_resolution_choice(layout, job)
+        self._build_subtitles_choice(layout, job)
 
         waiting_scene_numbers = [
             state.scene_number
@@ -231,7 +245,18 @@ class RenderWorkspaceView(QWidget):
             if state.requires_user_decision
         ]
 
-        render_result = self._job_store.get_render_result(self._job_id)
+        # Real-world finding, 2026-09-30: JobStore's own render-result
+        # cache is only ever populated from this view's/PackagingView's
+        # own GUI button handlers - a real, genuinely completed render
+        # that happened through a standalone script left this None
+        # forever, showing "Not rendered yet" despite a real output
+        # file on disk. Falls back to VideoJob.render_result (set
+        # directly by the render engine itself, whatever drove it) -
+        # see resolve_effective_render_orchestration_result's own
+        # docstring for the full finding.
+        render_result = resolve_effective_render_orchestration_result(
+            job, self._job_store.get_render_result(self._job_id)
+        )
 
         if waiting_scene_numbers:
             layout.addWidget(
@@ -383,6 +408,154 @@ class RenderWorkspaceView(QWidget):
             lambda _index, box=combo: self._handle_output_resolution_changed(box)
         )
         layout.addWidget(combo)
+
+    def _build_subtitles_choice(self, layout: QVBoxLayout, job: VideoJob) -> None:
+        """
+        Real-world finding, 2026-10-02: the subtitle toggle and caption
+        style used to live in Packaging, where they looked like they
+        controlled export variants. Subtitles are burned into the main
+        render, and variants/title cards are made from that finished
+        file, so both choices only ever take effect here, at render
+        time. The style picker is only shown while subtitles are on.
+        """
+
+        checkbox = QCheckBox("Include subtitles in the rendered video")
+        checkbox.setChecked(job.subtitles_enabled)
+        layout.addWidget(checkbox)
+        layout.addWidget(
+            small_muted(
+                "Subtitles are burned into the video when it is rendered. "
+                "Changing this applies to the next render - re-render to "
+                "update a video that is already rendered."
+            )
+        )
+
+        styles_container = QWidget()
+        styles_layout = QVBoxLayout(styles_container)
+        styles_layout.setContentsMargins(0, 0, 0, 0)
+        self._build_caption_style_options(styles_container, styles_layout, job)
+        styles_container.setVisible(job.subtitles_enabled)
+        layout.addWidget(styles_container)
+
+        def on_toggled(checked: bool) -> None:
+            styles_container.setVisible(checked)
+            self._handle_subtitles_toggled(checked)
+
+        checkbox.toggled.connect(on_toggled)
+
+    def _handle_subtitles_toggled(self, checked: bool) -> None:
+        job = self._current_job()
+
+        if job is None or job.subtitles_enabled == checked:
+            return
+
+        job.subtitles_enabled = checked
+        self._on_change()
+
+    def _build_caption_style_options(
+        self, parent: QWidget, layout: QVBoxLayout, job: VideoJob
+    ) -> None:
+        """
+        Which registered subtitle.* preset burns in, on top of the
+        genre's own auto-selection ("None" inherits the genre default).
+        Each preview reuses VideoFilterTranslationService's real FFmpeg
+        style dict via CaptionStyleOptionsService - what is shown is the
+        exact font/colour/border a real render burns in. Saved as soon
+        as an option is picked.
+        """
+
+        options = self._caption_style_options_service.list_options(
+            genre_id=job.genre_id
+        )
+        genre_default = next((o for o in options if o.is_genre_default), None)
+        genre_default_name = (
+            genre_default.display_name if genre_default is not None else "Default"
+        )
+
+        layout.addWidget(small_muted("Subtitle style"))
+        layout.addWidget(
+            small_muted(
+                "The genre picks a style automatically - currently "
+                f'"{genre_default_name}". Choose one to use it instead, '
+                "or Auto to let the genre decide."
+            )
+        )
+
+        group = QButtonGroup(parent)
+        radios: dict[str | None, QRadioButton] = {}
+
+        auto_radio = QRadioButton("Auto (genre-selected)")
+        group.addButton(auto_radio)
+        layout.addWidget(auto_radio)
+        radios[None] = auto_radio
+
+        for option in options:
+            row = QWidget()
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+
+            label_text = option.display_name
+
+            if option.is_genre_default:
+                label_text += " (genre default)"
+
+            radio = QRadioButton(label_text)
+            group.addButton(radio)
+            row_layout.addWidget(radio)
+
+            preview = QLabel("Sample subtitle text")
+            preview.setStyleSheet(self._caption_preview_stylesheet(option.style))
+            row_layout.addWidget(preview, stretch=1)
+
+            layout.addWidget(row)
+            radios[option.preset_id] = radio
+
+        radios.get(job.subtitle_style_override_preset_id, auto_radio).setChecked(True)
+
+        # Connected after the initial selection so building the card
+        # never counts as the operator changing anything.
+        for preset_id, radio in radios.items():
+            radio.toggled.connect(
+                lambda checked, value=preset_id: self._handle_caption_style_selected(
+                    value, checked
+                )
+            )
+
+    @staticmethod
+    def _caption_preview_stylesheet(style: dict[str, str]) -> str:
+        fontcolor = style.get("fontcolor", "white")
+        borderw = style.get("borderw", "1")
+        bordercolor = style.get("bordercolor", "black")
+
+        # FFmpeg's own point sizes render far larger on screen than a
+        # small Qt preview swatch needs - scaled down (never below
+        # 14px) so every option's relative size difference still reads
+        # clearly without one preview overflowing its row.
+        try:
+            scaled_size = max(14, int(int(style.get("fontsize", "24")) * 0.4))
+        except ValueError:
+            scaled_size = 18
+
+        return (
+            f"color: {fontcolor}; background-color: #1a1a1a; "
+            f"font-size: {scaled_size}px; font-weight: bold; "
+            f"border: {borderw}px solid {bordercolor}; "
+            "padding: 6px 10px; border-radius: 4px;"
+        )
+
+    def _handle_caption_style_selected(
+        self, preset_id: str | None, checked: bool
+    ) -> None:
+        job = self._current_job()
+
+        if not checked or job is None:
+            return
+
+        if job.subtitle_style_override_preset_id == preset_id:
+            return
+
+        job.subtitle_style_override_preset_id = preset_id
+        self._on_change()
 
     def _handle_output_resolution_changed(self, combo: QComboBox) -> None:
         job = self._current_job()

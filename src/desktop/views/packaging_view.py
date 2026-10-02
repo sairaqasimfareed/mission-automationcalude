@@ -1,24 +1,23 @@
 from __future__ import annotations
 
+import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
 from uuid import UUID
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import QObject, Qt, QThread, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
-    QButtonGroup,
     QCheckBox,
     QComboBox,
     QFileDialog,
     QFormLayout,
     QFrame,
-    QHBoxLayout,
-    QLabel,
     QLineEdit,
-    QRadioButton,
+    QProgressBar,
     QScrollArea,
     QVBoxLayout,
     QWidget,
@@ -40,6 +39,9 @@ from src.models.content_decision_record import DecisionCategory
 from src.models.enums import Platform, WorkflowStage
 from src.models.export_variant import ExportVariant, ExportVariantCollection
 from src.models.final_export import FinalExportPackage
+from src.models.render_orchestration_result import RenderOrchestrationResult
+from src.models.render_progress import RenderProgress
+from src.models.render_result import RenderResult
 from src.models.seo import SEOPackage, SEOStatus
 from src.models.specification_enums import AspectRatio
 from src.models.thumbnail import (
@@ -49,11 +51,15 @@ from src.models.thumbnail import (
 )
 from src.models.video_job import VideoJob
 from src.services.approval_gate_service import ApprovalGateService
-from src.services.caption_style_options_service import CaptionStyleOptionsService
 from src.services.export_variant_render_service import ExportVariantRenderService
 from src.services.final_export.final_export_service import FinalExportService
 from src.services.opening_title_card_service import OpeningTitleCardService
-from src.services.seo.seo_context_builder import SEOContextBuilder
+from src.services.render_result_resolution_service import (
+    replace_orchestration_render_result,
+    resolve_effective_render_orchestration_result,
+    resolve_effective_render_result,
+)
+from src.services.seo.seo_context_builder import SEOContext, SEOContextBuilder
 from src.services.seo.seo_package_service import SEOPackageService
 from src.services.thumbnail.thumbnail_package_service import ThumbnailPackageService
 from src.services.title_card_text_resolution_service import resolve_title_card_text
@@ -166,6 +172,149 @@ class _PackageProvenance(Protocol):
     source_scene_count: int | None
 
 
+class _ExportVariantWorker(QObject):
+    """
+    Runs one export-variant FFmpeg pass off the Qt main thread.
+
+    Mirrors RenderWorkspaceView's own _RenderWorker exactly, including
+    the real reason for its specific shape: AutoConnection only
+    detects that a Qt signal needs queued, main-thread delivery when
+    the receiving slot is a bound method of a real QObject (it reads
+    the method's __self__ to find the owning thread) - a lambda slot
+    has no such owner, so the handler would silently run directly on
+    this worker's own background thread instead, mutating GUI widgets
+    from off the main thread (undefined behaviour in Qt - the exact
+    cause of a real, intermittent heap-corruption crash, 0xc0000374,
+    documented on _RenderWorker). job_id, render_result, orientation,
+    and platform therefore all travel as plain attributes (read back
+    via self.sender() in each handler, e.g. to retry after a failure),
+    never via a lambda closure, so every connection below can target a
+    real bound method.
+    """
+
+    progress = Signal(object)
+    finished = Signal(object)
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        *,
+        service: ExportVariantRenderService,
+        job: VideoJob,
+        render_result: RenderResult,
+        orientation: AspectRatio,
+        platform: Platform | None,
+    ) -> None:
+        super().__init__()
+
+        self._service = service
+        self._job = job
+        self.job_id = job.id
+        self.render_result = render_result
+        self.orientation = orientation
+        self.platform = platform
+        self._cancel_event = threading.Event()
+
+    def run(self) -> None:
+        try:
+            variant = self._service.build(
+                job=self._job,
+                render_result=self.render_result,
+                orientation=self.orientation,
+                platform=self.platform,
+                progress_callback=self.progress.emit,
+                cancellation_check=self._cancel_event.is_set,
+            )
+        except Exception as error:  # noqa: BLE001 - reported to the UI thread
+            self.failed.emit(str(error))
+
+            return
+
+        self.finished.emit(variant)
+
+    def request_cancel(self) -> None:
+        self._cancel_event.set()
+
+
+class _TitleCardWorker(QObject):
+    """Same real pattern/crash-avoidance reasoning as _ExportVariantWorker above."""
+
+    progress = Signal(object)
+    finished = Signal(object)
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        *,
+        service: OpeningTitleCardService,
+        job_id: UUID,
+        render_orchestration_result: RenderOrchestrationResult,
+        seo_context: SEOContext,
+        genre_id: str,
+        channel_name: str,
+        topic: str,
+        main_video_file: str,
+        main_video_duration_seconds: float,
+        output_file: str,
+        selected_seo_title: str | None,
+        image_override: str | None,
+        title_override: str | None = None,
+        position_override: ThumbnailTextPosition | None = None,
+        title_clip_override: str | None = None,
+    ) -> None:
+        super().__init__()
+
+        self._service = service
+        self._seo_context = seo_context
+        self._genre_id = genre_id
+        self._channel_name = channel_name
+        self._topic = topic
+        self._main_video_file = main_video_file
+        self._main_video_duration_seconds = main_video_duration_seconds
+        self._output_file = output_file
+        self._selected_seo_title = selected_seo_title
+        self._image_override = image_override
+        self._title_override = title_override
+        self._position_override = position_override
+        self._title_clip_override = title_clip_override
+        self.job_id = job_id
+        # Carried as a plain attribute (not re-derived at finish time)
+        # so the finished handler can model_copy() it with the new
+        # render_result exactly as the previous synchronous handler
+        # did - re-resolving it fresh at finish time could race a
+        # concurrent change to job_store's own cache.
+        self.render_orchestration_result = render_orchestration_result
+        self._cancel_event = threading.Event()
+
+    def run(self) -> None:
+        try:
+            result = self._service.build(
+                seo_context=self._seo_context,
+                genre_id=self._genre_id,
+                channel_name=self._channel_name,
+                topic=self._topic,
+                main_video_file=self._main_video_file,
+                main_video_duration_seconds=self._main_video_duration_seconds,
+                output_file=self._output_file,
+                selected_seo_title=self._selected_seo_title,
+                image_override=self._image_override,
+                title_override=self._title_override,
+                position_override=self._position_override,
+                title_clip_override=self._title_clip_override,
+                progress_callback=self.progress.emit,
+                cancellation_check=self._cancel_event.is_set,
+            )
+        except Exception as error:  # noqa: BLE001 - reported to the UI thread
+            self.failed.emit(str(error))
+
+            return
+
+        self.finished.emit(result)
+
+    def request_cancel(self) -> None:
+        self._cancel_event.set()
+
+
 class PackagingView(QWidget):
     """
     Packaging: SEO metadata, thumbnail, and final publish-ready export.
@@ -187,7 +336,6 @@ class PackagingView(QWidget):
         approval_gate_service: ApprovalGateService | None = None,
         export_variant_render_service: ExportVariantRenderService | None = None,
         opening_title_card_service: OpeningTitleCardService | None = None,
-        caption_style_options_service: CaptionStyleOptionsService | None = None,
     ) -> None:
         super().__init__()
 
@@ -197,10 +345,6 @@ class PackagingView(QWidget):
         self._final_export_service = final_export_service
         self._on_change = on_change
         self._approval_gate_service = approval_gate_service or ApprovalGateService()
-        self._caption_style_options_service = (
-            caption_style_options_service or CaptionStyleOptionsService()
-        )
-        self._caption_style_radio_by_preset_id: dict[str | None, QRadioButton] = {}
         self._export_variant_render_service = (
             export_variant_render_service or ExportVariantRenderService()
         )
@@ -213,6 +357,23 @@ class PackagingView(QWidget):
         # rather than crashing.
         self._opening_title_card_service = opening_title_card_service
         self._job_id: UUID | None = None
+
+        # Real-world finding, 2026-10-01: both export-variant and
+        # title-card generation are real, potentially multi-minute
+        # FFmpeg passes over the full video - running them straight on
+        # the GUI thread (this view's own prior pattern, matching every
+        # other synchronous action here) froze the whole app, reported
+        # by Windows as "Not Responding", blocking every other action
+        # for the whole duration. Threading/bookkeeping below mirrors
+        # RenderWorkspaceView's own _render_threads/_rendering_job_ids
+        # pattern exactly (see _ExportVariantWorker's own docstring for
+        # why the bound-method, not-lambda signal wiring matters).
+        self._export_variant_threads: dict[
+            UUID, tuple[QThread, _ExportVariantWorker]
+        ] = {}
+        self._generating_export_variant_job_ids: set[UUID] = set()
+        self._title_card_threads: dict[UUID, tuple[QThread, _TitleCardWorker]] = {}
+        self._generating_title_card_job_ids: set[UUID] = set()
 
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -233,6 +394,24 @@ class PackagingView(QWidget):
         self._job_id = job_id
 
     def refresh(self, job: VideoJob) -> None:
+        if (
+            job.id in self._generating_export_variant_job_ids
+            or job.id in self._generating_title_card_job_ids
+        ):
+            # A generation is in flight for this job - its progress
+            # widgets are being updated live by the signal handlers
+            # below, not through refresh(). refresh() can be triggered
+            # by an unrelated workspace's own on_change (every
+            # workspace shares the same on_change callback), so
+            # rebuilding here would destroy the live widgets mid-
+            # generation even though this workspace isn't the one that
+            # changed - same real guard RenderWorkspaceView's own
+            # refresh() already needed for its main render.
+            return
+
+        self._rebuild_all(job)
+
+    def _rebuild_all(self, job: VideoJob) -> None:
         while self._layout.count():
             item = self._layout.takeAt(0)
 
@@ -247,7 +426,6 @@ class PackagingView(QWidget):
         self._build_seo_card(job)
         self._build_title_card_card(job)
         self._build_thumbnail_card(job)
-        self._build_caption_style_card(job)
         self._build_export_variants_card(job)
         self._build_final_export_card(job)
 
@@ -384,7 +562,7 @@ class PackagingView(QWidget):
         # clears the field; "Upload my own image..." opens a picker
         # and only changes the field if a file is actually chosen
         # (cancelling the dialog leaves whatever was there before).
-        layout.addWidget(subheading("Background image"))
+        layout.addWidget(subheading("Title card source"))
 
         image_path_display = QLineEdit(job.title_card_image_path or "")
         image_path_display.setReadOnly(True)
@@ -392,16 +570,63 @@ class PackagingView(QWidget):
             "Auto-generate a dedicated AI image (default)"
         )
 
-        auto_image_button = button("Auto-generate image")
-        auto_image_button.clicked.connect(image_path_display.clear)
+        clip_path_display = QLineEdit(job.title_card_clip_path or "")
+        clip_path_display.setReadOnly(True)
+        clip_path_display.setPlaceholderText("No clip - a title card is generated")
 
-        upload_image_button = button("Upload my own image...")
-        upload_image_button.clicked.connect(
-            lambda: self._handle_browse_title_card_image(image_path_display)
+        clip_note = small_muted(
+            "Your clip is used as the title card - it is added to the front "
+            "of the render as-is, so the title text and position above are "
+            "not used."
         )
 
-        layout.addLayout(row(auto_image_button, upload_image_button))
+        def apply_source_mode() -> None:
+            # A clip already contains its own text, so the generated
+            # card's title/position fields mean nothing for it.
+            using_clip = bool(clip_path_display.text().strip())
+            title_input.setEnabled(not using_clip)
+            position_select.setEnabled(not using_clip)
+            clip_note.setVisible(using_clip)
+
+        def choose_image() -> None:
+            self._handle_browse_title_card_image(image_path_display)
+
+            # One source at a time: picking an image drops any clip.
+            if image_path_display.text().strip() != (job.title_card_image_path or ""):
+                clip_path_display.clear()
+
+        def choose_clip() -> None:
+            self._handle_browse_cta_file(
+                clip_path_display,
+                "Select a title clip",
+                "Video files (*.mp4 *.mov *.mkv *.webm *.m4v)",
+            )
+
+            if clip_path_display.text().strip() != (job.title_card_clip_path or ""):
+                image_path_display.clear()
+
+        def choose_auto() -> None:
+            image_path_display.clear()
+            clip_path_display.clear()
+
+        auto_image_button = button("Auto-generate image")
+        auto_image_button.clicked.connect(choose_auto)
+
+        upload_image_button = button("Upload my own image...")
+        upload_image_button.clicked.connect(choose_image)
+
+        upload_clip_button = button("Upload my own clip...")
+        upload_clip_button.clicked.connect(choose_clip)
+
+        layout.addLayout(
+            row(auto_image_button, upload_image_button, upload_clip_button)
+        )
         layout.addWidget(image_path_display)
+        layout.addWidget(clip_path_display)
+        layout.addWidget(clip_note)
+
+        clip_path_display.textChanged.connect(lambda _text: apply_source_mode())
+        apply_source_mode()
 
         save_button = button("Save title card settings", icon_name="check")
         save_button.clicked.connect(
@@ -410,6 +635,7 @@ class PackagingView(QWidget):
                 title_input=title_input,
                 position_select=position_select,
                 image_path_display=image_path_display,
+                clip_path_display=clip_path_display,
             )
         )
         layout.addWidget(save_button, alignment=_LEFT)
@@ -424,8 +650,10 @@ class PackagingView(QWidget):
             else:
                 assert self._job_id is not None
 
-                render_orchestration_result = self._job_store.get_render_result(
-                    self._job_id
+                render_orchestration_result = (
+                    resolve_effective_render_orchestration_result(
+                        job, self._job_store.get_render_result(self._job_id)
+                    )
                 )
                 render_result = (
                     render_orchestration_result.render_result
@@ -445,9 +673,35 @@ class PackagingView(QWidget):
                             "Workspace) before a title card can be applied."
                         )
                     )
+                elif not (job.title_card_image_path or job.title_card_clip_path):
+                    # Real-world finding, 2026-09-30: no real AI image-
+                    # generation provider is wired into this app yet for
+                    # ANY image path - "Auto-generate image" (the
+                    # default when no upload is set) always fell
+                    # through to DryRunThumbnailImageProvider, whose
+                    # placeholder "dry-run://..." string FFmpeg cannot
+                    # open ("Protocol not found"), crashing every
+                    # attempt. Hidden here rather than left to crash -
+                    # uploading a real background image (now correctly
+                    # used, see image_override below) is the only
+                    # working path until a real provider exists.
+                    layout.addWidget(
+                        small_muted(
+                            "Auto-generated background images aren't "
+                            "available yet (no AI image provider is "
+                            "configured) - upload your own background "
+                            "image above to enable title card generation."
+                        )
+                    )
+                elif job.id in self._generating_title_card_job_ids:
+                    self._build_title_card_progress_state(layout)
                 else:
                     generate_title_card_button = button(
-                        "Generate title card onto the render",
+                        (
+                            "Add my clip to the render"
+                            if job.title_card_clip_path
+                            else "Generate title card onto the render"
+                        ),
                         variant="primary",
                         icon_name="clapper",
                     )
@@ -457,6 +711,24 @@ class PackagingView(QWidget):
                     layout.addWidget(generate_title_card_button, alignment=_LEFT)
 
         self._layout.addWidget(frame)
+
+    def _build_title_card_progress_state(self, layout: QVBoxLayout) -> None:
+        layout.addWidget(subheading("Generating title card..."))
+
+        self._title_card_progress_bar = QProgressBar()
+        self._title_card_progress_bar.setRange(0, 100)
+        self._title_card_progress_bar.setValue(0)
+        layout.addWidget(self._title_card_progress_bar)
+
+        self._title_card_progress_time_label = small_muted("0.0s")
+        layout.addWidget(self._title_card_progress_time_label)
+
+        self._title_card_progress_speed_label = small_muted("Speed: —")
+        layout.addWidget(self._title_card_progress_speed_label)
+
+        stop_button = button("Stop", variant="danger")
+        stop_button.clicked.connect(self._handle_stop_title_card_generation)
+        layout.addWidget(stop_button, alignment=_LEFT)
 
     def _handle_generate_title_card(self) -> None:
         """
@@ -468,10 +740,13 @@ class PackagingView(QWidget):
         from, so no separate "which file is the real one" concept is
         introduced.
 
-        Synchronous, matching this view's own established pattern for
-        every other real generation action here (SEO/thumbnail/export
-        variant) - none of them use a QThread worker; only the much
-        longer multi-scene main render does (RenderWorkspaceView).
+        Real-world finding, 2026-10-01: this used to run synchronously
+        on the GUI thread - a real, potentially multi-minute FFmpeg
+        pass, reported by Windows as "Not Responding" for its whole
+        duration and blocking every other action in the app. Now runs
+        on a background QThread (see _TitleCardWorker), matching
+        RenderWorkspaceView's own established pattern for its main
+        render.
         """
 
         job = self._current_job()
@@ -480,10 +755,25 @@ class PackagingView(QWidget):
             job is None
             or self._job_id is None
             or self._opening_title_card_service is None
+            # No real AI image-generation provider exists yet - see
+            # this view's own "Apply to your render" gate for the full
+            # real-world finding. Guarded here too (not just at the
+            # button's own visibility) so this handler is never called
+            # in a state that would crash FFmpeg on a fake
+            # "dry-run://..." path.
+            or not (job.title_card_image_path or job.title_card_clip_path)
         ):
             return
 
-        render_orchestration_result = self._job_store.get_render_result(self._job_id)
+        if job.id in self._generating_title_card_job_ids:
+            # Already generating for this job - the UI already
+            # reflects this (button replaced by progress state), this
+            # is just defense in depth.
+            return
+
+        render_orchestration_result = resolve_effective_render_orchestration_result(
+            job, self._job_store.get_render_result(self._job_id)
+        )
 
         if render_orchestration_result is None:
             return
@@ -508,19 +798,6 @@ class PackagingView(QWidget):
                 job,
                 genre_id=_resolved_genre_id(job),
             )
-
-            new_render_result = self._opening_title_card_service.build(
-                seo_context=context,
-                genre_id=_resolved_genre_id(job),
-                channel_name=job.channel_name,
-                topic=job.topic,
-                main_video_file=render_result.output_file,
-                main_video_duration_seconds=float(render_result.duration_seconds),
-                output_file=output_file,
-                selected_seo_title=(
-                    seo_package.selected_title if seo_package is not None else None
-                ),
-            )
         except (RuntimeError, ValueError) as error:
             self._record_error(
                 job,
@@ -530,25 +807,176 @@ class PackagingView(QWidget):
 
             return
 
-        if not new_render_result.success:
-            message = new_render_result.error_message or "Title card generation failed."
+        thread = QThread()
+        worker = _TitleCardWorker(
+            service=self._opening_title_card_service,
+            job_id=job.id,
+            render_orchestration_result=render_orchestration_result,
+            seo_context=context,
+            genre_id=_resolved_genre_id(job),
+            channel_name=job.channel_name,
+            topic=job.topic,
+            main_video_file=render_result.output_file,
+            main_video_duration_seconds=float(render_result.duration_seconds),
+            output_file=output_file,
+            selected_seo_title=(
+                seo_package.selected_title if seo_package is not None else None
+            ),
+            # Real-world finding, 2026-09-30: this call never read
+            # job.title_card_image_path (what "Save title card
+            # settings" actually persists when the operator uploads
+            # their own image) - it always fell through to
+            # OpeningTitleCardService.build()'s own auto-generate
+            # path instead, silently ignoring a real upload.
+            image_override=job.title_card_image_path,
+            # Real-world finding, 2026-10-02: the title text and
+            # position saved under "Save title card settings" were
+            # never passed here either, so the card always showed the
+            # auto-resolved SEO title/topic no matter what the
+            # operator typed. None still means "auto".
+            title_override=job.title_card_text,
+            position_override=job.title_card_text_position,
+            title_clip_override=job.title_card_clip_path,
+        )
+        worker.moveToThread(thread)
 
-            self._record_error(
-                job,
-                message,
-                on_retry=self._handle_generate_title_card,
+        job_id = job.id
+        # QThread is a QObject too, so it can carry the same job_id
+        # attribute the worker does - thread.finished (connected
+        # below) has no signal argument to carry it as a parameter
+        # instead.
+        thread.job_id = job_id  # type: ignore[attr-defined]
+
+        thread.started.connect(worker.run)
+        worker.progress.connect(self._handle_title_card_progress)
+        worker.finished.connect(self._handle_title_card_finished)
+        worker.failed.connect(self._handle_title_card_failed)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        thread.finished.connect(self._handle_title_card_thread_finished)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+
+        self._title_card_threads[job_id] = (thread, worker)
+        self._generating_title_card_job_ids.add(job_id)
+
+        # Show the in-progress state immediately - nothing else
+        # refreshes this workspace until generation finishes (see
+        # refresh()'s own guard above).
+        self._rebuild_all(job)
+
+        thread.start()
+
+    def _handle_title_card_progress(self, progress: RenderProgress) -> None:
+        worker = self.sender()
+        job_id = worker.job_id if isinstance(worker, _TitleCardWorker) else None
+
+        if job_id is None or job_id != self._job_id:
+            return
+
+        self._title_card_progress_bar.setValue(int(progress.progress_percent))
+
+        if progress.total_duration_seconds is not None:
+            self._title_card_progress_time_label.setText(
+                f"{progress.processed_duration_seconds:.1f}s / "
+                f"{progress.total_duration_seconds:.1f}s"
             )
+        else:
+            self._title_card_progress_time_label.setText(
+                f"{progress.processed_duration_seconds:.1f}s"
+            )
+
+        self._title_card_progress_speed_label.setText(
+            f"Speed: {progress.speed:.2f}x"
+            if progress.speed is not None
+            else "Speed: —"
+        )
+
+    def _handle_title_card_finished(self, result: RenderResult) -> None:
+        worker = self.sender()
+
+        if not isinstance(worker, _TitleCardWorker):
+            return
+
+        job_id = worker.job_id
+        self._generating_title_card_job_ids.discard(job_id)
+
+        job = self._job_store.get(job_id)
+
+        if not result.success:
+            message = result.error_message or "Title card generation failed."
+
+            if job is not None and job_id == self._job_id:
+                self._record_error(
+                    job, message, on_retry=self._handle_generate_title_card
+                )
+            elif job is not None:
+                job.errors.append(f"Title card generation failed: {message}")
 
             return
 
         self._job_store.set_render_result(
-            self._job_id,
-            render_orchestration_result.model_copy(
-                update={"render_result": new_render_result}
+            job_id,
+            replace_orchestration_render_result(
+                worker.render_orchestration_result, result
             ),
         )
 
-        self._on_change()
+        if job_id == self._job_id:
+            self._on_change()
+
+    def _handle_title_card_failed(self, message: str) -> None:
+        worker = self.sender()
+
+        if not isinstance(worker, _TitleCardWorker):
+            return
+
+        job_id = worker.job_id
+        self._generating_title_card_job_ids.discard(job_id)
+
+        job = self._job_store.get(job_id)
+
+        if job is None:
+            return
+
+        if job_id == self._job_id:
+            self._record_error(
+                job,
+                f"Title card generation failed: {message}",
+                on_retry=self._handle_generate_title_card,
+            )
+        else:
+            job.errors.append(f"Title card generation failed: {message}")
+
+    def _handle_title_card_thread_finished(self) -> None:
+        """
+        Drop the (thread, worker) bookkeeping entry once the QThread
+        has actually stopped.
+
+        Bound-method connection for the same cross-thread-safety
+        reason as the worker signals above - self.sender() here is
+        the QThread instance itself, which carries job_id as a plain
+        attribute (set above) since this signal has no arguments to
+        carry it as a parameter.
+        """
+
+        thread = self.sender()
+        job_id = getattr(thread, "job_id", None)
+
+        if job_id is not None:
+            self._title_card_threads.pop(job_id, None)
+
+    def _handle_stop_title_card_generation(self) -> None:
+        if self._job_id is None:
+            return
+
+        entry = self._title_card_threads.get(self._job_id)
+
+        if entry is None:
+            return
+
+        _thread, worker = entry
+        worker.request_cancel()
 
     def _handle_browse_title_card_image(self, image_path_display: QLineEdit) -> None:
         file_path, _selected_filter = QFileDialog.getOpenFileName(
@@ -568,6 +996,7 @@ class PackagingView(QWidget):
         title_input: QLineEdit,
         position_select: QComboBox,
         image_path_display: QLineEdit,
+        clip_path_display: QLineEdit,
     ) -> None:
         job = self._current_job()
 
@@ -597,17 +1026,12 @@ class PackagingView(QWidget):
 
         image_path = image_path_display.text().strip()
 
-        job.title_card_image_path = image_path or None
+        clip_path = clip_path_display.text().strip()
 
-        self._on_change()
-
-    def _handle_save_subtitles_enabled(self, checkbox: QCheckBox) -> None:
-        job = self._current_job()
-
-        if job is None:
-            return
-
-        job.subtitles_enabled = checkbox.isChecked()
+        # One source at a time: a clip replaces the generated card, so
+        # a stale image path must not linger beside it.
+        job.title_card_clip_path = clip_path or None
+        job.title_card_image_path = None if clip_path else (image_path or None)
 
         self._on_change()
 
@@ -825,127 +1249,6 @@ class PackagingView(QWidget):
         reject_button.clicked.connect(on_reject)
         layout.addWidget(reject_button, alignment=_LEFT)
 
-    def _build_caption_style_card(self, job: VideoJob) -> None:
-        """
-        Manual override for which registered subtitle.* preset burns
-        into the final video, on top of GenreEditingProfile.
-        subtitle_preset_id's own auto-selection - same "None inherits
-        the genre default" resolution-order pattern as letterbox_
-        enabled/subtitles_enabled above. Each option's preview reuses
-        VideoFilterTranslationService's own real FFmpeg style dict (via
-        CaptionStyleOptionsService), never a second, approximate style
-        catalog - what you see here is the exact font/color/border a
-        real render actually burns in, not a guess.
-        """
-
-        frame, layout = card("Caption style", icon_name="script")
-
-        assert self._job_id is not None
-
-        options = self._caption_style_options_service.list_options(
-            genre_id=job.genre_id
-        )
-
-        genre_default = next(
-            (option for option in options if option.is_genre_default),
-            None,
-        )
-
-        genre_default_name = (
-            genre_default.display_name if genre_default is not None else "Default"
-        )
-
-        layout.addWidget(
-            small_muted(
-                "The genre auto-selects a style for every render - "
-                f'currently "{genre_default_name}". Override it here to '
-                "pin one specific style instead, or choose Auto to go "
-                "back to letting the genre decide. Applies to your NEXT "
-                "render, not retroactively."
-            )
-        )
-
-        button_group = QButtonGroup(frame)
-        self._caption_style_radio_by_preset_id = {}
-
-        auto_radio = QRadioButton("Auto (genre-selected)")
-        button_group.addButton(auto_radio)
-        layout.addWidget(auto_radio)
-        self._caption_style_radio_by_preset_id[None] = auto_radio
-
-        for option in options:
-            option_row = QWidget()
-            option_row_layout = QHBoxLayout(option_row)
-            option_row_layout.setContentsMargins(0, 0, 0, 0)
-
-            label_text = option.display_name
-
-            if option.is_genre_default:
-                label_text += " (genre default)"
-
-            radio = QRadioButton(label_text)
-            button_group.addButton(radio)
-            option_row_layout.addWidget(radio)
-
-            preview = QLabel("Sample caption text")
-            preview.setStyleSheet(self._caption_preview_stylesheet(option.style))
-            option_row_layout.addWidget(preview, stretch=1)
-
-            layout.addWidget(option_row)
-            self._caption_style_radio_by_preset_id[option.preset_id] = radio
-
-        selected_radio = self._caption_style_radio_by_preset_id.get(
-            job.subtitle_style_override_preset_id,
-            auto_radio,
-        )
-        selected_radio.setChecked(True)
-
-        save_button = button("Save caption style", icon_name="check")
-        save_button.clicked.connect(self._handle_save_caption_style)
-        layout.addWidget(save_button, alignment=_LEFT)
-
-        self._layout.addWidget(frame)
-
-    @staticmethod
-    def _caption_preview_stylesheet(style: dict[str, str]) -> str:
-        fontcolor = style.get("fontcolor", "white")
-        borderw = style.get("borderw", "1")
-        bordercolor = style.get("bordercolor", "black")
-
-        # FFmpeg's own point sizes render far larger on screen than a
-        # small Qt preview swatch needs - scaled down (never below
-        # 14px) so every option's relative size difference still reads
-        # clearly without one preview overflowing its row.
-        try:
-            scaled_size = max(14, int(int(style.get("fontsize", "24")) * 0.4))
-        except ValueError:
-            scaled_size = 18
-
-        return (
-            f"color: {fontcolor}; background-color: #1a1a1a; "
-            f"font-size: {scaled_size}px; font-weight: bold; "
-            f"border: {borderw}px solid {bordercolor}; "
-            "padding: 6px 10px; border-radius: 4px;"
-        )
-
-    def _handle_save_caption_style(self) -> None:
-        job = self._current_job()
-
-        if job is None:
-            return
-
-        selected_preset_id = next(
-            (
-                preset_id
-                for preset_id, radio in self._caption_style_radio_by_preset_id.items()
-                if radio.isChecked()
-            ),
-            None,
-        )
-
-        job.subtitle_style_override_preset_id = selected_preset_id
-        self._on_change()
-
     def _build_export_variants_card(self, job: VideoJob) -> None:
         """
         Post-Script-Approval Production Plan, post-render export
@@ -960,24 +1263,9 @@ class PackagingView(QWidget):
 
         assert self._job_id is not None
 
-        subtitles_checkbox = QCheckBox("Include subtitles in the final video")
-        subtitles_checkbox.setChecked(job.subtitles_enabled)
-        layout.addWidget(subtitles_checkbox)
-
-        layout.addWidget(
-            small_muted(
-                "Applies to your NEXT render, not retroactively to an "
-                "already-rendered video above."
-            )
+        render_orchestration_result = resolve_effective_render_orchestration_result(
+            job, self._job_store.get_render_result(self._job_id)
         )
-
-        subtitles_save_button = button("Save subtitle setting", icon_name="check")
-        subtitles_save_button.clicked.connect(
-            lambda: self._handle_save_subtitles_enabled(subtitles_checkbox)
-        )
-        layout.addWidget(subtitles_save_button, alignment=_LEFT)
-
-        render_orchestration_result = self._job_store.get_render_result(self._job_id)
         render_result = (
             render_orchestration_result.render_result
             if render_orchestration_result is not None
@@ -1041,40 +1329,147 @@ class PackagingView(QWidget):
                 )
                 layout.addWidget(reveal_button, alignment=_LEFT)
 
-        orientation_combo = QComboBox()
+        if job.id in self._generating_export_variant_job_ids:
+            self._build_export_variant_progress_state(layout)
+        else:
+            orientation_combo = QComboBox()
 
-        for label, value in _ORIENTATION_LABELS:
-            orientation_combo.addItem(label, userData=value)
+            for label, value in _ORIENTATION_LABELS:
+                orientation_combo.addItem(label, userData=value)
 
-        platform_combo = QComboBox()
+            platform_combo = QComboBox()
 
-        for label, value in _PLATFORM_LABELS:
-            platform_combo.addItem(label, userData=value)
+            for label, value in _PLATFORM_LABELS:
+                platform_combo.addItem(label, userData=value)
 
-        platform_combo.currentIndexChanged.connect(
-            lambda _index, o=orientation_combo, p=platform_combo: (
-                self._handle_export_platform_changed(o, p)
+            platform_combo.currentIndexChanged.connect(
+                lambda _index, o=orientation_combo, p=platform_combo: (
+                    self._handle_export_platform_changed(o, p)
+                )
             )
-        )
 
-        generate_button = button(
-            "Generate variant",
-            variant="primary",
-            icon_name="clapper",
-        )
-        generate_button.clicked.connect(
-            lambda: self._handle_generate_export_variant(
-                orientation_combo, platform_combo
+            generate_button = button(
+                "Generate variant",
+                variant="primary",
+                icon_name="clapper",
             )
-        )
+            generate_button.clicked.connect(
+                lambda: self._handle_generate_export_variant(
+                    orientation_combo, platform_combo
+                )
+            )
 
-        layout.addWidget(small_muted("Orientation"))
-        layout.addWidget(orientation_combo)
-        layout.addWidget(small_muted("Platform"))
-        layout.addWidget(platform_combo)
-        layout.addWidget(generate_button, alignment=_LEFT)
+            layout.addWidget(small_muted("Orientation"))
+            layout.addWidget(orientation_combo)
+            layout.addWidget(small_muted("Platform"))
+            layout.addWidget(platform_combo)
+            self._build_cta_upload_controls(layout, job)
+            layout.addWidget(generate_button, alignment=_LEFT)
 
         self._layout.addWidget(frame)
+
+    def _build_cta_upload_controls(self, layout: QVBoxLayout, job: VideoJob) -> None:
+        """
+        Optional operator-supplied branding for platform variants: an
+        image used as the watermark, and a short clip appended as the
+        end CTA. Leaving either empty keeps the generated default
+        (text watermark / 5s text end-card). Saved explicitly, like the
+        title card settings, and applied when a variant is generated -
+        so a different look per platform is just "swap, save, generate".
+        """
+
+        layout.addWidget(subheading("Watermark and CTA (optional)"))
+        layout.addWidget(
+            small_muted(
+                "Used when a platform is selected. Leave a field empty to "
+                "keep the generated default."
+            )
+        )
+
+        layout.addWidget(small_muted("Watermark image (shown over the video)"))
+        watermark_display = QLineEdit(job.cta_watermark_image_path or "")
+        watermark_display.setReadOnly(True)
+        watermark_display.setPlaceholderText("Default: generated text watermark")
+        upload_watermark_button = button("Upload my own image...")
+        upload_watermark_button.clicked.connect(
+            lambda: self._handle_browse_cta_file(
+                watermark_display,
+                "Select a watermark image",
+                "Image files (*.png *.jpg *.jpeg *.webp)",
+            )
+        )
+        remove_watermark_button = button("Remove")
+        remove_watermark_button.clicked.connect(watermark_display.clear)
+        layout.addLayout(row(upload_watermark_button, remove_watermark_button))
+        layout.addWidget(watermark_display)
+
+        layout.addWidget(small_muted("CTA clip (added at the end)"))
+        clip_display = QLineEdit(job.cta_end_clip_path or "")
+        clip_display.setReadOnly(True)
+        clip_display.setPlaceholderText("Default: generated 5s text end-card")
+        upload_clip_button = button("Upload my own clip...")
+        upload_clip_button.clicked.connect(
+            lambda: self._handle_browse_cta_file(
+                clip_display,
+                "Select a CTA clip",
+                "Video files (*.mp4 *.mov *.mkv *.webm *.m4v)",
+            )
+        )
+        remove_clip_button = button("Remove")
+        remove_clip_button.clicked.connect(clip_display.clear)
+        layout.addLayout(row(upload_clip_button, remove_clip_button))
+        layout.addWidget(clip_display)
+
+        save_button = button("Save CTA settings", icon_name="check")
+        save_button.clicked.connect(
+            lambda: self._handle_save_cta_settings(
+                watermark_display=watermark_display,
+                clip_display=clip_display,
+            )
+        )
+        layout.addWidget(save_button, alignment=_LEFT)
+
+    def _handle_browse_cta_file(
+        self, display: QLineEdit, title: str, file_filter: str
+    ) -> None:
+        file_path, _selected_filter = QFileDialog.getOpenFileName(
+            self, title, "", file_filter
+        )
+
+        # Cancelling the dialog leaves whatever was there before.
+        if file_path:
+            display.setText(file_path)
+
+    def _handle_save_cta_settings(
+        self, *, watermark_display: QLineEdit, clip_display: QLineEdit
+    ) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        job.cta_watermark_image_path = watermark_display.text().strip() or None
+        job.cta_end_clip_path = clip_display.text().strip() or None
+
+        self._on_change()
+
+    def _build_export_variant_progress_state(self, layout: QVBoxLayout) -> None:
+        layout.addWidget(subheading("Generating export variant..."))
+
+        self._export_variant_progress_bar = QProgressBar()
+        self._export_variant_progress_bar.setRange(0, 100)
+        self._export_variant_progress_bar.setValue(0)
+        layout.addWidget(self._export_variant_progress_bar)
+
+        self._export_variant_progress_time_label = small_muted("0.0s")
+        layout.addWidget(self._export_variant_progress_time_label)
+
+        self._export_variant_progress_speed_label = small_muted("Speed: —")
+        layout.addWidget(self._export_variant_progress_speed_label)
+
+        stop_button = button("Stop", variant="danger")
+        stop_button.clicked.connect(self._handle_stop_export_variant_generation)
+        layout.addWidget(stop_button, alignment=_LEFT)
 
     def _build_variant_packaging_buttons(
         self,
@@ -1161,7 +1556,9 @@ class PackagingView(QWidget):
         assert self._job_id is not None
 
         final_export = self._job_store.get_final_export(self._job_id)
-        render_result = self._job_store.get_render_result(self._job_id)
+        render_result = resolve_effective_render_orchestration_result(
+            job, self._job_store.get_render_result(self._job_id)
+        )
         seo_package = self._job_store.get_seo_package(self._job_id)
         thumbnail = self._job_store.get_thumbnail(self._job_id)
 
@@ -1325,11 +1722,8 @@ class PackagingView(QWidget):
         if job is None or self._job_id is None:
             return
 
-        render_orchestration_result = self._job_store.get_render_result(self._job_id)
-        render_result = (
-            render_orchestration_result.render_result
-            if render_orchestration_result is not None
-            else None
+        render_result = resolve_effective_render_result(
+            job, self._job_store.get_render_result(self._job_id)
         )
 
         if render_result is None:
@@ -1342,7 +1736,10 @@ class PackagingView(QWidget):
         # check silently failed after a real .currentData() call,
         # never even reaching this handler's own service call). The
         # combo stores AspectRatio.value strings (see
-        # _ORIENTATION_LABELS); converted back here.
+        # _ORIENTATION_LABELS); converted back here. Read as PLAIN
+        # values, not kept as widget references - once generation
+        # starts, this card rebuilds into the progress state and these
+        # combo widgets get destroyed (see _rebuild_all).
         orientation_value = orientation_combo.currentData()
 
         if not isinstance(orientation_value, str):
@@ -1355,33 +1752,169 @@ class PackagingView(QWidget):
 
         platform = self._read_platform(platform_combo)
 
-        try:
-            variant = self._export_variant_render_service.build(
-                job=job,
-                render_result=render_result,
-                orientation=orientation,
-                platform=platform,
-            )
-        except (RuntimeError, ValueError) as error:
-            self._record_error(
-                job,
-                f"Export variant generation failed: {error}",
-                on_retry=lambda: self._handle_generate_export_variant(
-                    orientation_combo, platform_combo
-                ),
-            )
+        self._execute_export_variant_generation(
+            job,
+            render_result=render_result,
+            orientation=orientation,
+            platform=platform,
+        )
 
+    def _execute_export_variant_generation(
+        self,
+        job: VideoJob,
+        *,
+        render_result: RenderResult,
+        orientation: AspectRatio,
+        platform: Platform | None,
+    ) -> None:
+        """
+        Real-world finding, 2026-10-01: this used to run synchronously
+        on the GUI thread - a real, potentially multi-minute FFmpeg
+        pass over the full video, reported by Windows as "Not
+        Responding" for its whole duration and blocking every other
+        action in the app. Now runs on a background QThread (see
+        _ExportVariantWorker), matching RenderWorkspaceView's own
+        established pattern for its main render.
+        """
+
+        if self._job_id is None or job.id in self._generating_export_variant_job_ids:
+            # Already generating for this job - the UI already
+            # reflects this (controls replaced by progress state), this
+            # is just defense in depth.
             return
 
-        existing = self._job_store.get_export_variants(self._job_id)
+        thread = QThread()
+        worker = _ExportVariantWorker(
+            service=self._export_variant_render_service,
+            job=job,
+            render_result=render_result,
+            orientation=orientation,
+            platform=platform,
+        )
+        worker.moveToThread(thread)
+
+        job_id = job.id
+        thread.job_id = job_id  # type: ignore[attr-defined]
+
+        thread.started.connect(worker.run)
+        worker.progress.connect(self._handle_export_variant_progress)
+        worker.finished.connect(self._handle_export_variant_finished)
+        worker.failed.connect(self._handle_export_variant_failed)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        thread.finished.connect(self._handle_export_variant_thread_finished)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+
+        self._export_variant_threads[job_id] = (thread, worker)
+        self._generating_export_variant_job_ids.add(job_id)
+
+        self._rebuild_all(job)
+
+        thread.start()
+
+    def _handle_export_variant_progress(self, progress: RenderProgress) -> None:
+        worker = self.sender()
+        job_id = worker.job_id if isinstance(worker, _ExportVariantWorker) else None
+
+        if job_id is None or job_id != self._job_id:
+            return
+
+        self._export_variant_progress_bar.setValue(int(progress.progress_percent))
+
+        if progress.total_duration_seconds is not None:
+            self._export_variant_progress_time_label.setText(
+                f"{progress.processed_duration_seconds:.1f}s / "
+                f"{progress.total_duration_seconds:.1f}s"
+            )
+        else:
+            self._export_variant_progress_time_label.setText(
+                f"{progress.processed_duration_seconds:.1f}s"
+            )
+
+        self._export_variant_progress_speed_label.setText(
+            f"Speed: {progress.speed:.2f}x"
+            if progress.speed is not None
+            else "Speed: —"
+        )
+
+    def _handle_export_variant_finished(self, variant: ExportVariant) -> None:
+        worker = self.sender()
+
+        if not isinstance(worker, _ExportVariantWorker):
+            return
+
+        job_id = worker.job_id
+        self._generating_export_variant_job_ids.discard(job_id)
+
+        existing = self._job_store.get_export_variants(job_id)
         variants = list(existing.variants) if existing is not None else []
         variants.append(variant)
 
         self._job_store.set_export_variants(
-            self._job_id, ExportVariantCollection(variants=variants)
+            job_id, ExportVariantCollection(variants=variants)
         )
 
-        self._on_change()
+        if job_id == self._job_id:
+            self._on_change()
+
+    def _handle_export_variant_failed(self, message: str) -> None:
+        worker = self.sender()
+
+        if not isinstance(worker, _ExportVariantWorker):
+            return
+
+        job_id = worker.job_id
+        self._generating_export_variant_job_ids.discard(job_id)
+
+        job = self._job_store.get(job_id)
+
+        if job is None:
+            return
+
+        if job_id == self._job_id:
+            self._record_error(
+                job,
+                f"Export variant generation failed: {message}",
+                on_retry=lambda: self._execute_export_variant_generation(
+                    job,
+                    render_result=worker.render_result,
+                    orientation=worker.orientation,
+                    platform=worker.platform,
+                ),
+            )
+        else:
+            job.errors.append(f"Export variant generation failed: {message}")
+
+    def _handle_export_variant_thread_finished(self) -> None:
+        """
+        Drop the (thread, worker) bookkeeping entry once the QThread
+        has actually stopped.
+
+        Bound-method connection for the same cross-thread-safety
+        reason as the worker signals above - self.sender() here is
+        the QThread instance itself, which carries job_id as a plain
+        attribute (set above) since this signal has no arguments to
+        carry it as a parameter.
+        """
+
+        thread = self.sender()
+        job_id = getattr(thread, "job_id", None)
+
+        if job_id is not None:
+            self._export_variant_threads.pop(job_id, None)
+
+    def _handle_stop_export_variant_generation(self) -> None:
+        if self._job_id is None:
+            return
+
+        entry = self._export_variant_threads.get(self._job_id)
+
+        if entry is None:
+            return
+
+        _thread, worker = entry
+        worker.request_cancel()
 
     def _handle_generate_variant_packaging(
         self,
@@ -1704,7 +2237,9 @@ class PackagingView(QWidget):
 
         assert self._job_id is not None
 
-        render_result = self._job_store.get_render_result(self._job_id)
+        render_result = resolve_effective_render_orchestration_result(
+            job, self._job_store.get_render_result(self._job_id)
+        )
         seo_package = self._job_store.get_seo_package(self._job_id)
         thumbnail = self._job_store.get_thumbnail(self._job_id)
 
@@ -1731,6 +2266,71 @@ class PackagingView(QWidget):
 
         self._job_store.set_final_export(self._job_id, result.package)
         self._on_change()
+
+    def _all_generation_threads(self) -> list[QThread]:
+        return [thread for thread, _worker in self._export_variant_threads.values()] + [
+            thread for thread, _worker in self._title_card_threads.values()
+        ]
+
+    def has_pending_generations(self) -> bool:
+        """
+        Return whether any export-variant or title-card QThread is
+        still genuinely running.
+
+        Checks QThread.isFinished() directly rather than the thread
+        dicts' own membership - an entry is only popped by the
+        queued thread.finished signal, so dict membership alone would
+        report "still pending" after a thread has actually stopped, for
+        as long as nothing has pumped the event loop since (same
+        reasoning as RenderWorkspaceView.has_pending_renders).
+        """
+
+        return any(not thread.isFinished() for thread in self._all_generation_threads())
+
+    def cancel_pending_generations(self) -> None:
+        """
+        Ask every in-flight export-variant/title-card FFmpeg pass to
+        stop. Unlike the main render (RenderOrchestratorService has no
+        cancellation path at all), these two have real cancellation
+        support, so closing the app can stop them promptly instead of
+        waiting out a multi-minute pass.
+        """
+
+        for _thread, worker in list(self._export_variant_threads.values()):
+            worker.request_cancel()
+
+        for _thread, title_card_worker in list(self._title_card_threads.values()):
+            title_card_worker.request_cancel()
+
+    def wait_for_pending_generations(self, *, timeout_ms: int = 60_000) -> bool:
+        """
+        Block until every in-flight generation QThread has actually
+        stopped, or timeout_ms elapses - never abandon a still-running
+        one (destroying a QThread wrapper whose OS thread is still
+        executing is a hard Qt-level crash, not a catchable error - see
+        RenderWorkspaceView.wait_for_pending_renders for the full
+        history).
+
+        Interleaves short thread.wait() calls with processEvents()
+        because the worker thread's own termination depends on a queued
+        thread.quit signal that needs the calling thread's event loop
+        pumped to ever be delivered - a bare wait() would self-deadlock.
+        """
+
+        app = QApplication.instance()
+        deadline = time.monotonic() + (timeout_ms / 1000.0)
+
+        while self.has_pending_generations():
+            if time.monotonic() > deadline:
+                return False
+
+            for thread in self._all_generation_threads():
+                thread.wait(20)
+
+            if app is not None:
+                app.processEvents()
+
+        return True
 
     def _current_job(self) -> VideoJob | None:
         if self._job_id is None:

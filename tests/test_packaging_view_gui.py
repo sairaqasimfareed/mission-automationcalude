@@ -4,11 +4,15 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import threading  # noqa: E402
+import time  # noqa: E402
 from collections.abc import Iterator  # noqa: E402
 from pathlib import Path  # noqa: E402
+from unittest.mock import patch  # noqa: E402
 from uuid import uuid4  # noqa: E402
 
 import pytest  # noqa: E402
+from PySide6.QtCore import QEvent  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
     QComboBox,
@@ -992,6 +996,8 @@ class _FakeExportVariantRenderService:
         render_result: RenderResult,
         orientation: AspectRatio,
         platform: Platform | None = None,
+        progress_callback: object = None,
+        cancellation_check: object = None,
     ) -> ExportVariant:
         self.build_calls.append((orientation, platform))
 
@@ -1035,6 +1041,31 @@ class _FakeThumbnailPackageService:
             artifact=_thumbnail_artifact(),
             validation=ThumbnailValidationResult(is_valid=True),
         )
+
+
+def _wait_for_variant_generation(
+    view: PackagingView, qapp: QApplication, *, timeout_seconds: float = 30.0
+) -> None:
+    """
+    "Generate variant" now runs on a background QThread and returns
+    immediately (real-world finding, 2026-10-01: the previous
+    synchronous version froze the whole app, reported by Windows as
+    "Not Responding", for the length of a real FFmpeg pass) - tests
+    asserting on its outcome must pump the Qt event loop until the
+    worker's queued finished/failed and thread.finished signals have
+    actually been delivered.
+    """
+
+    deadline = time.monotonic() + timeout_seconds
+
+    while view._export_variant_threads or view._generating_export_variant_job_ids:
+        if time.monotonic() > deadline:
+            raise TimeoutError("Export variant generation never completed.")
+
+        qapp.processEvents()
+        time.sleep(0.01)
+
+    assert view.wait_for_pending_generations(timeout_ms=10_000)
 
 
 def _orientation_and_platform_combos(
@@ -1124,6 +1155,7 @@ def test_generate_export_variant_stores_the_result(
         if button.text() == "Generate variant"
     )
     generate_button.click()
+    _wait_for_variant_generation(view, qapp)
 
     assert fake_service.build_calls == [(AspectRatio.LANDSCAPE, None)]
 
@@ -1174,6 +1206,7 @@ def test_generate_export_variant_appends_to_existing_variants(
         if button.text() == "Generate variant"
     )
     generate_button.click()
+    _wait_for_variant_generation(view, qapp)
 
     stored = view._job_store.get_export_variants(job.id)
     assert stored is not None
@@ -1291,6 +1324,7 @@ def test_generate_export_variant_passes_the_chosen_platform_through(
         if button.text() == "Generate variant"
     )
     generate_button.click()
+    _wait_for_variant_generation(view, qapp)
 
     assert fake_service.build_calls == [(AspectRatio.LANDSCAPE, Platform.FACEBOOK)]
 
@@ -1500,3 +1534,247 @@ def test_variant_list_shows_no_cta_for_a_platformless_variant(
     labels = [label.text() for label in view.findChildren(QLabel)]
 
     assert any("No CTA" in text for text in labels)
+
+
+class _BlockingExportVariantRenderService:
+    """Blocks inside build() until released or cancelled."""
+
+    def __init__(self) -> None:
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.saw_cancellation = False
+
+    def build(
+        self,
+        *,
+        job: VideoJob,
+        render_result: RenderResult,
+        orientation: AspectRatio,
+        platform: Platform | None = None,
+        progress_callback: object = None,
+        cancellation_check: object = None,
+    ) -> ExportVariant:
+        assert callable(progress_callback)
+        assert callable(cancellation_check)
+
+        self.started.set()
+        deadline = time.monotonic() + 20.0
+
+        while time.monotonic() < deadline:
+            if cancellation_check():
+                self.saw_cancellation = True
+
+                # Real service contract: a cancelled FFmpeg pass raises.
+                raise RuntimeError("FFmpeg render was cancelled.")
+
+            if self.release.is_set():
+                break
+
+            time.sleep(0.01)
+
+        return ExportVariant(
+            orientation=orientation,
+            platform=platform,
+            output_file="F:/renders/job1/output.mp4",
+        )
+
+
+def _blocking_variant_view(
+    tmp_path: Path,
+) -> tuple[PackagingView, VideoJob, _BlockingExportVariantRenderService]:
+    service = _BlockingExportVariantRenderService()
+    job = _bare_job()
+    holder: dict[str, PackagingView] = {}
+
+    # Mirrors the real app: on_change refreshes the workspace, which is
+    # what restores the controls once a generation ends.
+    view = PackagingView(
+        job_store=InMemoryJobStore(),
+        seo_package_service=None,  # type: ignore[arg-type]
+        thumbnail_package_service=None,  # type: ignore[arg-type]
+        final_export_service=FinalExportService(export_root=tmp_path / "exports"),
+        on_change=lambda: holder["view"].refresh(job),
+        export_variant_render_service=service,  # type: ignore[arg-type]
+    )
+    holder["view"] = view
+
+    view._job_store.add(job)
+    view.set_job(job.id)
+    view._job_store.set_render_result(job.id, _render_orchestration_result(job))
+    view.refresh(job)
+
+    return view, job, service
+
+
+def _variant_buttons(view: PackagingView) -> dict[str, QPushButton]:
+    return {b.text(): b for b in view.findChildren(QPushButton)}
+
+
+def _wait_until_true(qapp: QApplication, predicate: object) -> None:
+    deadline = time.monotonic() + 10.0
+
+    while not predicate():  # type: ignore[operator]
+        if time.monotonic() > deadline:
+            raise TimeoutError("Condition never became true.")
+
+        qapp.processEvents()
+        time.sleep(0.01)
+
+
+def test_export_variant_runs_in_the_background_with_progress_and_stop(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    """
+    Real-world finding, 2026-10-01: the user saw the app go "Not
+    Responding" for the length of a real export-variant FFmpeg pass,
+    blocking every other action. The click must return immediately,
+    swapping the controls for a progress state with a Stop button.
+    """
+
+    view, job, service = _blocking_variant_view(tmp_path)
+
+    _variant_buttons(view)["Generate variant"].click()
+
+    # The worker is still blocked inside build() here - reaching this
+    # line at all proves the handler did not run the pass synchronously.
+    assert job.id in view._generating_export_variant_job_ids
+    # Old widgets are only queued for deletion by the rebuild - flush
+    # so findChildren() reflects what the user actually sees.
+    qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    buttons = _variant_buttons(view)
+    assert "Generate variant" not in buttons
+    assert "Stop" in buttons
+    assert view._export_variant_progress_bar.value() == 0
+
+    _wait_until_true(qapp, service.started.is_set)
+    service.release.set()
+    _wait_for_variant_generation(view, qapp)
+
+    stored = view._job_store.get_export_variants(job.id)
+    assert stored is not None
+    assert len(stored.variants) == 1
+    assert "Generate variant" in _variant_buttons(view)
+
+
+def test_stopping_an_export_variant_records_no_variant_and_restores_controls(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    view, job, service = _blocking_variant_view(tmp_path)
+
+    _variant_buttons(view)["Generate variant"].click()
+    _wait_until_true(qapp, service.started.is_set)
+
+    with patch("src.desktop.views.packaging_view.show_recoverable_error"):
+        _variant_buttons(view)["Stop"].click()
+        _wait_for_variant_generation(view, qapp)
+
+    assert service.saw_cancellation
+    assert job.id not in view._generating_export_variant_job_ids
+
+    stored = view._job_store.get_export_variants(job.id)
+    assert stored is None or stored.variants == []
+    # Restart is simply clicking Generate variant again.
+    assert "Generate variant" in _variant_buttons(view)
+
+
+def _cta_displays(view: PackagingView) -> tuple[QLineEdit, QLineEdit]:
+    watermark = next(
+        edit
+        for edit in view.findChildren(QLineEdit)
+        if edit.placeholderText() == "Default: generated text watermark"
+    )
+    clip = next(
+        edit
+        for edit in view.findChildren(QLineEdit)
+        if edit.placeholderText() == "Default: generated 5s text end-card"
+    )
+
+    return watermark, clip
+
+
+def _button(view: PackagingView, text: str) -> QPushButton:
+    # The Export variants card sits below the title card, which has its
+    # own "Upload my own image..." button - the last match is the one
+    # under test.
+    return [b for b in view.findChildren(QPushButton) if b.text() == text][-1]
+
+
+def _refresh_and_flush(view: PackagingView, job: VideoJob, qapp: QApplication) -> None:
+    view.refresh(job)
+    # Rebuilt cards' old widgets linger in findChildren() until Qt's
+    # deferred deletes are delivered.
+    qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def test_cta_upload_fields_default_to_empty_so_generated_defaults_apply(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    view, job = _view_with_render_result(tmp_path, _FakeExportVariantRenderService())
+
+    watermark, clip = _cta_displays(view)
+
+    assert watermark.text() == ""
+    assert clip.text() == ""
+    assert job.cta_watermark_image_path is None
+    assert job.cta_end_clip_path is None
+
+
+def test_uploading_and_saving_persists_both_cta_paths(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    on_change_calls: list[bool] = []
+    view, job = _view_with_render_result(tmp_path, _FakeExportVariantRenderService())
+    view._on_change = lambda: on_change_calls.append(True)
+
+    with patch(
+        "src.desktop.views.packaging_view.QFileDialog.getOpenFileName",
+        side_effect=[("C:/brand/logo.png", ""), ("C:/brand/cta.mp4", "")],
+    ):
+        _button(view, "Upload my own image...").click()
+        _button(view, "Upload my own clip...").click()
+
+    # Nothing is persisted until "Save CTA settings" - same as title card.
+    assert job.cta_watermark_image_path is None
+    assert job.cta_end_clip_path is None
+
+    _button(view, "Save CTA settings").click()
+
+    assert job.cta_watermark_image_path == "C:/brand/logo.png"
+    assert job.cta_end_clip_path == "C:/brand/cta.mp4"
+    assert on_change_calls == [True]
+
+
+def test_cancelling_the_file_dialog_keeps_the_existing_cta_value(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    view, job = _view_with_render_result(tmp_path, _FakeExportVariantRenderService())
+    job.cta_end_clip_path = "C:/brand/cta.mp4"
+    _refresh_and_flush(view, job, qapp)
+
+    with patch(
+        "src.desktop.views.packaging_view.QFileDialog.getOpenFileName",
+        return_value=("", ""),
+    ):
+        _button(view, "Upload my own clip...").click()
+
+    assert _cta_displays(view)[1].text() == "C:/brand/cta.mp4"
+
+
+def test_remove_then_save_returns_to_the_generated_defaults(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    view, job = _view_with_render_result(tmp_path, _FakeExportVariantRenderService())
+    job.cta_watermark_image_path = "C:/brand/logo.png"
+    job.cta_end_clip_path = "C:/brand/cta.mp4"
+    _refresh_and_flush(view, job, qapp)
+
+    # Export variants' two "Remove" buttons are the last two on screen.
+    for remove in [b for b in view.findChildren(QPushButton) if b.text() == "Remove"][
+        -2:
+    ]:
+        remove.click()
+
+    _button(view, "Save CTA settings").click()
+
+    assert job.cta_watermark_image_path is None
+    assert job.cta_end_clip_path is None

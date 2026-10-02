@@ -12,11 +12,21 @@ from src.models.ffmpeg_input import (
     FFmpegInputMediaType,
     FFmpegInputPlan,
 )
+from src.models.media_technical_validation import MediaTechnicalValidationResult
 from src.models.render_result import RenderResult
 from src.models.specification_enums import AspectRatio
 from src.models.video_job import VideoJob
 from src.services.ffmpeg_capability_service import FFmpegCapabilityService
-from src.services.ffmpeg_execution_service import FFmpegExecutionService
+from src.services.ffmpeg_execution_service import (
+    CancellationCheck,
+    FFmpegExecutionService,
+    ProgressCallback,
+)
+from src.services.join_segments_filter import JoinSegment, build_join_filter
+from src.services.media_technical_validation_service import (
+    MediaTechnicalValidationService,
+)
+from src.shared.logger import logger
 
 # The background-blur-fill sigma - high enough that the padded frame
 # reads as an intentional soft backdrop, not a compression artifact.
@@ -74,6 +84,10 @@ _MACOS_FONT_CANDIDATES = (
 
 _EXPORT_TEXT_CACHE_DIRECTORY = Path("data/export_variant_text_cache")
 
+# An uploaded watermark image is scaled to this share of the output
+# frame width (the text watermark is sized by font size instead).
+_WATERMARK_IMAGE_WIDTH_FRACTION = 0.15
+
 
 class ExportVariantRenderService:
     """
@@ -108,9 +122,13 @@ class ExportVariantRenderService:
         *,
         capability_service: FFmpegCapabilityService | None = None,
         execution_service: FFmpegExecutionService | None = None,
+        media_validation_service: MediaTechnicalValidationService | None = None,
     ) -> None:
         self._capability_service = capability_service or FFmpegCapabilityService()
         self._execution_service = execution_service or FFmpegExecutionService()
+        self._media_validation_service = (
+            media_validation_service or MediaTechnicalValidationService()
+        )
 
     def build(
         self,
@@ -119,6 +137,8 @@ class ExportVariantRenderService:
         render_result: RenderResult,
         orientation: AspectRatio,
         platform: Platform | None = None,
+        progress_callback: ProgressCallback | None = None,
+        cancellation_check: CancellationCheck | None = None,
     ) -> ExportVariant:
         """
         Build one export variant.
@@ -150,7 +170,9 @@ class ExportVariantRenderService:
             source_file=source_file,
             orientation=orientation,
             platform=platform,
-            duration_seconds=render_result.duration_seconds,
+            fallback_duration_seconds=render_result.duration_seconds,
+            progress_callback=progress_callback,
+            cancellation_check=cancellation_check,
         )
 
     def _build_processed_variant(
@@ -160,8 +182,28 @@ class ExportVariantRenderService:
         source_file: str,
         orientation: AspectRatio,
         platform: Platform | None,
-        duration_seconds: int,
+        fallback_duration_seconds: int,
+        progress_callback: ProgressCallback | None = None,
+        cancellation_check: CancellationCheck | None = None,
     ) -> ExportVariant:
+        # Real-world finding, 2026-09-30: RenderResult.duration_seconds
+        # (the pre-computed value every earlier caller trusted) can
+        # genuinely drift from the source file's own real length -
+        # confirmed live via ffprobe against a real job's own render
+        # (stored value 100s, real file 90.4s). The end-card's own
+        # `enable='gte(t,content_end_seconds)'` condition then never
+        # becomes true within the real, shorter output, so the CTA
+        # text never appears during its supposedly-frozen tail -
+        # reads as a blank final few seconds. Probing the real file
+        # directly, with the stored value only as a last-resort
+        # fallback for when the probe itself can't run, is the fix.
+        probed = self._media_validation_service.validate(Path(source_file))
+        duration_seconds: float = (
+            probed.duration_seconds
+            if probed.duration_seconds is not None
+            else float(fallback_duration_seconds)
+        )
+
         resolved_config = self._capability_service.resolve()
         source_width, source_height = self._parse_resolution(job.output_resolution)
 
@@ -189,7 +231,16 @@ class ExportVariantRenderService:
         total_duration = content_duration
         audio_label = "0:a"
 
+        # Extra inputs (uploaded watermark image / CTA clip), appended
+        # after the source in the order they are added to the command.
+        extra_input_files: list[str] = []
+
         if platform is not None:
+            watermark_image = self._resolve_upload(
+                job.cta_watermark_image_path, kind="watermark image"
+            )
+            cta_clip = self._resolve_cta_clip(job.cta_end_clip_path)
+
             # Real-world finding, 2026-09-14: confirmed live via an
             # extracted end-card frame - tpad freezes the actual LAST
             # rendered frame, and that frame's own timestamp still
@@ -205,27 +256,66 @@ class ExportVariantRenderService:
             watermark_end_seconds = max(
                 _WATERMARK_DELAY_SECONDS, content_duration - 1.0
             )
-            watermark_clause, video_label = self._watermark_clause(
-                input_label=video_label,
-                platform=platform,
-                orientation=orientation,
-                start_seconds=_WATERMARK_DELAY_SECONDS,
-                end_seconds=watermark_end_seconds,
-            )
+
+            if watermark_image is not None:
+                extra_input_files.append(str(watermark_image))
+                # An uploaded image is a persistent badge: visible from
+                # the first frame (the text watermark's hook-skipping
+                # delay is a choice about generated text, not about a
+                # logo the operator deliberately supplied). With a CTA
+                # clip there is no frozen tail to keep clean - the clip
+                # is joined after this stream - so it runs to the end.
+                watermark_clause, video_label = self._watermark_image_clause(
+                    input_label=video_label,
+                    image_input_index=len(extra_input_files),
+                    orientation=orientation,
+                    frame_width=target_width,
+                    end_seconds=(
+                        None if cta_clip is not None else watermark_end_seconds
+                    ),
+                )
+            else:
+                watermark_clause, video_label = self._watermark_clause(
+                    input_label=video_label,
+                    platform=platform,
+                    orientation=orientation,
+                    start_seconds=_WATERMARK_DELAY_SECONDS,
+                    end_seconds=watermark_end_seconds,
+                )
+
             clauses.append(watermark_clause)
 
-            end_card_clause, video_label = self._end_card_clause(
-                input_label=video_label,
-                platform=platform,
-                channel_name=job.channel_name,
-                content_end_seconds=content_duration,
-            )
-            clauses.append(end_card_clause)
+            if cta_clip is not None:
+                clip_path, clip_probe = cta_clip
+                extra_input_files.append(str(clip_path))
 
-            audio_clause, audio_label = self._audio_pad_clause()
-            clauses.append(audio_clause)
+                join_clauses, video_label, audio_label = self._cta_clip_clauses(
+                    video_input_label=video_label,
+                    clip_input_index=len(extra_input_files),
+                    clip_has_audio=clip_probe.has_audio_stream,
+                    clip_duration_seconds=float(clip_probe.duration_seconds or 0.0),
+                    content_duration_seconds=content_duration,
+                    width=target_width,
+                    height=target_height,
+                )
+                clauses.extend(join_clauses)
 
-            total_duration = content_duration + _END_CARD_DURATION_SECONDS
+                total_duration = content_duration + float(
+                    clip_probe.duration_seconds or 0.0
+                )
+            else:
+                end_card_clause, video_label = self._end_card_clause(
+                    input_label=video_label,
+                    platform=platform,
+                    channel_name=job.channel_name,
+                    content_end_seconds=content_duration,
+                )
+                clauses.append(end_card_clause)
+
+                audio_clause, audio_label = self._audio_pad_clause()
+                clauses.append(audio_clause)
+
+                total_duration = content_duration + _END_CARD_DURATION_SECONDS
 
         output_file = self._output_file_path(
             source_file, orientation=orientation, platform=platform
@@ -233,27 +323,36 @@ class ExportVariantRenderService:
 
         filter_complex = ";".join(clauses)
 
-        input_binding = FFmpegInputBinding(
-            input_index=0,
-            render_node_id="export_variant_source",
-            media_type=FFmpegInputMediaType.VIDEO,
-            source_file=source_file,
-            stream_label="0:v",
-        )
+        input_files = [source_file, *extra_input_files]
         input_plan = FFmpegInputPlan(
-            bindings=[input_binding],
-            input_count=1,
-            video_input_count=1,
+            bindings=[
+                FFmpegInputBinding(
+                    input_index=index,
+                    render_node_id=(
+                        "export_variant_source"
+                        if index == 0
+                        else f"export_variant_extra_{index}"
+                    ),
+                    media_type=FFmpegInputMediaType.VIDEO,
+                    source_file=input_file,
+                    stream_label=f"{index}:v",
+                )
+                for index, input_file in enumerate(input_files)
+            ],
+            input_count=len(input_files),
+            video_input_count=len(input_files),
             audio_input_count=0,
         )
 
         video_map = video_label if video_label == "0:v" else f"[{video_label}]"
         audio_map = audio_label if audio_label == "0:a" else f"[{audio_label}]"
 
-        arguments = [
-            "-y",
-            "-i",
-            source_file,
+        arguments = ["-y"]
+
+        for input_file in input_files:
+            arguments.extend(["-i", input_file])
+
+        arguments += [
             "-filter_complex",
             filter_complex,
             "-map",
@@ -315,10 +414,25 @@ class ExportVariantRenderService:
             arguments=arguments,
         )
 
-        self._execution_service.execute(
+        execution_result = self._execution_service.execute(
             command_plan,
             total_duration_seconds=total_duration,
+            progress_callback=progress_callback,
+            cancellation_check=cancellation_check,
         )
+
+        # Real-world finding, 2026-10-01: this previously discarded
+        # execute()'s own return value entirely and always returned a
+        # success ExportVariant regardless of what actually happened -
+        # harmless while nothing could ever cancel or meaningfully fail
+        # mid-export, but a real correctness gap now that a real Stop
+        # button exists: without this check, cancelling an export would
+        # still have been recorded as a completed variant.
+        if not execution_result.success:
+            raise RuntimeError(
+                execution_result.error_message
+                or "FFmpeg execution returned an unsuccessful result."
+            )
 
         return ExportVariant(
             orientation=orientation,
@@ -457,6 +571,123 @@ class ExportVariantRenderService:
         text_clause = f"[{padded_label}]drawtext={options_text}[{output_label}]"
 
         return f"{tpad_clause};{text_clause}", output_label
+
+    @staticmethod
+    def _resolve_upload(path: str | None, *, kind: str) -> Path | None:
+        """
+        An operator-supplied file. Unset means "use the generated
+        default"; set-but-missing is an error rather than a silent
+        fallback, so a video is never produced that quietly ignores a
+        file the operator chose.
+        """
+
+        if path is None or not path.strip():
+            return None
+
+        resolved = Path(path)
+
+        if not resolved.is_file():
+            raise ValueError(
+                f"The uploaded {kind} could not be found: {path}. "
+                "Upload it again or remove it to use the default."
+            )
+
+        return resolved
+
+    def _resolve_cta_clip(
+        self, path: str | None
+    ) -> tuple[Path, MediaTechnicalValidationResult] | None:
+        clip = self._resolve_upload(path, kind="CTA clip")
+
+        if clip is None:
+            return None
+
+        probe = self._media_validation_service.validate(clip)
+
+        if (
+            not probe.is_readable
+            or not probe.has_video_stream
+            or not probe.duration_seconds
+        ):
+            logger.warning("Uploaded CTA clip %s is not usable: %s", clip, probe.issues)
+
+            raise ValueError(
+                f"The uploaded CTA clip is not a readable video: {clip}. "
+                "Upload a different file or remove it to use the default."
+            )
+
+        return clip, probe
+
+    @classmethod
+    def _watermark_image_clause(
+        cls,
+        *,
+        input_label: str,
+        image_input_index: int,
+        orientation: AspectRatio,
+        frame_width: int,
+        end_seconds: float | None,
+    ) -> tuple[str, str]:
+        # Even width - some encoders reject odd dimensions.
+        image_width = max(
+            2, int(frame_width * _WATERMARK_IMAGE_WIDTH_FRACTION) // 2 * 2
+        )
+
+        if orientation == AspectRatio.PORTRAIT:
+            x_expr = "30"
+        else:
+            x_expr = "W-w-30"
+
+        enable = (
+            ""
+            if end_seconds is None
+            else f":enable='between(t,0,{cls._number(end_seconds)})'"
+        )
+
+        output_label = "watermarked"
+        clause = (
+            f"[{image_input_index}:v]scale={image_width}:-2,format=rgba[wmimg];"
+            f"[{input_label}][wmimg]overlay={x_expr}:H-h-30:format=auto"
+            f"{enable}[{output_label}]"
+        )
+
+        return clause, output_label
+
+    @staticmethod
+    def _cta_clip_clauses(
+        *,
+        video_input_label: str,
+        clip_input_index: int,
+        clip_has_audio: bool,
+        clip_duration_seconds: float,
+        content_duration_seconds: float,
+        width: int,
+        height: int,
+    ) -> tuple[list[str], str, str]:
+        """
+        Join the content and the uploaded CTA clip. The clip is fitted
+        inside the frame (letterboxed, never cropped) so a clip made for
+        a different aspect ratio is shown whole; a clip with no audio
+        gets matching silence so the audio stays aligned.
+        """
+
+        return build_join_filter(
+            [
+                JoinSegment(
+                    video_label=video_input_label,
+                    audio_label="0:a",
+                    duration_seconds=content_duration_seconds,
+                ),
+                JoinSegment(
+                    video_label=f"{clip_input_index}:v",
+                    audio_label=(f"{clip_input_index}:a" if clip_has_audio else None),
+                    duration_seconds=clip_duration_seconds,
+                    fit_to_frame=True,
+                ),
+            ],
+            width=width,
+            height=height,
+        )
 
     @staticmethod
     def _audio_pad_clause() -> tuple[str, str]:

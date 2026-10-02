@@ -150,9 +150,7 @@ def test_generate_writes_in_the_targeted_platforms_voice() -> None:
             llm_service=stub,  # type: ignore[arg-type]
         )
 
-        service.generate(
-            _context(platform=platform), selected_title="Great Video"
-        )
+        service.generate(_context(platform=platform), selected_title="Great Video")
 
         assert stub.last_request is not None
         assert stub.last_request.system_prompt is not None

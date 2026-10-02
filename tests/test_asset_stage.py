@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from src.models.asset_state import (
     AssetCandidate,
     AssetWorkflowStatus,
@@ -29,6 +31,10 @@ from src.pipeline.pipeline_stage import (
 )
 from src.pipeline.pipeline_state import PipelineState
 from src.pipeline.stage_context import StageContext
+from src.services.clip_duration_reconciliation_service import (
+    ClipDurationReconciliationService,
+)
+from src.services.frame_extraction_service import FrameExtractionService
 from src.services.scene_asset_workflow_service import (
     SceneAssetWorkflowService,
 )
@@ -601,6 +607,95 @@ def test_ready_states_with_candidates_build_video_clips() -> None:
     assert clips_by_scene[1].local_file == "/data/manual_uploads/scene_1.mp4"
     assert clips_by_scene[2].local_file == "/data/manual_uploads/scene_2.mp4"
     assert clips_by_scene[1].source_type == SceneSourceType.MANUAL_UPLOAD
+
+
+def test_a_stock_clip_longer_than_real_narration_is_trimmed(tmp_path: Path) -> None:
+    """
+    Real-world finding, 2026-09-30: nothing reconciled a stock/manual
+    clip's real duration against its scene's real, measured narration
+    length - AssetPipelineStage now does, via
+    ClipDurationReconciliationService, the same real ffmpeg trim
+    MuseSceneVideoGenerationService already uses for its own clips.
+    """
+
+    real_file = tmp_path / "scene_1.mp4"
+    real_file.write_bytes(b"fake-real-video-bytes")
+
+    received_commands: list[list[str]] = []
+
+    def runner(command: list[str]) -> None:
+        received_commands.append(command)
+        Path(command[-1]).write_bytes(b"fake-trimmed-bytes")
+
+    job = build_job()
+    job.scenes[1].real_narration_duration_seconds = 7.0  # scene 1
+
+    candidate = AssetCandidate(
+        title="Manual upload for scene 1",
+        source_type=SceneSourceType.MANUAL_UPLOAD,
+        file_path=str(real_file),
+        duration_seconds=12.0,
+        approved=True,
+    )
+
+    state = build_state(scene_number=1, status=AssetWorkflowStatus.READY)
+    state.selected_candidate = candidate
+    state.selected_source = SceneSourceType.MANUAL_UPLOAD
+
+    other_state = build_state(scene_number=2, status=AssetWorkflowStatus.READY)
+
+    service = SyntheticAssetWorkflowService(
+        states_by_scene_number={1: state, 2: other_state},
+    )
+
+    stage = AssetPipelineStage(
+        asset_workflow_service=service,
+        clip_duration_reconciliation_service=ClipDurationReconciliationService(
+            frame_extraction_service=FrameExtractionService(runner=runner),
+        ),
+    )
+
+    result = stage.execute(build_context(job))
+
+    assert result.status == PipelineStageStatus.COMPLETED
+    assert len(received_commands) == 1
+
+    trimmed_clip = next(c for c in job.video_clips if c.scene_number == 1)
+    assert trimmed_clip.duration_seconds == 7
+    assert trimmed_clip.local_file != str(real_file)
+
+
+def test_a_stock_clip_severely_shorter_than_real_narration_fails_the_stage() -> None:
+    job = build_job()
+    job.scenes[1].real_narration_duration_seconds = 10.0  # scene 1
+
+    candidate = AssetCandidate(
+        title="Manual upload for scene 1",
+        source_type=SceneSourceType.MANUAL_UPLOAD,
+        file_path="/data/manual_uploads/scene_1.mp4",
+        duration_seconds=3.0,
+        approved=True,
+    )
+
+    state = build_state(scene_number=1, status=AssetWorkflowStatus.READY)
+    state.selected_candidate = candidate
+    state.selected_source = SceneSourceType.MANUAL_UPLOAD
+
+    other_state = build_state(scene_number=2, status=AssetWorkflowStatus.READY)
+
+    service = SyntheticAssetWorkflowService(
+        states_by_scene_number={1: state, 2: other_state},
+    )
+
+    stage = AssetPipelineStage(
+        asset_workflow_service=service,
+    )
+
+    result = stage.execute(build_context(job))
+
+    assert result.status == PipelineStageStatus.FAILED
+    assert len(result.errors) == 1
+    assert "Scene 1" in result.errors[0]
 
 
 def test_waiting_states_do_not_build_video_clips() -> None:

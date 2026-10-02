@@ -329,6 +329,45 @@ def test_create_project_runs_workflow_steps_and_generates_seo(
     assert window._dashboard_view._table.rowCount() == 1
 
 
+def test_project_status_card_starts_collapsed(
+    qapp: QApplication,
+    no_blocking_dialogs: None,
+) -> None:
+    """
+    Real-world finding, 2026-09-30: the full 16-checkpoint "Project
+    status" card, expanded by default, crowded out the actual
+    workspace tab beneath it - confirmed live by the user. Collapsed
+    by default now, with a "Show details" toggle to expand it.
+    """
+
+    window = MainWindow(job_store=InMemoryJobStore())
+    _create_project(window)
+    job = window._job_store.list_all()[0]
+    window._open_project(job.id)
+
+    workspace = window._detail_view
+
+    assert workspace._status_card_expanded is False
+
+
+def test_project_status_card_toggle_expands_and_collapses(
+    qapp: QApplication,
+    no_blocking_dialogs: None,
+) -> None:
+    window = MainWindow(job_store=InMemoryJobStore())
+    _create_project(window)
+    job = window._job_store.list_all()[0]
+    window._open_project(job.id)
+
+    workspace = window._detail_view
+
+    workspace._handle_toggle_status_card()
+    assert workspace._status_card_expanded is True
+
+    workspace._handle_toggle_status_card()
+    assert workspace._status_card_expanded is False
+
+
 def test_thumbnail_generation_succeeds_in_dry_run(
     qapp: QApplication,
     no_blocking_dialogs: None,

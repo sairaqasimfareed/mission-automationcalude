@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 from src.desktop.approval_mode_labels import approval_mode_label
+from src.models.final_export import FinalExportPackage
 from src.models.script_quality_report import ScriptQualityStatus
+from src.models.seo import SEOPackage
+from src.models.thumbnail import ThumbnailArtifact
 from src.models.video_job import VideoJob
 from src.services.approval_gate_service import ApprovalGateService
 from src.services.production_readiness_service import ProductionReadinessService
+from src.services.project_production_journey_service import (
+    ProjectProductionJourneyService,
+)
 
 
 class ProjectHeaderSummary:
@@ -58,18 +64,25 @@ class ProjectHeaderService:
     every cross-tab header widget should read from, instead of each
     workspace deriving its own partial notion of "project status."
 
-    Two fields are deliberately narrower proxies for what their name
+    One field is a deliberately narrower proxy for what its name
     suggests, documented here rather than left silently ambiguous:
 
-    - current_stage reads VideoJob.current_stage, which only the
-      legacy ContentPipeline keeps updated - ContentIntelligencePipeline's
-      12 stages don't touch it. For a project using the newer pipeline
-      exclusively, this field can lag behind actual progress.
     - budget_state has no real per-project spend to report yet
       (Phase 7's budget gating tracks spend per ProviderProfile
       globally, not per VideoJob) - it reports whether any
       ManualAudioRequirement is unfulfilled instead, the closest
       real, job-level signal budget gating currently produces.
+
+    current_stage (real fix, 2026-09-30, found live: a real project
+    showed "Stage: research" while it was actually generating clips)
+    used to read VideoJob.current_stage directly, which only the
+    legacy ContentPipeline keeps updated. It now delegates to
+    ProjectProductionJourneyService.current_stage_label(), which is
+    pipeline-aware: a legacy-pipeline project (VideoJob.current_stage
+    was already accurate for it) gets that exact same value back
+    unchanged; a ContentIntelligencePipeline project instead gets the
+    first not-yet-approved checkpoint across the full real production
+    journey (content through packaging), recomputed fresh every call.
     """
 
     def __init__(
@@ -77,19 +90,35 @@ class ProjectHeaderService:
         *,
         readiness_service: ProductionReadinessService | None = None,
         approval_gate_service: ApprovalGateService | None = None,
+        journey_service: ProjectProductionJourneyService | None = None,
     ) -> None:
         self.readiness_service = readiness_service or ProductionReadinessService()
         self.approval_gate_service = approval_gate_service or ApprovalGateService()
+        self.journey_service = journey_service or ProjectProductionJourneyService()
 
-    def summarize(self, job: VideoJob) -> ProjectHeaderSummary:
+    def summarize(
+        self,
+        job: VideoJob,
+        *,
+        seo_package: SEOPackage | None = None,
+        thumbnail: ThumbnailArtifact | None = None,
+        final_export: FinalExportPackage | None = None,
+    ) -> ProjectHeaderSummary:
         approval_mode = approval_mode_label(job.approval_policy)
+
+        checkpoints = self.journey_service.compute(
+            job,
+            seo_package=seo_package,
+            thumbnail=thumbnail,
+            final_export=final_export,
+        )
 
         return ProjectHeaderSummary(
             project_name=job.project_name,
             production_mode=job.production_mode.value,
             genre=job.genre_id,
             target_duration=self._format_duration(job.target_duration_seconds),
-            current_stage=job.current_stage.value.replace("_", " "),
+            current_stage=self.journey_service.current_stage_label(job, checkpoints),
             approval_mode=approval_mode,
             next_approval=self._next_approval(job),
             quality_state=self._quality_state(job),

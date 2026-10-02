@@ -25,6 +25,9 @@ from src.services.duration_mismatch_policy_service import DurationMismatchPolicy
 from src.services.final_preview_service import FinalPreviewService
 from src.services.policy_service import PolicyService
 from src.services.production_readiness_service import ProductionReadinessService
+from src.services.render_result_resolution_service import (
+    resolve_effective_render_result,
+)
 
 _LEFT = Qt.AlignmentFlag.AlignLeft
 
@@ -235,7 +238,13 @@ class QualityCenterView(QWidget):
 
         assert self._job_id is not None
 
-        render_result = self._job_store.get_render_result(self._job_id)
+        # Real-world finding, 2026-09-30: see
+        # resolve_effective_render_result's own docstring - JobStore's
+        # render-result cache misses a genuinely completed render that
+        # happened outside this app's GUI.
+        render_result = resolve_effective_render_result(
+            job, self._job_store.get_render_result(self._job_id)
+        )
         render_ok = render_result is not None and render_result.success
 
         seo_package = self._job_store.get_seo_package(self._job_id)

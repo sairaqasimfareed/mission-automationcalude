@@ -119,6 +119,104 @@ def test_render_output_actions_appear_after_a_successful_render(
     assert "Save a copy as..." in buttons
 
 
+def _view_with_a_render_that_bypassed_the_gui(
+    tmp_path: Path,
+) -> tuple[RenderWorkspaceView, Path]:
+    """
+    Real-world finding, 2026-09-30: a render that happened through a
+    standalone script (rather than clicking "Run render" in this
+    view) never calls JobStore.set_render_result() - only this view's
+    own button handler does. VideoJob.render_result, set directly by
+    the render engine regardless of what drove it, must still be
+    recognized. Confirmed live: a real project's Render tab showed
+    "Not rendered yet" despite a real, completed render and a real
+    output file on disk.
+    """
+
+    from src.models.audio_timeline import AudioTimeline
+    from src.models.media_strategy import SceneSourceType
+    from src.models.research import ResearchResult, ResearchStatus
+    from src.models.scene import Scene
+    from src.models.script import Script, ScriptStatus
+    from src.models.video_clip import VideoClip
+    from src.models.video_timeline import VideoTimeline
+
+    output_file = tmp_path / "outputs" / "final_video.mp4"
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    output_file.write_bytes(b"synthetic mp4 bytes")
+
+    job_store = InMemoryJobStore()
+    job = _job()
+    job.id = uuid4()
+    job.research = ResearchResult.model_construct(status=ResearchStatus.APPROVED)
+    job.script = Script(
+        title="Test script",
+        content="Synthetic script content for render-tab testing.",
+        prompt_version="test-1.0",
+        word_count=8,
+        estimated_duration_seconds=20,
+        status=ScriptStatus.APPROVED,
+    )
+    job.scenes = [
+        Scene(
+            scene_number=1,
+            title="Scene 1",
+            narration="Narration for scene 1.",
+            visual_prompt="Visual prompt for scene 1.",
+            estimated_duration_seconds=8,
+        )
+    ]
+    job.voice_file = "dry-run://voice/test.mp3"
+    job.audio_timeline = AudioTimeline()
+    job.video_clips = [
+        VideoClip(
+            scene_number=1,
+            source_type=SceneSourceType.MANUAL_UPLOAD,
+            duration_seconds=8,
+            local_file="/data/manual_uploads/scene_1.mp4",
+        )
+    ]
+    job.video_timeline = VideoTimeline()
+    job.render_result = RenderResult(
+        success=True,
+        output_file=output_file.as_posix(),
+        render_engine="ffmpeg",
+        render_time_seconds=1.0,
+        duration_seconds=10,
+        status=RenderStatus.COMPLETED,
+    )
+    job.current_stage = WorkflowStage.READY_FOR_UPLOAD
+    job.status = JobStatus.COMPLETED
+    job_store.add(job)
+
+    # Deliberately never calling job_store.set_render_result() here -
+    # that's the entire point of this scenario.
+
+    view = RenderWorkspaceView(
+        job_store=job_store,
+        render_runtime_factory=object(),  # type: ignore[arg-type]
+        asset_workflow_service=object(),  # type: ignore[arg-type]
+        on_change=lambda: None,
+    )
+    view.set_job(job.id)
+    view.refresh(job)
+
+    return view, output_file
+
+
+def test_render_output_actions_appear_for_a_render_that_bypassed_the_gui(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    view, _output_file = _view_with_a_render_that_bypassed_the_gui(tmp_path)
+
+    buttons = _buttons_by_text(view)
+
+    assert "Reveal in folder" in buttons
+    assert "Open in default player" in buttons
+    assert "Save a copy as..." in buttons
+    assert "Run render" not in buttons
+
+
 def test_reveal_in_folder_opens_the_containing_directory(
     qapp: QApplication, tmp_path: Path
 ) -> None:

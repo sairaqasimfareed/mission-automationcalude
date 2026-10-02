@@ -12,6 +12,12 @@ from src.models.ffmpeg_config import (
     FFmpegConfig,
     FFmpegResolvedConfig,
 )
+from src.models.ffmpeg_execution_result import (
+    FFmpegExecutionResult,
+    FFmpegExecutionStatus,
+)
+from src.models.media_technical_validation import MediaTechnicalValidationResult
+from src.models.render_progress import RenderProgress, RenderProgressStatus
 from src.models.render_result import RenderResult
 from src.models.specification_enums import AspectRatio
 from src.models.video_job import VideoJob
@@ -35,8 +41,9 @@ class _FakeCapabilityService:
 
 
 class _FakeExecutionService:
-    def __init__(self) -> None:
+    def __init__(self, *, result: FFmpegExecutionResult | None = None) -> None:
         self.calls: list[tuple[FFmpegCommandPlan, float]] = []
+        self._result = result
 
     def execute(
         self,
@@ -44,8 +51,22 @@ class _FakeExecutionService:
         *,
         total_duration_seconds: float,
         **_kwargs: object,
-    ) -> None:
+    ) -> FFmpegExecutionResult:
         self.calls.append((command_plan, total_duration_seconds))
+
+        if self._result is not None:
+            return self._result
+
+        return FFmpegExecutionResult(
+            status=FFmpegExecutionStatus.SUCCEEDED,
+            success=True,
+            exit_code=0,
+            output_file=command_plan.output_file,
+            progress=RenderProgress(
+                status=RenderProgressStatus.COMPLETED,
+                progress_percent=100.0,
+            ),
+        )
 
 
 def _job(*, output_resolution: str = "1920x1080") -> VideoJob:
@@ -193,6 +214,39 @@ def test_landscape_with_a_platform_is_no_longer_a_passthrough() -> None:
     assert "youtube" in variant.output_file
 
 
+def test_a_failed_or_cancelled_execution_raises_instead_of_reporting_success() -> None:
+    """
+    Real-world finding, 2026-10-01: build() used to discard execute()'s
+    own return value entirely and always returned a success
+    ExportVariant regardless of what actually happened - harmless while
+    nothing could cancel or meaningfully fail mid-export, but a real
+    correctness gap once a genuine Stop button exists (built this same
+    session): without this check, a cancelled export would still have
+    been recorded as a completed variant.
+    """
+
+    execution = _FakeExecutionService(
+        result=FFmpegExecutionResult(
+            status=FFmpegExecutionStatus.CANCELLED,
+            success=False,
+            error_message="FFmpeg render was cancelled.",
+            progress=RenderProgress(status=RenderProgressStatus.CANCELLED),
+        )
+    )
+    service = ExportVariantRenderService(
+        capability_service=_FakeCapabilityService(),  # type: ignore[arg-type]
+        execution_service=execution,  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(RuntimeError, match="cancelled"):
+        service.build(
+            job=_job(),
+            render_result=_render_result(),
+            orientation=AspectRatio.LANDSCAPE,
+            platform=Platform.YOUTUBE,
+        )
+
+
 def test_platform_none_is_still_a_passthrough_for_landscape() -> None:
     service, execution = _service()
 
@@ -321,6 +375,83 @@ def test_end_card_freezes_the_last_frame_and_extends_total_duration() -> None:
     assert total_duration_seconds == 65.0
 
 
+class _FakeMediaValidationService:
+    def __init__(self, *, duration_seconds: float | None) -> None:
+        self._duration_seconds = duration_seconds
+        self.probed_paths: list[Path] = []
+
+    def validate(self, file_path: Path) -> MediaTechnicalValidationResult:
+        self.probed_paths.append(file_path)
+
+        if self._duration_seconds is None:
+            return MediaTechnicalValidationResult(
+                is_readable=False, issues=["File does not exist."]
+            )
+
+        return MediaTechnicalValidationResult(
+            is_readable=True, duration_seconds=self._duration_seconds
+        )
+
+
+def test_end_card_timing_uses_the_real_probed_duration_not_the_stale_stored_one() -> (
+    None
+):
+    """
+    Real-world finding, 2026-09-30: confirmed live via ffprobe against
+    a real job - RenderResult.duration_seconds (100s) had drifted from
+    the real output file's own actual length (90.4s). The end-card's
+    `enable='gte(t,...)'` condition was timed off the stale 100s, which
+    the real (shorter) exported file never reached, so the CTA text
+    never appeared during its own frozen tail. This proves the fix:
+    the real, probed duration is what the end-card timing is now based
+    on, not the possibly-stale stored value.
+    """
+
+    execution = _FakeExecutionService()
+    media_validation = _FakeMediaValidationService(duration_seconds=90.4)
+    service = ExportVariantRenderService(
+        capability_service=_FakeCapabilityService(),  # type: ignore[arg-type]
+        execution_service=execution,  # type: ignore[arg-type]
+        media_validation_service=media_validation,  # type: ignore[arg-type]
+    )
+
+    service.build(
+        job=_job(),
+        render_result=_render_result(duration_seconds=100),
+        orientation=AspectRatio.LANDSCAPE,
+        platform=Platform.YOUTUBE,
+    )
+
+    command_plan, _ = execution.calls[0]
+    match = re.search(r"gte\(t,(\d+(?:\.\d+)?)\)", command_plan.filter_complex)
+    assert match is not None
+    assert float(match.group(1)) == 90.4
+
+
+def test_end_card_falls_back_to_the_stored_duration_when_the_file_cant_be_probed() -> (
+    None
+):
+    execution = _FakeExecutionService()
+    media_validation = _FakeMediaValidationService(duration_seconds=None)
+    service = ExportVariantRenderService(
+        capability_service=_FakeCapabilityService(),  # type: ignore[arg-type]
+        execution_service=execution,  # type: ignore[arg-type]
+        media_validation_service=media_validation,  # type: ignore[arg-type]
+    )
+
+    service.build(
+        job=_job(),
+        render_result=_render_result(duration_seconds=60),
+        orientation=AspectRatio.LANDSCAPE,
+        platform=Platform.YOUTUBE,
+    )
+
+    command_plan, _ = execution.calls[0]
+    match = re.search(r"gte\(t,(\d+(?:\.\d+)?)\)", command_plan.filter_complex)
+    assert match is not None
+    assert float(match.group(1)) == 60.0
+
+
 def test_watermark_stops_before_the_frame_that_gets_frozen() -> None:
     """
     Real-world finding, 2026-09-14: confirmed live via an extracted
@@ -409,3 +540,166 @@ def test_portrait_with_a_platform_composes_reformat_and_branding() -> None:
     assert variant.platform == Platform.TIKTOK
     assert "portrait" in variant.output_file
     assert "tiktok" in variant.output_file
+
+
+class _FakeClipProbe:
+    """Probe stub: the source video and the uploaded clip report distinct
+    durations so the total-duration arithmetic is observable."""
+
+    def __init__(self, *, clip_seconds: float, clip_has_audio: bool = True) -> None:
+        self._clip_seconds = clip_seconds
+        self._clip_has_audio = clip_has_audio
+
+    def validate(self, file_path: Path) -> MediaTechnicalValidationResult:
+        if file_path.name.startswith("cta"):
+            return MediaTechnicalValidationResult(
+                is_readable=True,
+                duration_seconds=self._clip_seconds,
+                has_video_stream=True,
+                has_audio_stream=self._clip_has_audio,
+            )
+
+        return MediaTechnicalValidationResult(is_readable=True, duration_seconds=60.0)
+
+
+def _service_with_probe(
+    probe: object,
+) -> tuple[ExportVariantRenderService, _FakeExecutionService]:
+    execution = _FakeExecutionService()
+
+    return (
+        ExportVariantRenderService(
+            capability_service=_FakeCapabilityService(),  # type: ignore[arg-type]
+            execution_service=execution,  # type: ignore[arg-type]
+            media_validation_service=probe,  # type: ignore[arg-type]
+        ),
+        execution,
+    )
+
+
+def test_uploaded_watermark_image_replaces_the_text_watermark(tmp_path: Path) -> None:
+    image = tmp_path / "logo.png"
+    image.write_bytes(b"png")
+    job = _job()
+    job.cta_watermark_image_path = str(image)
+    service, execution = _service_with_probe(_FakeClipProbe(clip_seconds=2))
+
+    service.build(
+        job=job,
+        render_result=_render_result(),
+        orientation=AspectRatio.LANDSCAPE,
+        platform=Platform.YOUTUBE,
+    )
+
+    command_plan, _ = execution.calls[0]
+
+    assert "overlay=W-w-30:H-h-30" in command_plan.filter_complex
+    assert "drawtext" in command_plan.filter_complex  # the end-card text only
+    # Only the end-card's own text file remains - no short "Subscribe"
+    # watermark text file.
+    assert _textfile_contents(command_plan.filter_complex) == [
+        "Subscribe to Test Channel"
+    ]
+    assert command_plan.input_plan.input_count == 2
+    assert str(image) in command_plan.arguments
+
+
+def test_uploaded_cta_clip_replaces_the_generated_end_card(tmp_path: Path) -> None:
+    clip = tmp_path / "cta.mp4"
+    clip.write_bytes(b"mp4")
+    job = _job()
+    job.cta_end_clip_path = str(clip)
+    service, execution = _service_with_probe(_FakeClipProbe(clip_seconds=2.5))
+
+    service.build(
+        job=job,
+        render_result=_render_result(),
+        orientation=AspectRatio.LANDSCAPE,
+        platform=Platform.YOUTUBE,
+    )
+
+    command_plan, total_duration = execution.calls[0]
+
+    assert "concat=n=2:v=1:a=1" in command_plan.filter_complex
+    assert "tpad" not in command_plan.filter_complex
+    assert "endcard" not in command_plan.filter_complex
+    assert total_duration == pytest.approx(60.0 + 2.5)
+    assert command_plan.input_plan.input_count == 2
+
+
+def test_a_silent_cta_clip_gets_matching_silence(tmp_path: Path) -> None:
+    clip = tmp_path / "cta.mp4"
+    clip.write_bytes(b"mp4")
+    job = _job()
+    job.cta_end_clip_path = str(clip)
+    service, execution = _service_with_probe(
+        _FakeClipProbe(clip_seconds=3, clip_has_audio=False)
+    )
+
+    service.build(
+        job=job,
+        render_result=_render_result(),
+        orientation=AspectRatio.LANDSCAPE,
+        platform=Platform.YOUTUBE,
+    )
+
+    command_plan, _ = execution.calls[0]
+
+    assert "anullsrc" in command_plan.filter_complex
+    assert "[1:a]" not in command_plan.filter_complex
+
+
+def test_uploads_are_ignored_without_a_platform(tmp_path: Path) -> None:
+    """platform=None is the plain, unbranded export - uploads are branding."""
+
+    image = tmp_path / "logo.png"
+    image.write_bytes(b"png")
+    job = _job()
+    job.cta_watermark_image_path = str(image)
+    service, execution = _service_with_probe(_FakeClipProbe(clip_seconds=2))
+
+    service.build(
+        job=job,
+        render_result=_render_result(),
+        orientation=AspectRatio.PORTRAIT,
+        platform=None,
+    )
+
+    command_plan, _ = execution.calls[0]
+
+    assert "overlay=W-w-30" not in command_plan.filter_complex
+    assert command_plan.input_plan.input_count == 1
+
+
+def test_no_uploads_keeps_the_generated_text_defaults() -> None:
+    service, execution = _service_with_probe(_FakeClipProbe(clip_seconds=2))
+
+    service.build(
+        job=_job(),
+        render_result=_render_result(),
+        orientation=AspectRatio.LANDSCAPE,
+        platform=Platform.YOUTUBE,
+    )
+
+    command_plan, total_duration = execution.calls[0]
+
+    assert "tpad" in command_plan.filter_complex
+    assert "concat" not in command_plan.filter_complex
+    assert total_duration == pytest.approx(65.0)
+    assert command_plan.input_plan.input_count == 1
+
+
+def test_a_set_but_missing_upload_raises_instead_of_silently_using_defaults(
+    tmp_path: Path,
+) -> None:
+    job = _job()
+    job.cta_end_clip_path = str(tmp_path / "gone.mp4")
+    service, _execution = _service_with_probe(_FakeClipProbe(clip_seconds=2))
+
+    with pytest.raises(ValueError, match="could not be found"):
+        service.build(
+            job=job,
+            render_result=_render_result(),
+            orientation=AspectRatio.LANDSCAPE,
+            platform=Platform.YOUTUBE,
+        )

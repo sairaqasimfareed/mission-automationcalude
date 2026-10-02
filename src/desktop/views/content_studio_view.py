@@ -66,8 +66,9 @@ from src.services.approval_gate_service import ApprovalGateService
 from src.services.content_intelligence_pipeline import ContentIntelligencePipeline
 from src.services.content_pipeline import ContentPipeline
 from src.services.content_studio_journey_service import (
+    JOURNEY_STATUS_LABEL,
+    JOURNEY_STATUS_ROLE,
     ContentStudioJourneyService,
-    JourneyCheckpointStatus,
 )
 from src.services.fact_check_service import FactCheckService
 from src.services.genre_profile_registry_service import (
@@ -84,21 +85,6 @@ _GENRE_IDS = [
     profile.genre_id
     for profile in GenreProfileRegistryService.with_default_profiles().list_all()
 ]
-
-
-_JOURNEY_STATUS_ROLE: dict[JourneyCheckpointStatus, str | None] = {
-    JourneyCheckpointStatus.NOT_STARTED: None,
-    JourneyCheckpointStatus.WAITING: "warning",
-    JourneyCheckpointStatus.NEEDS_REVISION: "warning",
-    JourneyCheckpointStatus.APPROVED: "success",
-}
-
-_JOURNEY_STATUS_LABEL: dict[JourneyCheckpointStatus, str] = {
-    JourneyCheckpointStatus.NOT_STARTED: "Not started",
-    JourneyCheckpointStatus.WAITING: "Waiting",
-    JourneyCheckpointStatus.NEEDS_REVISION: "Needs revision",
-    JourneyCheckpointStatus.APPROVED: "Approved",
-}
 
 # (stage key, display label) in pipeline order. Each stage gets its
 # own dedicated panel - selecting one shows only that stage's content
@@ -614,8 +600,8 @@ class ContentStudioView(QWidget):
         strip.setSpacing(10)
 
         for checkpoint in self._journey_service.compute(job):
-            role = _JOURNEY_STATUS_ROLE[checkpoint.status]
-            text = f"{checkpoint.label}: {_JOURNEY_STATUS_LABEL[checkpoint.status]}"
+            role = JOURNEY_STATUS_ROLE[checkpoint.status]
+            text = f"{checkpoint.label}: {JOURNEY_STATUS_LABEL[checkpoint.status]}"
 
             if role is None:
                 strip.addWidget(small_muted(text))

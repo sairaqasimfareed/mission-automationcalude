@@ -586,6 +586,30 @@ that file's audio-regeneration row.
       `docs/MRA_PRE_7_GUI_OPERATOR_WORKFLOW_AUDIT.md`'s own
       "Explicitly not covered in this pass" section.
 
+## Deferred by user decision (2026-10-02)
+
+- Render tab: separate "render video without audio" / "render with
+  audio" actions (the staged video-only render and audio mux already exist
+  in code, nothing calls them) and a chunk-length control. Open design
+  question: display-only chunk count plus chunk-capable video-only render
+  (recommended) versus a manual "scenes per chunk" setting.
+- Removing subtitles from an already-rendered video is not possible;
+  re-rendering is required. A subtitle-free master alongside the
+  subtitled one was considered and not built.
+- Stop/progress UI for the main Render button (needs cancellation support
+  in `RenderOrchestratorService`).
+
+## Known limits of the 2026-10-02 branding uploads
+
+- The watermark image, CTA clip and title clip are one value per project,
+  not per platform: to brand TikTok differently from YouTube, swap the
+  file, save, then generate that variant. Already-generated variants keep
+  the files they were made with and are not flagged as out of date.
+- Uploads only apply to export variants made for a platform; a plain
+  (platform "None") export stays unbranded.
+- An uploaded title/CTA clip is letterboxed into the frame, never
+  cropped, and re-encoded to 30 fps stereo audio so it joins cleanly.
+
 ## Explicitly out of scope
 
 - Google Flow, or any browser automation targeting Google Flow's web UI.
