@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from src.models.audio_inclusion_preferences import AudioInclusionPreferences
 from src.models.editing_directives import (
     SceneEditingDirectives,
@@ -75,6 +77,7 @@ class RenderWorkflowStageFactory:
         render_service: RenderService | None = None,
         production_render_service: ProductionRenderService | None = None,
         top10_countdown_service: Top10CountdownService | None = None,
+        render_output_root: Path | str | None = None,
     ) -> None:
         if render_service is not None and production_render_service is not None:
             raise ValueError(
@@ -109,6 +112,10 @@ class RenderWorkflowStageFactory:
         self._top10_countdown_service = top10_countdown_service
 
         self._render_service = render_service
+
+        # Forwarded to RenderPipelineStage - see its render_output_root
+        # for why each job gets its own output directory.
+        self._render_output_root = render_output_root
 
         if render_service is not None:
             self._production_render_service = None
@@ -367,6 +374,7 @@ class RenderWorkflowStageFactory:
             subtitles_enabled=subtitles_enabled,
             genre_id=genre_id,
             top10_countdown_service=self._top10_countdown_service,
+            render_output_root=self._render_output_root,
         )
 
         stages: list[BasePipelineStage] = [

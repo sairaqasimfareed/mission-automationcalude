@@ -39,6 +39,11 @@ from src.services.startup_diagnostics import StartupDiagnosticsReporter
 from src.services.voice_provider_mapping_service import VoiceProviderMappingService
 from src.shared.logger import logger
 
+# Each project renders into its own <root>/<job id>/ directory (absolute,
+# resolved at startup) so one project's render can never overwrite
+# another's.
+RENDER_OUTPUT_STORAGE_ROOT = Path("data/renders")
+
 
 def build_production_runtime(
     *,
@@ -239,6 +244,7 @@ def build_production_runtime(
         voice_provider_mapping_service=voice_provider_mapping_service,
         dynamic_voice_selection_service=dynamic_voice_selection_service,
         thumbnail_image_provider=thumbnail_image_provider,
+        render_output_root=RENDER_OUTPUT_STORAGE_ROOT,
     ).build()
 
     try:

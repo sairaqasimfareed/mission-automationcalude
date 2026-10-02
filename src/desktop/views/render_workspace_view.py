@@ -44,6 +44,9 @@ from src.models.video_job import VideoJob
 from src.services.caption_style_options_service import CaptionStyleOptionsService
 from src.services.policy_service import PolicyService
 from src.services.project_render_runtime_factory import ProjectRenderRuntimeFactory
+from src.services.render_dependents_invalidation_service import (
+    invalidate_render_dependents,
+)
 from src.services.render_orchestrator_service import RenderOrchestratorService
 from src.services.render_result_resolution_service import (
     resolve_effective_render_orchestration_result,
@@ -927,6 +930,12 @@ class RenderWorkspaceView(QWidget):
             self._policy_service.evaluate(result.job)
 
         self._job_store.set_render_result(job_id, result)
+
+        if result.success:
+            # Everything made FROM the previous render is now stale.
+            invalidate_render_dependents(
+                self._job_store, self._job_store.get(job_id), job_id
+            )
 
         if job_id == self._job_id:
             self._on_change()

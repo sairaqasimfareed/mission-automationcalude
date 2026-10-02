@@ -1286,3 +1286,117 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+def _job_ready_to_render() -> VideoJob:
+    job = build_job()
+    job.voice_file = "assets/audio/test_voice.wav"
+    job.audio_timeline = _all_track_types_timeline()
+
+    return job
+
+
+def test_each_job_renders_into_its_own_directory_not_a_shared_file(
+    tmp_path: Path,
+) -> None:
+    """
+    Real-world finding, 2026-10-03: every project used to render to the
+    one fixed relative "outputs/final_video.mp4", so a second project's
+    render silently overwrote the first's video.
+    """
+
+    first = _job_ready_to_render()
+    second = _job_ready_to_render()
+    fake = _fake_production_render_service()
+    stage = RenderPipelineStage(
+        production_render_service=fake,
+        voice_blueprints=[MagicMock()],
+        render_output_root=tmp_path / "renders",
+    )
+
+    stage.execute(build_context(first))
+    first_target = fake.render.call_args.kwargs["output_file"]
+    stage.execute(build_context(second))
+    second_target = fake.render.call_args.kwargs["output_file"]
+
+    assert first_target != second_target
+    assert (
+        first_target
+        == (
+            (tmp_path / "renders").resolve() / str(first.id) / "final_video.mp4"
+        ).as_posix()
+    )
+    assert str(second.id) in second_target
+    # Absolute, so it does not depend on the working directory.
+    assert Path(first_target).is_absolute()
+    # The directory exists before FFmpeg is asked to write into it.
+    assert Path(first_target).parent.is_dir()
+
+
+def test_without_a_render_root_the_services_own_default_is_used() -> None:
+    job = _job_ready_to_render()
+    fake = _fake_production_render_service()
+    stage = RenderPipelineStage(
+        production_render_service=fake,
+        voice_blueprints=[MagicMock()],
+    )
+
+    stage.execute(build_context(job))
+
+    assert fake.render.call_args.kwargs["output_file"] is None
+
+
+def test_the_staged_render_writes_its_intermediates_into_the_jobs_directory(
+    tmp_path: Path,
+) -> None:
+    job = _job_ready_to_render()
+    fake = MagicMock()
+    fake.output_file = "outputs/final_video.mp4"
+    fake.render_video_only.return_value = RenderResult(
+        success=False,
+        output_file=None,
+        render_engine="ffmpeg",
+        duration_seconds=0,
+        status=RenderStatus.FAILED,
+        error_message="Synthetic stage 1 failure.",
+    )
+    stage = RenderPipelineStage(
+        production_render_service=fake,
+        voice_blueprints=[MagicMock()],
+        render_output_root=tmp_path / "renders",
+    )
+
+    stage.execute(build_context(job))
+
+    stage1_file = fake.render_video_only.call_args.kwargs["output_file"]
+
+    assert (
+        stage1_file
+        == (
+            (tmp_path / "renders").resolve() / str(job.id) / "final_video.stage1.mp4"
+        ).as_posix()
+    )
+
+
+def test_the_top10_countdown_render_also_uses_the_jobs_own_directory(
+    tmp_path: Path,
+) -> None:
+    job = _ranked_job()
+    fake = _fake_production_render_service()
+    countdown = _fake_top10_countdown_service()
+    stage = RenderPipelineStage(
+        production_render_service=fake,
+        voice_blueprints=[MagicMock()],
+        genre_id="genre.top10",
+        top10_countdown_service=countdown,
+        render_output_root=tmp_path / "renders",
+    )
+
+    stage.execute(build_context(job))
+
+    assert (
+        countdown.build.call_args.kwargs["output_file"]
+        == (
+            (tmp_path / "renders").resolve() / str(job.id) / "final_video.mp4"
+        ).as_posix()
+    )

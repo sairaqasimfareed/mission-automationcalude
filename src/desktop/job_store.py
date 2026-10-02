@@ -53,11 +53,15 @@ class JobStore(Protocol):
 
     def get_final_export(self, job_id: UUID) -> FinalExportPackage | None: ...
 
+    def clear_final_export(self, job_id: UUID) -> None: ...
+
     def set_export_variants(
         self, job_id: UUID, export_variants: ExportVariantCollection
     ) -> None: ...
 
     def get_export_variants(self, job_id: UUID) -> ExportVariantCollection | None: ...
+
+    def clear_export_variants(self, job_id: UUID) -> None: ...
 
 
 class InMemoryJobStore:
@@ -131,6 +135,9 @@ class InMemoryJobStore:
     def get_final_export(self, job_id: UUID) -> FinalExportPackage | None:
         return self._final_exports.get(job_id)
 
+    def clear_final_export(self, job_id: UUID) -> None:
+        self._final_exports.pop(job_id, None)
+
     def set_export_variants(
         self, job_id: UUID, export_variants: ExportVariantCollection
     ) -> None:
@@ -138,6 +145,9 @@ class InMemoryJobStore:
 
     def get_export_variants(self, job_id: UUID) -> ExportVariantCollection | None:
         return self._export_variants.get(job_id)
+
+    def clear_export_variants(self, job_id: UUID) -> None:
+        self._export_variants.pop(job_id, None)
 
 
 class JobStoreError(RuntimeError):
@@ -322,6 +332,22 @@ class JsonJobStore:
             self._artifact_path(job_id, "final_export"),
             FinalExportPackage,
         )
+
+    def clear_final_export(self, job_id: UUID) -> None:
+        """
+        Forget a project's final export package - the record only, never
+        the exported files on disk (they may be the operator's own
+        deliverable). Idempotent.
+        """
+
+        self._final_exports.pop(job_id, None)
+        self._artifact_path(job_id, "final_export").unlink(missing_ok=True)
+
+    def clear_export_variants(self, job_id: UUID) -> None:
+        """Same as clear_final_export(), for export variants."""
+
+        self._export_variants.pop(job_id, None)
+        self._artifact_path(job_id, "export_variants").unlink(missing_ok=True)
 
     def set_export_variants(
         self,

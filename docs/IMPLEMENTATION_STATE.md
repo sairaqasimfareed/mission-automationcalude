@@ -314,6 +314,23 @@ section records what changed and why so a later session does not undo it.
   `ExportVariantRenderService` and `TitleCardPrependService`. Real-FFmpeg
   tests cover duration, audio sync, clip pixels and watermark corners.
 
+- **Render pipeline audit fixes (2026-10-03).**
+  - A new successful render now clears export variants and the final export
+    that were built from the previous render
+    (`src/services/render_dependents_invalidation_service.py`, called from
+    `RenderWorkspaceView._handle_render_finished`; `JobStore` gained
+    `clear_export_variants`/`clear_final_export`). Records only - files on
+    disk are never deleted; SEO package and thumbnail are kept.
+  - Each project renders into its own absolute directory,
+    `data/renders/<job id>/final_video.mp4`
+    (`RenderPipelineStage(render_output_root=...)`, wired through
+    `RenderWorkflowStageFactory` and `ProductionApplicationFactory` from
+    `entrypoint.RENDER_OUTPUT_STORAGE_ROOT`). Previously every project wrote
+    to the one relative `outputs/final_video.mp4` and overwrote the last.
+    Existing projects keep their old `outputs/` path until re-rendered.
+  - Applying the title card again builds from the original render, not the
+    already-carded file.
+
 Deferred by the user (not built): separate "render video without audio" /
 "render with audio" buttons and a chunk-length control on the Render tab
 (see `docs/REMAINING_GAPS.md`).

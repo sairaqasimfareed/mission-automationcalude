@@ -129,6 +129,7 @@ def _factory(
     production_render_service: ProductionRenderService | None = None,
     advanced_settings: AdvancedSettings | None = None,
     thumbnail_image_provider: ThumbnailImageProvider | None = None,
+    render_output_root: str | Path | None = None,
 ) -> ProductionApplicationFactory:
     """Build one production application factory for composition tests."""
 
@@ -150,6 +151,7 @@ def _factory(
         production_render_service=(production_render_service),
         advanced_settings=advanced_settings,
         thumbnail_image_provider=thumbnail_image_provider,
+        render_output_root=render_output_root,
     )
 
 
@@ -442,3 +444,17 @@ def test_each_build_creates_fresh_application_graph() -> None:
     assert first.render_stage_factory is not second.render_stage_factory
 
     assert first.render_runtime_factory is not second.render_runtime_factory
+
+
+def test_render_output_root_reaches_the_render_stage_factory(tmp_path: Path) -> None:
+    """Each job renders into its own directory under this root."""
+
+    runtime = _factory(render_output_root=tmp_path).build()
+
+    assert runtime.render_stage_factory._render_output_root == tmp_path
+
+
+def test_the_real_entrypoint_gives_every_project_its_own_render_directory() -> None:
+    from src.entrypoint import RENDER_OUTPUT_STORAGE_ROOT
+
+    assert RENDER_OUTPUT_STORAGE_ROOT == Path("data/renders")

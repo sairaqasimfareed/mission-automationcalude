@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import cast
 
 import pytest
@@ -792,3 +793,30 @@ def test_build_rejects_blank_output_resolution(
             genre_id="documentary",
             output_resolution=(output_resolution),
         )
+
+
+def test_build_forwards_render_output_root_to_render_stage(tmp_path: Path) -> None:
+    """
+    Real-world finding, 2026-10-03: without this each job rendered to one
+    shared fixed path. The configured root must reach RenderPipelineStage
+    (as an absolute path); omitting it keeps the previous behaviour.
+    """
+
+    def render_stage_for(factory: RenderWorkflowStageFactory) -> RenderPipelineStage:
+        stages = factory.build(voice_blueprints=[_blueprint()], genre_id="top10")
+
+        return cast(RenderPipelineStage, stages[4])
+
+    def factory_with(root: Path | None) -> RenderWorkflowStageFactory:
+        return RenderWorkflowStageFactory(
+            voice_generation_service=_dependency(VoiceGenerationService),
+            voice_timeline_service=_dependency(VoiceTimelineService),
+            asset_workflow_service=_dependency(SceneAssetWorkflowService),
+            genre_timeline_service=_dependency(GenreTimelinePipelineService),
+            render_output_root=root,
+        )
+
+    assert render_stage_for(factory_with(tmp_path))._render_output_root == (
+        tmp_path.resolve()
+    )
+    assert render_stage_for(factory_with(None))._render_output_root is None

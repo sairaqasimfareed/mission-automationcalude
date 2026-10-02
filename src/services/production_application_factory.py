@@ -210,7 +210,10 @@ class ProductionApplicationFactory:
         voice_provider_mapping_service: VoiceProviderMappingService | None = None,
         dynamic_voice_selection_service: DynamicVoiceSelectionService | None = None,
         thumbnail_image_provider: ThumbnailImageProvider | None = None,
+        render_output_root: str | Path | None = None,
     ) -> None:
+        self._render_output_root = render_output_root
+
         if not provider_profiles:
             raise ValueError(
                 "Production application requires " "at least one provider profile."
@@ -517,6 +520,7 @@ class ProductionApplicationFactory:
             music_generation_service=music_generation_service,
             top10_countdown_service=top10_countdown_service,
             sound_effect_generation_service=(sound_effect_generation_service),
+            render_output_root=self._render_output_root,
             **(
                 {
                     "production_render_service": (self._production_render_service),

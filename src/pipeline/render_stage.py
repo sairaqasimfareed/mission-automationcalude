@@ -9,6 +9,7 @@ from src.models.render_result import RenderResult
 from src.models.resolved_voice_blueprint import (
     ResolvedVoiceBlueprint,
 )
+from src.models.video_job import VideoJob
 from src.models.video_timeline import VideoTimeline
 from src.pipeline.base_stage import BasePipelineStage
 from src.pipeline.pipeline_stage import (
@@ -64,6 +65,7 @@ class RenderPipelineStage(BasePipelineStage):
         top10_countdown_service: Top10CountdownService | None = None,
         audio_mux_render_service: AudioMuxRenderService | None = None,
         subtitle_burn_service: PostRenderSubtitleBurnService | None = None,
+        render_output_root: Path | str | None = None,
     ) -> None:
         if production_render_service is not None and not voice_blueprints:
             raise ValueError(
@@ -128,6 +130,20 @@ class RenderPipelineStage(BasePipelineStage):
         # without needing real FFmpeg for every test.
         self._audio_mux_render_service = (
             audio_mux_render_service or AudioMuxRenderService()
+        )
+
+        # Real-world finding, 2026-10-03: every job used to render to the
+        # one fixed, working-directory-relative ProductionRenderService
+        # default ("outputs/final_video.mp4"), so a second project's
+        # render silently overwrote the first's video (and its title
+        # card / variant files, which are named from it). When set, each
+        # job renders into its own absolute <root>/<job id>/ directory.
+        # None keeps the service's own configured output file, so
+        # callers that never supplied a root behave exactly as before.
+        self._render_output_root = (
+            Path(render_output_root).resolve()
+            if render_output_root is not None
+            else None
         )
 
         self._subtitle_burn_service = (
@@ -249,6 +265,8 @@ class RenderPipelineStage(BasePipelineStage):
 
         progress_callback = context.services.get("progress_callback")
 
+        job_output_file = self._job_output_file(context.job)
+
         # REQ-12 (top10 countdown rank cards), 2026-09-23: a job whose
         # scenes carry a real Scene.list_rank (assigned earlier by
         # TopTenRankAssignmentService) renders through
@@ -282,7 +300,9 @@ class RenderPipelineStage(BasePipelineStage):
                 voice_blueprints=self._voice_blueprints,
                 seo_context=seo_context,
                 voice_profile_id=voice_profile_id,
-                output_file=production_render_service.DEFAULT_OUTPUT_FILE,
+                output_file=(
+                    job_output_file or production_render_service.DEFAULT_OUTPUT_FILE
+                ),
                 image_override=(context.job.top10_countdown_background_image_path),
                 include_numbering_voiceover=(
                     context.job.top10_countdown_include_numbering_voiceover
@@ -310,6 +330,9 @@ class RenderPipelineStage(BasePipelineStage):
                 unfiltered_audio_timeline=unfiltered_audio_timeline,
                 muxed_audio_timeline=audio_timeline,
                 progress_callback=progress_callback,
+                target_output_file=(
+                    job_output_file or production_render_service.output_file
+                ),
             )
         except NotImplementedError:
             pass
@@ -333,7 +356,23 @@ class RenderPipelineStage(BasePipelineStage):
             letterbox_enabled=self._letterbox_enabled,
             include_subtitles=self._subtitles_enabled,
             audio_selection_is_intentional=True,
+            output_file=job_output_file,
         )
+
+    def _job_output_file(self, job: VideoJob) -> str | None:
+        """
+        This job's own final-video path (<root>/<job id>/final_video.mp4),
+        creating its directory - or None when no per-project root was
+        configured, meaning "use the render service's own default".
+        """
+
+        if self._render_output_root is None:
+            return None
+
+        job_directory = self._render_output_root / str(job.id)
+        job_directory.mkdir(parents=True, exist_ok=True)
+
+        return (job_directory / "final_video.mp4").as_posix()
 
     def _execute_staged_render(
         self,
@@ -343,6 +382,7 @@ class RenderPipelineStage(BasePipelineStage):
         unfiltered_audio_timeline: AudioTimeline,
         muxed_audio_timeline: AudioTimeline,
         progress_callback: ProgressCallback | None,
+        target_output_file: str,
     ) -> RenderResult:
         """
         REQ-00 Stage 1 -> conditional Stage 2 -> conditional REQ-0
@@ -369,8 +409,6 @@ class RenderPipelineStage(BasePipelineStage):
         audio streams by construction) is used directly wherever
         Stage 2's result would otherwise have been used.
         """
-
-        target_output_file = production_render_service.output_file
 
         stage1_output_file = self._stage_output_file(target_output_file, "stage1")
 
