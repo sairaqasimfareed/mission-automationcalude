@@ -47,6 +47,67 @@ class HttpTransportResponse:
 Transport = Callable[[PreparedHttpRequest], HttpTransportResponse]
 
 
+def summarize_error_response(
+    response: HttpTransportResponse, *, max_length: int = 240
+) -> str:
+    """
+    A short, human-readable reason from a failed response's body, e.g.
+    "invalid_api_key: Invalid API key" - so an operator can tell one HTTP 401
+    from another (a wrong key, a key without the needed permission, and
+    exhausted credits are all 401 on ElevenLabs).
+
+    Built from the response body only, never from the request, so it can
+    never contain a header such as an API key. Returns "" when there is
+    nothing useful to show.
+    """
+
+    text = response.content[:4000].decode("utf-8", errors="replace").strip()
+
+    if not text:
+        return ""
+
+    reason = text
+
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        parsed = None
+
+    if isinstance(parsed, dict):
+        detail = parsed.get("detail", parsed.get("error", parsed.get("message")))
+
+        if isinstance(detail, dict):
+            parts = [
+                str(detail[key])
+                for key in ("status", "code", "message")
+                if detail.get(key)
+            ]
+            reason = ": ".join(parts) if parts else json.dumps(detail)
+        elif isinstance(detail, list) and detail:
+            first = detail[0]
+            reason = (
+                str(first.get("msg", first)) if isinstance(first, dict) else str(first)
+            )
+        elif detail:
+            reason = str(detail)
+
+    reason = " ".join(reason.split())
+
+    if len(reason) > max_length:
+        reason = reason[: max_length - 3] + "..."
+
+    return reason
+
+
+def describe_http_failure(prefix: str, response: HttpTransportResponse) -> str:
+    """ "<prefix> failed with HTTP 401 (reason)." - reason omitted if unknown."""
+
+    reason = summarize_error_response(response)
+    suffix = f" ({reason})" if reason else ""
+
+    return f"{prefix} failed with HTTP {response.status_code}{suffix}."
+
+
 def default_transport(request: PreparedHttpRequest) -> HttpTransportResponse:
     """
     Default Transport implementation, backed by the `requests` library.

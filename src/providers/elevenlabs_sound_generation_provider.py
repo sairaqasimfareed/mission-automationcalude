@@ -12,6 +12,7 @@ from src.services.http.http_provider_executor import (
     PreparedHttpRequest,
     Transport,
     default_transport,
+    describe_http_failure,
 )
 
 _DEFAULT_BASE_URL = "https://api.elevenlabs.io"
@@ -75,8 +76,7 @@ class _ElevenLabsSoundGenerationCore:
 
         if response.status_code >= 400:
             raise HttpProviderExecutionError(
-                f"ElevenLabs sound-generation request failed with HTTP "
-                f"{response.status_code}."
+                describe_http_failure("ElevenLabs sound-generation request", response)
             )
 
         self._output_directory.mkdir(parents=True, exist_ok=True)

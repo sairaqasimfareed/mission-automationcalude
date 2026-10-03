@@ -758,3 +758,71 @@ def test_run_voice_releases_budget_when_generation_itself_fails() -> None:
         pipeline.run_voice(job, estimated_cost_usd=2.0)
 
     assert budget_service.registry.get("voice-main").daily_spent_usd == 0.0
+
+
+def test_run_voice_is_not_blocked_by_narration_longer_than_the_scene_estimate() -> None:
+    """
+    Real-world finding, 2026-10-03: a real project's voiceover failed with
+    "Estimated narration duration exceeds the scene duration" because a
+    word-count estimate ran slightly over the scene's rounded, whole-second
+    estimate. With audio-first generation the real narration length is
+    measured after synthesis and drives the clip length, so the estimate is
+    no budget to enforce - every scene's voice must generate regardless.
+    """
+
+    long_narration = " ".join(["word"] * 60)  # ~24s of speech at 150 wpm
+    overrunning = Scene(
+        scene_number=1,
+        title="Scene 1",
+        narration=long_narration,
+        visual_prompt="Visual prompt.",
+        estimated_duration_seconds=4,
+        status=SceneStatus.READY,
+    )
+    job = _job(overrunning, _scene(2))
+
+    result = _pipeline().run_voice(job)
+
+    assert result.voice_status == VoiceStatus.READY
+    assert result.voice_file is not None
+
+
+class _RaisingVoiceProvider(DryRunVoiceProvider):
+    """A real provider failing the way a misconfigured one does."""
+
+    @property
+    def provider_name(self) -> str:
+        return "elevenlabs"
+
+    def generate_voice(self, text: str, voice: str) -> str:
+        raise ValueError(
+            "No real ElevenLabs voice id is mapped for this voice profile."
+        )
+
+
+def test_a_voice_provider_failure_shows_its_real_cause_not_just_a_generic_message() -> (
+    None
+):
+    """
+    Real-world finding, 2026-10-03: a live voiceover failed with only
+    "Voice provider failed during audio generation." - the underlying
+    exception was kept in the failure's metadata and shown nowhere, so the
+    operator could not tell a missing voice mapping from a rejected API key
+    or a network error.
+    """
+
+    pipeline = _pipeline()
+    pipeline.voice_generation_service = VoiceGenerationService(
+        providers=[_RaisingVoiceProvider()]
+    )
+    job = _job(_scene(1))
+
+    with pytest.raises(RuntimeError) as error:
+        pipeline.run_voice(job)
+
+    message = str(error.value)
+
+    assert "Voice generation failed for scene 1" in message
+    assert "Voice provider failed during audio generation." in message
+    assert "Cause: ValueError: No real ElevenLabs voice id is mapped" in message
+    assert job.voice_status == VoiceStatus.FAILED

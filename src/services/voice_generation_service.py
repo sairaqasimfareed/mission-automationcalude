@@ -26,6 +26,7 @@ from src.providers.voice_provider import VoiceProvider
 from src.services.narration_condensation_service import (
     NarrationCondensationService,
 )
+from src.shared.logger import logger
 
 _PROBE_COMMAND_TIMEOUT_SECONDS = 30.0
 
@@ -323,6 +324,18 @@ class VoiceGenerationService:
             # site never needs to know which kind it has.
             output_file = provider.generate_from_blueprint(blueprint)
         except Exception as exc:
+            # The cause used to be kept only in the failure's metadata -
+            # nothing logged it and the dialog showed just the generic
+            # message, so a real failure (no voice id mapped, a rejected
+            # key, a network error) was impossible to diagnose.
+            logger.warning(
+                "Voice generation failed for scene %s via provider %s: %s: %s",
+                job.scene_number,
+                provider.provider_name,
+                type(exc).__name__,
+                exc,
+            )
+
             return self._fail(
                 job=job,
                 reason=(VoiceGenerationFailureReason.PROVIDER_ERROR),

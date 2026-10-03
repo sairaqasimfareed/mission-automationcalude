@@ -301,3 +301,23 @@ def test_loading_a_profile_shows_its_saved_default_model(qapp: QApplication) -> 
     view._list.setCurrentRow(0)  # noqa: SLF001
 
     assert view._default_model.currentText() == "claude-sonnet-5"  # noqa: SLF001
+
+
+def test_the_view_tells_the_operator_changes_need_an_app_restart(
+    qapp: QApplication,
+) -> None:
+    """
+    Real-world finding, 2026-10-03: providers and their API keys are built
+    once at startup, so a new key saved here was silently ignored by the
+    running app (it kept failing with the old key's error) until restarted.
+    """
+
+    from PySide6.QtWidgets import QLabel
+
+    view = _view(qapp)
+
+    texts = [label.text() for label in view.findChildren(QLabel)]
+
+    assert any(
+        "restart" in text.lower() and "api keys" in text.lower() for text in texts
+    )

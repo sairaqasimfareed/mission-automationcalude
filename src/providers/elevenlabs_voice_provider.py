@@ -27,6 +27,7 @@ from src.services.http.http_provider_executor import (
     PreparedHttpRequest,
     Transport,
     default_transport,
+    describe_http_failure,
 )
 from src.services.voice_generation_service import VoiceGenerationService
 from src.services.voice_pitch_shift_service import VoicePitchShiftService
@@ -395,8 +396,7 @@ class ElevenLabsVoiceProvider(VoiceProvider):
 
         if response.status_code >= 400:
             raise HttpProviderExecutionError(
-                f"ElevenLabs text-to-speech request failed with HTTP "
-                f"{response.status_code}."
+                describe_http_failure("ElevenLabs text-to-speech request", response)
             )
 
         return self._write_audio_bytes(response.content)
@@ -427,8 +427,9 @@ class ElevenLabsVoiceProvider(VoiceProvider):
 
         if response.status_code >= 400:
             raise HttpProviderExecutionError(
-                "ElevenLabs text-to-speech-with-timestamps request failed "
-                f"with HTTP {response.status_code}."
+                describe_http_failure(
+                    "ElevenLabs text-to-speech-with-timestamps request", response
+                )
             )
 
         try:

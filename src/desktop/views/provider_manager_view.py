@@ -23,7 +23,16 @@ from PySide6.QtWidgets import (
 )
 
 from src.desktop.theme import SPACE_SM
-from src.desktop.widgets import badge, button, card, heading, muted, row, separator
+from src.desktop.widgets import (
+    badge,
+    button,
+    card,
+    heading,
+    muted,
+    row,
+    separator,
+    small_muted,
+)
 from src.models.http_adapter_config import (
     HttpAdapterConfig,
     HttpMethod,
@@ -414,6 +423,16 @@ class ProviderManagerView(QWidget):
         delete_button.clicked.connect(self._handle_delete_clicked)
 
         card_layout.addLayout(row(save_button, test_button, delete_button))
+
+        # Real-world finding, 2026-10-03: providers (and the keys they hold) are
+        # built once when the app starts. A new ElevenLabs key saved here was
+        # ignored by the running app, which kept using the old one and kept
+        # failing with the same error until restarted - and nothing said so.
+        self._restart_notice = small_muted(
+            "Changes to providers and API keys take effect for generation the "
+            "next time the app starts - restart Mission Automation after saving."
+        )
+        card_layout.addWidget(self._restart_notice)
 
         return frame
 

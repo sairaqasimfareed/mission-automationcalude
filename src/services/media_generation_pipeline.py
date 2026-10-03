@@ -116,7 +116,19 @@ class MediaGenerationPipeline:
                         language=job.language,
                     ),
                     scene.narration,
-                    float(scene.estimated_duration_seconds),
+                    # Real-world finding, 2026-10-03: passing the scene's
+                    # rounded, whole-second ESTIMATE here made the voice
+                    # validator hard-fail ("Estimated narration duration
+                    # exceeds the scene duration") whenever a word-count
+                    # estimate ran a little over it - blocking voice
+                    # generation for a whole project. With audio-first
+                    # generation the real narration length is measured
+                    # after synthesis and drives the clip length (see
+                    # VoicePipelineStage), so there is no fixed budget to
+                    # validate against. None skips that check, exactly as
+                    # ProjectRenderRuntimeFactory already does for the
+                    # render-time voice resolution.
+                    None,
                 )
                 for scene in ordered_scenes
             ]
@@ -136,6 +148,18 @@ class MediaGenerationPipeline:
                     if failed.failure is not None
                     else "Voice generation failed without failure details."
                 )
+
+                # Include the underlying cause when the provider raised one
+                # (e.g. no voice id mapped, a rejected key) - the generic
+                # message alone gave nothing to act on.
+                if failed.failure is not None:
+                    exception_type = failed.failure.metadata.get("exception_type")
+                    exception_message = failed.failure.metadata.get("exception_message")
+
+                    if exception_type:
+                        message = f"{message} Cause: {exception_type}" + (
+                            f": {exception_message}" if exception_message else ""
+                        )
 
                 raise RuntimeError(
                     f"Voice generation failed for scene {failed.scene_number}: {message}"
