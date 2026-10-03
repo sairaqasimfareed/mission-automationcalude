@@ -9,6 +9,7 @@ from src.models.render_result import RenderResult
 from src.models.resolved_voice_blueprint import (
     ResolvedVoiceBlueprint,
 )
+from src.models.sound_design_plan import SoundDesignPlan
 from src.models.video_job import VideoJob
 from src.models.video_timeline import VideoTimeline
 from src.pipeline.base_stage import BasePipelineStage
@@ -22,6 +23,7 @@ from src.services.audio_inclusion_filter_service import (
     filter_audio_timeline_for_mux,
 )
 from src.services.audio_mux_render_service import AudioMuxRenderService
+from src.services.audio_realignment_service import realign_audio_to_scene_timings
 from src.services.ffmpeg_execution_service import ProgressCallback
 from src.services.media_technical_validation_service import (
     MediaTechnicalValidationService,
@@ -344,6 +346,7 @@ class RenderPipelineStage(BasePipelineStage):
                 unfiltered_audio_timeline=unfiltered_audio_timeline,
                 muxed_audio_timeline=audio_timeline,
                 progress_callback=progress_callback,
+                sound_design_plan=context.job.sound_design_plan,
                 target_output_file=(
                     job_output_file or production_render_service.output_file
                 ),
@@ -365,6 +368,21 @@ class RenderPipelineStage(BasePipelineStage):
         # docstring). Before this fix, turning off include_voiceover
         # (or any toggle combination reducing audio_timeline to zero
         # tracks) crashed this fallback call outright.
+        # Same correction for the composite path, from the same real-timing
+        # computation Stage 1 uses (every boundary a crossfade; the chunk
+        # logic downstream corrects the chunk-split ones).
+        fallback_timings = ProductionRenderService._compute_real_scene_timings(
+            video_timeline=video_timeline,
+            transition_duration_seconds=self._transition_duration_seconds,
+        )
+        for timeline in (unfiltered_audio_timeline, audio_timeline):
+            realign_audio_to_scene_timings(
+                timeline,
+                video_timeline=video_timeline,
+                scene_timings=fallback_timings,
+                sound_design_plan=context.job.sound_design_plan,
+            )
+
         return production_render_service.render(
             video_timeline=video_timeline,
             audio_timeline=audio_timeline,
@@ -437,6 +455,7 @@ class RenderPipelineStage(BasePipelineStage):
         muxed_audio_timeline: AudioTimeline,
         progress_callback: ProgressCallback | None,
         target_output_file: str,
+        sound_design_plan: SoundDesignPlan | None = None,
     ) -> RenderResult:
         """
         Run the staged render, then remove its intermediate per-stage
@@ -461,6 +480,7 @@ class RenderPipelineStage(BasePipelineStage):
                 muxed_audio_timeline=muxed_audio_timeline,
                 progress_callback=progress_callback,
                 target_output_file=target_output_file,
+                sound_design_plan=sound_design_plan,
             )
         finally:
             self._remove_stage_intermediates(target_output_file)
@@ -496,6 +516,7 @@ class RenderPipelineStage(BasePipelineStage):
         muxed_audio_timeline: AudioTimeline,
         progress_callback: ProgressCallback | None,
         target_output_file: str,
+        sound_design_plan: SoundDesignPlan | None = None,
     ) -> RenderResult:
         """
         REQ-00 Stage 1 -> conditional Stage 2 -> conditional REQ-0
@@ -537,6 +558,17 @@ class RenderPipelineStage(BasePipelineStage):
 
         if not stage1_result.success:
             return stage1_result
+
+        # Audio made from the Audio tab was positioned before the video
+        # existed; move it onto each scene's REAL start in the encoded
+        # video (Stage 1's own scene_timings) before it is mixed in.
+        for timeline in (unfiltered_audio_timeline, muxed_audio_timeline):
+            realign_audio_to_scene_timings(
+                timeline,
+                video_timeline=video_timeline,
+                scene_timings=stage1_result.scene_timings,
+                sound_design_plan=sound_design_plan,
+            )
 
         has_muxed_audio = bool(muxed_audio_timeline.tracks)
 

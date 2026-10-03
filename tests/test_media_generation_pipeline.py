@@ -826,3 +826,104 @@ def test_a_voice_provider_failure_shows_its_real_cause_not_just_a_generic_messag
     assert "Voice provider failed during audio generation." in message
     assert "Cause: ValueError: No real ElevenLabs voice id is mapped" in message
     assert job.voice_status == VoiceStatus.FAILED
+
+
+def test_run_voice_records_each_scenes_real_length_on_the_scene() -> None:
+    """
+    Real-world finding, 2026-10-03: only the render-time voice step ever set
+    Scene.real_narration_duration_seconds, so generating the voiceover from the
+    Audio tab left clip generation and the prompt previews on the estimates.
+    """
+
+    job = _job(_scene(1), _scene(2))
+    assert all(s.real_narration_duration_seconds is None for s in job.scenes)
+
+    pipeline = _pipeline()
+    result = pipeline.run_voice(job)
+
+    assert result.audio_timeline is not None
+    by_scene = {
+        track.metadata["scene_number"]: track.duration_seconds
+        for track in result.audio_timeline.tracks
+        if track.track_type == AudioTrackType.VOICEOVER
+    }
+
+    for scene in job.scenes:
+        assert scene.real_narration_duration_seconds == by_scene[scene.scene_number]
+
+
+def test_regenerating_the_voice_replaces_stale_scene_durations() -> None:
+    job = _job(_scene(1))
+    job.scenes[0].real_narration_duration_seconds = 99.0
+
+    _pipeline().run_voice(job)
+
+    assert job.scenes[0].real_narration_duration_seconds != 99.0
+
+
+def test_reusing_an_existing_voiceover_still_backfills_scene_durations() -> None:
+    """A voiceover generated before durations were synced needs no new (billed)
+    generation to get them - the reuse path fills them in from the tracks."""
+
+    job = _job(_scene(1), _scene(2))
+    pipeline = _pipeline()
+    pipeline.run_voice(job)
+
+    for scene in job.scenes:
+        scene.real_narration_duration_seconds = None
+
+    summary = pipeline.run_all_audio(job)
+
+    voice = next(r for r in summary.results if r.component == "voice")
+
+    assert voice.status == AudioComponentStatus.REUSED
+    assert all(s.real_narration_duration_seconds is not None for s in job.scenes)
+
+
+def test_audio_tab_tracks_are_flagged_with_the_time_axis_they_were_placed_on() -> None:
+    """
+    Real-world finding, 2026-10-03: the Audio tab places voice end to end and
+    sound effects/music from the video timeline's nominal starts - neither
+    accounts for crossfades, so the render must move them onto the real scene
+    starts. The flag is how it knows which tracks need that (and which, made by
+    the render's own steps, must not be corrected twice).
+    """
+
+    from src.services.audio_realignment_service import (
+        BASIS_NOMINAL,
+        BASIS_SEQUENTIAL,
+        POSITION_BASIS_KEY,
+    )
+
+    job = _job(_scene(1), _scene(2), _scene(3))
+    job.video_clips = [_clip(1), _clip(2), _clip(3)]
+    pipeline = _pipeline()
+
+    pipeline.run_voice(job)
+    pipeline.run_timeline(job)
+
+    cue = SoundEffectCueDirective(
+        scene_number=2, generation_prompt="knocks", rationale="r"
+    )
+    segment = MusicMoodSegment(
+        start_scene_number=2,
+        end_scene_number=3,
+        mood_description="drone",
+        rationale="r",
+    )
+    job.sound_design_plan = SoundDesignPlan(sfx_cues=[cue], music_segments=[segment])
+    pipeline.generate_single_sfx_cue(job, str(cue.id))
+    pipeline.generate_single_music_segment(job, str(segment.id))
+    pipeline.run_sound_effects(job)
+
+    assert job.audio_timeline is not None
+    by_type: dict[AudioTrackType, set[object]] = {}
+
+    for track in job.audio_timeline.tracks:
+        by_type.setdefault(track.track_type, set()).add(
+            track.metadata.get(POSITION_BASIS_KEY)
+        )
+
+    assert by_type[AudioTrackType.VOICEOVER] == {BASIS_SEQUENTIAL}
+    assert by_type[AudioTrackType.SOUND_EFFECT] == {BASIS_NOMINAL}
+    assert by_type[AudioTrackType.BACKGROUND_MUSIC] == {BASIS_NOMINAL}

@@ -463,7 +463,7 @@ def test_generate_one_repatches_the_compiled_prompts_stale_duration_statement() 
     assert provider.submitted_prompts == [
         "Identity: no recurring identity present. "
         "Environment: a wheat field. Lighting: golden hour. "
-        "Action progression: a farmer surveys the damage. "
+        "Shot progression: [0-8s] a farmer surveys the damage. "
         "Composition: wide shot. Lens/camera: 35mm, medium "
         "shot, eye level, static movement. Duration: 8 seconds."
     ]
@@ -2211,3 +2211,46 @@ def test_generate_one_routes_to_the_scenes_preferred_profile_id(
 
     assert entry.status == SceneCompletenessStatus.READY
     assert provider.submitted_requests[0].profile_id == "flow.backup"
+
+
+def test_generate_one_sizes_the_clip_from_the_voice_track_when_the_scene_field_is_empty() -> (
+    None
+):
+    """
+    Real-world finding, 2026-10-03: a voiceover generated from the Audio tab
+    left Scene.real_narration_duration_seconds empty, so clips were sized from
+    the script's estimate. generate_one now fills it from the scene's voice
+    track first - here a 12s estimate for a scene that really runs 5.5s.
+    """
+
+    from src.models.audio_timeline import AudioTimeline
+    from src.models.audio_track import AudioTrack, AudioTrackStatus, AudioTrackType
+
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            GoogleFlowGenerationState.GENERATING,
+            GoogleFlowGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    service = _service(provider)
+    scene = _scene(1, duration=12)
+    job = _job(scene)
+    job.audio_timeline = AudioTimeline(
+        tracks=[
+            AudioTrack(
+                track_type=AudioTrackType.VOICEOVER,
+                source_file="voice/1.mp3",
+                duration_seconds=5.5,
+                status=AudioTrackStatus.READY,
+                metadata={"scene_number": 1},
+            )
+        ]
+    )
+
+    assert scene.real_narration_duration_seconds is None
+
+    service.generate_one(job, 1)
+
+    assert scene.real_narration_duration_seconds == 5.5
+    request = job.flow_generation_attempts[0].request
+    assert request.execution_settings.duration_seconds == 6.0

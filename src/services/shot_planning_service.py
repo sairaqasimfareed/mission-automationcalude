@@ -202,8 +202,13 @@ class ShotPlanningService:
             "ACTION: <what physically happens on screen>\n"
             "TRANSITION_IN: <how this shot begins, e.g. 'cut', 'fade'>\n"
             "TRANSITION_OUT: <how this shot ends>\n"
-            "BEATS: <optional; semicolon-separated 'Ns-Ms: description' "
-            "within-clip action timing, coarse only>"
+            "BEATS: <semicolon-separated 'Ns-Ms: description' within-clip "
+            "action timing, e.g. '0s-3s: the key fact is shown; 3s-6s: "
+            "supporting detail'. Include it for every scene: the beats must "
+            "start at 0s, end at the scene's own duration, and put the "
+            "information the narration needs EARLY - the clip may be cut "
+            "short, so nothing essential may sit at the very end. Coarse, "
+            "2-3 beats at most>"
         )
 
     @staticmethod

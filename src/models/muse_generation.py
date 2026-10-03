@@ -332,6 +332,13 @@ class MuseGenerationAttempt(MissionBaseModel):
     downloaded_file: str | None = None
     checksum: str | None = None
 
+    # The checksum of the file exactly as Muse delivered it, before any
+    # local trim. `checksum` is re-computed after a trim (it describes what
+    # gets attached), so the SAME Muse video downloaded for two scenes and
+    # trimmed to two different lengths has two different checksums - this one
+    # stays equal, which is what duplicate detection must compare.
+    source_checksum: str | None = None
+
     technical_validation: MediaTechnicalValidationResult | None = None
     qc_result: MuseQCResult | None = None
 

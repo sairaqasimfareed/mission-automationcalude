@@ -5,11 +5,14 @@ from pathlib import Path
 from uuid import UUID
 
 from PySide6.QtCore import QObject, Qt, QThread, Signal
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFileDialog,
     QFrame,
+    QHBoxLayout,
+    QLabel,
     QMessageBox,
     QScrollArea,
     QVBoxLayout,
@@ -29,6 +32,11 @@ from src.desktop.widgets import (
 )
 from src.models.bulk_clip_ingestion import BulkClipIngestionEntryStatus
 from src.models.bulk_stock_assignment import BulkStockAssignmentEntryStatus
+from src.models.clip_attachment_verification import (
+    ClipAttachmentVerificationReport,
+    ClipVerificationSeverity,
+    SceneClipVerification,
+)
 from src.models.google_flow_generation import (
     GoogleFlowGenerationAttempt,
     GoogleFlowGenerationState,
@@ -42,6 +50,10 @@ from src.models.video_clip import VideoClip
 from src.models.video_job import VideoJob
 from src.services.bulk_clip_ingestion_service import BulkClipIngestionService
 from src.services.bulk_stock_assignment_service import BulkStockAssignmentService
+from src.services.clip_attachment_verification_service import (
+    ClipAttachmentVerificationService,
+    clip_signature,
+)
 from src.services.google_flow_generation_orchestrator_service import (
     GoogleFlowAttemptCreditSensitiveError,
 )
@@ -55,6 +67,7 @@ from src.services.scene_generation_dispatch_service import (
     SceneGenerationDispatchService,
 )
 from src.services.scene_prompt_export_service import ScenePromptExportService
+from src.shared.logger import logger
 
 _LEFT = Qt.AlignmentFlag.AlignLeft
 
@@ -130,10 +143,12 @@ class _SceneVideoGenerationWorker(QObject):
         scene_number: int | None,
         retry_after_auth: bool = False,
         forced_profile_id: str | None = None,
+        verifier: ClipAttachmentVerificationService | None = None,
     ) -> None:
         super().__init__()
 
         self._service = service
+        self._verifier = verifier
         self._job = job
         self.job = job
         self.job_id = job.id
@@ -155,14 +170,62 @@ class _SceneVideoGenerationWorker(QObject):
             else:
                 self._service.generate_one(self._job, self.scene_number)
         except Exception as error:  # noqa: BLE001 - reported to the UI thread
+            self._verify_quietly()
             self.failed.emit(str(error))
 
             return
 
+        self._verify_quietly()
         self.finished.emit()
+
+    def _verify_quietly(self) -> None:
+        """
+        After a whole-project run, check that every scene really ended up
+        with its own clip, so a run left unattended has its verdict waiting.
+        Runs on this worker thread (it probes and thumbnails every clip) and
+        can never fail the run itself - a check that cannot run is just
+        absent, and the Check clips button is still there.
+        """
+
+        if self._verifier is None or self.scene_number is not None:
+            return
+
+        try:
+            self._job.clip_verification_report = self._verifier.verify(self._job)
+        except Exception:  # noqa: BLE001
+            logger.exception("Post-generation clip check failed.")
 
     def _handle_scene_complete(self, job: VideoJob, scene_number: int) -> None:
         self.scene_completed.emit(job.model_copy(deep=True))
+
+
+class _ClipVerificationWorker(QObject):
+    """Runs one clip check off the Qt main thread (it runs ffprobe and
+    ffmpeg once per clip). Same bound-method signal convention as
+    _SceneVideoGenerationWorker; verifies a snapshot, so the GUI thread never
+    shares the job with this one."""
+
+    finished = Signal(object)
+    failed = Signal(str)
+
+    def __init__(
+        self, *, verifier: ClipAttachmentVerificationService, job: VideoJob
+    ) -> None:
+        super().__init__()
+
+        self._verifier = verifier
+        self._job = job
+        self.job_id = job.id
+
+    def run(self) -> None:
+        try:
+            report = self._verifier.verify(self._job)
+        except Exception as error:  # noqa: BLE001 - reported to the UI thread
+            self.failed.emit(str(error))
+
+            return
+
+        self.finished.emit(report)
 
 
 class ClipWorkspaceView(QWidget):
@@ -195,10 +258,21 @@ class ClipWorkspaceView(QWidget):
         on_change: Callable[[], None],
         scene_video_generation_service: SceneGenerationDispatchService | None = None,
         provider_registry: ProviderRegistry | None = None,
+        clip_verification_service: ClipAttachmentVerificationService | None = None,
     ) -> None:
         super().__init__()
 
         self._job_store = job_store
+        self._clip_verification_service = (
+            clip_verification_service
+            or ClipAttachmentVerificationService(
+                thumbnails_root=Path("data/clip_thumbnails")
+            )
+        )
+        self._verifying_job_ids: set[UUID] = set()
+        self._verification_threads: dict[
+            UUID, tuple[QThread, _ClipVerificationWorker]
+        ] = {}
         self._on_change = on_change
         self._job_id: UUID | None = None
         self._selected_scene_numbers: set[int] = set()
@@ -261,6 +335,7 @@ class ClipWorkspaceView(QWidget):
                 widget.deleteLater()
 
         self._build_summary_card(job)
+        self._build_verification_card(job)
         self._build_automatic_generation_card(job)
         self._build_bulk_generation_card(job)
         self._build_clips_card(job)
@@ -294,6 +369,232 @@ class ClipWorkspaceView(QWidget):
             )
 
         self._layout.addWidget(frame)
+
+    def _build_verification_card(self, job: VideoJob) -> None:
+        """
+        "Did every scene get the right clip?" - one verdict, then a still from
+        each scene's clip beside its narration so the picture can be checked
+        by eye. Filled in automatically at the end of Generate all scenes;
+        Check clips re-runs it any time (after a manual swap, say).
+        """
+
+        frame, layout = card("Clip check", icon_name="clapper")
+
+        if not job.scenes:
+            layout.addWidget(small_muted("No scenes planned yet - see Content Studio."))
+            self._layout.addWidget(frame)
+
+            return
+
+        checking = job.id in self._verifying_job_ids
+        check_button = button(
+            "Checking clips..." if checking else "Check clips now",
+            variant="primary",
+            icon_name="clapper",
+        )
+        check_button.setEnabled(not checking and job.id not in self._generating_job_ids)
+        check_button.clicked.connect(self._handle_check_clips)
+        layout.addWidget(check_button, alignment=_LEFT)
+
+        report = job.clip_verification_report
+
+        if report is None:
+            layout.addWidget(
+                small_muted(
+                    "Not checked yet. This runs by itself when Generate all scenes "
+                    "finishes: it confirms every scene has a readable clip of the "
+                    "right length, that no two scenes share the same footage, and "
+                    "shows a still from each clip next to its narration."
+                )
+            )
+            self._layout.addWidget(frame)
+
+            return
+
+        stale = report.clip_signature != clip_signature(job)
+        layout.addWidget(self._verification_headline(report, stale=stale))
+
+        for scene_result in report.scenes:
+            layout.addWidget(self._verification_row(scene_result))
+
+        self._layout.addWidget(frame)
+
+    @staticmethod
+    def _verification_headline(
+        report: ClipAttachmentVerificationReport, *, stale: bool
+    ) -> QLabel:
+        checked_at = report.verified_at.astimezone().strftime("%H:%M")
+        total = len(report.scenes)
+
+        if stale:
+            return status_label(
+                f"Out of date - the clips changed after this check ({checked_at}). "
+                "Check again before trusting it.",
+                role="warning",
+            )
+
+        if report.is_clean:
+            return status_label(
+                f"All {total} scene(s) have a readable clip of the right length and "
+                f"no repeated footage (checked {checked_at}). Compare each still with "
+                "its narration below.",
+                role="success",
+            )
+
+        parts = [f"{report.ok_count} OK"]
+
+        if report.warning_count:
+            parts.append(f"{report.warning_count} to look at")
+
+        if report.error_count:
+            parts.append(f"{report.error_count} with a problem")
+
+        return status_label(
+            f"{total} scene(s): {', '.join(parts)} (checked {checked_at}).",
+            role="error" if report.error_count else "warning",
+        )
+
+    @staticmethod
+    def _verification_row(result: SceneClipVerification) -> QFrame:
+        row_frame = QFrame()
+        row_frame.setProperty("sceneRow", True)
+
+        row_layout = QHBoxLayout(row_frame)
+        row_layout.setContentsMargins(12, 8, 12, 8)
+        row_layout.setSpacing(12)
+
+        picture = QLabel()
+        picture.setFixedWidth(176)
+        picture.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        pixmap = QPixmap(result.thumbnail_file) if result.thumbnail_file else QPixmap()
+
+        if pixmap.isNull():
+            picture.setText("No preview")
+            picture.setProperty("role", "small-muted")
+            picture.setFixedHeight(99)
+        else:
+            picture.setPixmap(
+                pixmap.scaledToWidth(176, Qt.TransformationMode.SmoothTransformation)
+            )
+
+        row_layout.addWidget(picture)
+
+        text_layout = QVBoxLayout()
+        text_layout.setSpacing(3)
+
+        lengths = (
+            f"{result.actual_seconds:g}s of footage"
+            if result.actual_seconds is not None
+            else "length unknown"
+        )
+
+        if result.expected_seconds is not None:
+            lengths += f" for {result.expected_seconds:g}s of narration"
+
+        verdict = {
+            ClipVerificationSeverity.OK: "OK",
+            ClipVerificationSeverity.WARNING: "Look at this",
+            ClipVerificationSeverity.ERROR: "Problem",
+        }[result.severity]
+        text_layout.addWidget(
+            badge(
+                f"#{result.scene_number} {result.scene_title} - {verdict}"
+                + (f" - {result.provider}" if result.provider else "")
+            )
+        )
+        text_layout.addWidget(small_muted(lengths))
+
+        narration = result.narration
+
+        if len(narration) > 160:
+            narration = narration[:157] + "..."
+
+        text_layout.addWidget(small_muted(narration))
+
+        for issue in result.issues:
+            text_layout.addWidget(
+                status_label(
+                    issue.message,
+                    role=(
+                        "error"
+                        if issue.severity == ClipVerificationSeverity.ERROR
+                        else "warning"
+                    ),
+                )
+            )
+
+        row_layout.addLayout(text_layout, stretch=1)
+
+        return row_frame
+
+    def _handle_check_clips(self) -> None:
+        job = self._current_job()
+
+        if job is None or job.id in self._verifying_job_ids:
+            return
+
+        thread = QThread()
+        worker = _ClipVerificationWorker(
+            verifier=self._clip_verification_service,
+            job=job.model_copy(deep=True),
+        )
+        worker.moveToThread(thread)
+        thread.job_id = job.id  # type: ignore[attr-defined]
+
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._handle_verification_finished)
+        worker.failed.connect(self._handle_verification_failed)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        thread.finished.connect(self._handle_verification_thread_finished)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+
+        self._verification_threads[job.id] = (thread, worker)
+        self._verifying_job_ids.add(job.id)
+
+        self._rebuild_card(job)
+
+        thread.start()
+
+    def _handle_verification_finished(self, report: object) -> None:
+        worker = self.sender()
+
+        if not isinstance(worker, _ClipVerificationWorker):
+            return
+
+        job_id = worker.job_id
+        self._verifying_job_ids.discard(job_id)
+
+        job = self._job_store.get(job_id)
+
+        if job is not None and isinstance(report, ClipAttachmentVerificationReport):
+            job.clip_verification_report = report
+            self._job_store.add(job)
+
+        if job_id == self._job_id:
+            self._on_change()
+
+    def _handle_verification_failed(self, message: str) -> None:
+        worker = self.sender()
+
+        if not isinstance(worker, _ClipVerificationWorker):
+            return
+
+        job_id = worker.job_id
+        self._verifying_job_ids.discard(job_id)
+
+        if job_id == self._job_id:
+            show_recoverable_error(self, "Clip check failed", message)
+            self._on_change()
+
+    def _handle_verification_thread_finished(self) -> None:
+        thread = self.sender()
+        job_id = getattr(thread, "job_id", None)
+
+        if job_id is not None:
+            self._verification_threads.pop(job_id, None)
 
     def _build_automatic_generation_card(self, job: VideoJob) -> None:
         """
@@ -750,6 +1051,7 @@ class ClipWorkspaceView(QWidget):
             scene_number=scene_number,
             retry_after_auth=retry_after_auth,
             forced_profile_id=forced_profile_id,
+            verifier=self._clip_verification_service,
         )
         worker.moveToThread(thread)
 

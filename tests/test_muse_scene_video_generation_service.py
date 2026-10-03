@@ -1265,3 +1265,156 @@ def test_negative_settle_seconds_is_rejected() -> None:
             asset_workflow_service=_asset_workflow_service(),
             generate_all_settle_seconds=-1.0,
         )
+
+
+def test_generate_one_trims_to_the_real_voice_length_when_the_scene_field_is_empty(
+    tmp_path: Path,
+) -> None:
+    """
+    Real-world finding, 2026-10-03: a voiceover generated from the Audio tab
+    left Scene.real_narration_duration_seconds empty, so Muse was asked to trim
+    to the script's estimate. generate_one fills it from the voice track first.
+    """
+
+    from src.models.audio_timeline import AudioTimeline
+    from src.models.audio_track import AudioTrack, AudioTrackStatus, AudioTrackType
+
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            MuseGenerationState.GENERATING,
+            MuseGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    provider.downloaded_file = str(_real_video_file(tmp_path))
+    service = _service(provider)
+    scene = _scene(1)
+    job = _job(scene)
+    job.audio_timeline = AudioTimeline(
+        tracks=[
+            AudioTrack(
+                track_type=AudioTrackType.VOICEOVER,
+                source_file="voice/1.mp3",
+                duration_seconds=4.0,
+                status=AudioTrackStatus.READY,
+                metadata={"scene_number": 1},
+            )
+        ]
+    )
+
+    assert scene.real_narration_duration_seconds is None
+
+    service.generate_one(job, 1)
+
+    assert scene.real_narration_duration_seconds == 4.0
+    assert "Also trim the generated 10 seconds video to only 4 seconds video." in (
+        provider.submitted_prompts[0]
+    )
+
+
+def test_a_repeat_of_another_scenes_video_is_caught_even_after_it_is_trimmed(
+    tmp_path: Path,
+) -> None:
+    """
+    Real-world finding, 2026-10-03 (live Remedy project): scene 2 downloaded
+    scene 1's Muse video again - the raw files were byte-identical (same
+    SHA-256) - but the duplicate guard compared checksums AFTER the local
+    safety-net trim, and the same video trimmed to a different scene length is
+    a different file. Scene 2 silently got scene 1's footage. The guard must
+    compare the untrimmed downloads.
+    """
+
+    shared_file = _real_video_file(tmp_path, name="honey-kitchen.mp4")
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            MuseGenerationState.GENERATING,
+            MuseGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    provider.downloaded_file = str(shared_file)
+
+    ten_second_probe = json.dumps(
+        {
+            "format": {"duration": "10.0"},
+            "streams": [
+                {"codec_type": "video", "width": 1920, "height": 1080},
+                {"codec_type": "audio"},
+            ],
+        }
+    )
+    frame_extraction, _commands = _frame_extraction_service(tmp_path)
+    service = MuseSceneVideoGenerationService(
+        orchestrator=_orchestrator(provider, probe_output=ten_second_probe),
+        asset_workflow_service=_asset_workflow_service(),
+        poll_interval_seconds=1.0,
+        max_poll_attempts=10,
+        sleep_fn=lambda _: None,
+        frame_extraction_service=frame_extraction,
+    )
+
+    scene_one = _scene(1)
+    scene_one.real_narration_duration_seconds = 10.0  # no trim needed
+    job = _job(scene_one)
+    assert service.generate_one(job, 1).status == SceneCompletenessStatus.READY
+
+    scene_two = _scene(2)
+    scene_two.real_narration_duration_seconds = 1.0  # same video, trimmed to 1s
+    job.scenes.append(scene_two)
+    provider._observe_sequence = [  # noqa: SLF001
+        MuseGenerationState.GENERATING,
+        MuseGenerationState.READY_TO_DOWNLOAD,
+    ]
+
+    second = service.generate_one(job, 2)
+
+    assert second.status != SceneCompletenessStatus.READY
+
+    attempt_two = next(
+        a for a in job.muse_generation_attempts if a.request.scene_number == 2
+    )
+    assert attempt_two.state == MuseGenerationState.UI_CHANGED
+    assert "scene 1" in (attempt_two.state_history[-1].detail or "")
+    # Its post-trim file really did differ - the old guard compared these.
+    first_attempt = job.muse_generation_attempts[0]
+    assert attempt_two.checksum != first_attempt.checksum
+    # ...while the untrimmed downloads are the same video.
+    assert attempt_two.source_checksum == first_attempt.source_checksum
+    assert 2 not in {clip.scene_number for clip in job.video_clips}
+
+
+def test_the_source_checksum_survives_a_trim_and_is_set_once(tmp_path: Path) -> None:
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            MuseGenerationState.GENERATING,
+            MuseGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    provider.downloaded_file = str(_real_video_file(tmp_path))
+    ten_second_probe = json.dumps(
+        {
+            "format": {"duration": "10.0"},
+            "streams": [
+                {"codec_type": "video", "width": 1920, "height": 1080},
+                {"codec_type": "audio"},
+            ],
+        }
+    )
+    frame_extraction, _commands = _frame_extraction_service(tmp_path)
+    service = MuseSceneVideoGenerationService(
+        orchestrator=_orchestrator(provider, probe_output=ten_second_probe),
+        asset_workflow_service=_asset_workflow_service(),
+        poll_interval_seconds=1.0,
+        max_poll_attempts=10,
+        sleep_fn=lambda _: None,
+        frame_extraction_service=frame_extraction,
+    )
+    scene = _scene(1)
+    scene.real_narration_duration_seconds = 4.0
+    job = _job(scene)
+
+    service.generate_one(job, 1)
+
+    attempt = job.muse_generation_attempts[-1]
+
+    assert attempt.source_checksum is not None
+    # The trim changed the attached file's checksum, not the source one.
+    assert attempt.checksum != attempt.source_checksum

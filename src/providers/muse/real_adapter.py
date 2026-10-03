@@ -16,6 +16,7 @@ from src.models.muse_generation import (
 )
 from src.providers.muse.locators import MuseRealAccessibleNames
 from src.providers.muse_ui_provider import MuseUIOperation, MuseUIProvider
+from src.shared.logger import logger
 
 # A separate profile root from Google Flow's DEFAULT_FLOW_PROFILES_ROOT
 # (src/browser/flow_profile_paths.py) - two unrelated providers must
@@ -54,6 +55,10 @@ class _ReferenceAssetAttachmentFailedError(RuntimeError):
     attached - same "missing/dropped reference: STOP before
     generation" rule as Google Flow's own equivalent error.
     """
+
+
+# How much of the END of the submitted prompt identifies its chat message.
+_PROMPT_ANCHOR_CHARS = 50
 
 
 class MuseRealUIAdapter(MuseUIProvider):
@@ -600,12 +605,73 @@ class MuseRealUIAdapter(MuseUIProvider):
             candidate = videos.nth(index)
             src = candidate.get_attribute("src")
 
-            if src and src not in known_srcs:
+            if (
+                src
+                and src not in known_srcs
+                and self._follows_submitted_prompt(candidate, attempt)
+            ):
                 self._resolved_video_src[attempt_key] = src
 
                 return candidate
 
         return None
+
+    def _follows_submitted_prompt(
+        self, candidate: Locator, attempt: MuseGenerationAttempt
+    ) -> bool:
+        """
+        True only if this video sits AFTER the chat message that holds this
+        attempt's own submitted prompt.
+
+        Real-world finding, 2026-10-03: a video's `src` blob URL can appear
+        late - Muse's chat only loads an older video once it scrolls into view.
+        When the window scrolled up while scene 2 was generating, scene 1's
+        video loaded its src, was not in the set of srcs known at submit, and
+        looked "new" - so scene 1's video was downloaded again for scene 2.
+        Position relative to our own prompt is immune to when a src appears,
+        scrolling, or lazy loading: an earlier scene's reply is always BEFORE
+        this prompt in the thread.
+
+        Matches on the prompt's tail (the head - identity/environment text - is
+        identical across scenes, the tail carries the scene's own duration).
+        If the prompt message cannot be found at all the check is skipped
+        (with a warning) rather than stalling forever; the downstream
+        duplicate-download guard still catches a repeated video.
+        """
+
+        anchor = " ".join(attempt.request.prompt.split())[-_PROMPT_ANCHOR_CHARS:]
+
+        try:
+            follows = candidate.evaluate(
+                """(video, anchor) => {
+                    const items = Array.from(
+                        document.querySelectorAll('[data-message-item]')
+                    );
+                    const norm = (text) => (text || '').replace(/\\s+/g, ' ');
+                    const matches = items.filter((item) =>
+                        norm(item.textContent).includes(anchor)
+                    );
+                    if (matches.length === 0) return null;
+                    const own = matches[matches.length - 1];
+                    return !!(
+                        own.compareDocumentPosition(video) &
+                        Node.DOCUMENT_POSITION_FOLLOWING
+                    );
+                }""",
+                anchor,
+            )
+        except PlaywrightError:
+            return True
+
+        if follows is None:
+            logger.warning(
+                "Could not find this attempt's own prompt message on the Muse "
+                "page; not able to confirm a video follows it."
+            )
+
+            return True
+
+        return bool(follows)
 
     @staticmethod
     def _current_video_srcs(page: Page) -> set[str]:

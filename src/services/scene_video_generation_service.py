@@ -49,6 +49,9 @@ from src.services.google_flow_generation_ledger_service import (
 from src.services.google_flow_generation_orchestrator_service import (
     GoogleFlowGenerationOrchestratorService,
 )
+from src.services.narration_duration_sync_service import (
+    sync_real_narration_durations,
+)
 from src.services.provider_profile_management_service import (
     ProviderProfileManagementService,
 )
@@ -107,6 +110,37 @@ def _extend_last_beat_to_real_duration(prompt: str, real_duration: float) -> str
     replacement = f"[{start_text}-{real_duration:g}s]"
 
     return prompt[: last_match.start()] + replacement + prompt[last_match.end() :]
+
+
+_FLAT_ACTION_PATTERN = re.compile(
+    r"Action progression: (.+?)(?= Composition:)", re.DOTALL
+)
+
+
+def _bound_flat_action_to_real_duration(prompt: str, real_duration: float) -> str:
+    """
+    Turn a flat "Action progression: <action>" line into an explicitly
+    time-boxed "Shot progression: [0-Ns] <action>" using the real clip
+    length N - a no-op when the prompt already has timed beats.
+
+    Real-world finding, 2026-10-03: a shot plan whose LLM answer carried no
+    BEATS (all 18 shots of a live Muse project) compiles to the flat line,
+    which says WHAT happens but not WHEN. Muse generates a fixed 10s video
+    and is then told to trim it to N seconds, so with no time box the
+    information the scene needs can land after second N and be trimmed away.
+    Done here, at the same point the real duration is stamped in, so it
+    also fixes prompts already compiled and stored, and applies to
+    sub-clips (each gets its own window length).
+    """
+
+    if _SHOT_PROGRESSION_BEAT_PATTERN.search(prompt) or real_duration <= 0:
+        return prompt
+
+    return _FLAT_ACTION_PATTERN.sub(
+        lambda match: f"Shot progression: [0-{real_duration:g}s] {match.group(1)}",
+        prompt,
+        count=1,
+    )
 
 
 # Real-world finding, 2026-09-21 (Phase 3/4's own real verification):
@@ -298,6 +332,12 @@ class SceneVideoGenerationService:
 
         if scene is None:
             raise ValueError(f"Job has no scene numbered {scene_number}.")
+
+        # A voiceover generated from the Audio tab leaves each scene's real
+        # narration length only on its audio track; fill it in (free, and a
+        # no-op once set) so this clip is sized from the real narration, not
+        # the script's estimate.
+        sync_real_narration_durations(job)
 
         # Phase 5 (multi-clip scene splitting): a scene whose real
         # narration exceeds Flow's own max single-clip duration is
@@ -1114,6 +1154,7 @@ class SceneVideoGenerationService:
         # at all (a legacy/flat-action prompt) or the beats already
         # reached the real duration.
         prompt = _extend_last_beat_to_real_duration(prompt, duration_seconds)
+        prompt = _bound_flat_action_to_real_duration(prompt, duration_seconds)
 
         attempt = self._timed(
             "submit",

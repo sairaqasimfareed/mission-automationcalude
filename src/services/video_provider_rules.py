@@ -13,6 +13,7 @@ from src.providers.google_flow.locators import (
 from src.services.scene_clip_split_planning_service import SceneClipSplitPlanningService
 from src.services.scene_video_generation_service import (
     _DURATION_STATEMENT_PATTERN,
+    _bound_flat_action_to_real_duration,
     _extend_last_beat_to_real_duration,
 )
 
@@ -107,6 +108,7 @@ class VideoProviderRules:
             prompt,
         )
         prompt = _extend_last_beat_to_real_duration(prompt, target_seconds)
+        prompt = _bound_flat_action_to_real_duration(prompt, target_seconds)
 
         if (
             self.provider == VideoProvider.MUSE

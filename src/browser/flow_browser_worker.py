@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sys
 import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -12,7 +11,6 @@ from playwright.sync_api import (
     Browser,
     BrowserContext,
     Playwright,
-    ViewportSize,
     sync_playwright,
 )
 
@@ -47,32 +45,6 @@ class FlowOperationTimedOut(TimeoutError):
             f"{label} timed out after {elapsed_seconds:.1f}s "
             f"(budget was {timeout_seconds:.1f}s)"
         )
-
-
-def _primary_screen_size() -> tuple[int, int] | None:
-    """
-    Best-effort real screen resolution query, Windows-only (matches
-    this whole application's own Windows-first environment - see the
-    system environment this codebase runs in). Used so a visible,
-    headed browser window can be sized to genuinely fit the real
-    screen, rather than relying on Chromium's own `--start-maximized`
-    flag, which is not reliably supported across every Windows/Chrome
-    version/policy combination. Returns None on any failure or a
-    non-Windows platform, so callers fall back to a safe default
-    rather than crash.
-    """
-
-    if sys.platform != "win32":
-        return None
-
-    try:
-        import ctypes
-
-        user32 = ctypes.windll.user32
-
-        return user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
-    except Exception:  # noqa: BLE001
-        return None
 
 
 # GF-0's own recorded decision: Playwright's Sync API, driven inside a
@@ -266,51 +238,47 @@ class FlowBrowserWorker:
 
         playwright = self._ensure_playwright()
 
-        # Real-world finding, 2026-09-07: Playwright's own default
-        # forces a fixed 1280x720 internal viewport even for a
-        # visible, headed window - an operator watching Check
-        # Connection found the real Google Flow dashboard cut off at
-        # the bottom (below the taskbar) with no way to scroll to the
-        # rest, since it's the window's fixed render area that's
-        # wrong, not the page's own scrolling. --start-maximized alone
-        # was tried first and did not reliably fix it (not every
-        # Windows/Chrome version/policy combination honors it) - so
-        # the real, verified fix is an explicit viewport sized to the
-        # actual screen resolution, which Playwright resizes the
-        # window to fit. Headless contexts keep Playwright's own fixed
-        # default - nothing is visually displayed there, so this
-        # doesn't matter, and a fixed viewport keeps automated
-        # interactions predictable. Safe for every real locator this
-        # codebase uses (role/name/CSS-based, never coordinate-based).
-        viewport: ViewportSize | None
-
-        if headless:
-            viewport = {"width": 1280, "height": 720}
-        else:
-            screen_size = _primary_screen_size()
-
-            if screen_size is None:
-                viewport = None  # best effort - let Chromium decide
-            else:
-                width, height = screen_size
-                # Leave room for the OS taskbar/window chrome so the
-                # actual window fits on screen, not just its content.
-                viewport = {"width": width, "height": max(height - 120, 480)}
-
+        # Window sizing, corrected 2026-10-03. History: Playwright's own
+        # default forces a fixed 1280x720 internal viewport even for a
+        # visible window, which cut the real dashboard off at the bottom
+        # (2026-09-07). The first fix passed an explicit viewport of
+        # (screen width, screen height - 120) - that fixed the cut-off
+        # but made Playwright size the OUTER window to the viewport
+        # instead of maximizing it: measured on a 1366x768 screen the
+        # window opened 1050x708, floating, not maximized (the Muse
+        # window the operator reported). The correct combination is
+        # no_viewport=True (the page follows the real window instead of
+        # a fixed size) together with --start-maximized: measured
+        # 1366x728 outer - the full work area above the taskbar - with
+        # the page filling it. Headless contexts keep Playwright's own
+        # fixed default - nothing is displayed there, and a fixed
+        # viewport keeps automated interactions predictable. Safe for
+        # every locator this codebase uses (role/name/CSS-based, never
+        # coordinate-based).
+        #
         # Installer packaging: Chromium is not bundled, so a first-ever
         # launch on a freshly-installed machine can genuinely hit "not
         # installed yet" here - ensure_chromium_and_retry() runs the
         # real "playwright install chromium" once and retries
         # transparently, rather than surfacing a raw Playwright error
         # the operator can't act on.
-        context = ensure_chromium_and_retry(
-            lambda: playwright.chromium.launch_persistent_context(
-                user_data_dir=str(profile_directory),
-                headless=headless,
-                viewport=viewport,
-                args=["--start-maximized"] if not headless else [],
+        if headless:
+            context = ensure_chromium_and_retry(
+                lambda: playwright.chromium.launch_persistent_context(
+                    user_data_dir=str(profile_directory),
+                    headless=True,
+                    viewport={"width": 1280, "height": 720},
+                )
             )
-        )
+        else:
+            context = ensure_chromium_and_retry(
+                lambda: playwright.chromium.launch_persistent_context(
+                    user_data_dir=str(profile_directory),
+                    headless=False,
+                    no_viewport=True,
+                    args=["--start-maximized"],
+                )
+            )
         self._contexts[profile_id] = context
 
         return context

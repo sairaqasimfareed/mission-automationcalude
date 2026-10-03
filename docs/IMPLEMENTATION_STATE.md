@@ -381,6 +381,78 @@ section records what changed and why so a later session does not undo it.
   - Project settings now store real enums for "Video provider" and "Content
     mode" (Qt returns a str-enum's value as a plain str, which triggered a
     Pydantic serializer warning on every save).
+  - **Audio-tab audio is re-aligned onto the video's real scene timing at render
+    time** (`src/services/audio_realignment_service.py`, called from
+    `RenderPipelineStage` right after the video-only render, and before the
+    composite fallback). The Audio tab lays voice end to end before any video
+    exists and reads SFX/music positions off the timeline's nominal item starts;
+    neither accounts for crossfade shrinkage or clip rounding, and the render
+    used those positions as stored. Measured on a real 18-scene project with the
+    app's own timeline code: voice 11.1s late (Muse) / 8.9s early (Flow) by the
+    last scene. Tracks carry `metadata["position_basis"]` ("sequential" voice,
+    "nominal" SFX/music, "real" once moved), so a track is corrected exactly once
+    and tracks the render's own steps made are never touched; an unflagged voice
+    that is exactly end to end (generated before the flag existed) is treated as
+    the Audio tab's. Verified with real FFmpeg: voice onsets 3.0s/6.0s became
+    3.4s/6.8s against pictures changing at 3.55s/6.85s.
+  - The Audio tab has a "Generated audio" card (voiceover / sound effects / music:
+    count, total length, provider, each file with a Play button) and real narration
+    lengths are copied onto scenes (`narration_duration_sync_service`) so clip
+    generation and the prompt previews no longer fall back to estimates.
+  - **Muse downloaded the wrong scene's video (2026-10-03, live).** Scene 2 received
+    scene 1's footage: while scene 2 generated, Muse's window scrolled up, scene 1's
+    video loaded its `src` late, was not in the set of srcs known at submit, and
+    looked "new". Two fixes. (1) `MuseRealUIAdapter._follows_submitted_prompt`: a
+    reply only qualifies if its video sits AFTER the chat message holding this
+    attempt's own prompt (matched on the prompt's tail, whitespace-normalised;
+    skipped with a warning if the prompt message isn't found); verified in a real
+    Chromium. (2) The duplicate-download guard compared checksums AFTER the local
+    safety-net trim, so the same video trimmed to two scene lengths looked distinct;
+    `MuseGenerationAttempt.source_checksum` (the untrimmed download, set once) is
+    now what is compared.
+  - **Prompts with no time box let Muse trim away needed content (2026-10-03,
+    live).** A shot plan whose LLM answer carried no `BEATS:` (all 18 shots of a
+    live Muse project; BEATS was optional) compiles to a flat "Action progression:"
+    line - what happens, not when - so after Muse's fixed 10s video is trimmed to N
+    seconds the needed content can sit after second N. Two fixes. (1) At the same
+    point the real duration is stamped in (`VideoProviderRules.finalize_prompt` and
+    Flow's `_submit`), `_bound_flat_action_to_real_duration` rewrites a flat action
+    line into "Shot progression: [0-Ns] ..." with N the real clip/sub-clip length;
+    timed beats are left alone. Because it runs at submission/preview time it also
+    fixes prompts already compiled and stored, with no regeneration. (2) The shot
+    planning request now asks for BEATS on every scene, starting at 0s, ending at
+    the scene duration, with essential information early (still optional to parse,
+    so a shot is never dropped for omitting it - the time box above covers that case).
+  - **Clip check after Generate all (2026-10-03).** Nothing in the app showed
+    whether an unattended Generate all had attached the right clip to every scene
+    (the wrong-Muse-video bug went unseen). `ClipAttachmentVerificationService`
+    (`src/services/clip_attachment_verification_service.py`) checks every scene
+    for: a clip attached; the file present and a readable video (ffprobe); footage
+    long enough for the real narration (sub-clips summed, crossfade overlap
+    allowed), or over-long (warning); the same footage on two scenes (file bytes
+    AND the provider's untrimmed source identity - ERROR when generated, WARNING
+    for stock/manual reuse); the latest Flow/Muse ledger attempt not failed or
+    unfinished. A 320px still is extracted from each clip
+    (`FrameExtractionService.extract_frame_at`, under `data/clip_thumbnails/<job>/`,
+    a derived cache). Result: `VideoJob.clip_verification_report` (new optional
+    field; `clip_signature` records which clips it covered so a stale verdict shows
+    as "Out of date"). Clip Workspace gains a "Clip check" card: headline verdict,
+    then per-scene still + narration + findings, and a "Check clips now" button
+    (off the GUI thread). It runs automatically at the end of a bulk Generate all
+    (also after a partial failure) on the generation worker thread, and a crash in
+    the check can never fail the generation. Verified against the real Honey
+    project (scenes 1-3 OK, 4-18 correctly reported as having no clip yet).
+  - **Muse/Flow window opened small, not maximized (2026-10-03, live).**
+    `FlowBrowserWorker.open_persistent_context` passed a fixed viewport of
+    (screen width, height - 120), which makes Chromium size the OUTER window to
+    that viewport: measured 1050x708 on a 1366x768 screen, floating. Headed
+    contexts now use `no_viewport=True` plus `--start-maximized` (measured
+    1366x728, the full work area, page filling it); headless keeps its fixed
+    1280x720. The `_primary_screen_size` helper is gone. Verified in a real
+    visible Chromium (`tests/test_flow_browser_worker_window_size_real_browser.py`,
+    including a test proving the old arguments really were not maximized). This
+    applies to every Playwright-driven window (Flow and Muse); the separate
+    real-Chrome "Open login" window is the operator's own Chrome and untouched.
   - The fallback to the composite render now catches only the new
     `ChunkedRenderRequiredError` (a `NotImplementedError` subclass raised
     by `render_video_only()` for command-length chunking); any other

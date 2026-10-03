@@ -606,6 +606,15 @@ re-render, leftover stage files, stored duration) and the broad
 `NotImplementedError` fallback are all fixed - see
 `docs/IMPLEMENTATION_STATE.md`. Still open:
 
+- Very short real narration (a one-word scene is ~1s) gives Muse clips of 1-2s,
+  shorter than two 0.6s crossfades; Flow's 4s minimum hides this. No minimum
+  clip length exists for Muse yet (a 3s floor was proposed). The editing rules'
+  "transitions exceed the scene" check compares against the script's estimate,
+  not the real clip length.
+  Clip durations are stored as whole seconds, so Muse's exact trims are rounded.
+- Chunk-split renders re-align Audio-tab audio with the same all-crossfade
+  assumption as the unchunked path; the downstream chunk logic corrects the
+  chunk-boundary hard cuts exactly as it does for the render's own audio.
 - Not audited: filter-graph / chunk-boundary / audio-timing math
   (historically the most desync-prone area) - needs real-FFmpeg
   experiments, not code reading.
@@ -617,6 +626,19 @@ re-render, leftover stage files, stored duration) and the broad
   before attaching (subjects that first appear in one scene share one
   extracted frame), and the attach check uses `.first`, so it cannot
   confirm the Nth attachment. Not yet changed - needs a live Flow check.
+
+## Known limits of the 2026-10-03 clip check
+
+- It cannot judge whether a clip's picture matches its narration - that is what
+  the per-scene still is for; a person still has to glance at them.
+- Repeated footage is caught by file bytes and, for Muse, the provider's untrimmed
+  source identity. Two separately generated Flow clips that merely look alike are
+  different files and are not flagged (no perceptual comparison).
+- The length check compares against the real narration length when known, else the
+  planned length; it does not check against a trimmed Muse target of a different
+  value, and treats a sub-clip scene's crossfade overlap as a flat allowance.
+- The verdict is not a gate: Render is not blocked by an ERROR finding.
+- Only the first clip of a split scene gets a still.
 
 ## Known limits of the 2026-10-02 branding uploads
 

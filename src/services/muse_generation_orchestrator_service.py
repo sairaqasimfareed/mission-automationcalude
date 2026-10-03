@@ -285,6 +285,9 @@ class MuseGenerationOrchestratorService:
             update={
                 "technical_validation": technical_validation,
                 "checksum": checksum,
+                # Set once, from the first (untrimmed) download - a re-validation
+                # after a local trim must not overwrite it.
+                "source_checksum": attempt.source_checksum or checksum,
             }
         )
 

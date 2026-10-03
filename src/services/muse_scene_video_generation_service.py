@@ -39,6 +39,9 @@ from src.services.muse_generation_ledger_service import MuseGenerationLedgerServ
 from src.services.muse_generation_orchestrator_service import (
     MuseGenerationOrchestratorService,
 )
+from src.services.narration_duration_sync_service import (
+    sync_real_narration_durations,
+)
 from src.services.scene_asset_video_clip_builder_service import (
     SceneAssetVideoClipBuilderService,
 )
@@ -172,6 +175,12 @@ class MuseSceneVideoGenerationService:
 
         if scene is None:
             raise ValueError(f"Job has no scene numbered {scene_number}.")
+
+        # A voiceover generated from the Audio tab leaves each scene's real
+        # narration length only on its audio track; fill it in (free, and a
+        # no-op once set) so this clip is sized from the real narration, not
+        # the script's estimate.
+        sync_real_narration_durations(job)
 
         # Phase 5 (multi-clip scene splitting): a scene whose real
         # narration exceeds Muse's own fixed ~10s single-clip length is
@@ -796,7 +805,13 @@ class MuseSceneVideoGenerationService:
         unique).
         """
 
-        if attempt.checksum is None:
+        # Compare the UNTRIMMED download, not the attached file: the same Muse
+        # video trimmed to two different scene lengths is two different
+        # files, which is how a live project's scene 2 silently received
+        # scene 1's footage (2026-10-03).
+        this_identity = attempt.source_checksum or attempt.checksum
+
+        if this_identity is None:
             return None
 
         this_key = (scene.scene_number, attempt.request.clip_sequence_index)
@@ -807,7 +822,9 @@ class MuseSceneVideoGenerationService:
                 other.request.clip_sequence_index,
             )
 
-            if other_key != this_key and other.checksum == attempt.checksum:
+            other_identity = other.source_checksum or other.checksum
+
+            if other_key != this_key and other_identity == this_identity:
                 return other.request.scene_number
 
         return None

@@ -1690,3 +1690,121 @@ def test_the_chunking_error_is_still_a_not_implemented_error() -> None:
     """Existing handlers that catch NotImplementedError keep working."""
 
     assert issubclass(ChunkedRenderRequiredError, NotImplementedError)
+
+
+# ---------------------------------------------------------------------------
+# Audio-tab audio is moved onto the video's real scene timing before mixing,
+# 2026-10-03.
+# ---------------------------------------------------------------------------
+
+
+def _audio_tab_voice(start: float) -> AudioTrack:
+    from src.services.audio_realignment_service import (
+        BASIS_SEQUENTIAL,
+        mark_position_basis,
+    )
+
+    track = AudioTrack(
+        track_type=AudioTrackType.VOICEOVER,
+        source_file="assets/audio/test_voice.wav",
+        start_time_seconds=start,
+        duration_seconds=5.0,
+        metadata={"scene_number": 1},
+    )
+    mark_position_basis(track, BASIS_SEQUENTIAL)
+
+    return track
+
+
+def test_the_staged_render_moves_audio_tab_voice_onto_its_real_scene_start(
+    tmp_path: Path,
+) -> None:
+    """
+    Real-world finding, 2026-10-03: the Audio tab lays voice end to end before
+    any video exists; the render used those positions as they were, so by the
+    last scene of a real 18-scene project the voice was ~11s off the picture.
+    Stage 1's own scene_timings are the ground truth for where each scene is.
+    """
+
+    job = _staged_job_with_real_cues()
+    job.audio_timeline = AudioTimeline(tracks=[_audio_tab_voice(start=0.0)])
+    target = tmp_path / "final_video.mp4"
+
+    production = MagicMock()
+    production.output_file = target.as_posix()
+    stage1 = _staged_stage1_result(output_file=(tmp_path / "x.stage1.mp4").as_posix())
+    stage1.scene_timings = [
+        SceneRenderTiming(scene_number=1, start_seconds=2.5, end_seconds=12.5)
+    ]
+    production.render_video_only.return_value = stage1
+
+    mux = MagicMock()
+    mux.mux.return_value = _ok_result(target.as_posix())
+
+    stage = RenderPipelineStage(
+        production_render_service=production,
+        voice_blueprints=[_staged_voice_blueprint()],
+        subtitles_enabled=False,
+        audio_mux_render_service=mux,
+        subtitle_burn_service=MagicMock(),
+    )
+
+    stage.execute(build_context(job))
+
+    mixed = mux.mux.call_args.kwargs["audio_timeline"]
+
+    assert mixed.tracks[0].start_time_seconds == 2.5
+    # ...and it is persisted on the job, so the Audio tab and any later render
+    # agree (the filtered mux copy shares the track objects).
+    assert job.audio_timeline.tracks[0].start_time_seconds == 2.5
+
+
+def test_a_track_the_render_already_placed_in_real_time_is_not_moved_again(
+    tmp_path: Path,
+) -> None:
+    from src.services.audio_realignment_service import BASIS_REAL, mark_position_basis
+
+    job = _staged_job_with_real_cues()
+    voice = _audio_tab_voice(start=7.0)
+    mark_position_basis(voice, BASIS_REAL)
+    job.audio_timeline = AudioTimeline(tracks=[voice])
+    target = tmp_path / "final_video.mp4"
+
+    production = MagicMock()
+    production.output_file = target.as_posix()
+    stage1 = _staged_stage1_result(output_file=(tmp_path / "x.stage1.mp4").as_posix())
+    stage1.scene_timings = [
+        SceneRenderTiming(scene_number=1, start_seconds=2.5, end_seconds=12.5)
+    ]
+    production.render_video_only.return_value = stage1
+    mux = MagicMock()
+    mux.mux.return_value = _ok_result(target.as_posix())
+
+    RenderPipelineStage(
+        production_render_service=production,
+        voice_blueprints=[_staged_voice_blueprint()],
+        subtitles_enabled=False,
+        audio_mux_render_service=mux,
+        subtitle_burn_service=MagicMock(),
+    ).execute(build_context(job))
+
+    assert (
+        mux.mux.call_args.kwargs["audio_timeline"].tracks[0].start_time_seconds == 7.0
+    )
+
+
+def test_the_composite_fallback_render_also_gets_realigned_audio() -> None:
+    job = _staged_job_with_real_cues()
+    job.audio_timeline = AudioTimeline(tracks=[_audio_tab_voice(start=5.0)])
+    fake = _fake_production_render_service()  # chunking required -> composite path
+
+    RenderPipelineStage(
+        production_render_service=fake,
+        voice_blueprints=[_staged_voice_blueprint()],
+        subtitles_enabled=False,
+    ).execute(build_context(job))
+
+    sent = fake.render.call_args.kwargs["audio_timeline"]
+
+    # Scene 1 really starts at 0.0 in the video, not 5.0 where it was laid.
+    assert sent.tracks[0].start_time_seconds == 0.0

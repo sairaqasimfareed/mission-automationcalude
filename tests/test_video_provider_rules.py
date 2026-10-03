@@ -102,6 +102,67 @@ class TestFinalizePrompt:
         assert "trim" in _MUSE.finalize_prompt(self._PROMPT, 9.4)
 
 
+class TestFlatActionIsTimeBoxed:
+    """2026-10-03: a shot plan with no BEATS compiles to a flat
+    "Action progression" line - WHAT happens, not WHEN. Muse trims its fixed
+    10s video to N seconds, so without a time box the needed content can land
+    after second N and be cut."""
+
+    _FLAT = (
+        "Identity: none. Environment: kitchen. Lighting: warm. "
+        "Action progression: A jar of honey is shown, then a spoon lifts it. "
+        "Composition: tight. Lens/camera: 50mm, close up. Duration: 8 seconds."
+    )
+
+    def test_muse_time_boxes_the_action_to_the_trimmed_length(self) -> None:
+        text = _MUSE.finalize_prompt(self._FLAT, 4.0)
+
+        assert (
+            "Shot progression: [0-4s] A jar of honey is shown, then a spoon lifts it."
+            in text
+        )
+        assert "Action progression:" not in text
+        assert "Duration: 4 seconds." in text
+        assert text.endswith("to only 4 seconds video.")
+
+    def test_flow_gets_the_same_time_box_for_its_clip_length(self) -> None:
+        text = _FLOW.finalize_prompt(self._FLAT, 6.0)
+
+        assert "Shot progression: [0-6s] A jar of honey" in text
+        assert "Action progression:" not in text
+
+    def test_a_non_whole_length_is_written_without_trailing_zeros(self) -> None:
+        assert "[0-3.5s]" in _MUSE.finalize_prompt(self._FLAT, 3.5)
+
+    def test_existing_timed_beats_are_left_alone(self) -> None:
+        prompt = (
+            "Action. Shot progression: [0-2s] a; [2-4s] b. Composition: x. "
+            "Duration: 8 seconds."
+        )
+
+        text = _MUSE.finalize_prompt(prompt, 4.0)
+
+        assert "[0-2s] a; [2-4s] b." in text
+        assert text.count("Shot progression:") == 1
+
+    def test_an_action_containing_sentences_is_kept_whole(self) -> None:
+        prompt = (
+            "Action progression: Honey pours. It glows. Then it stops. "
+            "Composition: x. Duration: 8 seconds."
+        )
+
+        text = _FLOW.finalize_prompt(prompt, 4.0)
+
+        assert "Shot progression: [0-4s] Honey pours. It glows. Then it stops." in text
+
+    def test_a_prompt_with_neither_form_is_unchanged_apart_from_duration(self) -> None:
+        prompt = "Just some text. Duration: 8 seconds."
+
+        assert (
+            _FLOW.finalize_prompt(prompt, 4.0) == "Just some text. Duration: 4 seconds."
+        )
+
+
 class TestResolveSceneVideoProvider:
     _NAMES = {"muse.1": "Muse", "flow.1": "Google Flow"}
 

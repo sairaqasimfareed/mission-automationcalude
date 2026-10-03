@@ -8,6 +8,9 @@ from src.models.scene import Scene
 from src.models.video_job import VideoJob
 from src.models.video_provider import VideoProvider
 from src.providers.google_flow.locators import VERIFIED_DURATIONS_SECONDS
+from src.services.narration_duration_sync_service import (
+    sync_real_narration_durations,
+)
 from src.services.scene_video_generation_service import SceneVideoGenerationService
 from src.services.video_provider_rules import (
     VideoProviderRules,
@@ -59,6 +62,7 @@ class EnrichedScenePromptService:
         job: VideoJob,
         scene: Scene,
     ) -> EnrichedScenePrompt:
+        sync_real_narration_durations(job)
         resolved_prompt = self._resolved_prompt_for(job, scene)
         rules = rules_for(self.provider_for(job, scene))
 
@@ -95,6 +99,7 @@ class EnrichedScenePromptService:
         scene had before Phase 5 existed.
         """
 
+        sync_real_narration_durations(job)
         duration_seconds = self._duration_seconds(scene)
         rules = rules_for(self.provider_for(job, scene))
 

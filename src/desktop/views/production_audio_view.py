@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from uuid import UUID
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox,
     QFrame,
@@ -38,6 +40,7 @@ from src.models.sound_design_plan import (
 )
 from src.models.video_job import VideoJob
 from src.services.media_generation_pipeline import MediaGenerationPipeline
+from src.shared.dry_run_placeholder import is_dry_run_placeholder
 
 _ITEM_STATUS_ROLE = {
     SoundDesignItemStatus.PENDING: "warning",
@@ -120,6 +123,7 @@ class ProductionAudioView(QWidget):
                 widget.deleteLater()
 
         self._build_generation_card(job)
+        self._build_generated_audio_card(job)
         self._build_audio_inclusion_card(job)
         self._build_summary_card()
         self._build_sound_design_card(job)
@@ -181,6 +185,177 @@ class ProductionAudioView(QWidget):
         layout.addWidget(all_audio_button, alignment=_LEFT)
 
         self._layout.addWidget(frame)
+
+    def _build_generated_audio_card(self, job: VideoJob) -> None:
+        """
+        What has actually been generated, right under the generate buttons:
+        for voiceover, sound effects and music - how many, how long, who made
+        them, and each file with a Play button.
+
+        Real-world finding, 2026-10-03: after "Generate voiceover" nothing on
+        screen said it had worked or how long the narration was - the only
+        evidence was a bare file path in a "Voiceover" card and raw track rows
+        at the very bottom of the page.
+        """
+
+        frame, layout = card("Generated audio", icon_name="audio")
+
+        tracks = job.audio_timeline.tracks if job.audio_timeline is not None else []
+        plan = job.sound_design_plan
+
+        voice_tracks = self._tracks_of(tracks, AudioTrackType.VOICEOVER)
+        sfx_tracks = self._tracks_of(tracks, AudioTrackType.SOUND_EFFECT)
+        music_tracks = self._tracks_of(tracks, AudioTrackType.BACKGROUND_MUSIC)
+
+        self._add_audio_category(
+            layout,
+            title="Voiceover",
+            tracks=voice_tracks,
+            count_text=f"{len(voice_tracks)} of {len(job.scenes)} scenes",
+            labeler=lambda track: self._voice_label(track),
+            empty_text="No voiceover generated yet - use Generate voiceover above.",
+        )
+
+        sfx_planned = (
+            f" ({sum(c.status == SoundDesignItemStatus.GENERATED for c in plan.sfx_cues)}"
+            f" of {len(plan.sfx_cues)} planned cues generated)"
+            if plan is not None and plan.sfx_cues
+            else ""
+        )
+        self._add_audio_category(
+            layout,
+            title="Sound effects",
+            tracks=sfx_tracks,
+            count_text=f"{len(sfx_tracks)} effect(s){sfx_planned}",
+            labeler=lambda track: self._sfx_label(track, plan),
+            empty_text="No sound effects generated yet.",
+        )
+
+        music_planned = (
+            f" ({sum(m.status == SoundDesignItemStatus.GENERATED for m in plan.music_segments)}"
+            f" of {len(plan.music_segments)} planned segments generated)"
+            if plan is not None and plan.music_segments
+            else ""
+        )
+        self._add_audio_category(
+            layout,
+            title="Music",
+            tracks=music_tracks,
+            count_text=f"{len(music_tracks)} track(s){music_planned}",
+            labeler=lambda track: self._music_label(track, plan),
+            empty_text="No background music generated yet.",
+        )
+
+        self._layout.addWidget(frame)
+
+    @staticmethod
+    def _tracks_of(
+        tracks: list[AudioTrack], track_type: AudioTrackType
+    ) -> list[AudioTrack]:
+        return sorted(
+            (track for track in tracks if track.track_type == track_type),
+            key=lambda track: track.start_time_seconds,
+        )
+
+    @staticmethod
+    def _format_seconds(seconds: float) -> str:
+        if seconds >= 60:
+            return f"{int(seconds // 60)}m {seconds % 60:.0f}s"
+
+        return f"{seconds:.1f}s"
+
+    def _add_audio_category(
+        self,
+        layout: QVBoxLayout,
+        *,
+        title: str,
+        tracks: list[AudioTrack],
+        count_text: str,
+        labeler: Callable[[AudioTrack], str],
+        empty_text: str,
+    ) -> None:
+        layout.addWidget(subheading(title))
+
+        if not tracks:
+            layout.addWidget(small_muted(empty_text))
+
+            return
+
+        total = sum(track.duration_seconds for track in tracks)
+        providers = sorted({track.provider for track in tracks if track.provider})
+        provider_text = f" · {', '.join(providers)}" if providers else ""
+
+        layout.addWidget(
+            muted(f"{count_text} · {self._format_seconds(total)} total{provider_text}")
+        )
+
+        for track in tracks:
+            layout.addLayout(self._audio_file_row(track, labeler(track)))
+
+    def _audio_file_row(self, track: AudioTrack, label: str) -> QHBoxLayout:
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+
+        row.addWidget(
+            small_muted(
+                f"{label} · {self._format_seconds(track.duration_seconds)} · "
+                f"{Path(track.source_file).name}"
+            ),
+            stretch=1,
+        )
+
+        if is_dry_run_placeholder(track.source_file):
+            row.addWidget(small_muted("(placeholder - no real audio)"))
+        elif not Path(track.source_file).is_file():
+            row.addWidget(small_muted("(file not found)"))
+        else:
+            play_button = button("Play", variant="ghost", icon_name="play")
+            play_button.clicked.connect(
+                lambda _checked=False, path=track.source_file: self._open_audio_file(
+                    path
+                )
+            )
+            row.addWidget(play_button)
+
+        return row
+
+    @staticmethod
+    def _open_audio_file(path: str) -> None:
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(path).resolve())))
+
+    @staticmethod
+    def _voice_label(track: AudioTrack) -> str:
+        scene_number = track.metadata.get("scene_number")
+
+        return f"Scene {scene_number}" if scene_number is not None else "Narration"
+
+    @staticmethod
+    def _sfx_label(track: AudioTrack, plan: SoundDesignPlan | None) -> str:
+        if plan is not None:
+            cue = next(
+                (c for c in plan.sfx_cues if c.audio_track_id == str(track.id)), None
+            )
+
+            if cue is not None:
+                return f"Scene {cue.scene_number}: {cue.generation_prompt[:60]}"
+
+        return f"Effect at {track.start_time_seconds:.1f}s"
+
+    @staticmethod
+    def _music_label(track: AudioTrack, plan: SoundDesignPlan | None) -> str:
+        if plan is not None:
+            segment = next(
+                (m for m in plan.music_segments if m.audio_track_id == str(track.id)),
+                None,
+            )
+
+            if segment is not None:
+                return (
+                    f"Scenes {segment.start_scene_number}-{segment.end_scene_number}: "
+                    f"{segment.mood_description[:60]}"
+                )
+
+        return f"Music at {track.start_time_seconds:.1f}s"
 
     def _build_audio_inclusion_card(self, job: VideoJob) -> None:
         """

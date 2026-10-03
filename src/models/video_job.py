@@ -11,6 +11,7 @@ from src.models.audio_inclusion_preferences import AudioInclusionPreferences
 from src.models.audio_timeline import AudioTimeline
 from src.models.base import MissionBaseModel
 from src.models.cinematic_prompt import CinematicPromptPackage
+from src.models.clip_attachment_verification import ClipAttachmentVerificationReport
 from src.models.content_decision_record import ContentDecisionRecord
 from src.models.continuity_bible import ContinuityBible, ContinuityValidationResult
 from src.models.creative_direction import CreativeDirection
@@ -452,6 +453,13 @@ class VideoJob(MissionBaseModel):
     # one list). Same append-only convention;
     # MuseGenerationLedgerService is the only intended writer.
     muse_generation_attempts: list[MuseGenerationAttempt] = Field(default_factory=list)
+
+    # The last "did every scene get the right clip?" check
+    # (ClipAttachmentVerificationService). Derived from the clips and ledgers
+    # above and recomputable at any time; kept here so a bulk generation left
+    # unattended still has its verdict waiting after an app restart.
+    # clip_signature on the report says which clips it covered.
+    clip_verification_report: ClipAttachmentVerificationReport | None = None
 
     policy_report: PolicyComplianceReport | None = None
 

@@ -94,12 +94,20 @@ class _FakeLocator:
         count: int = 1,
         input_value: str = "",
         srcs: list[str | None] | None = None,
+        follows_prompt: list[bool | None] | None = None,
     ) -> None:
         self._count = count
         self._input_value = input_value
         self.click_calls = 0
         self.hover_calls = 0
         self._srcs = srcs
+        # Per-index answer to "does this video sit after the chat message holding
+        # the submitted prompt?" - what the real adapter asks the page via
+        # evaluate(). None (the default) means every video does, which is how
+        # every pre-existing test already behaves. A None ENTRY simulates the
+        # prompt message not being found on the page at all.
+        self._follows_prompt = follows_prompt
+        self.evaluate_anchors: list[str] = []
         self._nth_index: int | None = None
         # Stable across every .nth() call on THIS SAME registered
         # locator (propagated, never reset, in .nth() below) - so two
@@ -130,6 +138,8 @@ class _FakeLocator:
     def nth(self, index: int) -> _FakeLocator:
         scoped = _FakeLocator(count=1, input_value=self._input_value)
         scoped._srcs = self._srcs
+        scoped._follows_prompt = self._follows_prompt
+        scoped.evaluate_anchors = self.evaluate_anchors  # shared, so tests can read it
         scoped._nth_index = index
         scoped._owner_id = self._owner_id
         scoped._page = self._page
@@ -144,6 +154,15 @@ class _FakeLocator:
             return self._srcs[self._nth_index]
 
         return f"fake-src-{self._owner_id}-{self._nth_index}"
+
+    def evaluate(self, script: str, arg: str | None = None) -> bool | None:
+        if arg is not None:
+            self.evaluate_anchors.append(arg)
+
+        if self._follows_prompt is None or self._nth_index is None:
+            return True
+
+        return self._follows_prompt[self._nth_index]
 
     def locator(self, selector: str) -> _FakeLocator:
         """
@@ -853,3 +872,125 @@ def test_cancel_or_abandon_is_never_supported(tmp_path: Path) -> None:
 
     with pytest.raises(MuseUIOperationNotSupportedError):
         adapter.cancel_or_abandon(submitted)
+
+
+# --- a reply must FOLLOW this attempt's own prompt (2026-10-03) ---
+
+_OLD = "blob:https://muse.ai/scene-one-video"
+_NEW = "blob:https://muse.ai/scene-two-video"
+_VIDEO_CSS = "video:not([aria-hidden='true'])"
+
+
+def test_a_leftover_video_that_loads_its_src_late_is_not_taken_for_this_attempt(
+    tmp_path: Path,
+) -> None:
+    """
+    Real-world finding, 2026-10-03: while scene 2 generated, Muse's window
+    scrolled up and scene 1's video (which had no loaded src when scene 2 was
+    submitted) loaded it. It was not in the set of srcs known at submit, so it
+    looked brand new - and scene 1's video was downloaded again for scene 2.
+    It sits BEFORE scene 2's own prompt in the thread, so it must be ignored.
+    """
+
+    page = _authenticated_page()
+    adapter = _adapter(page, tmp_path=tmp_path)
+    videos = _FakeLocator(srcs=[None])  # scene 1's video: present but no src yet
+    page.register_css(_VIDEO_CSS, videos)
+
+    request = _request(scene_number=2)
+    submitted = adapter.submit(request, _attempt(request))
+
+    # The window scrolls up: scene 1's video now has a src. It is not "known"
+    # (it had none at submit) and it is the only video - but it precedes the
+    # prompt, so it cannot be this attempt's reply.
+    videos._srcs = [_OLD]  # noqa: SLF001
+    videos._follows_prompt = [False]  # noqa: SLF001
+
+    result = adapter.observe(submitted)
+
+    assert result.state == MuseGenerationState.GENERATING  # not fooled
+
+
+def test_the_video_after_the_prompt_is_chosen_even_with_an_older_one_loaded_too(
+    tmp_path: Path,
+) -> None:
+    page = _authenticated_page()
+    adapter = _adapter(page, tmp_path=tmp_path)
+    videos = _FakeLocator(srcs=[None])
+    page.register_css(_VIDEO_CSS, videos)
+
+    request = _request(scene_number=2)
+    submitted = adapter.submit(request, _attempt(request))
+
+    videos._srcs = [_OLD, _NEW]  # noqa: SLF001
+    videos._follows_prompt = [False, True]  # noqa: SLF001
+
+    result = adapter.observe(submitted)
+
+    assert result.state == MuseGenerationState.READY_TO_DOWNLOAD
+    assert adapter._resolved_video_src[str(submitted.id)] == _NEW  # noqa: SLF001
+
+
+def test_download_never_picks_the_earlier_scenes_video(tmp_path: Path) -> None:
+    page = _authenticated_page()
+    adapter = _adapter(page, tmp_path=tmp_path)
+    videos = _FakeLocator(srcs=[None])
+    page.register_css(_VIDEO_CSS, videos)
+
+    request = _request(scene_number=2)
+    submitted = adapter.submit(request, _attempt(request))
+    videos._srcs = [_OLD]  # noqa: SLF001
+    videos._follows_prompt = [False]  # noqa: SLF001
+
+    result = adapter.download(submitted)
+
+    assert result.state == MuseGenerationState.UI_CHANGED
+    assert result.downloaded_file is None
+
+
+def test_the_check_matches_on_the_end_of_the_prompt_not_its_shared_head(
+    tmp_path: Path,
+) -> None:
+    """Every scene's prompt opens with the same identity/environment text; the
+    tail carries the scene's own duration, so that is what identifies it."""
+
+    page = _authenticated_page()
+    adapter = _adapter(page, tmp_path=tmp_path)
+    videos = _FakeLocator(srcs=[None])
+    page.register_css(_VIDEO_CSS, videos)
+
+    prompt = (
+        "Identity: The script states that honey may be in the kitchen. "
+        "Environment: Kitchen.\n\nAlso trim the generated 10 seconds video "
+        "to only 1 seconds video."
+    )
+    request = _request(scene_number=2, prompt=prompt)
+    submitted = adapter.submit(request, _attempt(request))
+    videos._srcs = [_NEW]  # noqa: SLF001
+    adapter.observe(submitted)
+
+    anchor = videos.evaluate_anchors
+
+    # Whitespace is normalised and only the END of the prompt is used.
+    assert anchor
+    assert anchor[-1].endswith("only 1 seconds video.")
+    assert "Identity" not in anchor[-1]
+
+
+def test_if_the_prompt_message_cannot_be_found_the_old_src_logic_still_applies(
+    tmp_path: Path,
+) -> None:
+    """Skipping the check (not stalling forever) when the page gives nothing
+    to anchor on; the duplicate-download guard downstream still applies."""
+
+    page = _authenticated_page()
+    adapter = _adapter(page, tmp_path=tmp_path)
+    videos = _FakeLocator(srcs=[None])
+    page.register_css(_VIDEO_CSS, videos)
+
+    request = _request(scene_number=2)
+    submitted = adapter.submit(request, _attempt(request))
+    videos._srcs = [_NEW]  # noqa: SLF001
+    videos._follows_prompt = [None]  # noqa: SLF001
+
+    assert adapter.observe(submitted).state == MuseGenerationState.READY_TO_DOWNLOAD

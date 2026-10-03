@@ -23,6 +23,12 @@ from src.pipeline.music_stage import (
     MusicPipelineStage,
 )
 from src.pipeline.sound_effect_stage import SoundEffectPipelineStage
+from src.services.audio_realignment_service import (
+    BASIS_NOMINAL,
+    BASIS_SEQUENTIAL,
+    POSITION_BASIS_KEY,
+    mark_position_basis,
+)
 from src.services.budget.provider_budget_service import ProviderBudgetService
 from src.services.genre_timeline_pipeline_service import GenreTimelinePipelineService
 from src.services.genre_voice_directive_generation_service import (
@@ -30,6 +36,9 @@ from src.services.genre_voice_directive_generation_service import (
 )
 from src.services.invalidation_service import InvalidationService
 from src.services.music_generation_service import MusicGenerationService
+from src.services.narration_duration_sync_service import (
+    sync_real_narration_durations,
+)
 from src.services.sound_effect_generation_service import SoundEffectGenerationService
 from src.services.voice_generation_service import VoiceGenerationService
 from src.services.voice_resolution_runtime import (
@@ -170,6 +179,21 @@ class MediaGenerationPipeline:
                 audio_timeline, results=results, replace=True
             )
             job.audio_timeline = audio_timeline
+
+            # Laid end to end from real lengths before any video exists; the
+            # render moves each onto its scene's real start (see
+            # audio_realignment_service).
+            for result in results:
+                mark_position_basis(
+                    self.voice_timeline_service.get_scene_voice(
+                        audio_timeline, scene_number=result.scene_number
+                    ),
+                    BASIS_SEQUENTIAL,
+                )
+
+            # The voice was just regenerated, so any earlier real duration
+            # on a scene is stale: re-read every scene's from its new track.
+            sync_real_narration_durations(job, overwrite=True)
 
             job.voice_file = results[0].output_file
             job.voice_provider = self._single_provider(results)
@@ -339,6 +363,8 @@ class MediaGenerationPipeline:
 
                         continue
 
+                    # Positioned from the video timeline's nominal item start.
+                    mark_position_basis(result.audio_track, BASIS_NOMINAL)
                     new_tracks.append(result.audio_track)
 
             attached_count = len(new_tracks)
@@ -451,6 +477,7 @@ class MediaGenerationPipeline:
                     "metadata": {
                         **result.audio_track.metadata,
                         "sound_design_cue_id": cue_id,
+                        POSITION_BASIS_KEY: BASIS_NOMINAL,
                     }
                 }
             )
@@ -561,6 +588,7 @@ class MediaGenerationPipeline:
                     "metadata": {
                         **result.audio_track.metadata,
                         "sound_design_segment_id": segment_id,
+                        POSITION_BASIS_KEY: BASIS_NOMINAL,
                     },
                 }
             )
@@ -604,6 +632,10 @@ class MediaGenerationPipeline:
 
     def _run_voice_component(self, job: VideoJob) -> AudioComponentResult:
         if self._voice_is_current(job):
+            # A voiceover generated before durations were synced still needs
+            # them on its scenes (free - nothing is regenerated).
+            sync_real_narration_durations(job)
+
             return AudioComponentResult(
                 component="voice",
                 status=AudioComponentStatus.REUSED,

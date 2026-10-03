@@ -104,6 +104,56 @@ class FrameExtractionService:
 
         return str(destination.resolve())
 
+    def extract_frame_at(
+        self,
+        *,
+        video_path: str,
+        at_seconds: float,
+        output_path: str,
+        width: int = 320,
+    ) -> str:
+        """
+        Extract one downscaled still frame at `at_seconds` into the clip -
+        used for review thumbnails (a small JPEG, not a continuity
+        reference), so it is scaled to `width` with the height following the
+        aspect ratio.
+        """
+
+        if at_seconds < 0.0:
+            raise ValueError("Frame extraction requires a non-negative time.")
+
+        if width <= 0:
+            raise ValueError("Thumbnail width must be positive.")
+
+        destination = Path(output_path)
+
+        destination.parent.mkdir(parents=True, exist_ok=True)
+
+        command = [
+            self._ffmpeg_path,
+            "-y",
+            "-ss",
+            f"{at_seconds:.3f}",
+            "-i",
+            str(Path(video_path).resolve()),
+            "-vframes",
+            "1",
+            "-vf",
+            f"scale={width}:-2",
+            "-q:v",
+            "4",
+            str(destination.resolve()),
+        ]
+
+        self._runner(command)
+
+        if not destination.exists():
+            raise RuntimeError(
+                f"ffmpeg reported success but no frame was written to {destination}."
+            )
+
+        return str(destination.resolve())
+
     def trim_to_duration(
         self,
         *,
