@@ -53,6 +53,7 @@ from src.services.scene_completeness_service import SceneCompletenessService
 from src.services.scene_prompt_export_service import ScenePromptExportService
 from src.services.video_provider_rules import (
     MUSE_CLIP_DURATION_SECONDS,
+    MUSE_MIN_CLIP_SECONDS,
     MUSE_SAFETY_NET_TRIM_TOLERANCE_SECONDS,
     rules_for,
 )
@@ -862,6 +863,12 @@ class MuseSceneVideoGenerationService:
                 "the pre-generation estimate.",
                 scene.scene_number,
             )
+
+        if duration_override is None:
+            # A scene's single clip is never shorter than the floor (see
+            # MUSE_MIN_CLIP_SECONDS). Split sub-clips are far longer, so
+            # the planner's own durations are left exactly as decided.
+            target_seconds = max(target_seconds, MUSE_MIN_CLIP_SECONDS)
 
         return min(target_seconds, _MUSE_CLIP_DURATION_SECONDS)
 

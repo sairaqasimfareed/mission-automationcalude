@@ -403,3 +403,30 @@ def test_an_older_job_without_a_report_still_loads() -> None:
     data.pop("clip_verification_report")
 
     assert VideoJob.model_validate(data).clip_verification_report is None
+
+
+def test_a_muse_clip_at_the_minimum_length_is_not_flagged_as_too_long(
+    tmp_path: Path,
+) -> None:
+    """A one-second Muse scene is generated at the 3s floor on purpose."""
+
+    file = tmp_path / "clips" / "1.mp4"
+    _make_clip(file, "red", 3.0)
+    job = _job([_scene(1, narration_seconds=1.0)], [_clip(1, file, seconds=3)])
+    job.muse_generation_attempts = [_muse_attempt(1)]
+
+    report = _service(tmp_path).verify(job)
+
+    assert ClipVerificationIssueCode.TOO_LONG not in _codes(report, 1)
+
+
+def test_the_same_clip_on_a_non_muse_scene_is_still_flagged_as_too_long(
+    tmp_path: Path,
+) -> None:
+    file = tmp_path / "clips" / "1.mp4"
+    _make_clip(file, "red", 3.0)
+    job = _job([_scene(1, narration_seconds=1.0)], [_clip(1, file, seconds=3)])
+
+    report = _service(tmp_path).verify(job)
+
+    assert ClipVerificationIssueCode.TOO_LONG in _codes(report, 1)

@@ -423,6 +423,20 @@ section records what changed and why so a later session does not undo it.
     planning request now asks for BEATS on every scene, starting at 0s, ending at
     the scene duration, with essential information early (still optional to parse,
     so a shot is never dropped for omitting it - the time box above covers that case).
+  - **Muse minimum clip length (2026-10-04).** A one-word scene (~1s of
+    narration) used to become a ~1s Muse clip - shorter than the crossfades
+    around it and the case Muse's "trim to N seconds" handles least reliably.
+    `MUSE_MIN_CLIP_SECONDS = 3.0` (`video_provider_rules.py`): a scene's single
+    Muse clip is now `max(narration, 3)`, capped at 10. Applied in both places
+    that size a Muse clip - `VideoProviderRules.single_clip_seconds` (prompt,
+    previews, trim line) and `MuseSceneVideoGenerationService.
+    _resolve_target_duration_seconds` (submission and the FFmpeg safety-net trim;
+    they must agree or the trim would undo the floor). Split sub-clips (duration
+    override) and Google Flow (already 4s minimum) are untouched, and scenes of 3s
+    or more size exactly as before. The extra seconds play as silent picture after
+    the narration; voice stays aligned to the scene start. The Clip check allows a
+    Muse scene's clip to be as long as the floor. Clips already generated keep
+    their length until regenerated.
   - **Clip check after Generate all (2026-10-03).** Nothing in the app showed
     whether an unattended Generate all had attached the right clip to every scene
     (the wrong-Muse-video bug went unseen). `ClipAttachmentVerificationService`

@@ -21,6 +21,7 @@ from src.services.frame_extraction_service import FrameExtractionService
 from src.services.media_technical_validation_service import (
     MediaTechnicalValidationService,
 )
+from src.services.video_provider_rules import MUSE_MIN_CLIP_SECONDS
 
 # A clip may fall short of the narration by this much before it is flagged -
 # trimming and frame rounding make an exact match unrealistic. Each extra
@@ -150,7 +151,13 @@ class ClipAttachmentVerificationService:
 
         if measured_all:
             result.actual_seconds = round(total_seconds, 2)
-            self._check_length(result, joins=len(clips) - 1)
+            self._check_length(
+                result,
+                joins=len(clips) - 1,
+                floor_seconds=(
+                    MUSE_MIN_CLIP_SECONDS if self._is_muse_scene(job, scene) else 0.0
+                ),
+            )
 
         self._check_attempts(job, scene, result, has_clip=True)
         self._extract_thumbnail(job, scene, clips[0], result)
@@ -203,7 +210,20 @@ class ClipAttachmentVerificationService:
 
         return validation.duration_seconds
 
-    def _check_length(self, result: SceneClipVerification, *, joins: int) -> None:
+    @staticmethod
+    def _is_muse_scene(job: VideoJob, scene: Scene) -> bool:
+        return any(
+            attempt.request.scene_number == scene.scene_number
+            for attempt in job.muse_generation_attempts
+        )
+
+    def _check_length(
+        self,
+        result: SceneClipVerification,
+        *,
+        joins: int,
+        floor_seconds: float = 0.0,
+    ) -> None:
         expected = result.expected_seconds
         actual = result.actual_seconds
 
@@ -222,7 +242,7 @@ class ClipAttachmentVerificationService:
                 f"The clip is {actual:g}s but the narration needs {expected:g}s - "
                 "the voice would outrun the picture.",
             )
-        elif actual > expected + _LONG_TOLERANCE_SECONDS:
+        elif actual > max(expected, floor_seconds) + _LONG_TOLERANCE_SECONDS:
             self._add(
                 result,
                 ClipVerificationIssueCode.TOO_LONG,

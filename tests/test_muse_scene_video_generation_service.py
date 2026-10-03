@@ -1418,3 +1418,75 @@ def test_the_source_checksum_survives_a_trim_and_is_set_once(tmp_path: Path) -> 
     assert attempt.source_checksum is not None
     # The trim changed the attached file's checksum, not the source one.
     assert attempt.checksum != attempt.source_checksum
+
+
+# --- minimum clip length (2026-10-04) ---
+
+
+def test_a_one_second_scene_is_generated_and_trimmed_to_three_seconds(
+    tmp_path: Path,
+) -> None:
+    """A one-word scene must not become a ~1s clip: the prompt asks Muse for 3s
+    and the safety-net trim - which uses the same target - cuts to 3s, not 1s
+    (the two sizing places must agree, or the floor would be undone)."""
+
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            MuseGenerationState.GENERATING,
+            MuseGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    provider.downloaded_file = str(_real_video_file(tmp_path))
+    ten_second_probe = json.dumps(
+        {
+            "format": {"duration": "10.0"},
+            "streams": [
+                {"codec_type": "video", "width": 1920, "height": 1080},
+                {"codec_type": "audio"},
+            ],
+        }
+    )
+    frame_extraction, commands = _frame_extraction_service(tmp_path)
+    service = MuseSceneVideoGenerationService(
+        orchestrator=_orchestrator(provider, probe_output=ten_second_probe),
+        asset_workflow_service=_asset_workflow_service(),
+        poll_interval_seconds=1.0,
+        max_poll_attempts=10,
+        sleep_fn=lambda _: None,
+        frame_extraction_service=frame_extraction,
+    )
+    scene = _scene(1)
+    scene.real_narration_duration_seconds = 1.0
+    job = _job(scene)
+
+    entry = service.generate_one(job, 1)
+
+    assert entry.status == SceneCompletenessStatus.READY
+
+    prompt = provider.submitted_prompts[0]
+    assert "Also trim the generated 10 seconds video to only 3 seconds video." in (
+        prompt
+    )
+    assert len(commands) == 1
+    trim_command = commands[0]
+    assert float(trim_command[trim_command.index("-t") + 1]) == pytest.approx(3.0)
+
+
+def test_a_scene_at_or_above_the_floor_is_sized_exactly_as_before(
+    tmp_path: Path,
+) -> None:
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            MuseGenerationState.GENERATING,
+            MuseGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    provider.downloaded_file = str(_real_video_file(tmp_path))
+    service = _service(provider)
+    scene = _scene(1)
+    scene.real_narration_duration_seconds = 4.0
+    job = _job(scene)
+
+    service.generate_one(job, 1)
+
+    assert "to only 4 seconds video." in provider.submitted_prompts[0]

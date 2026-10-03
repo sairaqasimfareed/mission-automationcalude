@@ -606,9 +606,10 @@ re-render, leftover stage files, stored duration) and the broad
 `NotImplementedError` fallback are all fixed - see
 `docs/IMPLEMENTATION_STATE.md`. Still open:
 
-- Very short real narration (a one-word scene is ~1s) gives Muse clips of 1-2s,
-  shorter than two 0.6s crossfades; Flow's 4s minimum hides this. No minimum
-  clip length exists for Muse yet (a 3s floor was proposed). The editing rules'
+- Muse now has a 3s minimum single-clip length (2026-10-04, see
+  `docs/IMPLEMENTATION_STATE.md`), so a one-word scene no longer yields a clip
+  shorter than two 0.6s crossfades. Clips generated before that keep their
+  length until regenerated. The editing rules'
   "transitions exceed the scene" check compares against the script's estimate,
   not the real clip length.
   Clip durations are stored as whole seconds, so Muse's exact trims are rounded.

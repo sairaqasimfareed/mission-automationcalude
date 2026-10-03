@@ -222,3 +222,38 @@ def test_an_existing_saved_job_without_the_field_loads_as_google_flow() -> None:
     del data["video_provider"]
 
     assert VideoJob.model_validate(data).video_provider == VideoProvider.GOOGLE_FLOW
+
+
+class TestMuseMinimumClipLength:
+    """2026-10-04: Muse never generates a single clip shorter than 3 seconds."""
+
+    def test_a_one_second_scene_gets_the_floor(self) -> None:
+        assert _MUSE.single_clip_seconds(1.0) == 3.0
+        assert _MUSE.single_clip_seconds(2.9) == 3.0
+
+    def test_the_floor_itself_and_longer_scenes_are_unchanged(self) -> None:
+        assert _MUSE.single_clip_seconds(3.0) == 3.0
+        assert _MUSE.single_clip_seconds(6.4) == 6.4
+        assert _MUSE.single_clip_seconds(10.0) == 10.0
+
+    def test_the_ten_second_ceiling_still_applies(self) -> None:
+        assert _MUSE.single_clip_seconds(12.0) == 10.0
+
+    def test_flow_is_untouched(self) -> None:
+        assert _FLOW.single_clip_seconds(1.0) == 4.0
+        assert _FLOW.single_clip_seconds(5.0) == 6.0
+
+    def test_split_scenes_are_not_affected(self) -> None:
+        assert _MUSE.plan_clips(13.0) == [6.5, 6.5]
+
+    def test_the_prompt_asks_for_the_floor_not_the_narration(self) -> None:
+        prompt = (
+            "Action progression: A jar of honey. Composition: tight. "
+            "Duration: 8 seconds."
+        )
+
+        text = _MUSE.finalize_prompt(prompt, _MUSE.single_clip_seconds(1.0))
+
+        assert "Duration: 3 seconds." in text
+        assert "[0-3s] A jar of honey." in text
+        assert text.endswith("to only 3 seconds video.")

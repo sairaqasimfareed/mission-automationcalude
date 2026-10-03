@@ -25,6 +25,16 @@ from src.services.scene_video_generation_service import (
 MUSE_CLIP_DURATION_SECONDS = 10.0
 MUSE_SAFETY_NET_TRIM_TOLERANCE_SECONDS = 0.5
 
+# The shortest clip Muse is ever asked for, 2026-10-04. A one-word scene
+# (~1s of narration) would otherwise be a ~1s clip - shorter than the
+# crossfades around it, and the case Muse's "trim to N seconds" handles
+# least reliably. Google Flow already has an effective 4s minimum (its
+# shortest verified duration), so this only brings Muse in line. The extra
+# seconds play as silent picture after the narration (the voice stays
+# aligned to the scene start; music continues underneath). Applies to a
+# scene's single clip only - split sub-clips are always much longer.
+MUSE_MIN_CLIP_SECONDS = 3.0
+
 _MAX_FLOW_CLIP_SECONDS = float(max(VERIFIED_DURATIONS_SECONDS))
 
 
@@ -87,10 +97,14 @@ class VideoProviderRules:
     def single_clip_seconds(self, narration_seconds: float) -> float:
         """The length of the one clip generated for a scene that does not
         need splitting: Flow rounds up to its verified grid; Muse's clip
-        is trimmed to the exact narration length."""
+        is trimmed to the exact narration length, but never below
+        MUSE_MIN_CLIP_SECONDS."""
 
         if self.provider == VideoProvider.MUSE:
-            return min(narration_seconds, MUSE_CLIP_DURATION_SECONDS)
+            return min(
+                max(narration_seconds, MUSE_MIN_CLIP_SECONDS),
+                MUSE_CLIP_DURATION_SECONDS,
+            )
 
         return float(clamp_to_verified_duration(narration_seconds))
 

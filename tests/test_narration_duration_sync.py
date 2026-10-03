@@ -123,8 +123,9 @@ class TestSync:
 
 
 def test_the_preview_uses_the_real_length_from_the_voice_track() -> None:
-    """A 4s estimate for a scene that really runs 1.07s: on Muse the clip is
-    trimmed to the real length; the preview must show it, with no manual step."""
+    """A 4s estimate for a scene that really runs 1.07s: the real length is read
+    from the voice track with no manual step, and the Muse preview is sized from
+    it - at Muse's 3s minimum clip length (2026-10-04), not the bare 1.07s."""
 
     job = _job([_scene(2, estimate=4)], [_voice(2, 1.07)])
     job.video_provider = VideoProvider.MUSE
@@ -132,4 +133,4 @@ def test_the_preview_uses_the_real_length_from_the_voice_track() -> None:
     entry = EnrichedScenePromptService().build_entry(job=job, scene=job.scenes[0])
 
     assert job.scenes[0].real_narration_duration_seconds == 1.07
-    assert entry.execution_duration_seconds == 1.07
+    assert entry.execution_duration_seconds == 3.0
