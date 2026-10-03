@@ -222,6 +222,14 @@ class ProjectWorkspaceView(QWidget):
         self._missing_label.setVisible(False)
         outer.addWidget(self._missing_label)
 
+        # One preview service for the Content and Prompts tabs, so both
+        # show the same provider-aware splits (see VideoProviderRules).
+        enriched_scene_prompt_service = EnrichedScenePromptService(
+            scene_video_generation_service=scene_video_generation_service,
+            provider_name_for_profile=self._provider_name_for_profile_resolver(
+                provider_registry
+            ),
+        )
         self.content_studio = ContentStudioView(
             job_store=job_store,
             content_pipeline=content_pipeline,
@@ -230,6 +238,7 @@ class ProjectWorkspaceView(QWidget):
             topic_candidate_generation_service=topic_candidate_generation_service,
             fact_check_service=fact_check_service,
             on_change=self.refresh,
+            enriched_scene_prompt_service=enriched_scene_prompt_service,
         )
         self.render_workspace = RenderWorkspaceView(
             job_store=job_store,
@@ -247,14 +256,13 @@ class ProjectWorkspaceView(QWidget):
         self.compiled_prompts = CompiledPromptView(
             job_store=job_store,
             on_change=self.refresh,
-            enriched_scene_prompt_service=EnrichedScenePromptService(
-                scene_video_generation_service=scene_video_generation_service,
-            ),
+            enriched_scene_prompt_service=enriched_scene_prompt_service,
         )
         self.production_audio = ProductionAudioView(
             job_store=job_store,
             media_generation_pipeline=media_generation_pipeline,
             on_change=self.refresh,
+            regenerate_sound_design_plan=content_intelligence_pipeline.run_sound_design,
         )
         self.editing_timeline = EditingTimelineView(
             job_store=job_store,
@@ -382,6 +390,25 @@ class ProjectWorkspaceView(QWidget):
 
         if flow_reconciled or muse_reconciled:
             self._job_store.add(job)
+
+    @staticmethod
+    def _provider_name_for_profile_resolver(
+        registry: ProviderRegistry | None,
+    ) -> Callable[[str], str | None] | None:
+        """Maps an account profile id to its provider name for the prompt
+        previews (a scene pinned to a Muse account is previewed with
+        Muse's rules). None when no registry is wired."""
+
+        if registry is None:
+            return None
+
+        def resolve(profile_id: str) -> str | None:
+            try:
+                return registry.get(profile_id).provider_name
+            except KeyError:
+                return None
+
+        return resolve
 
     def refresh(self) -> None:
         """Reload the current job once and push it to every workspace."""

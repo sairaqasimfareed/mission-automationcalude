@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
+from itertools import combinations_with_replacement
 
 from src.providers.google_flow.locators import (
     VERIFIED_DURATIONS_SECONDS,
@@ -103,6 +104,51 @@ class SceneClipSplitPlanningService:
             real_narration_duration_seconds / max_single_clip_seconds
         )
 
+        if clamp is clamp_to_verified_duration:
+            # Flow's discrete 4/6/8s grid: dividing evenly and then
+            # rounding each share UP wastes footage (9s became 6+6=12s
+            # when 6+4=10s covers it). Search the grid instead.
+            return cls._plan_on_verified_grid(
+                real_narration_duration_seconds, sub_clip_count
+            )
+
         even_share = real_narration_duration_seconds / sub_clip_count
 
         return [float(clamp(even_share)) for _ in range(sub_clip_count)]
+
+    @staticmethod
+    def _plan_on_verified_grid(
+        real_narration_duration_seconds: float, sub_clip_count: int
+    ) -> list[float]:
+        """
+        The cheapest set of `sub_clip_count` verified clip lengths whose
+        total still covers the real narration (never trim - the
+        invariant this class exists for). Ties on total prefer the most
+        even split (smallest longest clip), so 12s stays 6+6 rather than
+        8+4 and 16.1s stays 6+6+6. Longest clip first.
+
+        The count itself stays the minimum, ceil(total / max): fewer
+        seams always beat fewer seconds, since every extra seam costs a
+        reference-image hand-off and a visible join.
+        """
+
+        grid = sorted(float(value) for value in VERIFIED_DURATIONS_SECONDS)
+
+        best: tuple[float, ...] | None = None
+        best_key: tuple[float, float] | None = None
+
+        for combination in combinations_with_replacement(grid, sub_clip_count):
+            total = sum(combination)
+
+            if total < real_narration_duration_seconds - 1e-9:
+                continue
+
+            key = (total, max(combination))
+
+            if best_key is None or key < best_key:
+                best = combination
+                best_key = key
+
+        assert best is not None  # all-max clips always cover it
+
+        return sorted(best, reverse=True)

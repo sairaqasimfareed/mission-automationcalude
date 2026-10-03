@@ -62,6 +62,7 @@ from src.models.story_blueprint import StoryBlueprint
 from src.models.thumbnail import ThumbnailTextPosition
 from src.models.topic_candidate import TopicCandidate
 from src.models.video_clip import VideoClip
+from src.models.video_provider import VideoProvider
 from src.models.video_timeline import VideoTimeline
 from src.models.visual_continuity import VisualContinuityBible
 from src.models.writing_directives import WritingDirectiveSet
@@ -324,6 +325,16 @@ class VideoJob(MissionBaseModel):
     # Stage 1/Stage 2 split). Takes effect on the NEXT render, not
     # retroactively on an already-rendered video.
     subtitles_enabled: bool = True
+
+    # Which external video generator produces this project's clips
+    # (2026-10-03). The project-level default: a scene's own
+    # preferred_profile_id (an explicit account choice) still wins for
+    # that scene. Defaults to Google Flow, which is what "Auto" always
+    # routed to before this field existed, so every existing job keeps
+    # its exact behaviour. Drives how a scene is split into clips and
+    # how its prompt is worded (Flow: 4/6/8s clips; Muse: 10s clip
+    # trimmed to length) - see VideoProviderRules.
+    video_provider: VideoProvider = VideoProvider.GOOGLE_FLOW
 
     # Caption style manual override, 2026-09-26: real per-project
     # switch on top of the genre's own GenreEditingProfile.

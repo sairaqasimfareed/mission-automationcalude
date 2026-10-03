@@ -1,0 +1,160 @@
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
+
+from src.models.scene import Scene
+from src.models.video_job import VideoJob
+from src.models.video_provider import VideoProvider
+from src.providers.google_flow.locators import (
+    VERIFIED_DURATIONS_SECONDS,
+    clamp_to_verified_duration,
+)
+from src.services.scene_clip_split_planning_service import SceneClipSplitPlanningService
+from src.services.scene_video_generation_service import (
+    _DURATION_STATEMENT_PATTERN,
+    _extend_last_beat_to_real_duration,
+)
+
+# Muse always generates one fixed ~10s clip - it has no duration control to
+# size it (see MuseGenerationRequest). Anything shorter is reached by
+# trimming: first by asking Muse itself in the prompt, then by an FFmpeg
+# safety net. A target within this tolerance of 10s is "close enough" and
+# gets neither the instruction nor the correction.
+MUSE_CLIP_DURATION_SECONDS = 10.0
+MUSE_SAFETY_NET_TRIM_TOLERANCE_SECONDS = 0.5
+
+_MAX_FLOW_CLIP_SECONDS = float(max(VERIFIED_DURATIONS_SECONDS))
+
+
+def _identity(seconds: float) -> float:
+    return seconds
+
+
+@dataclass(frozen=True)
+class VideoProviderRules:
+    """
+    How one video provider sizes clips and words their prompts.
+
+    The single place these rules live, so the automated submission path
+    and the prompt previews (Prompts tab, Content tab) cannot drift apart:
+    the previews show exactly what a submission would send.
+    """
+
+    provider: VideoProvider
+
+    @property
+    def display_name(self) -> str:
+        return "Muse" if self.provider == VideoProvider.MUSE else "Google Flow"
+
+    @property
+    def max_single_clip_seconds(self) -> float:
+        return (
+            MUSE_CLIP_DURATION_SECONDS
+            if self.provider == VideoProvider.MUSE
+            else _MAX_FLOW_CLIP_SECONDS
+        )
+
+    @property
+    def summary(self) -> str:
+        """Short label for the UI, e.g. "Muse - 10s clips"."""
+
+        if self.provider == VideoProvider.MUSE:
+            return f"Muse - {MUSE_CLIP_DURATION_SECONDS:.0f}s clips, trimmed to length"
+
+        return f"Google Flow - up to {_MAX_FLOW_CLIP_SECONDS:.0f}s clips (4/6/8s)"
+
+    def needs_split(self, narration_seconds: float) -> bool:
+        return SceneClipSplitPlanningService.needs_split(
+            narration_seconds,
+            max_single_clip_seconds=self.max_single_clip_seconds,
+        )
+
+    def plan_clips(self, narration_seconds: float) -> list[float]:
+        """The clip lengths needed to cover the narration (one element
+        unless it must be split)."""
+
+        if self.provider == VideoProvider.MUSE:
+            return SceneClipSplitPlanningService.plan(
+                narration_seconds,
+                max_single_clip_seconds=MUSE_CLIP_DURATION_SECONDS,
+                clamp=_identity,
+            )
+
+        return SceneClipSplitPlanningService.plan(narration_seconds)
+
+    def single_clip_seconds(self, narration_seconds: float) -> float:
+        """The length of the one clip generated for a scene that does not
+        need splitting: Flow rounds up to its verified grid; Muse's clip
+        is trimmed to the exact narration length."""
+
+        if self.provider == VideoProvider.MUSE:
+            return min(narration_seconds, MUSE_CLIP_DURATION_SECONDS)
+
+        return float(clamp_to_verified_duration(narration_seconds))
+
+    def finalize_prompt(self, prompt: str, target_seconds: float) -> str:
+        """
+        The prompt exactly as a submission would send it: its stated
+        duration and last shot beat corrected to the real target (both
+        are baked in at compile time, before the real narration length
+        exists), plus - for Muse - the trim instruction when the target
+        is shorter than its fixed 10s clip.
+        """
+
+        prompt = _DURATION_STATEMENT_PATTERN.sub(
+            f"Duration: {target_seconds:.0f} seconds.",
+            prompt,
+        )
+        prompt = _extend_last_beat_to_real_duration(prompt, target_seconds)
+
+        if (
+            self.provider == VideoProvider.MUSE
+            and target_seconds
+            < MUSE_CLIP_DURATION_SECONDS - MUSE_SAFETY_NET_TRIM_TOLERANCE_SECONDS
+        ):
+            # Real-world finding, 2026-09-29: Muse's own agent executes an
+            # explicit trim instruction embedded in the prompt (confirmed
+            # live: "trim 10 seconds video to only 7 seconds video"
+            # produced a genuinely ~7s clip). Asking up front avoids
+            # wasting footage on a jump-cut correction most of the time;
+            # the FFmpeg safety net is the fallback, never the primary.
+            prompt = (
+                f"{prompt}\n\nAlso trim the generated "
+                f"{MUSE_CLIP_DURATION_SECONDS:.0f} seconds video to "
+                f"only {target_seconds:.0f} seconds video."
+            )
+
+        return prompt
+
+
+def rules_for(provider: VideoProvider) -> VideoProviderRules:
+    return VideoProviderRules(provider)
+
+
+def resolve_scene_video_provider(
+    job: VideoJob,
+    scene: Scene,
+    provider_name_for_profile: Callable[[str], str | None] | None = None,
+) -> VideoProvider:
+    """
+    Which provider generates this scene.
+
+    An explicit per-scene account choice (Scene.preferred_profile_id)
+    wins - it names both provider and account. Otherwise the project's
+    own video_provider decides. provider_name_for_profile maps a profile
+    id to its provider name; a profile it cannot resolve falls through to
+    the project default rather than guessing.
+    """
+
+    if scene.preferred_profile_id is not None and provider_name_for_profile is not None:
+        provider_name = provider_name_for_profile(scene.preferred_profile_id)
+
+        if provider_name is not None:
+            return (
+                VideoProvider.MUSE
+                if provider_name.strip().lower() == "muse"
+                else VideoProvider.GOOGLE_FLOW
+            )
+
+    return job.video_provider

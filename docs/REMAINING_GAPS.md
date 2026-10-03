@@ -601,19 +601,22 @@ that file's audio-regeneration row.
 
 ## Open findings from the 2026-10-03 render pipeline audit
 
-- Intermediate `final_video.stage1.mp4` / `.stage2.mp4` files are never
-  deleted after a successful staged render (only `.part` files are cleaned,
-  and only on failure) - every render with audio and subtitles leaves two
-  extra full-size copies in the job's render directory.
-- `RenderResult.duration_seconds` is the timeline's computed end time,
-  truncated to an int - not the real encoded length (crossfades shorten it;
-  a real project stores 100s for a 90.4s file). Still trusted by the final
-  export manifest, progress totals, and the title card result's duration.
-- `except NotImplementedError: pass` in `RenderPipelineStage` silently falls
-  back to the old composite render for any NotImplementedError, not only the
-  intended command-length chunking case.
-- Not audited: filter-graph/chunk-boundary/audio-timing math (historically
-  the most desync-prone area) - needs real-FFmpeg experiments.
+The audit's four findings (shared output path, stale variants after a
+re-render, leftover stage files, stored duration) and the broad
+`NotImplementedError` fallback are all fixed - see
+`docs/IMPLEMENTATION_STATE.md`. Still open:
+
+- Not audited: filter-graph / chunk-boundary / audio-timing math
+  (historically the most desync-prone area) - needs real-FFmpeg
+  experiments, not code reading.
+- `RenderPipelineStage.execute_video_only()` and the chunked-render
+  composite path were not given the per-project output directory or the
+  real-duration probe; nothing calls the former, and the latter shares
+  `render()`'s own output handling.
+- Reference-image continuity: identical references are not de-duplicated
+  before attaching (subjects that first appear in one scene share one
+  extracted frame), and the attach check uses `.first`, so it cannot
+  confirm the Nth attachment. Not yet changed - needs a live Flow check.
 
 ## Known limits of the 2026-10-02 branding uploads
 

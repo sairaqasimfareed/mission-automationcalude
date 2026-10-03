@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from src.models.cinematic_prompt import ResolvedCinematicPrompt
 from src.models.enriched_scene_prompt import EnrichedScenePrompt
 from src.models.scene import Scene
 from src.models.video_job import VideoJob
-from src.services.scene_clip_split_planning_service import SceneClipSplitPlanningService
+from src.models.video_provider import VideoProvider
+from src.providers.google_flow.locators import VERIFIED_DURATIONS_SECONDS
 from src.services.scene_video_generation_service import SceneVideoGenerationService
+from src.services.video_provider_rules import (
+    VideoProviderRules,
+    resolve_scene_video_provider,
+    rules_for,
+)
 
 
 class EnrichedScenePromptService:
@@ -31,8 +39,19 @@ class EnrichedScenePromptService:
         self,
         *,
         scene_video_generation_service: SceneVideoGenerationService | None = None,
+        provider_name_for_profile: Callable[[str], str | None] | None = None,
     ) -> None:
         self._scene_video_generation_service = scene_video_generation_service
+        # Maps an account profile id to its provider name, so a scene
+        # pinned to a specific account is previewed with THAT provider's
+        # rules. Without it, only the project's own provider is known.
+        self._provider_name_for_profile = provider_name_for_profile
+
+    def provider_for(self, job: VideoJob, scene: Scene) -> VideoProvider:
+        """Which provider will generate this scene - the same resolution
+        the generation dispatcher uses."""
+
+        return resolve_scene_video_provider(job, scene, self._provider_name_for_profile)
 
     def build_entry(
         self,
@@ -41,12 +60,14 @@ class EnrichedScenePromptService:
         scene: Scene,
     ) -> EnrichedScenePrompt:
         resolved_prompt = self._resolved_prompt_for(job, scene)
+        rules = rules_for(self.provider_for(job, scene))
 
         return self._entry(
             job=job,
             scene=scene,
             resolved_prompt=resolved_prompt,
-            duration_seconds=self._duration_seconds(scene),
+            duration_seconds=rules.single_clip_seconds(self._duration_seconds(scene)),
+            rules=rules,
         )
 
     def build_entries(
@@ -75,14 +96,15 @@ class EnrichedScenePromptService:
         """
 
         duration_seconds = self._duration_seconds(scene)
+        rules = rules_for(self.provider_for(job, scene))
 
-        if not SceneClipSplitPlanningService.needs_split(duration_seconds):
+        if not rules.needs_split(duration_seconds):
             return [self.build_entry(job=job, scene=scene)]
 
         if self._scene_video_generation_service is None:
             return [self.build_entry(job=job, scene=scene)]
 
-        sub_clip_durations = SceneClipSplitPlanningService.plan(duration_seconds)
+        sub_clip_durations = rules.plan_clips(duration_seconds)
 
         resolved_prompts = (
             self._scene_video_generation_service._resolve_sub_clip_prompts(
@@ -101,6 +123,10 @@ class EnrichedScenePromptService:
                 duration_seconds=sub_clip_durations[
                     resolved_prompt.clip_sequence_index
                 ],
+                rules=rules,
+                # Every sub-clip after the first is submitted with the
+                # previous clip's last frame as a reference image.
+                has_seam_reference=resolved_prompt.clip_sequence_index > 0,
             )
             for resolved_prompt in resolved_prompts
         ]
@@ -112,6 +138,8 @@ class EnrichedScenePromptService:
         scene: Scene,
         resolved_prompt: ResolvedCinematicPrompt | None,
         duration_seconds: float,
+        rules: VideoProviderRules,
+        has_seam_reference: bool = False,
     ) -> EnrichedScenePrompt:
         base_prompt_text = (
             resolved_prompt.prompt_text
@@ -143,6 +171,21 @@ class EnrichedScenePromptService:
             else None
         )
 
+        # Google Flow silently refuses image ingredients on a clip shorter
+        # than its longest one, so any clip submitted with a reference
+        # (an identity's reference frame, or the previous sub-clip's last
+        # frame) is always requested at that maximum - mirrors
+        # SceneVideoGenerationService._submit(). Muse has no duration
+        # control, so nothing is forced there.
+        if rules.provider == VideoProvider.GOOGLE_FLOW and (
+            reference_assets or has_seam_reference
+        ):
+            duration_seconds = float(max(VERIFIED_DURATIONS_SECONDS))
+
+        # Worded exactly as a submission would send it (stated duration,
+        # last shot beat, and - for Muse - the trim instruction).
+        base_prompt_text = rules.finalize_prompt(base_prompt_text, duration_seconds)
+
         return EnrichedScenePrompt(
             scene_number=scene.scene_number,
             clip_sequence_index=(
@@ -165,6 +208,7 @@ class EnrichedScenePromptService:
                 continuity.outgoing_state if continuity is not None else None
             ),
             reference_assets=reference_assets,
+            execution_provider_label=rules.summary,
             execution_model_family=model_family,
             execution_duration_seconds=duration_seconds,
             # aspect_ratio/resolution are genuinely unset anywhere ahead

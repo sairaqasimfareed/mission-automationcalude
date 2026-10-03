@@ -28,6 +28,7 @@ from src.models.scene_completeness import (
     SceneCompletenessStatus,
 )
 from src.models.video_job import VideoJob
+from src.models.video_provider import VideoProvider
 from src.models.visual_continuity import CanonicalEntityIdentity, CanonicalEntityType
 from src.services.asset_storage_service import AssetStorageService
 from src.services.cinematic_prompt_compilation_service import (
@@ -47,9 +48,10 @@ from src.services.scene_clip_split_planning_service import (
 )
 from src.services.scene_completeness_service import SceneCompletenessService
 from src.services.scene_prompt_export_service import ScenePromptExportService
-from src.services.scene_video_generation_service import (
-    _DURATION_STATEMENT_PATTERN,
-    _extend_last_beat_to_real_duration,
+from src.services.video_provider_rules import (
+    MUSE_CLIP_DURATION_SECONDS,
+    MUSE_SAFETY_NET_TRIM_TOLERANCE_SECONDS,
+    rules_for,
 )
 from src.shared.logger import logger
 
@@ -61,7 +63,7 @@ _T = TypeVar("_T")
 # MuseExecutionSettings/clamping logic exists to mirror (see
 # muse_generation.py's own MuseGenerationRequest docstring) - this is
 # simply the one real, fixed value every submission produces.
-_MUSE_CLIP_DURATION_SECONDS = 10.0
+_MUSE_CLIP_DURATION_SECONDS = MUSE_CLIP_DURATION_SECONDS
 
 # Real-world finding, 2026-09-29: a scene whose real narration is
 # shorter than Muse's fixed ~10s clip length used to attach the full,
@@ -74,7 +76,7 @@ _MUSE_CLIP_DURATION_SECONDS = 10.0
 # enough to Muse's own fixed length already" - not worth an explicit
 # trim instruction or a safety-net correction for a fraction of a
 # second nobody would notice.
-_SAFETY_NET_TRIM_TOLERANCE_SECONDS = 0.5
+_SAFETY_NET_TRIM_TOLERANCE_SECONDS = MUSE_SAFETY_NET_TRIM_TOLERANCE_SECONDS
 
 _POLLABLE_STATES = frozenset(
     {
@@ -956,31 +958,10 @@ class MuseSceneVideoGenerationService:
         # known - re-patched here so the prompt stays truthful about
         # what this scene actually needs, not always Muse's raw fixed
         # length.
-        prompt = _DURATION_STATEMENT_PATTERN.sub(
-            f"Duration: {target_seconds:.0f} seconds.",
-            prompt,
-        )
-        prompt = _extend_last_beat_to_real_duration(prompt, target_seconds)
-
-        if (
-            target_seconds
-            < _MUSE_CLIP_DURATION_SECONDS - _SAFETY_NET_TRIM_TOLERANCE_SECONDS
-        ):
-            # Real-world finding, 2026-09-29: Muse's own agent can
-            # execute an explicit trim instruction embedded in the
-            # prompt itself - confirmed live, a real "trim 10 seconds
-            # video to only 7 seconds video" instruction produced a
-            # genuinely ~7s clip, recorded as its own "Trim Scene N
-            # Video" action in Muse's own task list. Asking for this
-            # up front avoids wasting generated footage on a jump-cut
-            # correction most of the time - _apply_safety_net_trim()
-            # is the verified fallback for whenever Muse's own trim
-            # isn't exact, never the primary mechanism.
-            prompt = (
-                f"{prompt}\n\nAlso trim the generated "
-                f"{_MUSE_CLIP_DURATION_SECONDS:.0f} seconds video to "
-                f"only {target_seconds:.0f} seconds video."
-            )
+        # (the trim instruction for a target shorter than Muse's fixed
+        # clip is part of the same shared rules - see
+        # VideoProviderRules.finalize_prompt for the live finding behind it)
+        prompt = rules_for(VideoProvider.MUSE).finalize_prompt(prompt, target_seconds)
 
         reference_assets = self._resolve_reference_assets(job, scene) + list(
             extra_reference_assets or []

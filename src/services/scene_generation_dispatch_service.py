@@ -12,12 +12,14 @@ from src.models.scene_completeness import (
     SceneCompletenessStatus,
 )
 from src.models.video_job import VideoJob
+from src.models.video_provider import VideoProvider
 from src.services.muse_scene_video_generation_service import (
     MuseSceneVideoGenerationService,
 )
 from src.services.registry.provider_registry import ProviderRegistry
 from src.services.scene_completeness_service import SceneCompletenessService
 from src.services.scene_video_generation_service import SceneVideoGenerationService
+from src.services.video_provider_rules import resolve_scene_video_provider
 
 
 class SceneGenerationDispatchService:
@@ -39,8 +41,9 @@ class SceneGenerationDispatchService:
     generation, based on Scene.preferred_profile_id.
 
     Scene.preferred_profile_id is None ("Auto") for every scene by
-    default - routes to Google Flow, unchanged from every existing
-    job's behavior before Muse existed. Setting it to a specific
+    default - routes to the project's own VideoJob.video_provider
+    (Google Flow unless the project chose Muse, unchanged from every
+    existing job's behavior before that field existed). Setting it to a specific
     profile_id (which already uniquely identifies both provider and
     account, via ProviderRegistry) routes to whichever service that
     profile actually belongs to. An unregistered profile_id raises a
@@ -63,7 +66,7 @@ class SceneGenerationDispatchService:
     def generate_one(self, job: VideoJob, scene_number: int) -> SceneCompletenessEntry:
         scene = self._find_scene(job, scene_number)
 
-        return self._resolve_service(scene).generate_one(job, scene_number)
+        return self._resolve_service(job, scene).generate_one(job, scene_number)
 
     def generate_all(
         self,
@@ -185,23 +188,39 @@ class SceneGenerationDispatchService:
         )
 
     def _resolve_service(
-        self, scene: Scene
+        self, job: VideoJob, scene: Scene
     ) -> SceneVideoGenerationService | MuseSceneVideoGenerationService:
-        if scene.preferred_profile_id is None:
-            return self._flow_service
+        """
+        An explicit per-scene account choice wins; otherwise the
+        project's own video_provider decides (Google Flow by default,
+        which is what "Auto" always meant). Uses the same
+        resolve_scene_video_provider() the prompt previews use, so what
+        the Prompts/Content tabs show is what will actually run.
+        """
 
-        try:
-            profile = self._registry.get(scene.preferred_profile_id)
-        except KeyError:
-            raise ValueError(
-                f"Scene {scene.scene_number}'s preferred account "
-                f"'{scene.preferred_profile_id}' is not registered."
-            ) from None
+        if scene.preferred_profile_id is not None:
+            try:
+                self._registry.get(scene.preferred_profile_id)
+            except KeyError:
+                raise ValueError(
+                    f"Scene {scene.scene_number}'s preferred account "
+                    f"'{scene.preferred_profile_id}' is not registered."
+                ) from None
 
-        if profile.provider_name == "Muse":
+        provider = resolve_scene_video_provider(
+            job, scene, self._provider_name_for_profile
+        )
+
+        if provider == VideoProvider.MUSE:
             return self._muse_service
 
         return self._flow_service
+
+    def _provider_name_for_profile(self, profile_id: str) -> str | None:
+        try:
+            return self._registry.get(profile_id).provider_name
+        except KeyError:
+            return None
 
     @staticmethod
     def _find_scene(job: VideoJob, scene_number: int) -> Scene:

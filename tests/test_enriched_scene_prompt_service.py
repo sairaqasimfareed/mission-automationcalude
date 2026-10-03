@@ -20,6 +20,7 @@ from src.models.shot_planning import (
     ShotSpecification,
 )
 from src.models.video_job import VideoJob
+from src.models.video_provider import VideoProvider
 from src.models.visual_continuity import (
     ClipContinuityEntry,
     VisualContinuityBible,
@@ -266,7 +267,9 @@ def test_build_entry_uses_real_narration_duration_over_the_estimate_when_availab
 
     entry = service.build_entry(job=_job(), scene=scene)
 
-    assert entry.execution_duration_seconds == 6.4
+    # Google Flow only generates 4/6/8s clips, so a 6.4s narration is
+    # sized up to the next verified length (it is trimmed at assembly).
+    assert entry.execution_duration_seconds == 8.0
 
 
 def test_build_entry_falls_back_to_the_estimate_when_no_real_duration_exists() -> None:
@@ -469,3 +472,187 @@ def test_build_entries_splits_a_scene_whose_narration_exceeds_the_max_duration()
     assert entries[0].base_prompt_text != entries[1].base_prompt_text
     assert "part 1 of 2" in entries[0].base_prompt_text.lower()
     assert "part 2 of 2" in entries[1].base_prompt_text.lower()
+
+
+# ---------------------------------------------------------------------------
+# Provider-aware previews, 2026-10-03: the Prompts/Content tabs must show what
+# the project's chosen provider would actually generate - Muse's fixed 10s clip
+# trimmed to length vs Google Flow's 4/6/8s clips.
+# ---------------------------------------------------------------------------
+
+_MUSE_TRIM_9 = "Also trim the generated 10 seconds video to only 6 seconds video."
+
+
+def _split_job(provider: VideoProvider) -> VideoJob:
+    job = _job(
+        cinematic_shot_plan=_split_shot_plan(),
+        visual_continuity_bible=_split_bible(),
+        script_lock=_split_script_lock(),
+    )
+    job.video_provider = provider
+
+    return job
+
+
+def _scene_with_narration(seconds: float) -> Scene:
+    scene = _scene()
+    scene.real_narration_duration_seconds = seconds
+
+    return scene
+
+
+def _service(
+    *,
+    reference_assets: list[GoogleFlowReferenceAsset] | None = None,
+    provider_names: dict[str, str] | None = None,
+) -> EnrichedScenePromptService:
+    return EnrichedScenePromptService(
+        scene_video_generation_service=_FakeSceneVideoGenerationService(
+            reference_assets=reference_assets
+        ),  # type: ignore[arg-type]
+        provider_name_for_profile=(
+            (lambda profile_id: (provider_names or {}).get(profile_id))
+            if provider_names is not None
+            else None
+        ),
+    )
+
+
+def test_a_flow_project_is_labelled_and_sized_for_google_flow() -> None:
+    entry = _service().build_entry(
+        job=_split_job(VideoProvider.GOOGLE_FLOW), scene=_scene_with_narration(7.0)
+    )
+
+    assert entry.execution_provider_label is not None
+    assert "Google Flow" in entry.execution_provider_label
+    assert entry.execution_duration_seconds == 8.0
+    assert "trim the generated" not in entry.base_prompt_text
+    assert "Generates on: Google Flow" in entry.full_text()
+
+
+def test_a_muse_project_sizes_a_short_scene_to_its_exact_narration_and_asks_muse_to_trim() -> (
+    None
+):
+    """
+    Muse always generates 10 seconds, so a 6.4s scene is one clip trimmed
+    down, and the prompt carries the explicit trim instruction a real
+    submission sends.
+    """
+
+    entry = _service().build_entry(
+        job=_split_job(VideoProvider.MUSE), scene=_scene_with_narration(6.4)
+    )
+
+    assert entry.execution_duration_seconds == 6.4
+    assert entry.base_prompt_text.endswith(_MUSE_TRIM_9)
+    assert entry.execution_provider_label is not None
+    assert "Muse" in entry.execution_provider_label
+    assert "Generates on: Muse" in entry.full_text()
+
+
+def test_a_muse_scene_close_to_ten_seconds_gets_no_trim_instruction() -> None:
+    entry = _service().build_entry(
+        job=_split_job(VideoProvider.MUSE), scene=_scene_with_narration(9.8)
+    )
+
+    assert entry.execution_duration_seconds == 9.8
+    assert "trim the generated" not in entry.base_prompt_text
+
+
+def test_a_nine_second_scene_is_one_clip_on_muse_but_split_on_flow() -> None:
+    """The exact disagreement a live project showed: 9s is a single trimmed
+    clip for Muse (ceiling 10s) but needs two clips on Flow (ceiling 8s)."""
+
+    muse_entries = _service().build_entries(
+        job=_split_job(VideoProvider.MUSE), scene=_scene_with_narration(9.0)
+    )
+    flow_entries = _service().build_entries(
+        job=_split_job(VideoProvider.GOOGLE_FLOW),
+        scene=_scene_with_narration(9.0),
+    )
+
+    assert len(muse_entries) == 1
+    assert muse_entries[0].execution_duration_seconds == 9.0
+    assert len(flow_entries) == 2
+
+
+def test_flow_splits_nine_seconds_into_six_plus_four_with_the_seam_clip_forced_to_eight() -> (
+    None
+):
+    """The plan is 6+4, but Flow silently refuses image ingredients on a
+    clip shorter than 8s - and every clip after the first carries the
+    previous clip's last frame - so the second is requested at 8s, exactly
+    as SceneVideoGenerationService._submit() does."""
+
+    entries = _service().build_entries(
+        job=_split_job(VideoProvider.GOOGLE_FLOW), scene=_scene_with_narration(9.0)
+    )
+
+    assert [entry.execution_duration_seconds for entry in entries] == [6.0, 8.0]
+
+
+def test_flow_forces_the_first_clip_to_eight_when_an_identity_reference_exists() -> (
+    None
+):
+    reference = GoogleFlowReferenceAsset(
+        source_path="C:/refs/identity.jpg",
+        checksum="b" * 64,
+        role=GoogleFlowReferenceRole.CHARACTER,
+    )
+
+    entries = _service(reference_assets=[reference]).build_entries(
+        job=_split_job(VideoProvider.GOOGLE_FLOW), scene=_scene_with_narration(9.0)
+    )
+
+    assert [entry.execution_duration_seconds for entry in entries] == [8.0, 8.0]
+
+
+def test_muse_splits_a_long_scene_evenly_with_exact_lengths_and_trim_instructions() -> (
+    None
+):
+    entries = _service().build_entries(
+        job=_split_job(VideoProvider.MUSE), scene=_scene_with_narration(14.0)
+    )
+
+    assert [entry.execution_duration_seconds for entry in entries] == [7.0, 7.0]
+    assert all(
+        "Also trim the generated 10 seconds video to only 7 seconds video."
+        in entry.base_prompt_text
+        for entry in entries
+    )
+    assert "part 1 of 2" in entries[0].base_prompt_text.lower()
+
+
+def test_a_scene_pinned_to_a_muse_account_uses_muse_rules_in_a_flow_project() -> None:
+    scene = _scene_with_narration(6.4)
+    scene.preferred_profile_id = "muse.primary"
+
+    entry = _service(provider_names={"muse.primary": "Muse"}).build_entry(
+        job=_split_job(VideoProvider.GOOGLE_FLOW), scene=scene
+    )
+
+    assert entry.execution_duration_seconds == 6.4
+    assert "Muse" in (entry.execution_provider_label or "")
+
+
+def test_a_scene_pinned_to_a_flow_account_uses_flow_rules_in_a_muse_project() -> None:
+    scene = _scene_with_narration(6.4)
+    scene.preferred_profile_id = "flow.primary"
+
+    entry = _service(provider_names={"flow.primary": "Google Flow"}).build_entry(
+        job=_split_job(VideoProvider.MUSE), scene=scene
+    )
+
+    assert entry.execution_duration_seconds == 8.0
+    assert "Google Flow" in (entry.execution_provider_label or "")
+
+
+def test_an_unresolvable_pinned_account_falls_back_to_the_projects_provider() -> None:
+    scene = _scene_with_narration(6.4)
+    scene.preferred_profile_id = "deleted.account"
+
+    entry = _service(provider_names={}).build_entry(
+        job=_split_job(VideoProvider.MUSE), scene=scene
+    )
+
+    assert "Muse" in (entry.execution_provider_label or "")

@@ -25,6 +25,7 @@ from src.models.scene_completeness import (
     SceneCompletenessStatus,
 )
 from src.models.video_job import VideoJob
+from src.models.video_provider import VideoProvider
 from src.services.asset_decision_service import AssetDecisionService
 from src.services.asset_manager import AssetManager
 from src.services.asset_search_service import AssetSearchService
@@ -182,6 +183,55 @@ def test_generate_one_routes_to_flow_when_preference_names_a_flow_account() -> N
 
     assert flow.generate_one_calls == [1]
     assert muse.generate_one_calls == []
+
+
+def test_generate_one_routes_to_muse_when_the_project_chose_muse() -> None:
+    """
+    Project-level provider (2026-10-03): with no per-scene account choice
+    ("Auto"), the project's own video_provider decides.
+    """
+
+    dispatch, flow, muse = _dispatch()
+    job = _job(_scene(1))
+    job.video_provider = VideoProvider.MUSE
+
+    dispatch.generate_one(job, 1)
+
+    assert muse.generate_one_calls == [1]
+    assert flow.generate_one_calls == []
+
+
+def test_a_scenes_explicit_flow_account_beats_a_muse_project() -> None:
+    dispatch, flow, muse = _dispatch()
+    job = _job(_scene(1, preferred_profile_id="flow.primary"))
+    job.video_provider = VideoProvider.MUSE
+
+    dispatch.generate_one(job, 1)
+
+    assert flow.generate_one_calls == [1]
+    assert muse.generate_one_calls == []
+
+
+def test_a_scenes_explicit_muse_account_beats_a_flow_project() -> None:
+    dispatch, flow, muse = _dispatch()
+    job = _job(_scene(1, preferred_profile_id="muse.primary"))
+    job.video_provider = VideoProvider.GOOGLE_FLOW
+
+    dispatch.generate_one(job, 1)
+
+    assert muse.generate_one_calls == [1]
+    assert flow.generate_one_calls == []
+
+
+def test_generate_all_follows_the_projects_provider_for_unassigned_scenes() -> None:
+    dispatch, flow, muse = _dispatch()
+    job = _job(_scene(1), _scene(2, preferred_profile_id="flow.primary"), _scene(3))
+    job.video_provider = VideoProvider.MUSE
+
+    dispatch.generate_all(job)
+
+    assert muse.generate_one_calls == [1, 3]
+    assert flow.generate_one_calls == [2]
 
 
 def test_generate_one_raises_a_clear_error_for_an_unregistered_preference() -> None:

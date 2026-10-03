@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from src.providers.google_flow.locators import clamp_to_verified_duration
 from src.services.scene_clip_split_planning_service import (
     SceneClipSplitPlanningService,
 )
@@ -38,30 +39,57 @@ class TestPlan:
         assert SceneClipSplitPlanningService.plan(8.0) == [8.0]
 
     def test_just_past_the_max_bucket_plans_two_clips(self) -> None:
-        # ceil(8.1 / 8) = 2 sub-clips; 8.1 / 2 = 4.05, clamps up to 6s
-        # each - total 12s comfortably covers the real 8.1s narration.
-        assert SceneClipSplitPlanningService.plan(8.1) == [6.0, 6.0]
+        # ceil(8.1 / 8) = 2 sub-clips. The cheapest pair of verified
+        # lengths covering 8.1s is 6+4 = 10s (6+6 = 12s wasted 2 more).
+        assert SceneClipSplitPlanningService.plan(8.1) == [6.0, 4.0]
 
-    def test_nine_seconds_plans_two_six_second_clips(self) -> None:
-        # ceil(9 / 8) = 2; 9 / 2 = 4.5, clamps up to 6s each.
-        assert SceneClipSplitPlanningService.plan(9.0) == [6.0, 6.0]
+    def test_nine_seconds_plans_six_plus_four(self) -> None:
+        # Real case from a live project: 9s used to plan 6+6 = 12s
+        # (4.5s even shares rounded up to 6s each). 6+4 = 10s covers it.
+        assert SceneClipSplitPlanningService.plan(9.0) == [6.0, 4.0]
 
-    def test_twelve_seconds_plans_two_six_second_clips_exactly(self) -> None:
-        # ceil(12 / 8) = 2; 12 / 2 = 6.0 exactly, no rounding needed.
+    def test_ten_seconds_plans_six_plus_four_exactly(self) -> None:
+        assert SceneClipSplitPlanningService.plan(10.0) == [6.0, 4.0]
+
+    def test_twelve_seconds_stays_an_even_six_plus_six(self) -> None:
+        # 8+4 also totals exactly 12s - the tie goes to the more even
+        # split (smaller longest clip).
         assert SceneClipSplitPlanningService.plan(12.0) == [6.0, 6.0]
 
-    def test_just_past_twelve_seconds_needs_two_eight_second_clips(self) -> None:
-        # ceil(12.1 / 8) = 2; 12.1 / 2 = 6.05, clamps up to 8s each.
-        assert SceneClipSplitPlanningService.plan(12.1) == [8.0, 8.0]
+    def test_just_past_twelve_seconds_needs_eight_plus_six(self) -> None:
+        # 8+6 = 14s covers 12.1s; the old plan used 8+8 = 16s.
+        assert SceneClipSplitPlanningService.plan(12.1) == [8.0, 6.0]
 
     def test_sixteen_seconds_plans_two_eight_second_clips_exactly(self) -> None:
-        # ceil(16 / 8) = 2; 16 / 2 = 8.0 exactly.
         assert SceneClipSplitPlanningService.plan(16.0) == [8.0, 8.0]
 
     def test_just_past_sixteen_seconds_needs_three_clips(self) -> None:
-        # ceil(16.1 / 8) = 3; 16.1 / 3 ~= 5.37, clamps up to 6s each -
-        # total 18s comfortably covers the real 16.1s narration.
+        # ceil(16.1 / 8) = 3; 18s is the cheapest total, and 6+6+6 beats
+        # 8+6+4 on evenness.
         assert SceneClipSplitPlanningService.plan(16.1) == [6.0, 6.0, 6.0]
+
+    def test_twenty_seconds_plans_eight_eight_four_exactly(self) -> None:
+        assert SceneClipSplitPlanningService.plan(20.0) == [8.0, 8.0, 4.0]
+
+    @pytest.mark.parametrize(
+        "narration_seconds", [8.1, 9.0, 10.0, 11.0, 12.0, 12.1, 14.0, 16.5, 20.0]
+    )
+    def test_the_plan_is_never_more_wasteful_than_the_even_split_it_replaced(
+        self, narration_seconds: float
+    ) -> None:
+        import math
+
+        count = math.ceil(narration_seconds / 8.0)
+        even_share = narration_seconds / count
+        old_total = sum(
+            float(clamp_to_verified_duration(even_share)) for _ in range(count)
+        )
+
+        plan = SceneClipSplitPlanningService.plan(narration_seconds)
+
+        assert len(plan) == count  # never more seams
+        assert sum(plan) <= old_total
+        assert plan == sorted(plan, reverse=True)
 
     @pytest.mark.parametrize(
         "narration_seconds",

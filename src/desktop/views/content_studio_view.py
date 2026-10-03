@@ -39,6 +39,7 @@ from src.desktop.widgets import (
 )
 from src.models.approval import HumanApprovalAction
 from src.models.artifact_lifecycle import ArtifactType
+from src.models.cinematic_prompt import CinematicPromptPackage
 from src.models.content_decision_record import ContentDecisionRecord, DecisionCategory
 from src.models.creative_direction import CreativeDirection
 from src.models.enums import Platform, ProductionMode, ScriptOrigin, WorkflowStage
@@ -62,6 +63,7 @@ from src.models.script_version import ScriptVersionComparison
 from src.models.story_angle import StoryAngle, StoryAngleStyle
 from src.models.topic_candidate import TopicCandidate
 from src.models.video_job import VideoJob
+from src.models.video_provider import VideoProvider
 from src.services.approval_gate_service import ApprovalGateService
 from src.services.content_intelligence_pipeline import ContentIntelligencePipeline
 from src.services.content_pipeline import ContentPipeline
@@ -70,6 +72,7 @@ from src.services.content_studio_journey_service import (
     JOURNEY_STATUS_ROLE,
     ContentStudioJourneyService,
 )
+from src.services.enriched_scene_prompt_service import EnrichedScenePromptService
 from src.services.fact_check_service import FactCheckService
 from src.services.genre_profile_registry_service import (
     GenreProfileRegistryService,
@@ -78,6 +81,7 @@ from src.services.reviewer_service import ReviewerService
 from src.services.topic_candidate_generation_service import (
     TopicCandidateGenerationService,
 )
+from src.services.video_provider_rules import rules_for
 
 _LEFT = Qt.AlignmentFlag.AlignLeft
 
@@ -202,9 +206,15 @@ class ContentStudioView(QWidget):
         topic_candidate_generation_service: TopicCandidateGenerationService,
         fact_check_service: FactCheckService,
         on_change: Callable[[], None],
+        enriched_scene_prompt_service: EnrichedScenePromptService | None = None,
     ) -> None:
         super().__init__()
 
+        # When supplied, the cinematic prompt section shows each scene as it
+        # would actually be generated (split into clips, sized and worded
+        # for the project's video provider) instead of the raw one-prompt-
+        # per-scene package compiled before the voice existed.
+        self._enriched_scene_prompt_service = enriched_scene_prompt_service
         self._job_store = job_store
         self._content_pipeline = content_pipeline
         self._content_intelligence_pipeline = content_intelligence_pipeline
@@ -1377,6 +1387,21 @@ class ContentStudioView(QWidget):
         production_mode_select.setCurrentText(job.production_mode.value)
         form.addRow("Production mode", production_mode_select)
 
+        # Which external generator makes this project's clips (2026-10-03).
+        # Drives how scenes are split into clips and how prompts are
+        # worded - Google Flow: 4/6/8s clips; Muse: a fixed 10s clip
+        # trimmed to length - and which service "Generate" routes to
+        # (a scene's own explicit account choice still wins).
+        video_provider_select = QComboBox()
+
+        for provider in VideoProvider:
+            video_provider_select.addItem(rules_for(provider).summary, provider)
+
+        video_provider_select.setCurrentIndex(
+            video_provider_select.findData(job.video_provider)
+        )
+        form.addRow("Video provider", video_provider_select)
+
         approval_mode_select = QComboBox()
         approval_mode_select.addItems(list(_APPROVAL_MODE_PRESETS))
         approval_mode_select.setCurrentText(_approval_mode_label(job.approval_policy))
@@ -1417,6 +1442,7 @@ class ContentStudioView(QWidget):
                 duration_seconds_input=duration_seconds_input,
                 platform_select=platform_select,
                 production_mode_select=production_mode_select,
+                video_provider_select=video_provider_select,
                 approval_mode_select=approval_mode_select,
                 content_mode_select=content_mode_select,
                 language_input=language_input,
@@ -1884,6 +1910,88 @@ class ContentStudioView(QWidget):
         else:
             layout.addWidget(small_muted("Not yet scored."))
 
+        if self._enriched_scene_prompt_service is not None:
+            self._render_scene_prompt_entries(layout, job)
+        else:
+            self._render_raw_package_prompts(layout, package)
+
+        button_row = QHBoxLayout()
+        button_row.setSpacing(6)
+
+        recompile_button = button("Recompile prompts", variant="ghost")
+        recompile_button.clicked.connect(self._handle_compile_cinematic_prompts)
+        button_row.addWidget(recompile_button)
+
+        score_button = button("Score prompt quality", variant="primary")
+        score_button.clicked.connect(self._handle_score_cinematic_prompts)
+        button_row.addWidget(score_button)
+
+        button_row.addStretch()
+        layout.addLayout(button_row)
+
+    def _render_scene_prompt_entries(self, layout: QVBoxLayout, job: VideoJob) -> None:
+        """
+        Each scene as it would actually be generated: split into clips
+        when its narration is longer than one clip, sized and worded for
+        the project's video provider (the same logic as the Prompts tab,
+        which is what a real submission sends). The raw package was
+        compiled once, before the voice existed, and still shows the
+        single whole-scene clip.
+        """
+
+        service = self._enriched_scene_prompt_service
+        package = job.cinematic_prompt_package
+
+        assert service is not None and package is not None
+
+        for scene in sorted(job.scenes, key=lambda item: item.scene_number):
+            if package.prompt_for_scene(scene.scene_number) is None:
+                continue
+
+            entries = service.build_entries(job=job, scene=scene)
+
+            for entry in entries:
+                scores = [
+                    value
+                    for value in (
+                        entry.specificity_score,
+                        entry.continuity_score,
+                        entry.action_score,
+                        entry.camera_score,
+                        entry.lighting_score,
+                        entry.reveal_safety_score,
+                    )
+                    if value is not None
+                ]
+                score_text = f"lowest score {min(scores)}" if scores else "unscored"
+                part_text = (
+                    f" - part {entry.clip_sequence_index + 1} of {len(entries)}"
+                    if len(entries) > 1
+                    else ""
+                )
+                duration_text = (
+                    f"{entry.execution_duration_seconds:g}s, "
+                    if entry.execution_duration_seconds is not None
+                    else ""
+                )
+
+                layout.addWidget(
+                    small_muted(
+                        f"Scene {scene.scene_number}{part_text} "
+                        f"({duration_text}{score_text}): {entry.base_prompt_text}"
+                    )
+                )
+
+                if entry.negative_constraints:
+                    layout.addWidget(
+                        small_muted(
+                            "Negative: " + "; ".join(entry.negative_constraints)
+                        )
+                    )
+
+    def _render_raw_package_prompts(
+        self, layout: QVBoxLayout, package: CinematicPromptPackage
+    ) -> None:
         for prompt in sorted(package.prompts, key=lambda p: p.scene_number):
             score_text = (
                 f"lowest score {prompt.lowest_score}"
@@ -1900,20 +2008,6 @@ class ContentStudioView(QWidget):
                 layout.addWidget(
                     small_muted("Negative: " + "; ".join(prompt.negative_constraints))
                 )
-
-        button_row = QHBoxLayout()
-        button_row.setSpacing(6)
-
-        recompile_button = button("Recompile prompts", variant="ghost")
-        recompile_button.clicked.connect(self._handle_compile_cinematic_prompts)
-        button_row.addWidget(recompile_button)
-
-        score_button = button("Score prompt quality", variant="primary")
-        score_button.clicked.connect(self._handle_score_cinematic_prompts)
-        button_row.addWidget(score_button)
-
-        button_row.addStretch()
-        layout.addLayout(button_row)
 
     def _handle_compile_cinematic_prompts(self) -> None:
         job = self._current_job()
@@ -4785,6 +4879,7 @@ class ContentStudioView(QWidget):
         content_mode_select: QComboBox,
         language_input: QLineEdit,
         target_country_input: QLineEdit,
+        video_provider_select: QComboBox | None = None,
     ) -> None:
         job = self._current_job()
 
@@ -4813,10 +4908,13 @@ class ContentStudioView(QWidget):
             job.target_duration_seconds = duration_seconds_input.value()
             job.platform = Platform(platform_select.currentText())
             job.production_mode = ProductionMode(production_mode_select.currentText())
+            if video_provider_select is not None:
+                # Qt returns a str-enum's value as a plain str; store the enum.
+                job.video_provider = VideoProvider(video_provider_select.currentData())
             job.approval_policy = _APPROVAL_MODE_PRESETS[
                 approval_mode_select.currentText()
             ]()
-            job.script_origin = content_mode_select.currentData()
+            job.script_origin = ScriptOrigin(content_mode_select.currentData())
             job.language = language_input.text()
             job.target_country = target_country_input.text()
         except ValueError as error:
@@ -4828,6 +4926,7 @@ class ContentStudioView(QWidget):
                     duration_seconds_input=duration_seconds_input,
                     platform_select=platform_select,
                     production_mode_select=production_mode_select,
+                    video_provider_select=video_provider_select,
                     approval_mode_select=approval_mode_select,
                     content_mode_select=content_mode_select,
                     language_input=language_input,

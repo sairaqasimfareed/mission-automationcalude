@@ -42,6 +42,10 @@ class EnrichedScenePrompt(MissionBaseModel):
 
     reference_assets: list[GoogleFlowReferenceAsset] = Field(default_factory=list)
 
+    # Which provider's clip rules this entry was sized and worded for
+    # (e.g. "Muse - 10s clips, trimmed to length"). None when unknown.
+    execution_provider_label: str | None = None
+
     execution_model_family: str | None = None
 
     execution_duration_seconds: float | None = None
@@ -107,6 +111,10 @@ class EnrichedScenePrompt(MissionBaseModel):
             )
 
         lines.append("")
+        if self.execution_provider_label:
+            lines.append("")
+            lines.append(f"Generates on: {self.execution_provider_label}")
+
         lines.append(
             "Execution settings: "
             f"model_family={self.execution_model_family or 'unset (uses account default)'}, "

@@ -330,6 +330,61 @@ section records what changed and why so a later session does not undo it.
     Existing projects keep their old `outputs/` path until re-rendered.
   - Applying the title card again builds from the original render, not the
     already-carded file.
+  - The staged render now removes its `final_video.stage1.mp4` /
+    `.stage2.mp4` intermediates after success AND after a failed stage
+    (cleanup failures only log). The target file is never touched.
+  - `RenderResult.duration_seconds` is now the real encoded length, probed
+    from the finished file in `RenderPipelineStage._with_real_duration`
+    (was the timeline's computed end, truncated: 100s stored for a 90.4s
+    file). Falls back to the computed value if the file can't be probed.
+  - The Audio tab's "Generate voiceover" (`MediaGenerationPipeline.run_voice`)
+    no longer passes each scene's rounded estimated duration to the voice
+    validator, which hard-failed with "Estimated narration duration exceeds
+    the scene duration" whenever a word-count estimate ran a little over it
+    (found live on a real medical project). It now passes `None`, exactly as
+    `ProjectRenderRuntimeFactory` already did for render-time voice
+    resolution: with audio-first generation the real narration length is
+    measured after synthesis and drives the clip length.
+  - **Project-level video provider (2026-10-03).** `VideoJob.video_provider`
+    (Google Flow default, Muse) with a "Video provider" selector in Content
+    Studio's Project settings. `SceneGenerationDispatchService` routes unassigned
+    scenes to it (a scene's own `preferred_profile_id` still wins), via the
+    shared `resolve_scene_video_provider()`. `VideoProviderRules`
+    (`src/services/video_provider_rules.py`) is the one place each provider's
+    clip rules and prompt finishing live (Flow: 4/6/8s clips; Muse: fixed 10s
+    clip trimmed to length with the explicit "Also trim the generated 10
+    seconds video to only N seconds video." instruction); Muse's real submit
+    step now uses it, and `EnrichedScenePromptService` uses it so the Prompts
+    tab previews exactly what a submission would send, including Flow forcing
+    8s on any clip that carries a reference image. The Content tab's cinematic
+    prompt section now shows the same split-aware, provider-aware prompts
+    instead of the raw single-clip package.
+  - Flow's split plan now picks the cheapest covering combination of its 4/6/8s
+    clips (9s -> 6+4, 14s -> 8+6) instead of dividing evenly and rounding up
+    (9s -> 6+6, 14s -> 8+8); equal-cost ties keep the more even split.
+  - The Audio tab's voice generation no longer fails when a scene's word-count
+    speech estimate runs a little over its rounded whole-second estimate
+    (`MediaGenerationPipeline.run_voice` passes `None`, as the render runtime
+    does) - audio-first generation measures the real narration length after
+    synthesis.
+  - **Voice failures now show their cause.** A provider exception during voice
+    generation is logged and appended to the dialog message ("Cause:
+    ValueError: ..."); it was previously kept only in the failure's metadata,
+    so a missing voice mapping, a rejected key and a network error all read
+    "Voice provider failed during audio generation."
+  - **Sound design plan can be regenerated from the Audio tab**
+    ("Regenerate sound design plan", or "Generate" when none exists), via
+    `ContentIntelligencePipeline.run_sound_design`. The pipeline only creates a
+    plan when none exists, so a plan made during a dry-run session (placeholder
+    cues and moods) had no way to be replaced. Audio generated from the OLD
+    plan is dropped from the mix only after the new plan succeeds.
+  - Project settings now store real enums for "Video provider" and "Content
+    mode" (Qt returns a str-enum's value as a plain str, which triggered a
+    Pydantic serializer warning on every save).
+  - The fallback to the composite render now catches only the new
+    `ChunkedRenderRequiredError` (a `NotImplementedError` subclass raised
+    by `render_video_only()` for command-length chunking); any other
+    `NotImplementedError` surfaces instead of silently switching path.
 
 Deferred by the user (not built): separate "render video without audio" /
 "render with audio" buttons and a chunk-length control on the Render tab

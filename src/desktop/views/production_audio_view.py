@@ -73,9 +73,16 @@ class ProductionAudioView(QWidget):
         job_store: JobStore,
         media_generation_pipeline: MediaGenerationPipeline,
         on_change: Callable[[], None],
+        regenerate_sound_design_plan: Callable[[VideoJob], VideoJob] | None = None,
     ) -> None:
         super().__init__()
 
+        # Generates a fresh SoundDesignPlan from the scenes' real narration
+        # (ContentIntelligencePipeline.run_sound_design). Only run
+        # automatically when a job has NO plan, so a plan made during a
+        # dry-run session - placeholder cues and moods - was otherwise
+        # stuck with no way to replace it.
+        self._regenerate_sound_design_plan = regenerate_sound_design_plan
         self._job_store = job_store
         self._media_generation_pipeline = media_generation_pipeline
         self._on_change = on_change
@@ -282,6 +289,17 @@ class ProductionAudioView(QWidget):
         plan = job.sound_design_plan
 
         if plan is None:
+            if self._regenerate_sound_design_plan is not None and job.scenes:
+                frame, layout = card("Sound design plan", icon_name="audio")
+                layout.addWidget(
+                    small_muted(
+                        "No sound design plan yet - generate one from this "
+                        "video's narration."
+                    )
+                )
+                self._add_regenerate_plan_button(layout, "Generate sound design plan")
+                self._layout.addWidget(frame)
+
             return
 
         frame, layout = card("Sound design plan", icon_name="audio")
@@ -294,10 +312,55 @@ class ProductionAudioView(QWidget):
             )
         )
 
+        if self._regenerate_sound_design_plan is not None:
+            self._add_regenerate_plan_button(layout, "Regenerate sound design plan")
+
         self._build_sfx_cue_rows(layout, job=job, plan=plan)
         self._build_music_segment_rows(layout, job=job, plan=plan)
 
         self._layout.addWidget(frame)
+
+    def _add_regenerate_plan_button(self, layout: QVBoxLayout, text: str) -> None:
+        regenerate_button = button(text, variant="ghost")
+        regenerate_button.clicked.connect(self._handle_regenerate_sound_design_plan)
+        layout.addWidget(regenerate_button, alignment=Qt.AlignmentFlag.AlignLeft)
+
+    def _handle_regenerate_sound_design_plan(self) -> None:
+        """
+        Replace the whole plan with a freshly generated one. Audio already
+        generated from the OLD plan's cues/moods is dropped from the mix
+        only AFTER the new plan was made successfully (its items no longer
+        exist, so their tracks would otherwise linger unmatched), so a
+        failed generation changes nothing.
+        """
+
+        job = self._current_job()
+
+        if job is None or self._regenerate_sound_design_plan is None:
+            return
+
+        old_plan = job.sound_design_plan
+
+        try:
+            self._regenerate_sound_design_plan(job)
+        except Exception as error:  # noqa: BLE001 - shown to the operator
+            show_recoverable_error(
+                self,
+                "Sound design plan failed",
+                str(error),
+                on_retry=self._handle_regenerate_sound_design_plan,
+            )
+
+            return
+
+        if old_plan is not None:
+            for cue in old_plan.sfx_cues:
+                self._discard_matching_audio_track(job, cue.audio_track_id)
+
+            for segment in old_plan.music_segments:
+                self._discard_matching_audio_track(job, segment.audio_track_id)
+
+        self._on_change()
 
     def _build_sfx_cue_rows(
         self, layout: QVBoxLayout, *, job: VideoJob, plan: SoundDesignPlan
