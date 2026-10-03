@@ -23,10 +23,14 @@ from src.services.audio_inclusion_filter_service import (
 )
 from src.services.audio_mux_render_service import AudioMuxRenderService
 from src.services.ffmpeg_execution_service import ProgressCallback
+from src.services.media_technical_validation_service import (
+    MediaTechnicalValidationService,
+)
 from src.services.post_render_subtitle_burn_service import (
     PostRenderSubtitleBurnService,
 )
 from src.services.production_render_service import (
+    ChunkedRenderRequiredError,
     ProductionRenderService,
 )
 from src.services.render_service import RenderService
@@ -35,6 +39,7 @@ from src.services.subtitle_cue_resolution_service import (
     resolve_absolute_subtitle_cues,
 )
 from src.services.top10_countdown_service import Top10CountdownService
+from src.shared.logger import logger
 
 
 class RenderPipelineStage(BasePipelineStage):
@@ -66,6 +71,7 @@ class RenderPipelineStage(BasePipelineStage):
         audio_mux_render_service: AudioMuxRenderService | None = None,
         subtitle_burn_service: PostRenderSubtitleBurnService | None = None,
         render_output_root: Path | str | None = None,
+        media_validation_service: MediaTechnicalValidationService | None = None,
     ) -> None:
         if production_render_service is not None and not voice_blueprints:
             raise ValueError(
@@ -130,6 +136,12 @@ class RenderPipelineStage(BasePipelineStage):
         # without needing real FFmpeg for every test.
         self._audio_mux_render_service = (
             audio_mux_render_service or AudioMuxRenderService()
+        )
+
+        # Used only to read the finished file's real length - see
+        # _with_real_duration().
+        self._media_validation_service = (
+            media_validation_service or MediaTechnicalValidationService()
         )
 
         # Real-world finding, 2026-10-03: every job used to render to the
@@ -198,8 +210,10 @@ class RenderPipelineStage(BasePipelineStage):
             )
 
         if self.production_render_enabled:
-            render_result = self._execute_production_render(
-                context=context,
+            render_result = self._with_real_duration(
+                self._execute_production_render(
+                    context=context,
+                )
             )
         else:
             render_result = self._render_service.render(timeline)
@@ -334,7 +348,11 @@ class RenderPipelineStage(BasePipelineStage):
                     job_output_file or production_render_service.output_file
                 ),
             )
-        except NotImplementedError:
+        except ChunkedRenderRequiredError:
+            # The one intended reason to fall back: this video needs
+            # command-line-length chunking, which the video-only path
+            # does not support. Any OTHER NotImplementedError is a real
+            # bug and must surface, not silently switch render path.
             pass
 
         # REQ-13 real gap, found and fixed 2026-09-24: audio_timeline
@@ -359,6 +377,42 @@ class RenderPipelineStage(BasePipelineStage):
             output_file=job_output_file,
         )
 
+    def _with_real_duration(self, render_result: RenderResult) -> RenderResult:
+        """
+        Real-world finding, 2026-10-03: RenderResult.duration_seconds was
+        the timeline's computed end time, truncated - not the encoded
+        file's length. Crossfades overlap clips, so the real file is
+        shorter (a real project stored 100s for a 90.4s file). Everything
+        downstream that trusts the stored value (the final export
+        manifest, progress totals, the title card result's duration)
+        inherited the error. Replaced here, at the one place every render
+        path (staged, fallback, top-10) funnels through, with the real
+        length read from the finished file; the computed value stays as
+        the fallback whenever the file cannot be probed.
+        """
+
+        if not render_result.success or render_result.output_file is None:
+            return render_result
+
+        try:
+            probe = self._media_validation_service.validate(
+                Path(render_result.output_file)
+            )
+        except Exception as error:  # noqa: BLE001 - housekeeping, never fail a render
+            logger.warning("Could not probe the rendered file's duration: %s", error)
+
+            return render_result
+
+        if not probe.is_readable or not probe.duration_seconds:
+            return render_result
+
+        real_duration = max(1, round(probe.duration_seconds))
+
+        if real_duration == render_result.duration_seconds:
+            return render_result
+
+        return render_result.model_copy(update={"duration_seconds": real_duration})
+
     def _job_output_file(self, job: VideoJob) -> str | None:
         """
         This job's own final-video path (<root>/<job id>/final_video.mp4),
@@ -375,6 +429,65 @@ class RenderPipelineStage(BasePipelineStage):
         return (job_directory / "final_video.mp4").as_posix()
 
     def _execute_staged_render(
+        self,
+        *,
+        production_render_service: ProductionRenderService,
+        video_timeline: VideoTimeline,
+        unfiltered_audio_timeline: AudioTimeline,
+        muxed_audio_timeline: AudioTimeline,
+        progress_callback: ProgressCallback | None,
+        target_output_file: str,
+    ) -> RenderResult:
+        """
+        Run the staged render, then remove its intermediate per-stage
+        files whatever the outcome.
+
+        Real-world finding, 2026-10-03: nothing ever deleted
+        "<name>.stage1.mp4" / "<name>.stage2.mp4" - only the in-progress
+        ".part" files were cleaned (and only on failure) - so every
+        render left up to two extra full-size copies beside the real
+        output, one of them a silent video-only file easy to mistake for
+        the finished video. They are pure intermediates (the final file
+        is a separate path), so they are removed after success AND after
+        a failed or interrupted stage; the target itself is never
+        touched.
+        """
+
+        try:
+            return self._execute_staged_render_steps(
+                production_render_service=production_render_service,
+                video_timeline=video_timeline,
+                unfiltered_audio_timeline=unfiltered_audio_timeline,
+                muxed_audio_timeline=muxed_audio_timeline,
+                progress_callback=progress_callback,
+                target_output_file=target_output_file,
+            )
+        finally:
+            self._remove_stage_intermediates(target_output_file)
+
+    @classmethod
+    def _remove_stage_intermediates(cls, target_output_file: str) -> None:
+        target = Path(target_output_file)
+
+        for stage_name in ("stage1", "stage2"):
+            intermediate = Path(cls._stage_output_file(target_output_file, stage_name))
+
+            if intermediate == target:
+                continue
+
+            try:
+                intermediate.unlink(missing_ok=True)
+            except OSError as error:
+                # Cleanup is housekeeping - never let it fail a render
+                # that otherwise succeeded (e.g. a file briefly held
+                # open by a virus scanner on Windows).
+                logger.warning(
+                    "Could not remove render intermediate %s: %s",
+                    intermediate,
+                    error,
+                )
+
+    def _execute_staged_render_steps(
         self,
         *,
         production_render_service: ProductionRenderService,

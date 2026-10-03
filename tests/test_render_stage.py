@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from src.models.audience_promise import AudiencePromise, PromiseStrength
 from src.models.audio_inclusion_preferences import AudioInclusionPreferences
 from src.models.audio_timeline import AudioTimeline
@@ -16,6 +18,7 @@ from src.models.media_strategy import (
     SceneSourceStatus,
     SceneSourceType,
 )
+from src.models.media_technical_validation import MediaTechnicalValidationResult
 from src.models.render_result import (
     RenderResult,
     RenderStatus,
@@ -63,6 +66,7 @@ from src.pipeline.render_stage import (
     RenderPipelineStage,
 )
 from src.pipeline.stage_context import StageContext
+from src.services.production_render_service import ChunkedRenderRequiredError
 from src.services.render_service import RenderService
 
 
@@ -428,7 +432,7 @@ def _fake_production_render_service() -> MagicMock:
     """
 
     fake = MagicMock()
-    fake.render_video_only.side_effect = NotImplementedError(
+    fake.render_video_only.side_effect = ChunkedRenderRequiredError(
         "Synthetic chunking requirement - forces the real fallback."
     )
     fake.render.return_value = RenderResult(
@@ -1400,3 +1404,289 @@ def test_the_top10_countdown_render_also_uses_the_jobs_own_directory(
             (tmp_path / "renders").resolve() / str(job.id) / "final_video.mp4"
         ).as_posix()
     )
+
+
+# ---------------------------------------------------------------------------
+# Render pipeline audit, 2026-10-03: intermediate cleanup, real duration,
+# and a narrowed fallback.
+# ---------------------------------------------------------------------------
+
+
+def _ok_result(output_file: str, *, duration: int = 10) -> RenderResult:
+    return RenderResult(
+        success=True,
+        output_file=output_file,
+        render_engine="ffmpeg",
+        render_time_seconds=0.1,
+        duration_seconds=duration,
+        status=RenderStatus.COMPLETED,
+        scene_timings=[
+            SceneRenderTiming(scene_number=1, start_seconds=0.0, end_seconds=10.0)
+        ],
+    )
+
+
+def _writing(path: Path, *, duration: int = 10) -> MagicMock:
+    """A fake render step that creates its output file, like a real one."""
+
+    def run(*_args: object, **kwargs: object) -> RenderResult:
+        path.write_bytes(b"synthetic media")
+
+        return _ok_result(path.as_posix(), duration=duration)
+
+    return MagicMock(side_effect=run)
+
+
+def _staged_stage(
+    tmp_path: Path,
+    *,
+    subtitles: bool,
+    mux: MagicMock,
+    burn: MagicMock,
+    audio_timeline: AudioTimeline,
+) -> tuple[RenderPipelineStage, VideoJob, Path]:
+    job = _staged_job_with_real_cues()
+    job.audio_timeline = audio_timeline
+    target = tmp_path / "final_video.mp4"
+
+    production = MagicMock()
+    production.output_file = target.as_posix()
+    production.render_video_only = _writing(tmp_path / "final_video.stage1.mp4")
+
+    stage = RenderPipelineStage(
+        production_render_service=production,
+        voice_blueprints=[_staged_voice_blueprint()],
+        subtitles_enabled=subtitles,
+        audio_mux_render_service=MagicMock(mux=mux),
+        subtitle_burn_service=MagicMock(burn=burn),
+    )
+
+    return stage, job, target
+
+
+def _files(directory: Path) -> set[str]:
+    return {item.name for item in directory.iterdir()}
+
+
+def test_stage_intermediates_are_removed_after_a_full_staged_render(
+    tmp_path: Path,
+) -> None:
+    """
+    Real-world finding, 2026-10-03: nothing ever deleted
+    final_video.stage1.mp4 / .stage2.mp4, so every render left up to two
+    extra full-size copies - one a silent video-only file easy to mistake
+    for the finished video.
+    """
+
+    stage2 = tmp_path / "final_video.stage2.mp4"
+    target = tmp_path / "final_video.mp4"
+    stage, job, target = _staged_stage(
+        tmp_path,
+        subtitles=True,
+        mux=_writing(stage2),
+        burn=_writing(target),
+        audio_timeline=_all_track_types_timeline(),
+    )
+
+    result = stage.execute(build_context(job))
+
+    assert result.successful is True
+    assert _files(tmp_path) == {"final_video.mp4"}
+
+
+def test_stage_intermediates_are_removed_when_mux_writes_the_target(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "final_video.mp4"
+    stage, job, target = _staged_stage(
+        tmp_path,
+        subtitles=False,
+        mux=_writing(target),
+        burn=MagicMock(),
+        audio_timeline=_all_track_types_timeline(),
+    )
+
+    assert stage.execute(build_context(job)).successful is True
+    assert _files(tmp_path) == {"final_video.mp4"}
+
+
+def test_stage_intermediates_are_removed_when_a_later_stage_fails(
+    tmp_path: Path,
+) -> None:
+    failed = RenderResult(
+        success=False,
+        output_file=None,
+        render_engine="ffmpeg",
+        duration_seconds=0,
+        status=RenderStatus.FAILED,
+        error_message="Synthetic mux failure.",
+    )
+    stage, job, target = _staged_stage(
+        tmp_path,
+        subtitles=False,
+        mux=MagicMock(return_value=failed),
+        burn=MagicMock(),
+        audio_timeline=_all_track_types_timeline(),
+    )
+
+    result = stage.execute(build_context(job))
+
+    assert result.successful is False
+    # Stage 1's silent video-only file must not be left behind, and no
+    # half-finished target exists.
+    assert _files(tmp_path) == set()
+
+
+def test_a_cleanup_failure_never_fails_an_otherwise_good_render(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    target = tmp_path / "final_video.mp4"
+    stage, job, target = _staged_stage(
+        tmp_path,
+        subtitles=False,
+        mux=_writing(target),
+        burn=MagicMock(),
+        audio_timeline=_all_track_types_timeline(),
+    )
+
+    def refuse(self: Path, *args: object, **kwargs: object) -> None:
+        raise PermissionError("file held open by another process")
+
+    monkeypatch.setattr(Path, "unlink", refuse)  # type: ignore[attr-defined]
+
+    assert stage.execute(build_context(job)).successful is True
+    assert target.exists()
+
+
+class _FakeProbe:
+    def __init__(
+        self,
+        *,
+        duration: float | None = 90.4,
+        readable: bool = True,
+        raises: bool = False,
+    ) -> None:
+        self._duration = duration
+        self._readable = readable
+        self._raises = raises
+        self.probed: list[Path] = []
+
+    def validate(self, file_path: Path) -> MediaTechnicalValidationResult:
+        self.probed.append(file_path)
+
+        if self._raises:
+            raise RuntimeError("ffprobe exploded")
+
+        return MediaTechnicalValidationResult(
+            is_readable=self._readable, duration_seconds=self._duration
+        )
+
+
+def _render_with_probe(probe: _FakeProbe) -> tuple[RenderResult, VideoJob]:
+    job = _job_ready_to_render()
+    fake = _fake_production_render_service()
+    fake.render.return_value = _ok_result("outputs/test_render.mp4", duration=100)
+    stage = RenderPipelineStage(
+        production_render_service=fake,
+        voice_blueprints=[MagicMock()],
+        media_validation_service=probe,  # type: ignore[arg-type]
+    )
+
+    stage.execute(build_context(job))
+
+    assert job.render_result is not None
+
+    return job.render_result, job
+
+
+def test_the_stored_duration_is_the_real_encoded_length() -> None:
+    """
+    Real-world finding, 2026-10-03: a real project stored 100s (the
+    timeline's computed end, truncated) for a file that is really 90.4s.
+    """
+
+    probe = _FakeProbe(duration=90.4)
+
+    result, _job_ = _render_with_probe(probe)
+
+    assert result.duration_seconds == 90
+    assert probe.probed == [Path("outputs/test_render.mp4")]
+
+
+def test_a_sub_second_real_duration_is_never_stored_as_zero() -> None:
+    result, _job_ = _render_with_probe(_FakeProbe(duration=0.3))
+
+    assert result.duration_seconds == 1
+
+
+def test_the_computed_duration_is_kept_when_the_file_cannot_be_probed() -> None:
+    for probe in (
+        _FakeProbe(readable=False),
+        _FakeProbe(duration=None),
+        _FakeProbe(raises=True),
+    ):
+        result, _job_ = _render_with_probe(probe)
+
+        assert result.duration_seconds == 100
+
+
+def test_a_failed_render_is_not_probed() -> None:
+    probe = _FakeProbe()
+    job = _job_ready_to_render()
+    fake = _fake_production_render_service()
+    fake.render.return_value = RenderResult(
+        success=False,
+        output_file=None,
+        render_engine="ffmpeg",
+        duration_seconds=0,
+        status=RenderStatus.FAILED,
+        error_message="Synthetic failure.",
+    )
+    stage = RenderPipelineStage(
+        production_render_service=fake,
+        voice_blueprints=[MagicMock()],
+        media_validation_service=probe,  # type: ignore[arg-type]
+    )
+
+    stage.execute(build_context(job))
+
+    assert probe.probed == []
+
+
+def test_chunking_requirement_still_falls_back_to_the_composite_render() -> None:
+    job = _job_ready_to_render()
+    fake = _fake_production_render_service()  # raises ChunkedRenderRequiredError
+    stage = RenderPipelineStage(
+        production_render_service=fake,
+        voice_blueprints=[MagicMock()],
+    )
+
+    stage.execute(build_context(job))
+
+    fake.render.assert_called_once()
+
+
+def test_an_unrelated_not_implemented_error_is_not_swallowed() -> None:
+    """
+    Only the intended chunking case may fall back to the old render path;
+    any other NotImplementedError is a real bug and must surface.
+    """
+
+    job = _job_ready_to_render()
+    fake = _fake_production_render_service()
+    fake.render_video_only.side_effect = NotImplementedError("a real bug")
+    stage = RenderPipelineStage(
+        production_render_service=fake,
+        voice_blueprints=[MagicMock()],
+    )
+
+    with pytest.raises(NotImplementedError, match="a real bug"):
+        stage.execute(build_context(job))
+
+    fake.render.assert_not_called()
+
+
+def test_the_chunking_error_is_still_a_not_implemented_error() -> None:
+    """Existing handlers that catch NotImplementedError keep working."""
+
+    assert issubclass(ChunkedRenderRequiredError, NotImplementedError)

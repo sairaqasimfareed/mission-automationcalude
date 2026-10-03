@@ -56,6 +56,18 @@ from src.services.transition_execution_service import (
 )
 
 
+class ChunkedRenderRequiredError(NotImplementedError):
+    """
+    render_video_only() cannot render this video in one FFmpeg command and
+    does not support chunking yet; the caller should fall back to render().
+
+    A distinct type (still a NotImplementedError, so existing handlers
+    keep working) so that callers can fall back on exactly this case and
+    let any other NotImplementedError - a genuine bug - surface instead of
+    silently switching render path.
+    """
+
+
 class ProductionRenderService:
     """
     Execute one prepared video job through the real FFmpeg render stack.
@@ -495,7 +507,7 @@ class ProductionRenderService:
         if full_command_length is not None and full_command_length > (
             self._SAFE_COMMAND_LINE_LENGTH
         ):
-            raise NotImplementedError(
+            raise ChunkedRenderRequiredError(
                 "This video is long/complex enough to need chunked "
                 "rendering, which REQ-00 Stage 1's video-only render "
                 "does not support yet - render() (the existing "
