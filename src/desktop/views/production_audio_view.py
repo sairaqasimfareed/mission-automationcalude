@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 from src.desktop.job_store import JobStore
 from src.desktop.recovery_dialog import show_recoverable_error
 from src.desktop.widgets import (
+    ExpandableList,
     badge,
     button,
     card,
@@ -49,6 +50,10 @@ _ITEM_STATUS_ROLE = {
 }
 
 _LEFT = Qt.AlignmentFlag.AlignLeft
+
+# Rows each Generated audio category shows before "Show all" - one row per
+# scene would otherwise make a 100-scene project a very long scroll.
+_AUDIO_ROWS_VISIBLE = 8
 
 _COMPONENT_STATUS_ROLE = {
     AudioComponentStatus.REUSED: "success",
@@ -214,6 +219,7 @@ class ProductionAudioView(QWidget):
             count_text=f"{len(voice_tracks)} of {len(job.scenes)} scenes",
             labeler=lambda track: self._voice_label(track),
             empty_text="No voiceover generated yet - use Generate voiceover above.",
+            noun="voiceover files",
         )
 
         sfx_planned = (
@@ -229,6 +235,7 @@ class ProductionAudioView(QWidget):
             count_text=f"{len(sfx_tracks)} effect(s){sfx_planned}",
             labeler=lambda track: self._sfx_label(track, plan),
             empty_text="No sound effects generated yet.",
+            noun="sound effects",
         )
 
         music_planned = (
@@ -244,6 +251,7 @@ class ProductionAudioView(QWidget):
             count_text=f"{len(music_tracks)} track(s){music_planned}",
             labeler=lambda track: self._music_label(track, plan),
             empty_text="No background music generated yet.",
+            noun="music tracks",
         )
 
         self._layout.addWidget(frame)
@@ -273,6 +281,7 @@ class ProductionAudioView(QWidget):
         count_text: str,
         labeler: Callable[[AudioTrack], str],
         empty_text: str,
+        noun: str = "files",
     ) -> None:
         layout.addWidget(subheading(title))
 
@@ -289,8 +298,18 @@ class ProductionAudioView(QWidget):
             muted(f"{count_text} · {self._format_seconds(total)} total{provider_text}")
         )
 
+        rows: list[QWidget] = []
+
         for track in tracks:
-            layout.addLayout(self._audio_file_row(track, labeler(track)))
+            row_widget = QWidget()
+            row_widget.setLayout(self._audio_file_row(track, labeler(track)))
+            rows.append(row_widget)
+
+        # A long project has one row per scene per category - show the
+        # first few, the rest on request.
+        layout.addWidget(
+            ExpandableList(rows, visible_count=_AUDIO_ROWS_VISIBLE, noun=noun)
+        )
 
     def _audio_file_row(self, track: AudioTrack, label: str) -> QHBoxLayout:
         row = QHBoxLayout()

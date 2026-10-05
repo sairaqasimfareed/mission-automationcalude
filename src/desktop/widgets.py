@@ -170,3 +170,76 @@ def row(*widgets: QWidget, stretch_at_end: bool = True) -> QHBoxLayout:
         layout.addStretch()
 
     return layout
+
+
+class ExpandableList(QWidget):
+    """
+    A list that shows its first `visible_count` rows and keeps the rest behind a
+    "Show all N" button - so a screen that lists one row per scene stays short
+    for a 100-scene project instead of becoming a very long scroll.
+
+    Expanding only shows or hides rows that already exist: nothing is rebuilt,
+    so the page does not jump back to the top (the failure the Content Studio
+    had when a refresh rebuilt its widgets). The expanded state is a view detail
+    and resets on the next refresh.
+    """
+
+    def __init__(
+        self,
+        rows: list[QWidget],
+        *,
+        visible_count: int,
+        noun: str,
+    ) -> None:
+        super().__init__()
+
+        self._rows = rows
+        self._visible_count = max(visible_count, 0)
+        self._noun = noun
+        self._expanded = False
+        self._toggle: QPushButton | None = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(SPACE_SM)
+
+        for row_widget in rows:
+            layout.addWidget(row_widget)
+
+        if len(rows) > self._visible_count:
+            self._toggle = button("", variant="ghost")
+            self._toggle.clicked.connect(self._handle_toggle)
+            layout.addWidget(self._toggle, alignment=Qt.AlignmentFlag.AlignLeft)
+
+        self._apply()
+
+    @property
+    def is_expanded(self) -> bool:
+        return self._expanded
+
+    @property
+    def hidden_count(self) -> int:
+        return (
+            max(len(self._rows) - self._visible_count, 0) if not self._expanded else 0
+        )
+
+    @property
+    def toggle_button(self) -> QPushButton | None:
+        return self._toggle
+
+    def _handle_toggle(self) -> None:
+        self._expanded = not self._expanded
+        self._apply()
+
+    def _apply(self) -> None:
+        for index, row_widget in enumerate(self._rows):
+            row_widget.setHidden(not self._expanded and index >= self._visible_count)
+
+        if self._toggle is not None:
+            total = len(self._rows)
+            self._toggle.setText(
+                "Show fewer"
+                if self._expanded
+                else f"Show all {total} {self._noun} "
+                f"({total - self._visible_count} more)"
+            )

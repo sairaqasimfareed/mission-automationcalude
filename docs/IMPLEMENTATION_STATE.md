@@ -423,6 +423,15 @@ section records what changed and why so a later session does not undo it.
     planning request now asks for BEATS on every scene, starting at 0s, ending at
     the scene duration, with essential information early (still optional to parse,
     so a shot is never dropped for omitting it - the time box above covers that case).
+  - **Long lists collapse (2026-10-04, live).** The Clip check, Scenes and
+    Generated audio cards each built one row per scene, so a 70-100 scene project
+    was a very long scroll. New `ExpandableList` (`src/desktop/widgets.py`) shows
+    the first rows and keeps the rest behind "Show all N ..." / "Show fewer". It
+    only shows/hides existing rows - nothing is rebuilt, so the page does not jump
+    to the top; the expanded state resets on the next refresh. Clip check: scenes
+    needing attention first (10 shown), OK scenes below (3 shown), each under its
+    own heading with a count; Scenes card: 15 shown; Generated audio: 8 rows per
+    category, the per-category summary line always visible.
   - **Muse minimum clip length (2026-10-04).** A one-word scene (~1s of
     narration) used to become a ~1s Muse clip - shorter than the crossfades
     around it and the case Muse's "trim to N seconds" handles least reliably.

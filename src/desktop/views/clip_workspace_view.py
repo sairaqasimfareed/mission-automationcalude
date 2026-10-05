@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 from src.desktop.job_store import JobStore
 from src.desktop.recovery_dialog import show_recoverable_error
 from src.desktop.widgets import (
+    ExpandableList,
     badge,
     button,
     card,
@@ -29,6 +30,7 @@ from src.desktop.widgets import (
     row,
     small_muted,
     status_label,
+    subheading,
 )
 from src.models.bulk_clip_ingestion import BulkClipIngestionEntryStatus
 from src.models.bulk_stock_assignment import BulkStockAssignmentEntryStatus
@@ -70,6 +72,12 @@ from src.services.scene_prompt_export_service import ScenePromptExportService
 from src.shared.logger import logger
 
 _LEFT = Qt.AlignmentFlag.AlignLeft
+
+# How many rows each long list shows before "Show all" (a 100-scene project
+# would otherwise be a very long scroll).
+_CLIP_CHECK_PROBLEM_ROWS_VISIBLE = 10
+_CLIP_CHECK_OK_ROWS_VISIBLE = 3
+_SCENE_ROWS_VISIBLE = 15
 
 _COMPLETENESS_STATUS_ROLE = {
     SceneCompletenessStatus.READY: "success",
@@ -414,8 +422,33 @@ class ClipWorkspaceView(QWidget):
         stale = report.clip_signature != clip_signature(job)
         layout.addWidget(self._verification_headline(report, stale=stale))
 
-        for scene_result in report.scenes:
-            layout.addWidget(self._verification_row(scene_result))
+        # Scenes that need a look come first and in full; the ones that are
+        # fine are tucked behind a button so a 100-scene project is not a
+        # 100-row scroll. Every scene is still one click away.
+        needs_attention = [
+            r for r in report.scenes if r.severity != ClipVerificationSeverity.OK
+        ]
+        fine = [r for r in report.scenes if r.severity == ClipVerificationSeverity.OK]
+
+        if needs_attention:
+            layout.addWidget(subheading(f"Needs attention ({len(needs_attention)})"))
+            layout.addWidget(
+                ExpandableList(
+                    [self._verification_row(r) for r in needs_attention],
+                    visible_count=_CLIP_CHECK_PROBLEM_ROWS_VISIBLE,
+                    noun="scenes needing attention",
+                )
+            )
+
+        if fine:
+            layout.addWidget(subheading(f"OK ({len(fine)})"))
+            layout.addWidget(
+                ExpandableList(
+                    [self._verification_row(r) for r in fine],
+                    visible_count=_CLIP_CHECK_OK_ROWS_VISIBLE,
+                    noun="OK scenes",
+                )
+            )
 
         self._layout.addWidget(frame)
 
@@ -1198,6 +1231,7 @@ class ClipWorkspaceView(QWidget):
         layout.addWidget(bulk_assign_button, alignment=_LEFT)
 
         clips_by_scene = {clip.scene_number: clip for clip in job.video_clips}
+        scene_rows: list[QWidget] = []
 
         for scene in job.scenes:
             row = QFrame()
@@ -1231,7 +1265,11 @@ class ClipWorkspaceView(QWidget):
                     small_muted("No resolved clip yet - see Render Workspace.")
                 )
 
-            layout.addWidget(row)
+            scene_rows.append(row)
+
+        layout.addWidget(
+            ExpandableList(scene_rows, visible_count=_SCENE_ROWS_VISIBLE, noun="scenes")
+        )
 
         self._layout.addWidget(frame)
 
