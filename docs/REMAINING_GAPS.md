@@ -628,6 +628,27 @@ re-render, leftover stage files, stored duration) and the broad
   extracted frame), and the attach check uses `.first`, so it cannot
   confirm the Nth attachment. Not yet changed - needs a live Flow check.
 
+## Known limits of the 2026-10-06 live findings
+
+- Places' references are never refreshed automatically and the first-extraction location
+  picker still cannot tell a place from an object or an overlay: the Remedy Kitchen reference
+  is a jar close-up and every Kitchen scene came out as that jar. A better pick needs object or
+  text-overlay detection, or an optional manual choice.
+- Characters seen only together (Adults and Children share one frame) still share a
+  reference; telling people apart in a frame is not built.
+- Wardrobe is not carried: the reference carries a face, so an adult wore different clothes
+  in scene 9 than in scene 3. Prompts do not yet state the wardrobe.
+- Muse text overlays: the generator added an unwanted text panel (scene 5) and an infographic
+  with AI-written text including a claim not in the script (scene 6). There is no check for
+  on-screen text in generated clips.
+- A Muse download that times out leaves an unfinished (UI_CHANGED) attempt that counts as
+  in-flight and blocks the account; resuming the download of an already-generated video is
+  not built, so it costs a regeneration.
+- Single-call Content Studio handlers other than the production stages (script intake/lock,
+  revision, hooks, narrative architecture, resolving ambiguities) still run on the window thread.
+- Project video provider defaults to Google Flow for every new project; a default per
+  channel or genre is not built.
+
 ## Known limits of the 2026-10-05 reference frame selection
 
 - The score does not check open eyes: in the test a clip's best frame (score 0.94)
@@ -645,8 +666,10 @@ re-render, leftover stage files, stored duration) and the broad
   clips (about 20 with a person) - confirm on more footage.
 - Not built yet from the continuity plan: replacing a weak reference when a later
   scene gives a clearly better frame (the score is stored for it), checking that the
-  reference chip is really attached before submit, showing the reference used in the
-  Clip check, the per-project continuity level, and the SFace similarity check.
+  reference chip is really attached before submit (count the chips; Muse is not
+  checked at all today and Flow only checks that some chip is visible), clearing
+  stale chips, the per-project continuity level, and the SFace similarity check.
+  (Showing the reference used in the Clip check is built.)
 - Muse: whether a reference actually changes what Muse draws is unmeasured.
 
 ## Known limits of the 2026-10-03 clip check

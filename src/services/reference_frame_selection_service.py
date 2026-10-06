@@ -45,6 +45,19 @@ _FULL_TURN_NOSE_OFFSET = 0.6
 _FACE_DOMINANCE_WIDTH_FRACTION = 0.30
 _FACE_DOMINANCE_MAX_PENALTY = 0.8
 
+# A face whose box touches the edge of the frame is cut off (forehead, chin or
+# side missing). Live, 2026-10-06: a frame showing only a woman's mouth and chin
+# scored as a good reference. Such a face is marked down hard; a box within this
+# fraction of an edge counts as touching it.
+_EDGE_TOUCH_FRACTION = 0.01
+_CROPPED_FACE_FACTOR = 0.35
+
+# The detector only reports a face at or above this confidence. Live, 2026-10-06:
+# the decorated label on a honey jar was reported as a face at 0.79 and 0.71 and
+# became a character's "reference", while real faces in the same project scored
+# 0.89-0.91. A missed face costs a reference; a false one poisons every scene.
+DETECTOR_CONFIDENCE = 0.85
+
 _DEFAULT_DETECTOR_MODEL = "face_detection_yunet_2023mar.onnx"
 
 
@@ -65,6 +78,12 @@ class DetectedFace:
     right_eye_x: float
     left_eye_x: float
     nose_x: float
+    # Where the face box sits in the frame (0 = not reported, so no
+    # cropping check is made).
+    x: float = 0.0
+    y: float = 0.0
+    height: float = 0.0
+    frame_height: float = 0.0
 
 
 class FaceDetector(Protocol):
@@ -88,8 +107,28 @@ def frontal_factor(face: DetectedFace) -> float:
     return max(0.0, 1.0 - offset / _FULL_TURN_NOSE_OFFSET)
 
 
+def visibility_factor(face: DetectedFace) -> float:
+    """1.0 for a face wholly inside the frame, markedly less when its box touches
+    an edge (part of the head is out of shot)."""
+
+    if face.frame_height <= 0 or face.height <= 0:
+        return 1.0
+
+    margin_x = _EDGE_TOUCH_FRACTION * face.frame_width
+    margin_y = _EDGE_TOUCH_FRACTION * face.frame_height
+    cut = (
+        face.x <= margin_x
+        or face.y <= margin_y
+        or face.x + face.width >= face.frame_width - margin_x
+        or face.y + face.height >= face.frame_height - margin_y
+    )
+
+    return _CROPPED_FACE_FACTOR if cut else 1.0
+
+
 def score_face(face: DetectedFace) -> float:
-    """0-1: detector confidence x how big the face is x how frontal it is."""
+    """0-1: detector confidence x how big the face is x how frontal it is x
+    whether all of it is in the frame."""
 
     if face.frame_width <= 0:
         return 0.0
@@ -98,7 +137,12 @@ def score_face(face: DetectedFace) -> float:
         (face.width / face.frame_width) / _FULL_SIZE_FACE_WIDTH_FRACTION, 1.0
     )
 
-    return face.detection_score * size_factor * frontal_factor(face)
+    return (
+        face.detection_score
+        * size_factor
+        * frontal_factor(face)
+        * visibility_factor(face)
+    )
 
 
 @dataclass(frozen=True)
@@ -140,6 +184,11 @@ class ReferenceFrameSelection:
     frames_sampled: int = 0
     frames_with_face: int = 0
     best_rejected_score: float = 0.0
+    # The chosen frame's value on a scale that is comparable ACROSS clips (a
+    # person's face score, or a location's sharpness x spread x no-face-in-the-
+    # way). `score` for a location is relative to its own clip and cannot be
+    # compared with another clip's, or with a stored reference.
+    raw_value: float = 0.0
     reason: str = ""
 
 
@@ -148,7 +197,13 @@ class YuNetFaceDetector:
     CPU). Everything OpenCV is imported lazily so a machine without it still runs
     the app - `is_available()` says whether detection can happen at all."""
 
-    def __init__(self, *, model_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        model_path: Path | None = None,
+        confidence: float = DETECTOR_CONFIDENCE,
+    ) -> None:
+        self._confidence = confidence
         self._model_path = model_path or (
             default_model_directory() / _DEFAULT_DETECTOR_MODEL
         )
@@ -185,6 +240,10 @@ class YuNetFaceDetector:
             DetectedFace(
                 width=float(face[2]),
                 frame_width=float(width),
+                x=float(face[0]),
+                y=float(face[1]),
+                height=float(face[3]),
+                frame_height=float(height),
                 detection_score=float(face[14]),
                 right_eye_x=float(face[4]),
                 left_eye_x=float(face[6]),
@@ -199,7 +258,7 @@ class YuNetFaceDetector:
 
             self._cv2 = cv2
             self._detector = cv2.FaceDetectorYN.create(
-                str(self._model_path), "", (320, 320), 0.6, 0.3, 5000
+                str(self._model_path), "", (320, 320), self._confidence, 0.3, 5000
             )
 
         return self._cv2
@@ -262,6 +321,56 @@ def _sharpness(image: Any) -> float:
     return float(cv2.Laplacian(grey, cv2.CV_64F).var())
 
 
+def _spread(image: Any) -> float:
+    """How evenly the frame's detail is spread, 0-1: the normalised entropy of
+    the Laplacian energy over a 4x4 grid.
+
+    A wide shot of a room has detail across the whole frame; a close-up of one
+    object (a honey jar, a hand) has it in the middle and smooth blur around it.
+    A location reference should show the PLACE - without this a sharp close-up of
+    a prop beats the wide shot (live, 2026-10-06: the Kitchen reference was the
+    honey jar, so every Kitchen scene came out as the same jar)."""
+
+    import math
+
+    import cv2
+
+    grey = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    height, width = grey.shape[:2]
+
+    if width > DETECTION_WIDTH:
+        grey = cv2.resize(
+            grey, (DETECTION_WIDTH, int(round(height * DETECTION_WIDTH / width)))
+        )
+        height, width = grey.shape[:2]
+
+    energy = abs(cv2.Laplacian(grey, cv2.CV_64F))
+    cells = [
+        float(
+            energy[
+                row * height // 4 : (row + 1) * height // 4,
+                col * width // 4 : (col + 1) * width // 4,
+            ].mean()
+        )
+        for row in range(4)
+        for col in range(4)
+    ]
+    total = sum(cells)
+
+    if total <= 0:
+        return 0.0
+
+    shares = [c / total for c in cells if c > 0]
+
+    return -sum(share * math.log(share) for share in shares) / math.log(16)
+
+
+def _read_image(path: str) -> Any:
+    import cv2
+
+    return cv2.imread(path)
+
+
 def _write_image(image: Any, path: str) -> bool:
     import cv2
 
@@ -290,6 +399,8 @@ class ReferenceFrameSelectionService:
         frame_reader: Callable[[str, int], list[SampledFrame]] | None = None,
         image_writer: Callable[[Any, str], bool] | None = None,
         sharpness_scorer: Callable[[Any], float] | None = None,
+        spread_scorer: Callable[[Any], float] | None = None,
+        image_reader: Callable[[str], Any] | None = None,
         min_score: float = REFERENCE_MIN_SCORE,
         sample_count: int = DEFAULT_SAMPLE_COUNT,
     ) -> None:
@@ -307,6 +418,8 @@ class ReferenceFrameSelectionService:
         self._read_frames = frame_reader or _read_sample_frames
         self._write_image = image_writer or _write_image
         self._sharpness = sharpness_scorer or _sharpness
+        self._spread_of = spread_scorer or _spread
+        self._read_image = image_reader or _read_image
         self._min_score = min_score
         self._sample_count = sample_count
 
@@ -389,10 +502,62 @@ class ReferenceFrameSelectionService:
             status=ReferenceSelectionStatus.SELECTED,
             output_path=output_path,
             score=best[0],
+            raw_value=best[0],
             time_seconds=best[1].time_seconds,
             frames_sampled=len(frames),
             frames_with_face=with_face,
         )
+
+    def environment_value(self, image: Any) -> tuple[float, int]:
+        """(value, number of faces) of one frame as a LOCATION reference:
+        sharpness x how evenly the detail is spread x not being dominated by a
+        face. Comparable across frames, clips and stored references."""
+
+        sharpness = self._sharpness(image)
+        spread = self._spread_of(image)
+        faces = self._detector.detect(image)
+        largest = max(
+            (face.width / face.frame_width for face in faces if face.frame_width > 0),
+            default=0.0,
+        )
+        penalty = (
+            min(largest / _FACE_DOMINANCE_WIDTH_FRACTION, 1.0)
+            * _FACE_DOMINANCE_MAX_PENALTY
+        )
+
+        return sharpness * spread * (1.0 - penalty), len(faces)
+
+    def person_value(self, image: Any) -> float:
+        """The best face score in one image (0 when no face is found)."""
+
+        return max(
+            (score_face(face) for face in self._detector.detect(image)), default=0.0
+        )
+
+    def value_of_stored_reference(self, path: str, kind: ReferenceKind) -> float | None:
+        """How a reference picture already on disk scores on the same scale as a
+        freshly chosen frame - so a stored reference can be compared with a
+        candidate. None when the picture cannot be read or scored."""
+
+        try:
+            image = self._read_image(path)
+
+            if image is None:
+                return None
+
+            if kind == ReferenceKind.PERSON:
+                return self.person_value(image)
+
+            return self.environment_value(image)[0]
+        except Exception as error:  # noqa: BLE001
+            logger.warning(
+                "Scoring a stored reference failed: %s", type(error).__name__
+            )
+
+            return None
+
+    def is_available(self) -> bool:
+        return bool(self._is_available())
 
     def _select_environment(
         self, frames: list[SampledFrame], output_path: str
@@ -406,8 +571,7 @@ class ReferenceFrameSelectionService:
 
         for frame in frames:
             try:
-                sharpness = self._sharpness(frame.image)
-                faces = self._detector.detect(frame.image)
+                value, face_count = self.environment_value(frame.image)
             except Exception as error:  # noqa: BLE001
                 logger.warning(
                     "Scoring one frame for a location reference failed: %s",
@@ -415,19 +579,7 @@ class ReferenceFrameSelectionService:
                 )
                 continue
 
-            largest = max(
-                (
-                    face.width / face.frame_width
-                    for face in faces
-                    if face.frame_width > 0
-                ),
-                default=0.0,
-            )
-            penalty = (
-                min(largest / _FACE_DOMINANCE_WIDTH_FRACTION, 1.0)
-                * _FACE_DOMINANCE_MAX_PENALTY
-            )
-            scored.append((sharpness * (1.0 - penalty), frame, len(faces)))
+            scored.append((value, frame, face_count))
 
         if not scored:
             return ReferenceFrameSelection(
@@ -452,6 +604,7 @@ class ReferenceFrameSelectionService:
             # Sharpness has no fixed scale, so the "score" here is relative: how
             # close the chosen frame is to the best the clip offered (1.0).
             score=(best_value / peak) if peak > 0 else 0.0,
+            raw_value=best_value,
             time_seconds=best_frame.time_seconds,
             frames_sampled=len(frames),
             frames_with_face=sum(1 for _, _, count in scored if count),
@@ -649,4 +802,5 @@ __all__ = [
     "pick_reference_frame",
     "reference_kind_for",
     "score_face",
+    "visibility_factor",
 ]

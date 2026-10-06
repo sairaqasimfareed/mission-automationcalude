@@ -31,6 +31,7 @@ from src.services.reference_frame_selection_service import (
     pick_reference_frame,
     reference_kind_for,
     score_face,
+    visibility_factor,
 )
 
 
@@ -105,6 +106,67 @@ def test_a_profile_scores_zero_however_big() -> None:
 
 def test_a_zero_width_frame_scores_zero() -> None:
     assert score_face(_face(frame_width=0)) == 0.0
+
+
+# ---- cropped faces ----------------------------------------------------
+
+
+def _placed(x: float, y: float, w: float = 150, h: float = 170) -> DetectedFace:
+    """A face with its box placed in a 640x360 frame."""
+
+    return DetectedFace(
+        width=w,
+        frame_width=640,
+        detection_score=0.95,
+        right_eye_x=300,
+        left_eye_x=340,
+        nose_x=320,
+        x=x,
+        y=y,
+        height=h,
+        frame_height=360,
+    )
+
+
+def test_a_face_wholly_inside_the_frame_is_not_marked_down() -> None:
+    assert visibility_factor(_placed(250, 60)) == 1.0
+
+
+def test_a_face_cut_off_at_the_top_is_marked_down_hard() -> None:
+    """Live, 2026-10-06: a frame of only a woman's mouth and chin (box at y=0)
+    scored as a good reference."""
+
+    cut = _placed(250, 0)
+
+    assert visibility_factor(cut) == pytest.approx(0.35)
+    assert score_face(cut) < REFERENCE_MIN_SCORE
+    assert score_face(_placed(250, 60)) >= REFERENCE_MIN_SCORE
+
+
+@pytest.mark.parametrize(
+    "face",
+    [
+        _placed(0, 60),  # left edge
+        _placed(490, 60),  # right edge (490 + 150 = 640)
+        _placed(250, 190),  # bottom edge (190 + 170 = 360)
+        _placed(-20, 60),  # partly outside
+    ],
+)
+def test_a_face_touching_any_edge_counts_as_cropped(face: DetectedFace) -> None:
+    assert visibility_factor(face) == pytest.approx(0.35)
+
+
+def test_a_face_that_does_not_report_its_position_is_not_second_guessed() -> None:
+    assert visibility_factor(_face()) == 1.0
+
+
+def test_the_detector_confidence_is_set_high_enough_to_ignore_a_jar_label() -> None:
+    """A decorated honey-jar label was reported as a face at 0.79 and 0.71; the
+    real faces in the same project scored 0.89-0.91."""
+
+    from src.services.reference_frame_selection_service import DETECTOR_CONFIDENCE
+
+    assert 0.79 < DETECTOR_CONFIDENCE < 0.89
 
 
 # ---- the service -------------------------------------------------------
@@ -319,6 +381,7 @@ def test_at_least_one_frame_must_be_sampled() -> None:
 def _environment_service(
     sharpness_by_image: dict[int, float],
     faces_by_image: dict[int, list[DetectedFace]] | None = None,
+    spread_by_image: dict[int, float] | None = None,
     **kwargs,  # type: ignore[no-untyped-def]
 ) -> ReferenceFrameSelectionService:
     faces = faces_by_image or {}
@@ -340,6 +403,7 @@ def _environment_service(
         )
         > 0,
         sharpness_scorer=lambda image: sharpness_by_image[image],
+        spread_scorer=lambda image: (spread_by_image or {}).get(image, 1.0),
         **kwargs,
     )
 
@@ -417,6 +481,7 @@ def test_a_frame_that_cannot_be_scored_is_skipped_for_a_location(
         frame_reader=lambda _p, _c: [SampledFrame(0, 0.0, 0), SampledFrame(10, 0.5, 1)],
         image_writer=lambda image, path: Path(path).write_bytes(b"x") > 0,
         sharpness_scorer=sharp,
+        spread_scorer=lambda _image: 1.0,
     )
 
     assert (
@@ -427,6 +492,69 @@ def test_a_frame_that_cannot_be_scored_is_skipped_for_a_location(
         ).status
         == ReferenceSelectionStatus.SELECTED
     )
+
+
+def test_a_wide_shot_beats_a_sharper_close_up_of_one_object(tmp_path: Path) -> None:
+    """Live, 2026-10-06: the Kitchen reference was a honey-jar close-up (sharp,
+    detail only in the middle), so every Kitchen scene came out as the same jar. A
+    place has detail spread across the frame."""
+
+    service = _environment_service(
+        {0: 220.0, 1: 150.0},  # frame 0 is the sharper one...
+        spread_by_image={0: 0.35, 1: 0.9},  # ...but frame 1 shows the whole room
+    )
+    out = tmp_path / "loc.jpg"
+
+    service.select(video_path="c", output_path=str(out), kind=ReferenceKind.ENVIRONMENT)
+
+    assert out.read_bytes() == b"frame-1"
+
+
+def test_environment_value_is_comparable_across_frames_and_files(
+    tmp_path: Path,
+) -> None:
+    service = _environment_service(
+        {0: 100.0, 1: 100.0}, spread_by_image={0: 0.4, 1: 0.8}
+    )
+
+    low, _ = service.environment_value(0)
+    high, _ = service.environment_value(1)
+
+    assert high == pytest.approx(2 * low)
+
+
+def test_a_stored_reference_is_scored_on_the_same_scale(tmp_path: Path) -> None:
+    class _D:
+        def detect(self, frame):  # type: ignore[no-untyped-def]
+            return [_face()] if frame == "portrait" else []
+
+    service = ReferenceFrameSelectionService(
+        detector=_D(),
+        availability_check=lambda: True,
+        image_reader=lambda path: Path(path).stem,
+        sharpness_scorer=lambda _i: 100.0,
+        spread_scorer=lambda _i: 0.5,
+    )
+
+    assert service.value_of_stored_reference(
+        "portrait.jpg", ReferenceKind.PERSON
+    ) == pytest.approx(0.95)
+    assert (
+        service.value_of_stored_reference("room.jpg", ReferenceKind.PERSON) == 0.0
+    )  # no face in it
+    assert service.value_of_stored_reference(
+        "room.jpg", ReferenceKind.ENVIRONMENT
+    ) == pytest.approx(50.0)
+
+
+def test_a_stored_reference_that_cannot_be_read_scores_none() -> None:
+    service = ReferenceFrameSelectionService(
+        detector=_Detector({}),
+        availability_check=lambda: True,
+        image_reader=lambda _p: None,
+    )
+
+    assert service.value_of_stored_reference("x.jpg", ReferenceKind.PERSON) is None
 
 
 def test_a_location_selection_is_reported_as_such_in_the_pick(tmp_path: Path) -> None:

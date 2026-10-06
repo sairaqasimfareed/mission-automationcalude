@@ -2174,3 +2174,82 @@ def test_run_all_resumes_from_a_restarted_job_without_regenerating_earlier_stage
     assert "AudiencePromiseService" not in agents_called
     assert "ResearchAgent" not in agents_called
     assert "StoryAngleGenerationService" not in agents_called
+
+
+# --- progress is reported stage by stage (2026-10-06) ---
+
+
+def test_run_all_reports_every_stage_it_runs_in_order() -> None:
+    """Live, 2026-10-06: Resume automation made four paid Claude calls and then the
+    window froze; nothing had been saved because the job was only saved after the
+    whole run. run_all now reports each finished stage so a caller can save as it
+    goes."""
+
+    pipeline, _ = _pipeline()
+    job = pipeline.run_script_intake(
+        _job(target_duration_seconds=2), raw_text="Imported narration text."
+    )
+    seen: list[str] = []
+
+    pipeline.run_all(job, on_stage_complete=lambda _job, stage: seen.append(stage))
+
+    # An imported script skips the whole generation chain: it starts at the
+    # continuity bible and goes on to locking and scene planning.
+    assert seen[0] == "continuity_bible"
+    assert "script_lock" in seen
+    assert seen.index("script_lock") < seen.index("scene_planning")
+    assert len(seen) == len(set(seen))  # each stage reported once
+
+
+def test_run_all_hands_the_callback_the_job_as_it_stands_after_that_stage() -> None:
+    pipeline, _ = _pipeline()
+    job = pipeline.run_script_intake(
+        _job(target_duration_seconds=2), raw_text="Imported narration text."
+    )
+    after_bible: list[bool] = []
+    after_planning: list[int] = []
+
+    def record(updated: VideoJob, stage: str) -> None:
+        if stage == "continuity_bible":
+            after_bible.append(updated.continuity_bible is not None)
+
+        if stage == "scene_planning":
+            after_planning.append(len(updated.scenes))
+
+    pipeline.run_all(job, on_stage_complete=record)
+
+    assert after_bible == [True]
+    assert after_planning and after_planning[0] > 0
+
+
+def test_a_failing_stage_still_leaves_the_earlier_ones_reported() -> None:
+    """A stage that raises must not stop the stages before it having been saved."""
+
+    pipeline, _ = _pipeline()
+    job = pipeline.run_script_intake(
+        _job(target_duration_seconds=2), raw_text="Imported narration text."
+    )
+    seen: list[str] = []
+
+    def explode(_job: VideoJob) -> VideoJob:
+        raise RuntimeError("scene planner failed")
+
+    pipeline.run_scene_planning = explode  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="scene planner failed"):
+        pipeline.run_all(job, on_stage_complete=lambda _j, stage: seen.append(stage))
+
+    assert "continuity_bible" in seen
+    assert "scene_planning" not in seen
+
+
+def test_run_all_without_a_callback_behaves_exactly_as_before() -> None:
+    pipeline, _ = _pipeline()
+    job = pipeline.run_script_intake(
+        _job(target_duration_seconds=2), raw_text="Imported narration text."
+    )
+
+    result = pipeline.run_all(job)
+
+    assert result.continuity_bible is not None
+    assert result.scenes

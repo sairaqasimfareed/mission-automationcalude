@@ -480,7 +480,7 @@ def test_build_entries_splits_a_scene_whose_narration_exceeds_the_max_duration()
 # trimmed to length vs Google Flow's 4/6/8s clips.
 # ---------------------------------------------------------------------------
 
-_MUSE_TRIM_9 = "Also trim the generated 10 seconds video to only 6 seconds video."
+_MUSE_TRIM_9 = "Also trim the generated 10 seconds video to only 7 seconds video."
 
 
 def _split_job(provider: VideoProvider) -> VideoJob:
@@ -543,7 +543,7 @@ def test_a_muse_project_sizes_a_short_scene_to_its_exact_narration_and_asks_muse
         job=_split_job(VideoProvider.MUSE), scene=_scene_with_narration(6.4)
     )
 
-    assert entry.execution_duration_seconds == 6.4
+    assert entry.execution_duration_seconds == 7.0  # 6.4s rounded UP
     assert entry.base_prompt_text.endswith(_MUSE_TRIM_9)
     assert entry.execution_provider_label is not None
     assert "Muse" in entry.execution_provider_label
@@ -555,7 +555,7 @@ def test_a_muse_scene_close_to_ten_seconds_gets_no_trim_instruction() -> None:
         job=_split_job(VideoProvider.MUSE), scene=_scene_with_narration(9.8)
     )
 
-    assert entry.execution_duration_seconds == 9.8
+    assert entry.execution_duration_seconds == 10.0  # 9.8s rounded UP
     assert "trim the generated" not in entry.base_prompt_text
 
 
@@ -631,7 +631,7 @@ def test_a_scene_pinned_to_a_muse_account_uses_muse_rules_in_a_flow_project() ->
         job=_split_job(VideoProvider.GOOGLE_FLOW), scene=scene
     )
 
-    assert entry.execution_duration_seconds == 6.4
+    assert entry.execution_duration_seconds == 7.0
     assert "Muse" in (entry.execution_provider_label or "")
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -40,6 +41,21 @@ _MAX_FLOW_CLIP_SECONDS = float(max(VERIFIED_DURATIONS_SECONDS))
 
 def _identity(seconds: float) -> float:
     return seconds
+
+
+def muse_target_seconds(seconds: float) -> float:
+    """
+    The length asked of Muse for a clip needing `seconds`: ROUNDED UP to a whole
+    second, never past its fixed 10s.
+
+    Muse is told "trim to only N seconds" in whole seconds, and this used to
+    print the nearest one - so a 7.38s narration got a 7s clip and a 4.32s one
+    got 4s (live, 2026-10-06): the voice ran past the picture. A little silent
+    picture at the end of a scene is harmless; narration running over the next
+    scene's picture is not. (The tiny epsilon keeps an exact 7.0 at 7.)
+    """
+
+    return float(min(math.ceil(seconds - 1e-9), MUSE_CLIP_DURATION_SECONDS))
 
 
 @dataclass(frozen=True)
@@ -101,10 +117,7 @@ class VideoProviderRules:
         MUSE_MIN_CLIP_SECONDS."""
 
         if self.provider == VideoProvider.MUSE:
-            return min(
-                max(narration_seconds, MUSE_MIN_CLIP_SECONDS),
-                MUSE_CLIP_DURATION_SECONDS,
-            )
+            return muse_target_seconds(max(narration_seconds, MUSE_MIN_CLIP_SECONDS))
 
         return float(clamp_to_verified_duration(narration_seconds))
 
@@ -117,8 +130,11 @@ class VideoProviderRules:
         is shorter than its fixed 10s clip.
         """
 
+        if self.provider == VideoProvider.MUSE:
+            target_seconds = muse_target_seconds(target_seconds)
+
         prompt = _DURATION_STATEMENT_PATTERN.sub(
-            f"Duration: {target_seconds:.0f} seconds.",
+            lambda match: f"Duration: {target_seconds:.0f} seconds{match.group(1)}",
             prompt,
         )
         prompt = _extend_last_beat_to_real_duration(prompt, target_seconds)

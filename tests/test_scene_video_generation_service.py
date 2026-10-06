@@ -1860,6 +1860,7 @@ def test_generate_one_attaches_a_resolved_reference_and_forces_max_duration(
     assert reference.source_path == stored_asset.file_path
     assert reference.checksum == stored_asset.content_hash
     assert reference.role == GoogleFlowReferenceRole.CHARACTER
+    assert reference.identity_name == "Jack Reid"  # who it stands for
 
     # Real narration was only 2.5s (would normally clamp to 4s) - but
     # a resolved reference forces the max verified duration (8s),
@@ -2524,6 +2525,7 @@ def _person_and_place_selection(*, person_visible: bool):  # type: ignore[no-unt
         )
         > 0,
         sharpness_scorer=lambda image: sharp[image],
+        spread_scorer=lambda image: 1.0,
     )
 
 

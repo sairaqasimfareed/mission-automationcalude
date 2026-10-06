@@ -59,6 +59,7 @@ from src.services.video_provider_rules import (
     MUSE_CLIP_DURATION_SECONDS,
     MUSE_MIN_CLIP_SECONDS,
     MUSE_SAFETY_NET_TRIM_TOLERANCE_SECONDS,
+    muse_target_seconds,
     rules_for,
 )
 from src.shared.logger import logger
@@ -612,6 +613,7 @@ class MuseSceneVideoGenerationService:
                 if primary_duration is not None
                 else float(scene.estimated_duration_seconds)
             ),
+            ai_generated_provider="muse",
         )
 
         sub_clip_candidates: list[AssetCandidate] = []
@@ -877,7 +879,9 @@ class MuseSceneVideoGenerationService:
             # the planner's own durations are left exactly as decided.
             target_seconds = max(target_seconds, MUSE_MIN_CLIP_SECONDS)
 
-        return min(target_seconds, _MUSE_CLIP_DURATION_SECONDS)
+        # Whole seconds, rounded UP (see muse_target_seconds) - the safety-net
+        # trim below uses this same value, so it never cuts back below it.
+        return muse_target_seconds(target_seconds)
 
     def _apply_safety_net_trim(
         self,
@@ -1111,6 +1115,7 @@ class MuseSceneVideoGenerationService:
                 if real_duration is not None
                 else float(scene.estimated_duration_seconds)
             ),
+            ai_generated_provider="muse",
         )
 
         if existing_state is None:
@@ -1289,6 +1294,7 @@ class MuseSceneVideoGenerationService:
                         source_path=str(asset_path),
                         checksum=checksum,
                         role=role,
+                        identity_name=identity.name,
                     )
                 )
 

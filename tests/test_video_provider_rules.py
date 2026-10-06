@@ -59,8 +59,15 @@ class TestSingleClipLength:
         assert _FLOW.single_clip_seconds(6.4) == 8.0
         assert _FLOW.single_clip_seconds(8.0) == 8.0
 
-    def test_muse_is_trimmed_to_the_exact_narration_and_capped_at_ten(self) -> None:
-        assert _MUSE.single_clip_seconds(6.4) == 6.4
+    def test_muse_is_trimmed_to_the_narration_rounded_up_and_capped_at_ten(
+        self,
+    ) -> None:
+        # Rounded UP to a whole second so the picture is never shorter than the
+        # voice (7.38s of narration used to get a 7s clip).
+        assert _MUSE.single_clip_seconds(6.4) == 7.0
+        assert _MUSE.single_clip_seconds(7.0) == 7.0
+        assert _MUSE.single_clip_seconds(7.38) == 8.0
+        assert _MUSE.single_clip_seconds(4.32) == 5.0
         assert _MUSE.single_clip_seconds(10.0) == 10.0
         assert _MUSE.single_clip_seconds(12.0) == 10.0
 
@@ -98,8 +105,15 @@ class TestFinalizePrompt:
         assert "trim" not in _MUSE.finalize_prompt(self._PROMPT, 9.6)
         assert "trim" not in _MUSE.finalize_prompt(self._PROMPT, 10.0)
 
-    def test_muse_trims_just_outside_the_tolerance(self) -> None:
-        assert "trim" in _MUSE.finalize_prompt(self._PROMPT, 9.4)
+    def test_muse_rounds_up_so_9_4_seconds_needs_the_full_ten_and_no_trim(
+        self,
+    ) -> None:
+        assert "trim" not in _MUSE.finalize_prompt(self._PROMPT, 9.4)
+
+    def test_muse_trims_when_the_rounded_target_is_clearly_under_ten(self) -> None:
+        text = _MUSE.finalize_prompt(self._PROMPT, 8.4)
+
+        assert text.endswith("to only 9 seconds video.")
 
 
 class TestFlatActionIsTimeBoxed:
@@ -131,8 +145,12 @@ class TestFlatActionIsTimeBoxed:
         assert "Shot progression: [0-6s] A jar of honey" in text
         assert "Action progression:" not in text
 
+    def test_muse_writes_a_whole_second_window(self) -> None:
+        assert "[0-4s]" in _MUSE.finalize_prompt(self._FLAT, 3.5)
+
     def test_a_non_whole_length_is_written_without_trailing_zeros(self) -> None:
-        assert "[0-3.5s]" in _MUSE.finalize_prompt(self._FLAT, 3.5)
+        # Flow is not rounded: its own length rules apply upstream.
+        assert "[0-3.5s]" in _FLOW.finalize_prompt(self._FLAT, 3.5)
 
     def test_existing_timed_beats_are_left_alone(self) -> None:
         prompt = (
@@ -233,7 +251,7 @@ class TestMuseMinimumClipLength:
 
     def test_the_floor_itself_and_longer_scenes_are_unchanged(self) -> None:
         assert _MUSE.single_clip_seconds(3.0) == 3.0
-        assert _MUSE.single_clip_seconds(6.4) == 6.4
+        assert _MUSE.single_clip_seconds(6.0) == 6.0
         assert _MUSE.single_clip_seconds(10.0) == 10.0
 
     def test_the_ten_second_ceiling_still_applies(self) -> None:
@@ -257,3 +275,38 @@ class TestMuseMinimumClipLength:
         assert "Duration: 3 seconds." in text
         assert "[0-3s] A jar of honey." in text
         assert text.endswith("to only 3 seconds video.")
+
+
+class TestSplitScenesDurationLine:
+    """Live, 2026-10-06 (scene 30): a split Muse prompt said "Duration: 6 seconds
+    (part 1 of 2)." and then asked Muse to trim to "only 7 seconds" - the duration
+    line was only rewritten in its "N seconds." form."""
+
+    _PART = (
+        "Identity: x. Shot progression: [0-4s] a; [4-7s] b. Composition: tight. "
+        "Duration: 6 seconds (part 1 of 2)."
+    )
+
+    def test_muse_rewrites_the_split_form_to_the_rounded_up_length(self) -> None:
+        text = _MUSE.finalize_prompt(self._PART, 6.48)
+
+        assert "Duration: 7 seconds (part 1 of 2)." in text
+        assert "Duration: 6 seconds" not in text
+        assert text.endswith("to only 7 seconds video.")
+
+    def test_the_part_label_survives(self) -> None:
+        text = _MUSE.finalize_prompt(
+            self._PART.replace("part 1 of 2", "part 2 of 2"), 6.48
+        )
+
+        assert "(part 2 of 2)." in text
+
+    def test_flow_rewrites_the_split_form_too(self) -> None:
+        text = _FLOW.finalize_prompt(self._PART, 8.0)
+
+        assert "Duration: 8 seconds (part 1 of 2)." in text
+
+    def test_the_plain_form_is_still_rewritten(self) -> None:
+        text = _MUSE.finalize_prompt("Composition: x. Duration: 8 seconds.", 7.0)
+
+        assert "Duration: 7 seconds." in text

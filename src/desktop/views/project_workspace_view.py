@@ -239,6 +239,7 @@ class ProjectWorkspaceView(QWidget):
             fact_check_service=fact_check_service,
             on_change=self.refresh,
             enriched_scene_prompt_service=enriched_scene_prompt_service,
+            run_stages_in_background=True,
         )
         self.render_workspace = RenderWorkspaceView(
             job_store=job_store,

@@ -292,6 +292,12 @@ class GoogleFlowReferenceAsset(MissionBaseModel):
     role: GoogleFlowReferenceRole
     version: int = Field(default=1, ge=1)
 
+    # Which continuity-bible identity (a character or place) this reference
+    # stands for, so the Clip check can say WHO was attached to a scene.
+    # None for a reference that is not an identity's (e.g. a sub-clip's seam
+    # frame) and for requests recorded before this field existed.
+    identity_name: str | None = None
+
     @field_validator("source_path", "checksum")
     @classmethod
     def clean_required_text(cls, value: str) -> str:

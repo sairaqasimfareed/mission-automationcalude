@@ -4,12 +4,15 @@ import hashlib
 from collections.abc import Callable
 from pathlib import Path
 
+from src.models.asset_index import IndexedAsset
 from src.models.clip_attachment_verification import (
     ClipAttachmentVerificationReport,
     ClipVerificationIssue,
     ClipVerificationIssueCode,
     ClipVerificationSeverity,
+    ReferenceUse,
     SceneClipVerification,
+    SceneReferenceStatus,
 )
 from src.models.google_flow_generation import GoogleFlowGenerationState
 from src.models.media_technical_validation import MediaTechnicalValidationResult
@@ -17,6 +20,10 @@ from src.models.muse_generation import MuseGenerationState
 from src.models.scene import Scene
 from src.models.video_clip import VideoClip
 from src.models.video_job import VideoJob
+from src.models.visual_continuity import (
+    CanonicalEntityIdentity,
+    CanonicalEntityType,
+)
 from src.services.frame_extraction_service import FrameExtractionService
 from src.services.media_technical_validation_service import (
     MediaTechnicalValidationService,
@@ -160,6 +167,7 @@ class ClipAttachmentVerificationService:
             )
 
         self._check_attempts(job, scene, result, has_clip=True)
+        self._check_references(job, scene, result)
         self._extract_thumbnail(job, scene, clips[0], result)
 
         return result
@@ -284,6 +292,180 @@ class ClipAttachmentVerificationService:
                 f"The latest generation attempt{part} ended as '{state}' - "
                 f"{consequence}.",
             )
+
+    def _check_references(
+        self, job: VideoJob, scene: Scene, result: SceneClipVerification
+    ) -> None:
+        """
+        For every character and place the continuity bible puts ON SCREEN in this
+        scene: does it have a reference, and did the request that made the clip
+        actually carry it?
+
+        Only AI-generated scenes are checked (a stock or manual clip is not sent
+        a reference). A scene cannot carry the reference that was taken from it,
+        or one that did not exist yet when it was generated - those are noted, not
+        flagged. What is flagged: a reference that existed and was not attached,
+        and a character with no usable reference at all.
+        """
+
+        bible = job.visual_continuity_bible
+
+        if bible is None:
+            return
+
+        entry = bible.entry_for_scene(scene.scene_number)
+
+        if entry is None or not entry.on_screen_entity_names:
+            return
+
+        sent = self._references_sent(job, scene)
+
+        if sent is None:
+            return
+
+        by_name = {identity.name: identity for identity in bible.identities}
+
+        for name in entry.on_screen_entity_names:
+            identity = by_name.get(name)
+
+            if identity is None:
+                continue
+
+            status = self._reference_status(job, scene, identity, sent)
+            result.references.append(status)
+
+            if status.state == ReferenceUse.NO_REFERENCE:
+                what = "character" if status.is_person else "place"
+                self._add(
+                    result,
+                    ClipVerificationIssueCode.CHARACTER_WITHOUT_REFERENCE,
+                    ClipVerificationSeverity.WARNING,
+                    f"{name} is on screen but has no reference picture yet - this "
+                    f"{what} is held to the written description only.",
+                )
+            elif status.state == ReferenceUse.NOT_ATTACHED:
+                self._add(
+                    result,
+                    ClipVerificationIssueCode.REFERENCE_NOT_ATTACHED,
+                    ClipVerificationSeverity.WARNING,
+                    f"{name} has a reference (from scene {status.reference_scene}) "
+                    "but this scene was generated without it - they may not look "
+                    "the same as in the other scenes.",
+                )
+
+    def _reference_status(
+        self,
+        job: VideoJob,
+        scene: Scene,
+        identity: CanonicalEntityIdentity,
+        sent: list[tuple[str | None, str]],
+    ) -> SceneReferenceStatus:
+        is_person = identity.entity_type == CanonicalEntityType.PERSON
+        asset = self._valid_reference_asset(job, identity)
+
+        if asset is None:
+            return SceneReferenceStatus(
+                name=identity.name, is_person=is_person, state=ReferenceUse.NO_REFERENCE
+            )
+
+        source_scene = asset.metadata.get("scene_number")
+        reference_scene = source_scene if isinstance(source_scene, int) else None
+
+        def status(state: ReferenceUse) -> SceneReferenceStatus:
+            return SceneReferenceStatus(
+                name=identity.name,
+                is_person=is_person,
+                state=state,
+                reference_file=asset.file_path,
+                reference_scene=reference_scene,
+            )
+
+        # Matched by identity name, or - for a request recorded before names
+        # were stored - by the reference picture's own checksum.
+        attached = any(
+            name == identity.name
+            or (asset.content_hash is not None and checksum == asset.content_hash)
+            for name, checksum in sent
+        )
+
+        if attached:
+            return status(ReferenceUse.ATTACHED)
+
+        if reference_scene is not None and scene.scene_number == reference_scene:
+            return status(ReferenceUse.SOURCE_SCENE)
+
+        if reference_scene is not None and scene.scene_number < reference_scene:
+            return status(ReferenceUse.BEFORE_REFERENCE)
+
+        return status(ReferenceUse.NOT_ATTACHED)
+
+    @staticmethod
+    def _valid_reference_asset(
+        job: VideoJob, identity: CanonicalEntityIdentity
+    ) -> IndexedAsset | None:
+        """The identity's reference picture, if one still resolves to a real file."""
+
+        for asset_id in identity.reference_asset_ids:
+            asset = job.extracted_frame_asset_index.get(asset_id)
+
+            if asset is not None and Path(asset.file_path).is_file():
+                return asset
+
+        return None
+
+    @staticmethod
+    def _references_sent(
+        job: VideoJob, scene: Scene
+    ) -> list[tuple[str | None, str]] | None:
+        """(identity name, checksum) of every reference the scene's accepted
+        request(s) carried - or None when the scene has no generation attempt at
+        all (stock or manual footage), where references do not apply."""
+
+        # (sequence, attempt number, is READY, [(name, checksum), ...])
+        attempts: list[tuple[int, int, bool, list[tuple[str | None, str]]]] = []
+
+        for flow in job.flow_generation_attempts:
+            if flow.request.scene_number == scene.scene_number:
+                attempts.append(
+                    (
+                        flow.request.clip_sequence_index,
+                        flow.attempt_number,
+                        flow.state == GoogleFlowGenerationState.READY,
+                        [
+                            (r.identity_name, r.checksum)
+                            for r in flow.request.reference_assets
+                        ],
+                    )
+                )
+
+        for muse in job.muse_generation_attempts:
+            if muse.request.scene_number == scene.scene_number:
+                attempts.append(
+                    (
+                        muse.request.clip_sequence_index,
+                        muse.attempt_number,
+                        muse.state == MuseGenerationState.READY,
+                        [
+                            (r.identity_name, r.checksum)
+                            for r in muse.request.reference_assets
+                        ],
+                    )
+                )
+
+        if not attempts:
+            return None
+
+        chosen: dict[int, tuple[bool, int, list[tuple[str | None, str]]]] = {}
+
+        for sequence, number, ready, references in attempts:
+            current = chosen.get(sequence)
+
+            # The attempt that produced the attached clip: a READY one beats a
+            # later failed one, and among equals the latest wins.
+            if current is None or (ready, number) >= (current[0], current[1]):
+                chosen[sequence] = (ready, number, references)
+
+        return [pair for _, _, references in chosen.values() for pair in references]
 
     def _extract_thumbnail(
         self,

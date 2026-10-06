@@ -23,12 +23,40 @@ class ClipVerificationIssueCode(str, Enum):
     TOO_SHORT = "too_short"
     TOO_LONG = "too_long"
     LAST_ATTEMPT_FAILED = "last_attempt_failed"
+    CHARACTER_WITHOUT_REFERENCE = "character_without_reference"
+    REFERENCE_NOT_ATTACHED = "reference_not_attached"
 
 
 class ClipVerificationIssue(MissionBaseModel):
     code: ClipVerificationIssueCode
     severity: ClipVerificationSeverity
     message: str
+
+
+class ReferenceUse(str, Enum):
+    """What happened to one on-screen character's or place's reference in a scene."""
+
+    ATTACHED = "attached"
+    # A reference exists and the scene was generated after it did, but the
+    # request did not carry it - the failure this check exists to catch.
+    NOT_ATTACHED = "not_attached"
+    # The character is on screen but has no usable reference anywhere (for
+    # instance no clear face was ever found), so continuity is text only.
+    NO_REFERENCE = "no_reference"
+    # This scene is where the reference was taken from - it could not have been
+    # attached to the scene it came from.
+    SOURCE_SCENE = "source_scene"
+    # The scene was generated before the reference existed.
+    BEFORE_REFERENCE = "before_reference"
+
+
+class SceneReferenceStatus(MissionBaseModel):
+    name: str
+    is_person: bool = True
+    state: ReferenceUse
+    # The reference picture, shown beside the scene so it can be compared by eye.
+    reference_file: str | None = None
+    reference_scene: int | None = None
 
 
 class SceneClipVerification(MissionBaseModel):
@@ -52,6 +80,11 @@ class SceneClipVerification(MissionBaseModel):
     thumbnail_file: str | None = None
 
     issues: list[ClipVerificationIssue] = Field(default_factory=list)
+
+    # The characters and places on screen in this scene and what became of
+    # each one's reference. Empty for a scene with none, or one that was
+    # not AI-generated, and for a report made before this existed.
+    references: list[SceneReferenceStatus] = Field(default_factory=list)
 
     @property
     def severity(self) -> ClipVerificationSeverity:

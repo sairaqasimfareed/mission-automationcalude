@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from uuid import UUID
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QMessageBox,
     QScrollArea,
@@ -183,6 +184,113 @@ _SELECTION_EDIT_OPERATIONS: list[tuple[SelectionEditOperation, str]] = [
 ]
 
 
+_STAGE_WORDS = {
+    "audience_promise": "audience promise",
+    "research_plan": "research plan",
+    "story_angles": "story angles",
+    "narrative_architecture": "story structure",
+    "retention_audit": "retention audit",
+    "writing_directives": "writing directives",
+    "continuity_bible": "continuity bible",
+    "editorial_critique": "editorial critique",
+    "quality_gate": "quality gate",
+    "packaging_hypothesis": "packaging",
+    "script_lock": "script lock",
+    "scene_planning": "scene planning",
+    "sound_design": "sound design plan",
+    "top10_rank_assignment": "list ranking",
+    "visual_continuity": "visual continuity bible",
+    "shot_planning": "cinematic shot plan",
+    "cinematic_prompt_compilation": "cinematic prompts",
+}
+
+
+def _stage_words(stage: str) -> str:
+    return _STAGE_WORDS.get(stage, stage.replace("_", " "))
+
+
+class _AutomationWorker(QObject):
+    """
+    Runs Resume/Run automation off the Qt main thread, on its OWN COPY of the job,
+    and reports every finished stage so it can be saved straight away.
+
+    Live, 2026-10-06: run_all() used to run on the window's own thread. A manual-
+    script project's Resume automation made four paid Claude calls (one took 80s),
+    the window froze ("Not responding"), was closed, and every result was lost -
+    the job was only saved once the WHOLE run had finished. Mirrors the other
+    workers' bound-method signal convention; the snapshot emitted per stage is a
+    deep copy taken at a consistent moment, so the GUI never reads a job this
+    thread is still mutating.
+    """
+
+    stage_completed = Signal(object, str)
+    finished = Signal()
+    failed = Signal(str)
+
+    def __init__(self, *, pipeline: ContentIntelligencePipeline, job: VideoJob) -> None:
+        super().__init__()
+
+        self._pipeline = pipeline
+        self.job = job
+        self.job_id = job.id
+
+    def run(self) -> None:
+        try:
+            self._pipeline.run_all(self.job, on_stage_complete=self._emit_stage)
+        except Exception as error:  # noqa: BLE001 - reported to the UI thread
+            self.failed.emit(f"{type(error).__name__}: {error}")
+
+            return
+
+        self.finished.emit()
+
+    def _emit_stage(self, job: VideoJob, stage: str) -> None:
+        self.stage_completed.emit(job.model_copy(deep=True), stage)
+
+
+class _StageWorker(QObject):
+    """
+    Runs ONE pipeline stage (a Claude call that can take a minute or two - the
+    visual continuity bible took 117s on a 32-scene script) off the Qt main
+    thread, on its own copy of the job. Before this, every stage button blocked the
+    window until Claude replied: it showed "Not responding" and invited a forced
+    close that discarded a paid result (live, 2026-10-06).
+    """
+
+    finished = Signal()
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        *,
+        runner: Callable[[VideoJob], object],
+        job: VideoJob,
+        failure: str,
+        retry: Callable[[], None] | None,
+    ) -> None:
+        super().__init__()
+
+        self._runner = runner
+        self.job = job
+        self.job_id = job.id
+        self.failure = failure
+        self.retry = retry
+
+    def run(self) -> None:
+        try:
+            self._runner(self.job)
+        except (RuntimeError, ValueError) as error:
+            self.failed.emit(str(error))
+
+            return
+        except Exception as error:  # noqa: BLE001 - reported to the UI thread
+            self.failed.emit(f"{type(error).__name__}: {error}")
+
+            return
+
+        self.finished.emit()
+
+
 class ContentStudioView(QWidget):
     """
     Content Studio: research, script, originality review, scene
@@ -207,8 +315,16 @@ class ContentStudioView(QWidget):
         fact_check_service: FactCheckService,
         on_change: Callable[[], None],
         enriched_scene_prompt_service: EnrichedScenePromptService | None = None,
+        run_stages_in_background: bool = False,
     ) -> None:
         super().__init__()
+
+        # True in the real app: a stage button runs its Claude call on a worker
+        # thread and the window stays usable. False runs it inline - how the
+        # many existing tests drive these handlers synchronously.
+        self._run_stages_in_background = run_stages_in_background
+        self._stage_threads: dict[UUID, tuple[QThread, _StageWorker]] = {}
+        self._stage_labels: dict[UUID, str] = {}
 
         # When supplied, the cinematic prompt section shows each scene as it
         # would actually be generated (split into clips, sized and worded
@@ -283,6 +399,12 @@ class ContentStudioView(QWidget):
         # navigation - cleared only once the script is actually
         # imported.
         self._script_intake_draft_text: str = ""
+
+        # Resume/Run automation runs in the background (see _AutomationWorker).
+        self._automation_job_ids: set[UUID] = set()
+        self._automation_threads: dict[UUID, tuple[QThread, _AutomationWorker]] = {}
+        self._automation_progress: dict[UUID, str] = {}
+        self._automation_progress_label: QLabel | None = None
 
         # Content Studio Redesign, Phase 18: Activity History filters -
         # plain strings persisted across refresh() (not live QComboBox
@@ -403,6 +525,7 @@ class ContentStudioView(QWidget):
             if widget is not None:
                 widget.deleteLater()
 
+        self._build_busy_banner(job)
         self._build_journey_card(job)
         self._build_topic_card(job)
         self._build_settings_card(job)
@@ -1499,8 +1622,15 @@ class ContentStudioView(QWidget):
         status = self._content_intelligence_pipeline.compute_automation_status(job)
 
         run_row = QHBoxLayout()
+        running = job.id in self._automation_job_ids
         run_button = button(
-            "Resume automation" if status.completed_stages else "Run automation",
+            (
+                "Automation running..."
+                if running
+                else (
+                    "Resume automation" if status.completed_stages else "Run automation"
+                )
+            ),
             variant="primary",
         )
         # Manual/auto content mode, locked plan part D, 2026-09-24:
@@ -1512,13 +1642,23 @@ class ContentStudioView(QWidget):
         # imported - run_all() then correctly skips straight to
         # continuity/scenes/etc. (see run_all()'s own is_intake_job).
         run_button.setEnabled(
-            not (_is_manual_content_mode(job) and job.script_intake_result is None)
+            not running
+            and not (_is_manual_content_mode(job) and job.script_intake_result is None)
         )
         run_button.clicked.connect(self._handle_run_automation)
         self._automation_run_button = run_button
         run_row.addWidget(run_button)
         run_row.addWidget(badge(f"{len(status.completed_stages)} stage(s) completed"))
         layout.addLayout(run_row)
+
+        self._automation_progress_label = None
+
+        if running:
+            self._automation_progress_label = status_label(
+                self._automation_progress.get(job.id, "Starting..."),
+                role="warning",
+            )
+            layout.addWidget(self._automation_progress_label)
 
         if status.is_paused:
             layout.addWidget(
@@ -1536,20 +1676,263 @@ class ContentStudioView(QWidget):
 
         layout.addWidget(separator())
 
+    def _is_busy(self, job: VideoJob) -> bool:
+        return job.id in self._automation_job_ids or job.id in self._stage_labels
+
+    def _run_stage(
+        self,
+        job: VideoJob,
+        runner: Callable[[VideoJob], object],
+        *,
+        label: str,
+        failure: str,
+        retry: Callable[[], None] | None = None,
+    ) -> None:
+        """
+        Run one stage. In the real app that happens on a worker thread (the
+        window stays usable and shows what is running); with
+        run_stages_in_background=False it runs inline, exactly as before. One
+        stage at a time per project, so a second click while one is running is
+        ignored rather than started twice (each Claude call is paid for).
+        """
+
+        if self._is_busy(job):
+            return
+
+        if not self._run_stages_in_background:
+            try:
+                runner(job)
+            except (RuntimeError, ValueError) as error:
+                self._record_error(job, f"{failure}: {error}", on_retry=retry)
+
+                return
+
+            self._on_change()
+
+            return
+
+        thread = QThread()
+        worker = _StageWorker(
+            runner=runner,
+            job=job.model_copy(deep=True),
+            failure=failure,
+            retry=retry,
+        )
+        worker.moveToThread(thread)
+        thread.job_id = job.id  # type: ignore[attr-defined]
+
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._handle_stage_finished)
+        worker.failed.connect(self._handle_stage_failed)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        thread.finished.connect(self._handle_stage_thread_finished)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+
+        self._stage_threads[job.id] = (thread, worker)
+        self._stage_labels[job.id] = label
+
+        self._on_change()
+
+        thread.start()
+
+    def _handle_stage_finished(self) -> None:
+        worker = self.sender()
+
+        if not isinstance(worker, _StageWorker):
+            return
+
+        job_id = worker.job_id
+        self._stage_labels.pop(job_id, None)
+        self._job_store.add(worker.job)
+
+        if job_id == self._job_id:
+            self._on_change()
+
+    def _handle_stage_failed(self, message: str) -> None:
+        worker = self.sender()
+
+        if not isinstance(worker, _StageWorker):
+            return
+
+        job_id = worker.job_id
+        self._stage_labels.pop(job_id, None)
+        # Whatever the stage changed before failing is kept, as when it ran inline.
+        self._job_store.add(worker.job)
+
+        if job_id == self._job_id:
+            self._record_error(
+                worker.job, f"{worker.failure}: {message}", on_retry=worker.retry
+            )
+
+    def _handle_stage_thread_finished(self) -> None:
+        thread = self.sender()
+        job_id = getattr(thread, "job_id", None)
+
+        if job_id is not None:
+            self._stage_threads.pop(job_id, None)
+
+    def _build_busy_banner(self, job: VideoJob) -> None:
+        """What is running right now, at the very top, so a Claude call that takes
+        a minute or two does not look like a hang."""
+
+        if job.id in self._stage_labels:
+            text = (
+                f"Working: {self._stage_labels[job.id]}. This can take a minute or "
+                "two - the window stays usable, and the result is saved when it "
+                "finishes."
+            )
+        elif job.id in self._automation_job_ids:
+            text = self._automation_progress.get(job.id, "Automation running...")
+        else:
+            return
+
+        self._layout.addWidget(status_label(text, role="warning"))
+
     def _handle_run_automation(self) -> None:
         job = self._current_job()
 
-        if job is None:
+        if job is None or self._is_busy(job):
             return
 
-        try:
-            self._content_intelligence_pipeline.run_all(job)
-        except (RuntimeError, ValueError) as error:
-            self._record_error(job, f"Automation stopped: {error}")
+        if not self._run_stages_in_background:
+            # Inline, exactly as before - how the many existing tests drive it.
+            try:
+                self._content_intelligence_pipeline.run_all(job)
+            except (RuntimeError, ValueError) as error:
+                self._record_error(job, f"Automation stopped: {error}")
+
+                return
+
+            self._on_change()
 
             return
+
+        thread = QThread()
+        # Its own copy: the window keeps working on the stored job while this runs.
+        worker = _AutomationWorker(
+            pipeline=self._content_intelligence_pipeline,
+            job=job.model_copy(deep=True),
+        )
+        worker.moveToThread(thread)
+        thread.job_id = job.id  # type: ignore[attr-defined]
+
+        thread.started.connect(worker.run)
+        worker.stage_completed.connect(self._handle_automation_stage_completed)
+        worker.finished.connect(self._handle_automation_finished)
+        worker.failed.connect(self._handle_automation_failed)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        thread.finished.connect(self._handle_automation_thread_finished)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+
+        self._automation_threads[job.id] = (thread, worker)
+        self._automation_job_ids.add(job.id)
+        self._automation_progress[job.id] = (
+            "Running - each stage is saved as soon as it finishes."
+        )
 
         self._on_change()
+
+        thread.start()
+
+    def _handle_automation_stage_completed(self, snapshot: object, stage: str) -> None:
+        worker = self.sender()
+
+        if not isinstance(worker, _AutomationWorker) or not isinstance(
+            snapshot, VideoJob
+        ):
+            return
+
+        # Saved NOW, not at the end: a stage that finished and was paid for
+        # must survive the window freezing, closing or crashing before the run
+        # completes.
+        self._job_store.add(snapshot)
+
+        self._automation_progress[worker.job_id] = (
+            f"Finished {_stage_words(stage)} - saved. Running..."
+        )
+
+        label = self._automation_progress_label
+
+        if label is not None and worker.job_id == self._job_id:
+            try:
+                label.setText(self._automation_progress[worker.job_id])
+            except RuntimeError:  # the card was rebuilt and the label deleted
+                self._automation_progress_label = None
+
+    def _handle_automation_finished(self) -> None:
+        worker = self.sender()
+
+        if not isinstance(worker, _AutomationWorker):
+            return
+
+        job_id = worker.job_id
+        self._automation_job_ids.discard(job_id)
+        self._automation_progress.pop(job_id, None)
+        self._job_store.add(worker.job)
+
+        if job_id == self._job_id:
+            self._on_change()
+
+    def _handle_automation_failed(self, message: str) -> None:
+        worker = self.sender()
+
+        if not isinstance(worker, _AutomationWorker):
+            return
+
+        job_id = worker.job_id
+        self._automation_job_ids.discard(job_id)
+        self._automation_progress.pop(job_id, None)
+
+        # Whatever the run finished before failing is kept: the failed job is the
+        # worker's own copy, which already holds every completed stage.
+        job = worker.job
+        job.errors.append(f"Automation stopped: {message}")
+        self._job_store.add(job)
+
+        if job_id == self._job_id:
+            show_recoverable_error(
+                self,
+                "Automation stopped",
+                f"{message}\n\nEvery stage that finished before this was saved.",
+                on_retry=self._handle_run_automation,
+            )
+            self._on_change()
+
+    def _handle_automation_thread_finished(self) -> None:
+        thread = self.sender()
+        job_id = getattr(thread, "job_id", None)
+
+        if job_id is not None:
+            self._automation_threads.pop(job_id, None)
+
+    def has_pending_automation(self) -> bool:
+        return any(
+            not thread.isFinished()
+            for thread, _ in [
+                *self._automation_threads.values(),
+                *self._stage_threads.values(),
+            ]
+        )
+
+    def wait_for_pending_automation(self, *, timeout_ms: int) -> bool:
+        """Wait (keeping the window responsive) for a running automation to end -
+        used when the window is closing, so a still-running QThread is never torn
+        down underneath Qt (the same crash the render guard prevents)."""
+
+        from PySide6.QtCore import QCoreApplication
+
+        waited = 0
+
+        while self.has_pending_automation() and waited < timeout_ms:
+            QCoreApplication.processEvents()
+            QThread.msleep(50)
+            waited += 50
+
+        return not self.has_pending_automation()
 
     def _build_production_handoff_card(self, job: VideoJob) -> None:
         """
@@ -1703,18 +2086,13 @@ class ContentStudioView(QWidget):
         if job is None:
             return
 
-        try:
-            self._content_intelligence_pipeline.run_production_semantic_brief(job)
-        except (RuntimeError, ValueError) as error:
-            self._record_error(
-                job,
-                f"Could not generate production directives: {error}",
-                on_retry=self._handle_generate_production_semantic_brief,
-            )
-
-            return
-
-        self._on_change()
+        self._run_stage(
+            job,
+            self._content_intelligence_pipeline.run_production_semantic_brief,
+            label="production directives",
+            failure="Could not generate production directives",
+            retry=self._handle_generate_production_semantic_brief,
+        )
 
     def _render_visual_continuity_section(
         self, layout: QVBoxLayout, job: VideoJob
@@ -1790,18 +2168,13 @@ class ContentStudioView(QWidget):
         if job is None:
             return
 
-        try:
-            self._content_intelligence_pipeline.run_visual_continuity(job)
-        except (RuntimeError, ValueError) as error:
-            self._record_error(
-                job,
-                f"Could not generate visual continuity bible: {error}",
-                on_retry=self._handle_generate_visual_continuity,
-            )
-
-            return
-
-        self._on_change()
+        self._run_stage(
+            job,
+            self._content_intelligence_pipeline.run_visual_continuity,
+            label="visual continuity bible",
+            failure="Could not generate visual continuity bible",
+            retry=self._handle_generate_visual_continuity,
+        )
 
     def _render_shot_planning_section(self, layout: QVBoxLayout, job: VideoJob) -> None:
         """
@@ -1854,18 +2227,13 @@ class ContentStudioView(QWidget):
         if job is None:
             return
 
-        try:
-            self._content_intelligence_pipeline.run_shot_planning(job)
-        except (RuntimeError, ValueError) as error:
-            self._record_error(
-                job,
-                f"Could not generate cinematic shot plan: {error}",
-                on_retry=self._handle_generate_shot_plan,
-            )
-
-            return
-
-        self._on_change()
+        self._run_stage(
+            job,
+            self._content_intelligence_pipeline.run_shot_planning,
+            label="cinematic shot plan",
+            failure="Could not generate cinematic shot plan",
+            retry=self._handle_generate_shot_plan,
+        )
 
     def _render_cinematic_prompt_section(
         self, layout: QVBoxLayout, job: VideoJob
@@ -2015,18 +2383,13 @@ class ContentStudioView(QWidget):
         if job is None:
             return
 
-        try:
-            self._content_intelligence_pipeline.run_cinematic_prompt_compilation(job)
-        except (RuntimeError, ValueError) as error:
-            self._record_error(
-                job,
-                f"Could not compile cinematic prompts: {error}",
-                on_retry=self._handle_compile_cinematic_prompts,
-            )
-
-            return
-
-        self._on_change()
+        self._run_stage(
+            job,
+            self._content_intelligence_pipeline.run_cinematic_prompt_compilation,
+            label="cinematic prompts",
+            failure="Could not compile cinematic prompts",
+            retry=self._handle_compile_cinematic_prompts,
+        )
 
     def _handle_score_cinematic_prompts(self) -> None:
         job = self._current_job()
@@ -2034,18 +2397,13 @@ class ContentStudioView(QWidget):
         if job is None:
             return
 
-        try:
-            self._content_intelligence_pipeline.run_cinematic_prompt_quality(job)
-        except (RuntimeError, ValueError) as error:
-            self._record_error(
-                job,
-                f"Could not score cinematic prompt quality: {error}",
-                on_retry=self._handle_score_cinematic_prompts,
-            )
-
-            return
-
-        self._on_change()
+        self._run_stage(
+            job,
+            self._content_intelligence_pipeline.run_cinematic_prompt_quality,
+            label="prompt quality scores",
+            failure="Could not score cinematic prompt quality",
+            retry=self._handle_score_cinematic_prompts,
+        )
 
     def _render_clip_materialization_section(
         self, layout: QVBoxLayout, job: VideoJob
@@ -4111,18 +4469,13 @@ class ContentStudioView(QWidget):
             ),
         }
 
-        try:
-            runners[stage_key](job)
-        except (RuntimeError, ValueError) as error:
-            self._record_error(
-                job,
-                f"Content Intelligence stage failed: {error}",
-                on_retry=lambda: self._handle_run_ci_stage(stage_key),
-            )
-
-            return
-
-        self._on_change()
+        self._run_stage(
+            job,
+            runners[stage_key],
+            label=stage_key.replace("_", " "),
+            failure="Content Intelligence stage failed",
+            retry=lambda: self._handle_run_ci_stage(stage_key),
+        )
 
     def _handle_toggle_script_version_lock(self) -> None:
         job = self._current_job()

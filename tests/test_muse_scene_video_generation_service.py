@@ -819,6 +819,7 @@ def test_generate_one_attaches_a_resolved_reference_for_a_later_scene(
     request = provider.submitted_requests[0]
     assert len(request.reference_assets) == 1
     assert request.reference_assets[0].source_path == result.asset.file_path
+    assert request.reference_assets[0].identity_name == "Jack Reid"
 
 
 def test_generate_one_does_not_attach_a_reference_for_an_off_screen_identity(
@@ -1680,6 +1681,7 @@ def _person_and_place_selection(*, person_visible: bool):  # type: ignore[no-unt
         )
         > 0,
         sharpness_scorer=lambda image: sharp[image],
+        spread_scorer=lambda image: 1.0,
     )
 
 
@@ -1750,3 +1752,70 @@ def test_muse_location_still_gets_a_reference_when_nobody_is_in_the_scene(
     person, place = job.visual_continuity_bible.identities
     assert person.reference_asset_ids == []
     assert len(place.reference_asset_ids) == 1
+
+
+def test_a_muse_clip_is_labelled_as_muse_not_google_flow(tmp_path: Path) -> None:
+    """The single-clip attach left the workflow's default provider label
+    ("google_flow") on Muse's clips, so the Clip check and any report called a
+    Muse clip a Google Flow one (seen live, 2026-10-06)."""
+
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            MuseGenerationState.GENERATING,
+            MuseGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    provider.downloaded_file = str(_real_video_file(tmp_path))
+    service = _service(provider)
+    scene = _scene(1)
+    job = _job(scene)
+
+    service.generate_one(job, 1)
+
+    clips = [c for c in job.video_clips if c.scene_number == 1]
+    assert clips
+    assert {c.provider for c in clips} == {"muse"}
+
+
+def test_a_narration_with_a_fraction_gets_a_clip_rounded_up_not_down(
+    tmp_path: Path,
+) -> None:
+    """Live, 2026-10-06: 7.38s of narration got a 7s clip and 4.32s got 4s, so the
+    voice ran past the picture. The prompt asks for the next whole second and the
+    safety-net trim - which uses the same target - cuts to it, not back to 7.38."""
+
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            MuseGenerationState.GENERATING,
+            MuseGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    provider.downloaded_file = str(_real_video_file(tmp_path))
+    ten_second_probe = json.dumps(
+        {
+            "format": {"duration": "10.0"},
+            "streams": [
+                {"codec_type": "video", "width": 1920, "height": 1080},
+                {"codec_type": "audio"},
+            ],
+        }
+    )
+    frame_extraction, commands = _frame_extraction_service(tmp_path)
+    service = MuseSceneVideoGenerationService(
+        orchestrator=_orchestrator(provider, probe_output=ten_second_probe),
+        asset_workflow_service=_asset_workflow_service(),
+        poll_interval_seconds=1.0,
+        max_poll_attempts=10,
+        sleep_fn=lambda _: None,
+        frame_extraction_service=frame_extraction,
+    )
+    scene = _scene(1)
+    scene.real_narration_duration_seconds = 7.38
+    job = _job(scene)
+
+    entry = service.generate_one(job, 1)
+
+    assert entry.status == SceneCompletenessStatus.READY
+    assert "to only 8 seconds video." in provider.submitted_prompts[0]
+    trim = commands[0]
+    assert float(trim[trim.index("-t") + 1]) == pytest.approx(8.0)

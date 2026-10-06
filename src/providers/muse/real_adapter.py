@@ -57,6 +57,18 @@ class _ReferenceAssetAttachmentFailedError(RuntimeError):
     """
 
 
+# How long a control (the message box, the "+" attach button) may take to
+# appear after the page loads before it counts as missing. Muse is a single-page
+# app that keeps drawing after the load event - at full window width the "+"
+# button arrived later than the message box, and a one-shot check 1.5s after
+# navigation reported it absent (2026-10-06, live: scene 2's attach failed with
+# the button plainly on screen).
+_CONTROL_APPEARS_WITHIN_SECONDS = 20.0
+
+# How long a click on Download may take before the file starts arriving.
+_DOWNLOAD_START_TIMEOUT_SECONDS = 180.0
+_CONTROL_POLL_MILLISECONDS = 500
+
 # How much of the END of the submitted prompt identifies its chat message.
 _PROMPT_ANCHOR_CHARS = 50
 
@@ -208,7 +220,15 @@ class MuseRealUIAdapter(MuseUIProvider):
                 page = self._get_or_open_page_and_navigate(attempt.profile_id)
                 page.wait_for_timeout(1500)
 
-                if not self._looks_authenticated(page):
+                # Waited for, not checked once - the signed-in chat surface (the
+                # message box) can take a moment to draw after the page loads,
+                # and a one-shot check reported a slow page as "not signed in".
+                if not self._wait_until_present(
+                    page,
+                    lambda: page.get_by_placeholder(
+                        self._names.message_input_placeholder
+                    ),
+                ):
                     return attempt.with_transition(
                         MuseGenerationState.AUTH_REQUIRED,
                         detail=(
@@ -222,7 +242,7 @@ class MuseRealUIAdapter(MuseUIProvider):
                     self._names.message_input_placeholder
                 )
 
-                if message_box.count() == 0:
+                if not self._wait_until_present(page, lambda: message_box):
                     raise MuseUIChangedError("The Muse message box was not found.")
 
                 if request.reference_assets:
@@ -459,8 +479,14 @@ class MuseRealUIAdapter(MuseUIProvider):
                         ),
                     )
 
+                # Live, 2026-10-06: scene 11's reply video was generated, but the
+                # download only began after more than the old 30s allowance
+                # (earlier downloads took 1.5-6s) - the attempt was marked failed
+                # and, being unfinished, blocked the account for the rest of the
+                # run. Starting a download is network-dependent, so it gets the
+                # same generous budget as other real, slow steps.
                 with page.expect_download(
-                    timeout=self._action_timeout_ms
+                    timeout=_DOWNLOAD_START_TIMEOUT_SECONDS * 1000
                 ) as download_info:
                     download_button.click(timeout=self._action_timeout_ms)
             except PlaywrightError as error:
@@ -522,11 +548,15 @@ class MuseRealUIAdapter(MuseUIProvider):
         for reference_asset in reference_assets:
             attach_button = page.locator(self._names.attach_button_selector)
 
-            if attach_button.count() == 0:
+            # Waited for, not checked once: the page is still drawing for a
+            # moment after it loads (see _CONTROL_APPEARS_WITHIN_SECONDS).
+            if not self._wait_until_present(
+                page, lambda: page.locator(self._names.attach_button_selector)
+            ):
                 raise _ReferenceAssetAttachmentFailedError(
-                    "The Muse attach ('+') button was not found - "
-                    "refusing to submit without the reference this "
-                    "request asked for."
+                    "The Muse attach ('+') button did not appear within "
+                    f"{_CONTROL_APPEARS_WITHIN_SECONDS:.0f}s - refusing to "
+                    "submit without the reference this request asked for."
                 )
 
             with page.expect_file_chooser(
@@ -536,6 +566,23 @@ class MuseRealUIAdapter(MuseUIProvider):
 
             chooser_info.value.set_files(reference_asset.source_path)
             page.wait_for_timeout(1000)
+
+    @staticmethod
+    def _wait_until_present(page: Page, locator: Callable[[], Locator]) -> bool:
+        """True once the control exists, polling for up to
+        _CONTROL_APPEARS_WITHIN_SECONDS - False only if it never appears."""
+
+        waited_ms = 0
+
+        while True:
+            if locator().count() > 0:
+                return True
+
+            if waited_ms >= _CONTROL_APPEARS_WITHIN_SECONDS * 1000:
+                return False
+
+            page.wait_for_timeout(_CONTROL_POLL_MILLISECONDS)
+            waited_ms += _CONTROL_POLL_MILLISECONDS
 
     def _looks_authenticated(self, page: Page) -> bool:
         """

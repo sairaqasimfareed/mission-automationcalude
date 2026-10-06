@@ -255,6 +255,21 @@ class MainWindow(QMainWindow):
         the specific safety gap without inventing one.
         """
 
+        # A running Resume automation finishes the stage it is on (each finished
+        # stage is already saved) before the window goes - never torn down
+        # underneath Qt.
+        content_studio = self._detail_view.content_studio
+
+        if content_studio.has_pending_automation():
+            if not content_studio.wait_for_pending_automation(
+                timeout_ms=int(_CLOSE_RENDER_WAIT_TIMEOUT_SECONDS * 1000)
+            ):
+                logger.warning(
+                    "Closing with an automation stage still running after "
+                    f"{_CLOSE_RENDER_WAIT_TIMEOUT_SECONDS:.0f}s - every "
+                    "stage that had finished was already saved."
+                )
+
         render_workspace = self._detail_view.render_workspace
 
         if render_workspace.has_pending_renders():

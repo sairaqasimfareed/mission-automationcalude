@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
@@ -36,8 +36,11 @@ from src.models.bulk_clip_ingestion import BulkClipIngestionEntryStatus
 from src.models.bulk_stock_assignment import BulkStockAssignmentEntryStatus
 from src.models.clip_attachment_verification import (
     ClipAttachmentVerificationReport,
+    ClipVerificationIssueCode,
     ClipVerificationSeverity,
+    ReferenceUse,
     SceneClipVerification,
+    SceneReferenceStatus,
 )
 from src.models.google_flow_generation import (
     GoogleFlowGenerationAttempt,
@@ -47,9 +50,11 @@ from src.models.google_flow_generation import (
 from src.models.muse_generation import MuseGenerationAttempt, MuseGenerationState
 from src.models.muse_generation import is_terminal_state as muse_is_terminal_state
 from src.models.provider_profile import ProviderCategory
+from src.models.scene import Scene
 from src.models.scene_completeness import SceneCompletenessStatus
 from src.models.video_clip import VideoClip
 from src.models.video_job import VideoJob
+from src.models.video_provider import VideoProvider
 from src.services.bulk_clip_ingestion_service import BulkClipIngestionService
 from src.services.bulk_stock_assignment_service import BulkStockAssignmentService
 from src.services.clip_attachment_verification_service import (
@@ -62,6 +67,13 @@ from src.services.google_flow_generation_orchestrator_service import (
 from src.services.muse_generation_orchestrator_service import (
     MuseAttemptCreditSensitiveError,
 )
+from src.services.reference_frame_selection_service import (
+    ReferenceFrameSelectionService,
+)
+from src.services.reference_refresh_service import (
+    ReferenceRefreshReport,
+    ReferenceRefreshService,
+)
 from src.services.registry.provider_registry import ProviderRegistry
 from src.services.scene_asset_workflow_service import SceneAssetWorkflowService
 from src.services.scene_completeness_service import SceneCompletenessService
@@ -69,6 +81,11 @@ from src.services.scene_generation_dispatch_service import (
     SceneGenerationDispatchService,
 )
 from src.services.scene_prompt_export_service import ScenePromptExportService
+from src.services.video_provider_rules import (
+    muse_target_seconds,
+    resolve_scene_video_provider,
+    rules_for,
+)
 from src.shared.logger import logger
 
 _LEFT = Qt.AlignmentFlag.AlignLeft
@@ -78,6 +95,15 @@ _LEFT = Qt.AlignmentFlag.AlignLeft
 _CLIP_CHECK_PROBLEM_ROWS_VISIBLE = 10
 _CLIP_CHECK_OK_ROWS_VISIBLE = 3
 _SCENE_ROWS_VISIBLE = 15
+
+# Reference problems are shown on the reference's own line (with its picture),
+# so their issue messages are not repeated below it.
+_REFERENCE_ISSUE_CODES = frozenset(
+    {
+        ClipVerificationIssueCode.CHARACTER_WITHOUT_REFERENCE,
+        ClipVerificationIssueCode.REFERENCE_NOT_ATTACHED,
+    }
+)
 
 _COMPLETENESS_STATUS_ROLE = {
     SceneCompletenessStatus.READY: "success",
@@ -236,6 +262,32 @@ class _ClipVerificationWorker(QObject):
         self.finished.emit(report)
 
 
+class _ReferenceRefreshWorker(QObject):
+    """Re-picks the references off the Qt main thread (it decodes and scores frames
+    of every generated clip). Works on a deep copy; the result is brought back onto
+    the real job on the GUI thread with ReferenceRefreshService.apply_to."""
+
+    finished = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, *, service: ReferenceRefreshService, job: VideoJob) -> None:
+        super().__init__()
+
+        self._service = service
+        self._job = job
+        self.job_id = job.id
+
+    def run(self) -> None:
+        try:
+            report = self._service.refresh(self._job)
+        except Exception as error:  # noqa: BLE001 - reported to the UI thread
+            self.failed.emit(str(error))
+
+            return
+
+        self.finished.emit((self._job, report))
+
+
 class ClipWorkspaceView(QWidget):
     """
     Clip Workspace: per-scene duration and resolved-clip review, plus
@@ -267,6 +319,7 @@ class ClipWorkspaceView(QWidget):
         scene_video_generation_service: SceneGenerationDispatchService | None = None,
         provider_registry: ProviderRegistry | None = None,
         clip_verification_service: ClipAttachmentVerificationService | None = None,
+        reference_refresh_service: ReferenceRefreshService | None = None,
     ) -> None:
         super().__init__()
 
@@ -277,6 +330,18 @@ class ClipWorkspaceView(QWidget):
                 thumbnails_root=Path("data/clip_thumbnails")
             )
         )
+        self._reference_refresh_service = (
+            reference_refresh_service
+            or ReferenceRefreshService(
+                selection_service=ReferenceFrameSelectionService(),
+                storage_root=Path("data/extracted_frames"),
+            )
+        )
+        self._refreshing_job_ids: set[UUID] = set()
+        self._refresh_threads: dict[UUID, tuple[QThread, _ReferenceRefreshWorker]] = {}
+        # What the last refresh did, shown under the buttons. Feedback about an
+        # action, not a fact about the video, so it lives with the view.
+        self._refresh_notices: dict[UUID, tuple[str, str]] = {}
         self._verifying_job_ids: set[UUID] = set()
         self._verification_threads: dict[
             UUID, tuple[QThread, _ClipVerificationWorker]
@@ -402,7 +467,33 @@ class ClipWorkspaceView(QWidget):
         )
         check_button.setEnabled(not checking and job.id not in self._generating_job_ids)
         check_button.clicked.connect(self._handle_check_clips)
-        layout.addWidget(check_button, alignment=_LEFT)
+
+        bible = job.visual_continuity_bible
+        has_identities = bible is not None and bool(bible.identities)
+        refreshing = job.id in self._refreshing_job_ids
+        refresh_button = button(
+            "Refreshing references..." if refreshing else "Refresh references",
+            icon_name="clapper",
+        )
+        refresh_button.setToolTip(
+            "Re-pick each character's and place's reference picture from the "
+            "clips generated so far, replacing one only when the new frame is "
+            "clearly better. Existing clips are not changed."
+        )
+        refresh_button.setEnabled(
+            has_identities
+            and not refreshing
+            and not checking
+            and job.id not in self._generating_job_ids
+        )
+        refresh_button.setVisible(has_identities)
+        refresh_button.clicked.connect(self._handle_refresh_references)
+        layout.addLayout(row(check_button, refresh_button))
+
+        notice = self._refresh_notices.get(job.id)
+
+        if notice is not None:
+            layout.addWidget(status_label(notice[0], role=notice[1]))
 
         report = job.clip_verification_report
 
@@ -545,7 +636,13 @@ class ClipWorkspaceView(QWidget):
 
         text_layout.addWidget(small_muted(narration))
 
+        for reference in result.references:
+            text_layout.addLayout(ClipWorkspaceView._reference_line(reference))
+
         for issue in result.issues:
+            if issue.code in _REFERENCE_ISSUE_CODES:
+                continue
+
             text_layout.addWidget(
                 status_label(
                     issue.message,
@@ -560,6 +657,146 @@ class ClipWorkspaceView(QWidget):
         row_layout.addLayout(text_layout, stretch=1)
 
         return row_frame
+
+    @staticmethod
+    def _reference_line(reference: SceneReferenceStatus) -> QHBoxLayout:
+        """One character or place on screen: its reference picture (so it can be
+        compared with the still beside it) and what became of it in this scene."""
+
+        line = QHBoxLayout()
+        line.setSpacing(8)
+
+        picture = QLabel()
+        picture.setFixedSize(44, 44)
+        picture.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        pixmap = (
+            QPixmap(reference.reference_file) if reference.reference_file else QPixmap()
+        )
+
+        if pixmap.isNull():
+            picture.setText("-")
+            picture.setProperty("role", "small-muted")
+        else:
+            picture.setPixmap(
+                pixmap.scaled(
+                    44,
+                    44,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+
+        line.addWidget(picture)
+
+        kind = "character" if reference.is_person else "place"
+        name = reference.name
+
+        if reference.state == ReferenceUse.NO_REFERENCE:
+            label: QLabel = status_label(
+                f"{name} is on screen but has no reference picture yet - this "
+                f"{kind} is held to the written description only.",
+                role="warning",
+            )
+        elif reference.state == ReferenceUse.NOT_ATTACHED:
+            label = status_label(
+                f"{name} has a reference (from scene {reference.reference_scene}) "
+                "but this scene was generated without it - they may not look the "
+                "same as in the other scenes.",
+                role="warning",
+            )
+        elif reference.state == ReferenceUse.SOURCE_SCENE:
+            label = small_muted(
+                f"{name} ({kind}) - this scene is where their reference was taken from"
+            )
+        elif reference.state == ReferenceUse.BEFORE_REFERENCE:
+            label = small_muted(
+                f"{name} ({kind}) - generated before a reference existed"
+            )
+        else:
+            label = small_muted(f"{name} ({kind}) - reference attached")
+
+        line.addWidget(label, stretch=1)
+
+        return line
+
+    def _handle_refresh_references(self) -> None:
+        job = self._current_job()
+
+        if job is None or job.id in self._refreshing_job_ids:
+            return
+
+        thread = QThread()
+        worker = _ReferenceRefreshWorker(
+            service=self._reference_refresh_service, job=job.model_copy(deep=True)
+        )
+        worker.moveToThread(thread)
+        thread.job_id = job.id  # type: ignore[attr-defined]
+
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._handle_refresh_finished)
+        worker.failed.connect(self._handle_refresh_failed)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        thread.finished.connect(self._handle_refresh_thread_finished)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+
+        self._refresh_threads[job.id] = (thread, worker)
+        self._refreshing_job_ids.add(job.id)
+        self._refresh_notices.pop(job.id, None)
+
+        self._rebuild_card(job)
+
+        thread.start()
+
+    def _handle_refresh_finished(self, result: object) -> None:
+        worker = self.sender()
+
+        if not isinstance(worker, _ReferenceRefreshWorker):
+            return
+
+        job_id = worker.job_id
+        self._refreshing_job_ids.discard(job_id)
+
+        if not isinstance(result, tuple) or len(result) != 2:
+            return
+
+        refreshed, report = result
+        job = self._job_store.get(job_id)
+
+        if job is not None and isinstance(report, ReferenceRefreshReport):
+            ReferenceRefreshService.apply_to(job, refreshed)
+            self._job_store.add(job)
+            self._refresh_notices[job_id] = (
+                report.text(),
+                "success" if report.replaced_count else "warning",
+            )
+
+        if job_id == self._job_id:
+            self._on_change()
+
+    def _handle_refresh_failed(self, message: str) -> None:
+        worker = self.sender()
+
+        if not isinstance(worker, _ReferenceRefreshWorker):
+            return
+
+        job_id = worker.job_id
+        self._refreshing_job_ids.discard(job_id)
+        self._refresh_notices[job_id] = (
+            f"References could not be refreshed: {message}",
+            "error",
+        )
+
+        if job_id == self._job_id:
+            self._on_change()
+
+    def _handle_refresh_thread_finished(self) -> None:
+        thread = self.sender()
+        job_id = getattr(thread, "job_id", None)
+
+        if job_id is not None:
+            self._refresh_threads.pop(job_id, None)
 
     def _handle_check_clips(self) -> None:
         job = self._current_job()
@@ -707,7 +944,10 @@ class ClipWorkspaceView(QWidget):
             row_layout.setSpacing(2)
 
             row_layout.addWidget(
-                small_muted(f"Scene {scene.scene_number}: {scene.title}")
+                small_muted(
+                    f"Scene {scene.scene_number}: {scene.title}  \u00b7  "
+                    f"{self._clip_length_text(job, scene)}"
+                )
             )
 
             if entry is not None:
@@ -738,6 +978,12 @@ class ClipWorkspaceView(QWidget):
                         role=_sub_clip_status_role(sub_clip_status),
                     )
                 )
+
+            if not sub_clip_statuses:
+                plan_text = self._planned_split_text(job, scene)
+
+                if plan_text is not None:
+                    row_layout.addWidget(small_muted(plan_text))
 
             stuck_on_auth = self._auth_required_attempt(job, scene.scene_number)
             stuck_other = (
@@ -965,6 +1211,80 @@ class ClipWorkspaceView(QWidget):
 
             if index >= 0:
                 combo.setCurrentIndex(index)
+
+    @staticmethod
+    def _clip_length_text(job: VideoJob, scene: Scene) -> str:
+        """How long this scene's clip is: the real length once a clip exists
+        ("clip 7s", or "clips 7s + 7s = 14s" for a split scene), otherwise the
+        length it is planned to be generated at, so the row says how long the
+        picture will run before a credit is spent. The narration length is added
+        once it is known - it is what the clip has to cover."""
+
+        narration = scene.real_narration_duration_seconds
+        narration_text = f"  \u00b7  narration {narration:.1f}s" if narration else ""
+        clips = sorted(
+            (c for c in job.video_clips if c.scene_number == scene.scene_number),
+            key=lambda c: c.clip_sequence_index,
+        )
+
+        if clips:
+            lengths = [clip.duration_seconds for clip in clips]
+
+            if len(lengths) == 1:
+                return f"clip {lengths[0]}s{narration_text}"
+
+            return (
+                f"clips {' + '.join(f'{n}s' for n in lengths)} = "
+                f"{sum(lengths)}s{narration_text}"
+            )
+
+        provider = resolve_scene_video_provider(job, scene)
+        rules = rules_for(provider)
+        seconds = (
+            narration
+            if narration is not None
+            else float(scene.estimated_duration_seconds)
+        )
+
+        if rules.needs_split(seconds):
+            parts = [
+                muse_target_seconds(part) if provider == VideoProvider.MUSE else part
+                for part in rules.plan_clips(seconds)
+            ]
+            planned = " + ".join(f"{part:.0f}s" for part in parts)
+
+            return f"planned {planned}{narration_text}"
+
+        return f"planned {rules.single_clip_seconds(seconds):.0f}s{narration_text}"
+
+    @staticmethod
+    def _planned_split_text(job: VideoJob, scene: Scene) -> str | None:
+        """For a scene that has not started: say up front that it will be several
+        clips. The Prompts tab already shows one prompt per part, while this row has
+        one Generate button - which makes every part, in order, so without this line
+        it looked as if the second prompt had no clip."""
+
+        provider = resolve_scene_video_provider(job, scene)
+        rules = rules_for(provider)
+        seconds = (
+            scene.real_narration_duration_seconds
+            if scene.real_narration_duration_seconds is not None
+            else float(scene.estimated_duration_seconds)
+        )
+
+        if not rules.needs_split(seconds):
+            return None
+
+        parts = [
+            muse_target_seconds(part) if provider == VideoProvider.MUSE else part
+            for part in rules.plan_clips(seconds)
+        ]
+
+        return (
+            f"Will be generated as {len(parts)} clips "
+            f"({' + '.join(f'{part:.0f}s' for part in parts)}) - one Generate makes "
+            "all of them, in order."
+        )
 
     def _handle_generate_scene_video(self, scene_number: int) -> None:
         job = self._current_job()

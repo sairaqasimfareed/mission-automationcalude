@@ -278,6 +278,7 @@ class _FakePage:
     ) -> None:
         self.url_history: list[str] = []
         self.wait_for_timeout_calls: list[float] = []
+        self.download_timeouts: list[float | None] = []
         self.keyboard = _FakeKeyboard()
         self._by_placeholder: dict[str, _FakeLocator] = {}
         self._by_role: dict[tuple[str, str], _FakeLocator] = {}
@@ -334,6 +335,8 @@ class _FakePage:
         self.wait_for_timeout_calls.append(ms)
 
     def expect_download(self, timeout: float | None = None) -> _FakeDownloadContext:
+        self.download_timeouts.append(timeout)
+
         return _FakeDownloadContext(self._download)
 
     def expect_file_chooser(
@@ -527,6 +530,94 @@ def test_submit_reports_ui_changed_when_attach_button_is_missing(
 
     assert result.state == MuseGenerationState.UI_CHANGED
     assert page.keyboard.typed == []  # never proceeded to type the prompt
+
+
+class _AppearsAfterPolls(_FakeLocator):
+    """A control that is absent for the first `polls` looks, then present - how the
+    "+" button behaves at full window width, where the page keeps drawing after
+    it has loaded."""
+
+    def __init__(self, polls: int) -> None:
+        super().__init__()
+        self._remaining = polls
+        self.looks = 0
+
+    def count(self) -> int:
+        self.looks += 1
+
+        if self._remaining > 0:
+            self._remaining -= 1
+
+            return 0
+
+        return 1
+
+
+def _reference_request(tmp_path: Path):  # type: ignore[no-untyped-def]
+    reference_source = tmp_path / "reference.jpg"
+    reference_source.write_bytes(b"fake reference image bytes")
+
+    return reference_source, _request(
+        reference_assets=[
+            MuseReferenceAsset(
+                source_path=str(reference_source),
+                checksum="abc123",
+                role=MuseReferenceRole.CHARACTER,
+            )
+        ]
+    )
+
+
+def test_a_attach_button_that_appears_a_moment_late_is_waited_for(
+    tmp_path: Path,
+) -> None:
+    """Live, 2026-10-06: at full window width the page was still drawing after it
+    loaded; the "+" button was on screen seconds later but a one-shot check had
+    already declared it missing and stopped scene 2."""
+
+    page = _authenticated_page()
+    late_button = _AppearsAfterPolls(polls=6)
+    page.register_css('[data-pel-click="chat_tap_attachment"]', late_button)
+    adapter = _adapter(page, tmp_path=tmp_path)
+    source, request = _reference_request(tmp_path)
+
+    result = adapter.submit(request, _attempt(request))
+
+    assert result.state == MuseGenerationState.GENERATING
+    assert late_button.looks > 6  # it kept looking until the button arrived
+    assert page.keyboard.typed  # and then went on to type the prompt
+
+
+def test_the_wait_for_the_attach_button_is_bounded(tmp_path: Path) -> None:
+    """It waits, but not forever: a button that never appears still stops the
+    submission before anything is typed (no reference, no send)."""
+
+    page = _authenticated_page()  # no attach button registered
+    adapter = _adapter(page, tmp_path=tmp_path)
+    source, request = _reference_request(tmp_path)
+
+    result = adapter.submit(request, _attempt(request))
+
+    assert result.state == MuseGenerationState.UI_CHANGED
+    assert "did not appear within 20s" in (result.state_history[-1].detail or "")
+    assert page.keyboard.typed == []
+    # polled in half-second steps up to the limit, not one instant check
+    assert len(page.wait_for_timeout_calls) >= 40
+
+
+def test_a_message_box_that_appears_a_moment_late_is_waited_for(
+    tmp_path: Path,
+) -> None:
+    page = _authenticated_page()
+    late_box = _AppearsAfterPolls(polls=4)
+    page.register_placeholder("Message", late_box)
+    adapter = _adapter(page, tmp_path=tmp_path)
+    request = _request()
+
+    result = adapter.submit(request, _attempt(request))
+
+    assert result.state == MuseGenerationState.GENERATING
+    assert late_box.looks > 4
 
 
 # --- observe ---
@@ -804,6 +895,24 @@ def test_download_happy_path_saves_the_file(tmp_path: Path) -> None:
     assert downloaded.state == MuseGenerationState.DOWNLOADED
     assert downloaded.downloaded_file is not None
     assert Path(downloaded.downloaded_file).exists()
+
+
+def test_download_allows_a_slow_start_before_giving_up(tmp_path: Path) -> None:
+    """Live, 2026-10-06: scene 11's video was ready but its download only began
+    after more than the old 30s allowance, so the attempt was failed and blocked
+    the account. The download-start budget must be far longer than a normal
+    click's."""
+
+    page = _authenticated_page()
+    adapter = _adapter(page, tmp_path=tmp_path)
+    request = _request()
+    submitted = adapter.submit(request, _attempt(request))
+    page.register_css("video:not([aria-hidden='true'])", _FakeLocator())
+    page.register_role("button", "Download", _FakeLocator())
+
+    adapter.download(adapter.observe(submitted))
+
+    assert page.download_timeouts == [180_000.0]
 
 
 def test_download_reports_ui_changed_when_no_video_is_present(tmp_path: Path) -> None:

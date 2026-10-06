@@ -544,3 +544,26 @@ def test_compile_sub_clip_prompts_falls_back_to_flat_action_with_no_overlap() ->
     assert "Action progression: The captain surveys the horizon." in (
         prompts[1].prompt_text
     )
+
+
+def test_beat_times_are_whole_or_half_seconds_never_long_fractions() -> None:
+    """Live, 2026-10-06: split windows came out as "[0-1.51914s]" and
+    "[2.66667-5.33333s]" - meaningless precision for a video generator."""
+
+    from src.services.cinematic_prompt_compilation_service import (
+        _beat_time,
+        _beat_window,
+    )
+
+    assert _beat_time(1.51914) == "1.5"
+    assert _beat_time(2.66667) == "2.5"
+    assert _beat_time(7.0) == "7"
+    assert _beat_time(0.0) == "0"
+    assert _beat_window(0, 1.51914) == "[0-1.5s]"
+    assert _beat_window(1.51914, 7) == "[1.5-7s]"
+
+
+def test_a_window_that_rounds_to_nothing_still_has_a_length() -> None:
+    from src.services.cinematic_prompt_compilation_service import _beat_window
+
+    assert _beat_window(2.1, 2.2) == "[2-2.5s]"

@@ -59,6 +59,25 @@ _STANDARD_NEGATIVE_CONSTRAINTS = (
 _USE_SHOT_BY_SHOT_BEATS = True
 
 
+def _beat_time(seconds: float) -> str:
+    """A beat boundary for the prompt: the nearest half second ("1.5", "7"), not
+    "1.51914". A scene is cut into windows at the narration's own length, so the
+    boundaries came out as long fractions that mean nothing to a video generator."""
+
+    return f"{round(seconds * 2) / 2:g}"
+
+
+def _beat_window(start: float, end: float) -> str:
+    """ "[start-end s]" with both ends on half seconds and never an empty window."""
+
+    start_text, end_text = _beat_time(start), _beat_time(end)
+
+    if float(end_text) <= float(start_text):
+        end_text = f"{float(start_text) + 0.5:g}"
+
+    return f"[{start_text}-{end_text}s]"
+
+
 class CinematicPromptCompilationService:
     """
     Post-Script-Approval Production Plan, Phase 4: "Compile shot,
@@ -413,8 +432,8 @@ class CinematicPromptCompilationService:
         usable = sorted(beats, key=lambda beat: beat.start_offset_seconds)
 
         rendered = [
-            f"[{beat.start_offset_seconds * scale:g}-"
-            f"{beat.end_offset_seconds * scale:g}s] {beat.description}"
+            f"{_beat_window(beat.start_offset_seconds * scale, beat.end_offset_seconds * scale)} "
+            f"{beat.description}"
             for beat in usable
         ]
 
@@ -461,8 +480,7 @@ class CinematicPromptCompilationService:
             return None
 
         rendered = [
-            f"[{max(beat.start_offset_seconds, window_start_seconds) - window_start_seconds:g}-"
-            f"{min(beat.end_offset_seconds, window_end_seconds) - window_start_seconds:g}s] "
+            f"{_beat_window(max(beat.start_offset_seconds, window_start_seconds) - window_start_seconds, min(beat.end_offset_seconds, window_end_seconds) - window_start_seconds)} "
             f"{beat.description}"
             for beat in overlapping
         ]

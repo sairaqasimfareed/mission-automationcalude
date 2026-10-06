@@ -717,6 +717,11 @@ def _run_content_intelligence_pipeline_to_scene_planning(
     window._open_project(job.id)
     workspace = window._detail_view
     content_studio = workspace.content_studio
+    # The real app runs automation on a worker thread (so the window stays usable
+    # and each finished stage is saved); this loop drives run/approve cycles
+    # synchronously and reads the job straight after, so it uses the inline mode.
+    # The background path is covered by test_content_studio_background_stages_gui.
+    content_studio._run_stages_in_background = False  # noqa: SLF001
 
     for _ in range(15):
         content_studio._handle_run_automation()

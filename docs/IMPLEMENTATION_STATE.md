@@ -423,6 +423,101 @@ section records what changed and why so a later session does not undo it.
     planning request now asks for BEATS on every scene, starting at 0s, ending at
     the scene duration, with essential information early (still optional to parse,
     so a shot is never dropped for omitting it - the time box above covers that case).
+  - **Split-scene prompts and the Clips tab (2026-10-06, live, Lake Nyos scene 30).**
+    A 12.96s scene on Muse is two clips and the Prompts tab shows two prompts, but the
+    Clips row has one Generate (which makes every part in order) and said nothing about
+    it. The Clips row now says "Will be generated as 2 clips (7s + 7s) - one Generate
+    makes all of them, in order" for an unstarted split scene, and every scene row shows
+    its length: "planned 7s" (Muse rounds up, Flow its 4/6/8s grid) before a clip exists,
+    "clip 7s" / "clips 7s + 7s = 14s" once it does, plus the narration length when known.
+    Also fixed in the same prompt: the split-form duration line "Duration: 6 seconds (part
+    1 of 2)." was never rewritten (the pattern only matched "N seconds."), so a Muse part
+    said 6 next to "trim to only 7 seconds" - the pattern now keeps the "(part x of y)"
+    ending; and beat boundaries are written to the nearest half second ("[0-1.5s]", not
+    "[0-1.51914s]").
+  - **Stages and automation run in the background, saved stage by stage
+    (2026-10-06, live).** A manual-script project's Resume automation made four paid
+    Claude calls on the window's own thread (one 80s), the window froze, Windows
+    logged an Application Hang and it was force-closed: every result was lost because
+    `run_all()` only saved after the WHOLE run (`ProjectWorkspaceView.refresh()` does
+    the save). Then each stage button froze it again (the visual continuity bible took
+    117s on a 32-scene script). Now: `ContentIntelligencePipeline.run_all(job, *,
+    on_stage_complete)` reports every stage that ran (23 call sites wrapped by a `step`
+    helper); `ContentStudioView` runs Resume/Run automation (`_AutomationWorker`) and
+    the production-stage buttons - production directives, visual continuity bible, shot
+    plan, compile/score prompts, and every stage-tab runner (`_StageWorker`) - on a
+    worker thread with its own deep copy of the job, saves a snapshot after each stage
+    (a stage that finished and was paid for is on disk before the next starts), shows a
+    "Working: ..." banner / "Automation running..." button, ignores a second click while
+    one is running (each call is paid for), keeps partial progress and shows the error on
+    failure, and `MainWindow.closeEvent` waits for a running stage (never tearing a QThread
+    down). `run_stages_in_background` is True in the real app (`ProjectWorkspaceView`) and
+    False by default so the ~150 existing tests keep driving the handlers inline. Not
+    converted: the other single-call handlers (script intake/lock/edit, revision,
+    resolve ambiguity, hooks, narrative architecture) still run inline and can still show
+    "Not responding" while Claude replies.
+  - **Muse trim target rounded UP (2026-10-06, live).** Muse is told "trim to only N
+    seconds" in whole seconds and the prompt used the nearest second, so 7.38s of
+    narration got a 7s clip and 4.32s got 4s - the voice ran past the picture.
+    `muse_target_seconds()` (`video_provider_rules.py`) rounds up to the next whole
+    second, floor 3, cap 10; used by `single_clip_seconds`, `finalize_prompt` and the Muse
+    service's target (so the FFmpeg safety trim cannot cut back below it). Split sub-clips
+    are rounded up the same way. Flow is unchanged.
+  - **Reference refresh, and a stricter face gate (2026-10-06, live).** Live
+    inspection of the Remedy project: both characters shared ONE two-person frame, the
+    adult's reference was a dark 3/4 profile (face score 0), and the Kitchen reference was
+    a honey-jar close-up (so every Kitchen scene came out as that jar). New
+    `ReferenceRefreshService` + "Refresh references" button on the Clip check card: re-picks
+    each CHARACTER's reference from the generated footage (a person alone on screen gets only
+    scenes where they are alone; stored references are scored on the same scale as fresh
+    candidates; replaced only when clearly better - +0.10 face score; old asset kept in the
+    index with `refreshed`/`replaced_asset_id` metadata; clips untouched; runs on a copy off the
+    GUI thread, brought back with `apply_to`). Places are NOT refreshed automatically: a
+    sharpness pick cannot tell a place from an object or a text overlay (a trial chose the jar
+    again with a text panel in frame). Testing it on the real project exposed two false
+    "faces", both fixed in `ReferenceFrameSelectionService`: a face box touching a frame edge
+    (a mouth-and-chin crop) is marked down to x0.35 (`visibility_factor`), and the YuNet
+    confidence cut-off is now 0.85 (`DETECTOR_CONFIDENCE`; a decorated jar label scored 0.79 and
+    0.71, real faces 0.89-0.91) - checked on 60 clips: 19 usable vs 20 at 0.6. The location picker
+    also gained a `_spread` factor (detail spread across the frame vs concentrated on one object).
+  - **Muse download start allowed 180s; Muse clips labelled "muse" (2026-10-06, live).**
+    A live Generate all produced clips 1-10 (consistent kitchen/jar, references attached
+    and shown in the Clip check, one-word scenes at the 3s floor) then failed scene 11 at
+    download: "Timeout 30000ms exceeded while waiting for event 'download'" - the reply
+    video was generated but the download began after the old 30s allowance (earlier ones
+    took 1.5-6s). The attempt became UI_CHANGED, which is not terminal, so it counted as
+    in-flight and the next scene failed instantly with NoEligibleMuseAccountError. The
+    download-start budget is now 180s. Not built: resuming the download of an already
+    generated video instead of regenerating (a UI_CHANGED attempt cannot return to
+    READY_TO_DOWNLOAD). Also: both single-clip Muse attach sites left the workflow default
+    provider label "google_flow" on Muse clips; they now pass "muse" (existing clips keep
+    their old label).
+  - **Muse: controls are waited for, not checked once (2026-10-06, live).** Scene 2's
+    regenerate stopped with "The Muse attach ('+') button was not found" while the
+    button was plainly on screen (DevTools showed `data-pel-click="chat_tap_attachment"`
+    present). Muse is a single-page app that keeps drawing after the load event; at full
+    window width (the maximized window) the "+" arrived later than the message box, and
+    `submit()` checked once 1.5s after navigation. `_wait_until_present` now polls (0.5s
+    steps, up to 20s) for the sign-in surface, the message box and the attach button; a
+    control that never appears still stops the submission before anything is typed. The
+    sign-in check is waited for too, so a slow page is no longer reported as "not signed
+    in". Nothing was sent and no credits were spent in the failed attempt.
+  - **Clip check shows which reference each scene used (2026-10-06, continuity
+    step 3 parts C and D).** C: `GoogleFlowReferenceAsset` / `MuseReferenceAsset` gain
+    an optional `identity_name` (the bible identity the picture stands for; None for
+    seam frames and for requests recorded earlier), set by both providers'
+    `_resolve_reference_assets`. D: for every character and place the continuity bible
+    puts ON SCREEN in an AI-generated scene, `ClipAttachmentVerificationService` now
+    reports what became of its reference (`SceneClipVerification.references`):
+    attached (matched by name, or by the picture's checksum for older requests), taken
+    from this scene, made before the reference existed, NOT attached although it
+    existed (WARNING `REFERENCE_NOT_ATTACHED`), or no usable reference at all (WARNING
+    `CHARACTER_WITHOUT_REFERENCE`). The attempt that produced the clip decides (a READY
+    attempt beats a later failed one; any sub-clip carrying it counts). Stock/manual
+    scenes have no attempt and are skipped. The row shows each reference's picture
+    (44px) with a plain-words line; reference problems appear once, on that line.
+    Older reports without the field still load. Not built: the chip-count check at
+    submit and stale-chip handling (parts A and B - need a live Flow/Muse session).
   - **Reference frame chosen per identity type (2026-10-05, same day).** The
     face gate above was first applied to EVERY identity in the continuity bible, so a
     location (no face) would have got no reference where it used to get the last

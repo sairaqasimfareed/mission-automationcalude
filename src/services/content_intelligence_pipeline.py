@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from uuid import UUID
 
 from src.agents.research_agent.agent import ResearchAgent
@@ -1712,7 +1713,12 @@ class ContentIntelligencePipeline:
 
         return self.script_production_readiness_service.evaluate(job)
 
-    def run_all(self, job: VideoJob) -> VideoJob:
+    def run_all(
+        self,
+        job: VideoJob,
+        *,
+        on_stage_complete: Callable[[VideoJob, str], None] | None = None,
+    ) -> VideoJob:
         """
         Run every stage in sequence (Fully Automatic mode), including
         one bounded revision pass if the first quality gate result
@@ -1762,57 +1768,70 @@ class ContentIntelligencePipeline:
         concept to substitute.
         """
 
+        # on_stage_complete(job, stage_name) fires after EVERY stage that ran, so a
+        # caller can save progress as it goes. Live, 2026-10-06: a manual-script
+        # project's Resume automation made four paid Claude calls on the window's
+        # own thread, the window froze, was closed, and every result was lost
+        # because the job was only saved after the whole run finished.
+        def step(name: str, runner: Callable[[VideoJob], VideoJob]) -> VideoJob:
+            result = runner(job)
+
+            if on_stage_complete is not None:
+                on_stage_complete(result, name)
+
+            return result
+
         is_intake_job = job.script_intake_result is not None
 
         if not is_intake_job:
             if job.audience_promise is None:
-                job = self.run_audience_promise(job)
+                job = step("audience_promise", self.run_audience_promise)
             if self.approval_gate_service.is_blocked(job, "content_strategy"):
                 return job
 
             if job.research_plan is None:
-                job = self.run_research_plan(job)
+                job = step("research_plan", self.run_research_plan)
             if self.approval_gate_service.is_blocked(job, "research_plan"):
                 return job
 
             if job.research is None:
-                job = self.run_research(job)
+                job = step("research", self.run_research)
             if self.approval_gate_service.is_blocked(job, "research"):
                 return job
 
             if not job.story_angles:
-                job = self.run_story_angles(job)
+                job = step("story_angles", self.run_story_angles)
             if self.approval_gate_service.is_blocked(job, "story_angle"):
                 return job
 
             if job.story_blueprint is None:
-                job = self.run_narrative_architecture(job)
+                job = step("narrative_architecture", self.run_narrative_architecture)
             if self.approval_gate_service.is_blocked(job, "narrative_architecture"):
                 return job
 
             if job.retention_audit is None:
-                job = self.run_retention_audit(job)
+                job = step("retention_audit", self.run_retention_audit)
             if not job.hook_candidates:
-                job = self.run_hooks(job)
+                job = step("hooks", self.run_hooks)
             if self.approval_gate_service.is_blocked(job, "hook"):
                 return job
 
             if job.writing_directives is None:
-                job = self.run_writing_directives(job)
+                job = step("writing_directives", self.run_writing_directives)
 
             if job.generated_script is None:
-                job = self.run_script(job)
+                job = step("script", self.run_script)
             if self.approval_gate_service.is_blocked(job, "final_script"):
                 return job
 
         if job.continuity_bible is None:
-            job = self.run_continuity_bible(job)
+            job = step("continuity_bible", self.run_continuity_bible)
 
         if not is_intake_job:
             if job.editorial_critique is None:
-                job = self.run_editorial_critique(job)
+                job = step("editorial_critique", self.run_editorial_critique)
             if job.script_quality_report is None:
-                job = self.run_quality_gate(job)
+                job = step("quality_gate", self.run_quality_gate)
 
             needs_revision = (
                 job.script_quality_report is not None
@@ -1823,9 +1842,9 @@ class ContentIntelligencePipeline:
             )
 
             if needs_revision:
-                job = self.run_revision(job)
-                job = self.run_editorial_critique(job)
-                job = self.run_quality_gate(job)
+                job = step("revision", self.run_revision)
+                job = step("editorial_critique", self.run_editorial_critique)
+                job = step("quality_gate", self.run_quality_gate)
 
         approved = (
             job.script_quality_report is not None
@@ -1861,7 +1880,7 @@ class ContentIntelligencePipeline:
             history_before_lock = job.script_version_history
 
             try:
-                job = self.run_script_lock(job)
+                job = step("script_lock", self.run_script_lock)
             except ValueError:
                 job.script_version_history = self.script_version_service.lock_version(
                     history=history_before_lock,
@@ -1869,13 +1888,13 @@ class ContentIntelligencePipeline:
                 )
 
         if not is_intake_job and job.packaging_hypothesis is None:
-            job = self.run_packaging_hypothesis(job)
+            job = step("packaging_hypothesis", self.run_packaging_hypothesis)
 
         if not job.scenes or self.invalidation_service.is_stale(job, "scenes"):
-            job = self.run_scene_planning(job)
+            job = step("scene_planning", self.run_scene_planning)
 
         if job.sound_design_plan is None and job.scenes:
-            job = self.run_sound_design(job)
+            job = step("sound_design", self.run_sound_design)
 
         # REQ-12 (top10 countdown rank cards): only meaningful for
         # this one genre - every other genre's scenes keep
@@ -1893,7 +1912,7 @@ class ContentIntelligencePipeline:
         # with no separate invalidation tracking needed.
         if job.genre_id == "genre.top10" and job.scenes:
             if not any(scene.list_rank is not None for scene in job.scenes):
-                job = self.run_top10_rank_assignment(job)
+                job = step("top10_rank_assignment", self.run_top10_rank_assignment)
 
         # Real-world finding, 2026-09-14: the visual-continuity ->
         # shot-planning -> cinematic-prompt-compilation chain is fully
@@ -1913,11 +1932,14 @@ class ContentIntelligencePipeline:
         # that precondition isn't met.
         if job.script_lock is not None:
             if job.visual_continuity_bible is None:
-                job = self.run_visual_continuity(job)
+                job = step("visual_continuity", self.run_visual_continuity)
             if job.cinematic_shot_plan is None:
-                job = self.run_shot_planning(job)
+                job = step("shot_planning", self.run_shot_planning)
             if job.cinematic_prompt_package is None:
-                job = self.run_cinematic_prompt_compilation(job)
+                job = step(
+                    "cinematic_prompt_compilation",
+                    self.run_cinematic_prompt_compilation,
+                )
 
         return job
 

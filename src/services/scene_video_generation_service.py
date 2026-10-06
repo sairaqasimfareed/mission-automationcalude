@@ -79,7 +79,13 @@ _T = TypeVar("_T")
 # real submission can re-patch it with the real, final duration this
 # scene is about to request. See _submit()'s own real-world-finding
 # comment for why this re-patch exists.
-_DURATION_STATEMENT_PATTERN = re.compile(r"Duration: \d+ seconds\.")
+# Matches both "Duration: 8 seconds." and the split form
+# "Duration: 6 seconds (part 1 of 2)." - group 1 is the ending to keep. Only the
+# first form used to match, so a split Muse prompt kept the compile-time
+# "6 seconds" next to a trim instruction for 7 (live, 2026-10-06, scene 30).
+_DURATION_STATEMENT_PATTERN = re.compile(
+    r"Duration: \d+ seconds(\.| \(part \d+ of \d+\)\.)"
+)
 
 # Matches CinematicPromptCompilationService._render_shot_progression's
 # own exact "[X-Ys]" beat range text
@@ -1133,7 +1139,7 @@ class SceneVideoGenerationService:
         # fallback-to-estimate branch, since that branch's value is
         # exactly what compiled the text in the first place.
         prompt = _DURATION_STATEMENT_PATTERN.sub(
-            f"Duration: {duration_seconds:.0f} seconds.",
+            lambda match: f"Duration: {duration_seconds:.0f} seconds{match.group(1)}",
             prompt,
         )
 
@@ -1495,6 +1501,7 @@ class SceneVideoGenerationService:
                         source_path=str(asset_path),
                         checksum=checksum,
                         role=role,
+                        identity_name=identity.name,
                     )
                 )
 
