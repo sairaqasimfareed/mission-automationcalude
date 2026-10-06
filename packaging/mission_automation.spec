@@ -49,7 +49,7 @@ datas: list[tuple[str, str]] = []
 binaries: list[tuple[str, str]] = []
 hiddenimports: list[str] = []
 
-for package in ("google.genai", "anthropic", "openai", "playwright"):
+for package in ("google.genai", "anthropic", "openai", "playwright", "cv2"):
     package_datas, package_binaries, package_hiddenimports = collect_all(package)
     datas += package_datas
     binaries += package_binaries
@@ -66,6 +66,14 @@ hiddenimports = [
     name for name in hiddenimports if not name.startswith("google.genai.tests")
 ]
 datas = [entry for entry in datas if "genai/tests" not in entry[0].replace("\\", "/")]
+
+# Face-detection model for choosing character reference frames (see
+# models/face/NOTICE.md). The detector is small and bundled; the larger
+# similarity model is fetched on first use.
+datas += [
+    (str(REPO_ROOT / "models" / "face" / "face_detection_yunet_2023mar.onnx"), "models/face"),
+    (str(REPO_ROOT / "models" / "face" / "NOTICE.md"), "models/face"),
+]
 excludes = ["google.genai.tests"]
 
 analysis = Analysis(

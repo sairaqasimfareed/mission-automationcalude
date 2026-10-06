@@ -45,3 +45,6 @@ audit/
 /build/
 # Claude Code session output artifacts (audits, scratch reports)
 Claude outputs/
+
+# large face-similarity model - fetched on first use (see models/face/NOTICE.md)
+models/face/face_recognition_sface_2021dec.onnx

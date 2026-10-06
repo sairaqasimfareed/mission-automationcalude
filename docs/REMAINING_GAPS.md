@@ -628,6 +628,27 @@ re-render, leftover stage files, stored duration) and the broad
   extracted frame), and the attach check uses `.first`, so it cannot
   confirm the Nth attachment. Not yet changed - needs a live Flow check.
 
+## Known limits of the 2026-10-05 reference frame selection
+
+- The score does not check open eyes: in the test a clip's best frame (score 0.94)
+  had the character's eyes closed. A usable frame is not guaranteed a good one.
+- A scene introducing several NEW PEOPLE still gives them all the same frame (the
+  best face in it); telling two people apart in one frame is not built. (A person
+  and a place in one scene do get separate frames.)
+- A location frame is the sharpest one with no face dominating - it cannot tell a
+  place from an object, so a detail-rich close-up can win (a gun's mechanism was
+  chosen over a wider shot in the test). Props and vehicles are not identities in
+  the bible yet, so they get no reference at all.
+- A split scene still takes its reference from the last sub-clip only, not the best
+  frame across all of them.
+- `REFERENCE_MIN_SCORE` 0.5 and the size/frontal weights come from one test on 60
+  clips (about 20 with a person) - confirm on more footage.
+- Not built yet from the continuity plan: replacing a weak reference when a later
+  scene gives a clearly better frame (the score is stored for it), checking that the
+  reference chip is really attached before submit, showing the reference used in the
+  Clip check, the per-project continuity level, and the SFace similarity check.
+- Muse: whether a reference actually changes what Muse draws is unmeasured.
+
 ## Known limits of the 2026-10-03 clip check
 
 - It cannot judge whether a clip's picture matches its narration - that is what

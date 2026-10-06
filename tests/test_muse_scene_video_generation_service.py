@@ -224,6 +224,7 @@ def _service(
     registry: ProviderRegistry | None = None,
     frame_extraction_service: FrameExtractionService | None = None,
     asset_storage_service: AssetStorageService | None = None,
+    reference_frame_selection_service: object | None = None,
 ) -> MuseSceneVideoGenerationService:
     return MuseSceneVideoGenerationService(
         orchestrator=_orchestrator(provider, registry=registry),
@@ -233,6 +234,7 @@ def _service(
         sleep_fn=lambda _: None,
         frame_extraction_service=frame_extraction_service,
         asset_storage_service=asset_storage_service,
+        reference_frame_selection_service=reference_frame_selection_service,  # type: ignore[arg-type]
     )
 
 
@@ -1490,3 +1492,261 @@ def test_a_scene_at_or_above_the_floor_is_sized_exactly_as_before(
     service.generate_one(job, 1)
 
     assert "to only 4 seconds video." in provider.submitted_prompts[0]
+
+
+# --- reference frame chosen by face quality (2026-10-05) ---
+
+
+def _selection_service(*, faces_by_frame):  # type: ignore[no-untyped-def]
+    """A real ReferenceFrameSelectionService with a stub detector and fake frames,
+    so the wiring is exercised without OpenCV or a real face."""
+
+    from src.services.reference_frame_selection_service import (
+        ReferenceFrameSelectionService,
+        SampledFrame,
+    )
+
+    class _Detector:
+        def detect(self, frame):  # type: ignore[no-untyped-def]
+            return faces_by_frame[frame]
+
+    frames = [
+        SampledFrame(index=i, time_seconds=float(i), image=i)
+        for i in range(len(faces_by_frame))
+    ]
+
+    return ReferenceFrameSelectionService(
+        detector=_Detector(),
+        availability_check=lambda: True,
+        frame_reader=lambda _path, _count: frames,
+        image_writer=lambda image, path: Path(path).write_bytes(
+            f"frame-{image}".encode()
+        )
+        > 0,
+    )
+
+
+def _good_face():  # type: ignore[no-untyped-def]
+    from src.services.reference_frame_selection_service import DetectedFace
+
+    return DetectedFace(
+        width=120,
+        frame_width=640,
+        detection_score=0.95,
+        right_eye_x=300,
+        left_eye_x=340,
+        nose_x=320,
+    )
+
+
+def _profile_face():  # type: ignore[no-untyped-def]
+    from src.services.reference_frame_selection_service import DetectedFace
+
+    return DetectedFace(
+        width=120,
+        frame_width=640,
+        detection_score=0.95,
+        right_eye_x=300,
+        left_eye_x=340,
+        nose_x=372,
+    )
+
+
+def test_muse_reference_is_the_best_face_frame_not_the_last_frame(
+    tmp_path: Path,
+) -> None:
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            MuseGenerationState.GENERATING,
+            MuseGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    provider.downloaded_file = str(_real_video_file(tmp_path))
+    frame_extraction, commands = _frame_extraction_service(tmp_path)
+    asset_storage = AssetStorageService(
+        storage_root=tmp_path / "storage", asset_index=AssetIndex()
+    )
+    selection = _selection_service(
+        faces_by_frame={0: [_profile_face()], 1: [_good_face()], 2: [_profile_face()]}
+    )
+    service = _service(
+        provider,
+        frame_extraction_service=frame_extraction,
+        asset_storage_service=asset_storage,
+        reference_frame_selection_service=selection,
+    )
+    job = _job(_scene(1))
+    job.visual_continuity_bible = _continuity_bible(scene_numbers=[1])
+
+    service.generate_one(job, 1)
+
+    assert commands == []
+    identity = job.visual_continuity_bible.identities[0]
+    asset = job.extracted_frame_asset_index.get(identity.reference_asset_ids[0])
+    assert asset is not None
+    assert Path(asset.file_path).read_bytes() == b"frame-1"
+    assert asset.metadata["selection_method"] == "best_face"
+
+
+def test_muse_stores_no_reference_when_no_frame_shows_a_clear_face(
+    tmp_path: Path,
+) -> None:
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            MuseGenerationState.GENERATING,
+            MuseGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    provider.downloaded_file = str(_real_video_file(tmp_path))
+    frame_extraction, commands = _frame_extraction_service(tmp_path)
+    asset_storage = AssetStorageService(
+        storage_root=tmp_path / "storage", asset_index=AssetIndex()
+    )
+    selection = _selection_service(faces_by_frame={0: [_profile_face()], 1: []})
+    service = _service(
+        provider,
+        frame_extraction_service=frame_extraction,
+        asset_storage_service=asset_storage,
+        reference_frame_selection_service=selection,
+    )
+    job = _job(_scene(1))
+    job.visual_continuity_bible = _continuity_bible(scene_numbers=[1])
+
+    service.generate_one(job, 1)
+
+    assert job.visual_continuity_bible.identities[0].reference_asset_ids == []
+    assert commands == []
+    assert any("no usable reference frame" in w for w in job.warnings)
+
+
+def _bible_with_a_person_and_a_place(scene_number: int = 1):  # type: ignore[no-untyped-def]
+    from src.models.visual_continuity import (
+        CanonicalEntityIdentity,
+        CanonicalEntityType,
+        ClipContinuityEntry,
+        VisualContinuityBible,
+        VisualState,
+    )
+
+    return VisualContinuityBible(
+        script_lock_hash="a" * 64,
+        identities=[
+            CanonicalEntityIdentity(
+                entity_type=CanonicalEntityType.PERSON,
+                name="Jack Reid",
+                canonical_description="A weathered farmer.",
+            ),
+            CanonicalEntityIdentity(
+                entity_type=CanonicalEntityType.LOCATION,
+                name="Reid Farm",
+                canonical_description="A dusty wheat farm.",
+            ),
+        ],
+        clip_entries=[
+            ClipContinuityEntry(
+                scene_number=scene_number,
+                incoming_state=VisualState(),
+                shot_action="Surveys the field.",
+                outgoing_state=VisualState(),
+                entity_names=["Jack Reid", "Reid Farm"],
+                on_screen_entity_names=["Jack Reid", "Reid Farm"],
+            )
+        ],
+    )
+
+
+def _person_and_place_selection(*, person_visible: bool):  # type: ignore[no-untyped-def]
+    """Frame 0 is a sharp wide shot of the place with nobody in it; frame 1 is a
+    softer close-up of the person (when they are visible)."""
+
+    from src.services.reference_frame_selection_service import (
+        ReferenceFrameSelectionService,
+        SampledFrame,
+    )
+
+    class _Detector:
+        def detect(self, frame):  # type: ignore[no-untyped-def]
+            return [_good_face()] if frame == 1 and person_visible else []
+
+    sharp = {0: 220.0, 1: 90.0}
+    frames = [SampledFrame(index=i, time_seconds=float(i), image=i) for i in (0, 1)]
+
+    return ReferenceFrameSelectionService(
+        detector=_Detector(),
+        availability_check=lambda: True,
+        frame_reader=lambda _p, _c: frames,
+        image_writer=lambda image, path: Path(path).write_bytes(
+            f"frame-{image}".encode()
+        )
+        > 0,
+        sharpness_scorer=lambda image: sharp[image],
+    )
+
+
+def test_muse_person_and_place_in_one_scene_get_their_own_frames(
+    tmp_path: Path,
+) -> None:
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            MuseGenerationState.GENERATING,
+            MuseGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    provider.downloaded_file = str(_real_video_file(tmp_path))
+    frame_extraction, commands = _frame_extraction_service(tmp_path)
+    asset_storage = AssetStorageService(
+        storage_root=tmp_path / "storage", asset_index=AssetIndex()
+    )
+    service = _service(
+        provider,
+        frame_extraction_service=frame_extraction,
+        asset_storage_service=asset_storage,
+        reference_frame_selection_service=_person_and_place_selection(
+            person_visible=True
+        ),
+    )
+    job = _job(_scene(1))
+    job.visual_continuity_bible = _bible_with_a_person_and_a_place()
+
+    service.generate_one(job, 1)
+
+    person, place = job.visual_continuity_bible.identities
+    person_asset = job.extracted_frame_asset_index.get(person.reference_asset_ids[0])
+    place_asset = job.extracted_frame_asset_index.get(place.reference_asset_ids[0])
+
+    assert person_asset is not None and place_asset is not None
+    assert Path(person_asset.file_path).read_bytes() == b"frame-1"
+    assert Path(place_asset.file_path).read_bytes() == b"frame-0"
+    assert commands == []
+
+
+def test_muse_location_still_gets_a_reference_when_nobody_is_in_the_scene(
+    tmp_path: Path,
+) -> None:
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            MuseGenerationState.GENERATING,
+            MuseGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    provider.downloaded_file = str(_real_video_file(tmp_path))
+    frame_extraction, _ = _frame_extraction_service(tmp_path)
+    asset_storage = AssetStorageService(
+        storage_root=tmp_path / "storage", asset_index=AssetIndex()
+    )
+    service = _service(
+        provider,
+        frame_extraction_service=frame_extraction,
+        asset_storage_service=asset_storage,
+        reference_frame_selection_service=_person_and_place_selection(
+            person_visible=False
+        ),
+    )
+    job = _job(_scene(1))
+    job.visual_continuity_bible = _bible_with_a_person_and_a_place()
+
+    service.generate_one(job, 1)
+
+    person, place = job.visual_continuity_bible.identities
+    assert person.reference_asset_ids == []
+    assert len(place.reference_asset_ids) == 1

@@ -423,6 +423,45 @@ section records what changed and why so a later session does not undo it.
     planning request now asks for BEATS on every scene, starting at 0s, ending at
     the scene duration, with essential information early (still optional to parse,
     so a shot is never dropped for omitting it - the time box above covers that case).
+  - **Reference frame chosen per identity type (2026-10-05, same day).** The
+    face gate above was first applied to EVERY identity in the continuity bible, so a
+    location (no face) would have got no reference where it used to get the last
+    frame - caught on review. The reference now follows what the bible says the
+    identity IS (`reference_kind_for`, from `CanonicalEntityType`): a PERSON gets the
+    best front-facing face frame (gated, may be none); a LOCATION gets the frame that
+    shows the place best - the sharpest sampled frame, marked down where a face fills
+    the shot, with no minimum (`ReferenceKind.ENVIRONMENT`). A scene introducing a
+    person and a place stores two different frames (asset title and metadata carry
+    `reference_kind`). One shared `extract_references_for_identities` replaces the
+    duplicated block in the Flow and Muse services. Checked on 12 real clips: the
+    monument at sunset, wheat field and room interiors were chosen over close-ups;
+    ~3 s per clip (was 15-20 s) after switching to one in-order decode at 640px.
+  - **Character reference chosen by face quality (2026-10-05).** A character's
+    reference used to be the LAST frame of its first on-screen clip - blind, and the
+    real cause of an unusable side-profile reference (2026-09-21). New
+    `ReferenceFrameSelectionService` (`src/services/reference_frame_selection_service.py`)
+    samples 8 frames across the clip (decoded once in order, detected at 640px wide),
+    scores each by OpenCV YuNet face confidence x face size x how frontal it is
+    (nose position between the eyes), and keeps the best; below `REFERENCE_MIN_SCORE`
+    (0.5) it returns NO reference - a profile or tiny face makes every later scene of
+    that character worse than text-only continuity. Local, free, no LLM. Tested first
+    on 60 real Flow clips: usable frames 25 (best-of-8) vs 16 (last frame); >=0.5: 19
+    vs 12. Both `_extract_reference_for_new_identities` (Flow and Muse) go through the
+    shared `pick_reference_frame`: no selection service, or OpenCV/model unavailable,
+    falls back to the old last-frame grab, so an install without OpenCV behaves as
+    before. No qualifying frame leaves the identity eligible (its next on-screen scene
+    tries again) and adds a job warning. The score and method are stored in the
+    reference asset's metadata (`selection_method`, `reference_score`,
+    `reference_time_seconds`) for a later "replace if clearly better" step. The
+    sub-clip seam frame (previous clip's last frame -> next sub-clip's first frame)
+    is deliberately unchanged. New dependency `opencv-python-headless` (headless: the
+    standard build bundles its own Qt, which clashes with PySide6) and `numpy`
+    pinned in `requirements.txt`; PyInstaller spec collects `cv2` and bundles the
+    detector. Models in `models/face/` (see `NOTICE.md`): YuNet detector (0.2 MB, MIT,
+    committed); SFace similarity model (38 MB, Apache-2.0) is git-ignored and not used
+    yet - it is for the later face-similarity continuity check (same-person scores
+    were 0.60-0.80 and different people 0.0-0.41 in the test, so a cut-off of about
+    0.5 rather than SFace's own 0.363).
   - **Long lists collapse (2026-10-04, live).** The Clip check, Scenes and
     Generated audio cards each built one row per scene, so a 70-100 scene project
     was a very long scroll. New `ExpandableList` (`src/desktop/widgets.py`) shows

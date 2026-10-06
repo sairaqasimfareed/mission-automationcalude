@@ -56,6 +56,9 @@ from src.services.project_render_runtime_factory import (
 from src.services.provider_profile_management_service import (
     ProviderProfileManagementService,
 )
+from src.services.reference_frame_selection_service import (
+    ReferenceFrameSelectionService,
+)
 from src.services.registry.provider_profile_repository import (
     JsonProviderProfileRepository,
 )
@@ -834,6 +837,19 @@ def get_frame_extraction_service() -> FrameExtractionService:
 
 
 @lru_cache
+def get_reference_frame_selection_service() -> ReferenceFrameSelectionService:
+    """
+    Picks each character's reference frame by looking for a clear, front-facing
+    face (local OpenCV detector - no LLM, no network). Stateless apart from the
+    lazily loaded model, so one shared instance is fine. Where OpenCV or the
+    model file is missing it reports itself unavailable and references fall
+    back to the last frame, as before.
+    """
+
+    return ReferenceFrameSelectionService()
+
+
+@lru_cache
 def get_extracted_frame_asset_storage_service() -> AssetStorageService:
     """
     Shared storage wrapper for frames this codebase extracts itself
@@ -893,6 +909,7 @@ def get_scene_video_generation_service() -> SceneVideoGenerationService:
         provider=get_google_flow_real_ui_adapter(),
         profile_management_service=get_provider_profile_management_service(),
         frame_extraction_service=get_frame_extraction_service(),
+        reference_frame_selection_service=get_reference_frame_selection_service(),
         asset_storage_service=get_extracted_frame_asset_storage_service(),
     )
 
@@ -970,6 +987,7 @@ def get_muse_scene_video_generation_service() -> MuseSceneVideoGenerationService
         orchestrator=get_muse_generation_orchestrator_service(),
         asset_workflow_service=get_asset_workflow_service(),
         frame_extraction_service=get_frame_extraction_service(),
+        reference_frame_selection_service=get_reference_frame_selection_service(),
         asset_storage_service=get_extracted_frame_asset_storage_service(),
     )
 

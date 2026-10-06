@@ -55,6 +55,10 @@ from src.services.narration_duration_sync_service import (
 from src.services.provider_profile_management_service import (
     ProviderProfileManagementService,
 )
+from src.services.reference_frame_selection_service import (
+    ReferenceFrameSelectionService,
+    extract_references_for_identities,
+)
 from src.services.registry.provider_registry import ProviderRegistry
 from src.services.scene_asset_video_clip_builder_service import (
     SceneAssetVideoClipBuilderService,
@@ -235,6 +239,7 @@ class SceneVideoGenerationService:
         sleep_fn: Callable[[float], None] = time.sleep,
         estimated_cost_usd_per_scene: float = 0.0,
         frame_extraction_service: FrameExtractionService | None = None,
+        reference_frame_selection_service: ReferenceFrameSelectionService | None = None,
         asset_storage_service: AssetStorageService | None = None,
         cinematic_prompt_compilation_service: (
             CinematicPromptCompilationService | None
@@ -263,6 +268,8 @@ class SceneVideoGenerationService:
         # service reproduces its exact prior behavior - no frame
         # extraction, no reference population.
         self._frame_extraction_service = frame_extraction_service
+        # Optional: without it a reference is the last frame, as before.
+        self._reference_frame_selection_service = reference_frame_selection_service
         self._asset_storage_service = asset_storage_service
         self._cinematic_prompt_compilation_service = (
             cinematic_prompt_compilation_service or CinematicPromptCompilationService()
@@ -1376,44 +1383,19 @@ class SceneVideoGenerationService:
         if clip is None or clip.local_file is None or clip.duration_seconds <= 0:
             return
 
-        try:
-            with tempfile.TemporaryDirectory() as temp_directory:
-                staged_frame_path = (
-                    f"{temp_directory}/scene_{scene.scene_number:03d}_last_frame.jpg"
-                )
-
-                extracted_path = self._frame_extraction_service.extract_last_frame(
-                    video_path=clip.local_file,
-                    video_duration_seconds=float(clip.duration_seconds),
-                    output_path=staged_frame_path,
-                )
-
-                result = self._asset_storage_service.store_extracted_frame(
-                    source_path=extracted_path,
-                    project_id=str(job.id),
-                    scene_number=scene.scene_number,
-                    title=f"Reference - scene {scene.scene_number}",
-                )
-        except Exception as error:
-            logger.warning(
-                "Reference frame extraction failed for scene %s: %s",
-                scene.scene_number,
-                type(error).__name__,
-            )
-
-            return
-
-        if not result.success or result.asset is None:
-            logger.warning(
-                "Storing the extracted reference frame failed for scene %s: %s",
-                scene.scene_number,
-                result.message,
-            )
-
-            return
-
-        for identity in new_identities:
-            identity.reference_asset_ids = [str(result.asset.id)]
+        # Each identity's reference is chosen for what it is (see the shared
+        # function's docstring): a person by their best face, a place by the
+        # frame that shows it best - and nothing at all when no frame is good
+        # enough, since a bad reference is worse than none.
+        extract_references_for_identities(
+            job=job,
+            scene=scene,
+            clip=clip,
+            identities=new_identities,
+            selection_service=self._reference_frame_selection_service,
+            frame_extraction_service=self._frame_extraction_service,
+            asset_storage_service=self._asset_storage_service,
+        )
 
     def _resolve_reference_assets(
         self, job: VideoJob, scene: Scene

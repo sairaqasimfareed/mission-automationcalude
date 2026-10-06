@@ -271,6 +271,7 @@ def _service(
     profile_management_service: object | None = None,
     frame_extraction_service: FrameExtractionService | None = None,
     asset_storage_service: AssetStorageService | None = None,
+    reference_frame_selection_service: object | None = None,
 ) -> SceneVideoGenerationService:
     return SceneVideoGenerationService(
         orchestrator=_orchestrator(
@@ -285,6 +286,7 @@ def _service(
         sleep_fn=lambda _: None,
         frame_extraction_service=frame_extraction_service,
         asset_storage_service=asset_storage_service,
+        reference_frame_selection_service=reference_frame_selection_service,  # type: ignore[arg-type]
     )
 
 
@@ -2254,3 +2256,350 @@ def test_generate_one_sizes_the_clip_from_the_voice_track_when_the_scene_field_i
     assert scene.real_narration_duration_seconds == 5.5
     request = job.flow_generation_attempts[0].request
     assert request.execution_settings.duration_seconds == 6.0
+
+
+# --- reference frame chosen by face quality (2026-10-05) ---
+
+
+def _selection_service(*, faces_by_frame):  # type: ignore[no-untyped-def]
+    """A real ReferenceFrameSelectionService with a stub detector and fake frames,
+    so the wiring is exercised without OpenCV or a real face."""
+
+    from src.services.reference_frame_selection_service import (
+        ReferenceFrameSelectionService,
+        SampledFrame,
+    )
+
+    class _Detector:
+        def detect(self, frame):  # type: ignore[no-untyped-def]
+            return faces_by_frame[frame]
+
+    frames = [
+        SampledFrame(index=i, time_seconds=float(i), image=i)
+        for i in range(len(faces_by_frame))
+    ]
+
+    return ReferenceFrameSelectionService(
+        detector=_Detector(),
+        availability_check=lambda: True,
+        frame_reader=lambda _path, _count: frames,
+        image_writer=lambda image, path: Path(path).write_bytes(
+            f"frame-{image}".encode()
+        )
+        > 0,
+    )
+
+
+def _good_face():  # type: ignore[no-untyped-def]
+    from src.services.reference_frame_selection_service import DetectedFace
+
+    return DetectedFace(
+        width=120,
+        frame_width=640,
+        detection_score=0.95,
+        right_eye_x=300,
+        left_eye_x=340,
+        nose_x=320,
+    )
+
+
+def _profile_face():  # type: ignore[no-untyped-def]
+    from src.services.reference_frame_selection_service import DetectedFace
+
+    return DetectedFace(
+        width=120,
+        frame_width=640,
+        detection_score=0.95,
+        right_eye_x=300,
+        left_eye_x=340,
+        nose_x=372,
+    )
+
+
+def test_a_reference_is_the_best_face_frame_not_the_last_frame(tmp_path: Path) -> None:
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            GoogleFlowGenerationState.GENERATING,
+            GoogleFlowGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    provider.downloaded_file = str(_real_video_file(tmp_path))
+    frame_extraction, commands = _frame_extraction_service()
+    asset_storage = AssetStorageService(
+        storage_root=tmp_path / "storage", asset_index=AssetIndex()
+    )
+    # frame 0 profile, frame 1 clean front-on, frame 2 (the last) profile
+    selection = _selection_service(
+        faces_by_frame={0: [_profile_face()], 1: [_good_face()], 2: [_profile_face()]}
+    )
+    service = _service(
+        provider,
+        frame_extraction_service=frame_extraction,
+        asset_storage_service=asset_storage,
+        reference_frame_selection_service=selection,
+    )
+    job = _job(_scene(1))
+    job.visual_continuity_bible = _continuity_bible(scene_numbers=[1])
+
+    service.generate_one(job, 1)
+
+    assert commands == []  # the blind last-frame grab was NOT used
+    identity = job.visual_continuity_bible.identities[0]
+    asset = asset_storage.asset_index.get(identity.reference_asset_ids[0])
+    assert asset is not None
+    assert Path(asset.file_path).read_bytes() == b"frame-1"
+    assert asset.metadata["selection_method"] == "best_face"
+    assert asset.metadata["reference_score"] >= 0.5
+
+
+def test_no_reference_is_stored_when_no_frame_shows_a_clear_face(
+    tmp_path: Path,
+) -> None:
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            GoogleFlowGenerationState.GENERATING,
+            GoogleFlowGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    provider.downloaded_file = str(_real_video_file(tmp_path))
+    frame_extraction, commands = _frame_extraction_service()
+    asset_storage = AssetStorageService(
+        storage_root=tmp_path / "storage", asset_index=AssetIndex()
+    )
+    selection = _selection_service(faces_by_frame={0: [_profile_face()], 1: []})
+    service = _service(
+        provider,
+        frame_extraction_service=frame_extraction,
+        asset_storage_service=asset_storage,
+        reference_frame_selection_service=selection,
+    )
+    job = _job(_scene(1))
+    job.visual_continuity_bible = _continuity_bible(scene_numbers=[1])
+
+    service.generate_one(job, 1)
+
+    identity = job.visual_continuity_bible.identities[0]
+    assert identity.reference_asset_ids == []  # a bad reference is worse than none
+    assert commands == []  # and it did not fall back to the last frame
+    assert any("no usable reference frame" in w for w in job.warnings)
+    assert [
+        c for c in job.video_clips if c.scene_number == 1
+    ]  # the clip itself is fine
+
+
+def test_an_identity_with_no_reference_gets_another_chance_next_scene(
+    tmp_path: Path,
+) -> None:
+    """A scene that gave no usable face leaves the identity eligible, so the next
+    scene featuring them tries again."""
+
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            GoogleFlowGenerationState.GENERATING,
+            GoogleFlowGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    provider.downloaded_file = str(_real_video_file(tmp_path))
+    frame_extraction, _ = _frame_extraction_service()
+    asset_storage = AssetStorageService(
+        storage_root=tmp_path / "storage", asset_index=AssetIndex()
+    )
+    bad = _selection_service(faces_by_frame={0: []})
+    service = _service(
+        provider,
+        frame_extraction_service=frame_extraction,
+        asset_storage_service=asset_storage,
+        reference_frame_selection_service=bad,
+    )
+    job = _job(_scene(1), _scene(2))
+    job.visual_continuity_bible = _continuity_bible(scene_numbers=[1, 2])
+
+    service.generate_one(job, 1)
+    identity = job.visual_continuity_bible.identities[0]
+    assert identity.reference_asset_ids == []
+
+    provider._observe_sequence = [  # noqa: SLF001
+        GoogleFlowGenerationState.GENERATING,
+        GoogleFlowGenerationState.READY_TO_DOWNLOAD,
+    ]
+    service._reference_frame_selection_service = _selection_service(  # noqa: SLF001
+        faces_by_frame={0: [_good_face()]}
+    )
+    service.generate_one(job, 2)
+
+    assert len(identity.reference_asset_ids) == 1
+
+
+def test_without_a_selection_service_the_last_frame_is_still_used(
+    tmp_path: Path,
+) -> None:
+    """An install with no OpenCV behaves exactly as before."""
+
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            GoogleFlowGenerationState.GENERATING,
+            GoogleFlowGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    provider.downloaded_file = str(_real_video_file(tmp_path))
+    frame_extraction, commands = _frame_extraction_service()
+    asset_storage = AssetStorageService(
+        storage_root=tmp_path / "storage", asset_index=AssetIndex()
+    )
+    service = _service(
+        provider,
+        frame_extraction_service=frame_extraction,
+        asset_storage_service=asset_storage,
+    )
+    job = _job(_scene(1))
+    job.visual_continuity_bible = _continuity_bible(scene_numbers=[1])
+
+    service.generate_one(job, 1)
+
+    assert len(commands) == 1
+    identity = job.visual_continuity_bible.identities[0]
+    asset = asset_storage.asset_index.get(identity.reference_asset_ids[0])
+    assert asset is not None
+    assert asset.metadata["selection_method"] == "last_frame"
+
+
+def _bible_with_a_person_and_a_place(scene_number: int = 1):  # type: ignore[no-untyped-def]
+    from src.models.visual_continuity import (
+        CanonicalEntityIdentity,
+        CanonicalEntityType,
+        ClipContinuityEntry,
+        VisualContinuityBible,
+        VisualState,
+    )
+
+    return VisualContinuityBible(
+        script_lock_hash="a" * 64,
+        identities=[
+            CanonicalEntityIdentity(
+                entity_type=CanonicalEntityType.PERSON,
+                name="Jack Reid",
+                canonical_description="A weathered farmer.",
+            ),
+            CanonicalEntityIdentity(
+                entity_type=CanonicalEntityType.LOCATION,
+                name="Reid Farm",
+                canonical_description="A dusty wheat farm.",
+            ),
+        ],
+        clip_entries=[
+            ClipContinuityEntry(
+                scene_number=scene_number,
+                incoming_state=VisualState(),
+                shot_action="Surveys the field.",
+                outgoing_state=VisualState(),
+                entity_names=["Jack Reid", "Reid Farm"],
+                on_screen_entity_names=["Jack Reid", "Reid Farm"],
+            )
+        ],
+    )
+
+
+def _person_and_place_selection(*, person_visible: bool):  # type: ignore[no-untyped-def]
+    """Frame 0 is a sharp wide shot of the place with nobody in it; frame 1 is a
+    softer close-up of the person (when they are visible)."""
+
+    from src.services.reference_frame_selection_service import (
+        ReferenceFrameSelectionService,
+        SampledFrame,
+    )
+
+    class _Detector:
+        def detect(self, frame):  # type: ignore[no-untyped-def]
+            return [_good_face()] if frame == 1 and person_visible else []
+
+    sharp = {0: 220.0, 1: 90.0}
+    frames = [SampledFrame(index=i, time_seconds=float(i), image=i) for i in (0, 1)]
+
+    return ReferenceFrameSelectionService(
+        detector=_Detector(),
+        availability_check=lambda: True,
+        frame_reader=lambda _p, _c: frames,
+        image_writer=lambda image, path: Path(path).write_bytes(
+            f"frame-{image}".encode()
+        )
+        > 0,
+        sharpness_scorer=lambda image: sharp[image],
+    )
+
+
+def test_a_person_and_a_place_in_one_scene_get_their_own_frames(tmp_path: Path) -> None:
+    """The reference follows the continuity bible's identity, not the clip: the
+    person from the frame showing their face, the farm from the frame showing the
+    farm."""
+
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            GoogleFlowGenerationState.GENERATING,
+            GoogleFlowGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    provider.downloaded_file = str(_real_video_file(tmp_path))
+    frame_extraction, commands = _frame_extraction_service()
+    asset_storage = AssetStorageService(
+        storage_root=tmp_path / "storage", asset_index=AssetIndex()
+    )
+    service = _service(
+        provider,
+        frame_extraction_service=frame_extraction,
+        asset_storage_service=asset_storage,
+        reference_frame_selection_service=_person_and_place_selection(
+            person_visible=True
+        ),
+    )
+    job = _job(_scene(1))
+    job.visual_continuity_bible = _bible_with_a_person_and_a_place()
+
+    service.generate_one(job, 1)
+
+    person, place = job.visual_continuity_bible.identities
+    person_asset = asset_storage.asset_index.get(person.reference_asset_ids[0])
+    place_asset = asset_storage.asset_index.get(place.reference_asset_ids[0])
+
+    assert person_asset is not None and place_asset is not None
+    assert Path(person_asset.file_path).read_bytes() == b"frame-1"  # the face
+    assert Path(place_asset.file_path).read_bytes() == b"frame-0"  # the place
+    assert person_asset.metadata["reference_kind"] == "person"
+    assert place_asset.metadata["reference_kind"] == "environment"
+    assert commands == []
+
+
+def test_a_location_still_gets_a_reference_when_nobody_is_in_the_scene(
+    tmp_path: Path,
+) -> None:
+    """Regression guard for the face gate: a place has no face, and must not be
+    left without a reference because of it."""
+
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            GoogleFlowGenerationState.GENERATING,
+            GoogleFlowGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    provider.downloaded_file = str(_real_video_file(tmp_path))
+    frame_extraction, _ = _frame_extraction_service()
+    asset_storage = AssetStorageService(
+        storage_root=tmp_path / "storage", asset_index=AssetIndex()
+    )
+    service = _service(
+        provider,
+        frame_extraction_service=frame_extraction,
+        asset_storage_service=asset_storage,
+        reference_frame_selection_service=_person_and_place_selection(
+            person_visible=False
+        ),
+    )
+    job = _job(_scene(1))
+    job.visual_continuity_bible = _bible_with_a_person_and_a_place()
+
+    service.generate_one(job, 1)
+
+    person, place = job.visual_continuity_bible.identities
+    assert person.reference_asset_ids == []  # no face anywhere: none, with a warning
+    assert len(place.reference_asset_ids) == 1  # the place does not need one
+    assert any("Jack Reid" in w for w in job.warnings)
+    assert not any("Reid Farm" in w for w in job.warnings)

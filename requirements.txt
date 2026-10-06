@@ -4,7 +4,9 @@ anthropic==0.120.2
 google-auth==2.56.2
 google-genai==2.16.0
 keyring==25.6.0
+numpy==2.5.3
 openai==2.53.0
+opencv-python-headless==5.0.0.93
 platformdirs==4.3.8
 playwright==1.62.0
 pydantic==2.13.4
