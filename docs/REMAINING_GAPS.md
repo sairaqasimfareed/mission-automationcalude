@@ -653,6 +653,51 @@ re-render, leftover stage files, stored duration) and the broad
   Dashboard and the Flow/Muse panels rebuild lists rather than card stacks and were
   not changed; if one of them jumps to the top it needs `keep_scroll_on_refresh`.
   Confirmed in the offscreen tests, not yet re-checked by hand in the running app.
+- **PRIORITY - aspect ratio (16:9 / 9:16) chosen when a project is created, for YouTube,
+  Facebook and TikTok** (requested 2026-10-07; not built). The New Project form has only a
+  Platform dropdown; output is fixed at 1920x1080 and prompts say nothing about the shape.
+  Wanted: after choosing the platform, offer 16:9 or 9:16 (stored on the project, default
+  16:9); for 9:16 every clip prompt gets an explicit vertical sentence, for 16:9 nothing is
+  added (it is Muse's default).
+  *Muse findings (operator's own tests, files inspected 2026-10-07):* a bare "Resolution
+  9:16." tag at the end of a prompt came back as a 16:9 picture with blurred bars top and
+  bottom. Asking explicitly, in words, for no crop / no letterbox / no blurred bars returned
+  a true native vertical clip: 720x1280 (Muse's normal clips are 1280x720), 8.0 s, full
+  frame, sharp; the 8 s duration was obeyed. Three clips so far (a close-up, a regenerated
+  close-up, an infographic) with the sentence AT THE END of the prompt:
+  `Vertical 9:16 portrait video, true full-frame vertical composition, no crop, no letterbox,
+  no blurred bars. Compose natively for vertical: main subject centered and fully inside the
+  frame.` (operator confirmed this exact sentence works in Muse.) What the operator called "cropped" was composition (a face cut by the frame edge),
+  fixed by the "centered and fully inside the frame" half. Muse's own chat claims about its
+  output are not reliable (it said "nothing cut at the edges" while a hand still ran off the
+  frame) - judge the file. Not yet known: whether it holds in a fresh chat (the app returns
+  to the same long Muse chat before each submit, so Muse may remember the instruction).
+  *Also needed:* shot planning told the ratio so compositions suit a tall frame ("balanced
+  two-shot", "symmetrical" are 16:9 words); a 1080x1920 timeline, portrait title card and CTA
+  end card, subtitle placement, portrait thumbnail; Flow should set its own aspect-ratio
+  control (its automation can already click it) instead of using prompt wording; the
+  export-variant card stays exactly as it is, offering both resolutions (operator
+  decision 2026-10-07); changing the ratio after clips exist must warn and invalidate them. Related: the
+  graphic-scene text rule is still not sent, and the 9:16 infographic repeated the problem
+  (added "safely", dropped "modestly", an invented "Source:" line and a "Trusted Info" badge).
+- **PRIORITY (build with the 9:16 work) - AI-written claims on infographic (graphic) scenes**
+  (found 2026-10-07; plan agreed, not built). The graphic-scene text rule exists on the stored
+  prompt but is never sent, so Muse writes its own text. Remedy and the 9:16 test infographic
+  both showed it: "safely" where the narration said "can be given", "modestly" dropped from
+  "modestly reduce nighttime coughing", "Strongest clinical evidence" for "most of the
+  stronger evidence", an invented "Source: Pediatric medical guidelines & clinical trials"
+  line and a "Trusted Info" badge, "5ml" labels on icons - on medical content. Plan, in order:
+  (1) send an explicit text rule for graphic scenes at the end of the prompt, next to the 9:16
+  sentence, e.g. `On-screen text rule: use only the words of this narration: "<narration>".
+  You may arrange them as a headline and short points, but add no other words: no sources,
+  citations, badges, "trusted" labels, numbers, labels on icons, or stronger wording. Keep the
+  narration's own qualifiers such as "can", "may" and "modestly".` - test it first on the
+  9:16 infographic scene and compare; (2) flag graphic scenes in the Clip check as "check the
+  on-screen text yourself" (human check, no new software); (3) only if Muse still adds
+  claims: OCR the generated clip and compare it with the narration (needs an OCR tool bundled
+  in the installer), or, for medical topics, draw the infographic text ourselves and use Muse
+  for the background only (safest, biggest build). Scenes that are not graphics are left
+  alone - the operator likes on-screen text there.
 - **To build - from the 2026-10-07 Remedy render review** (operator asked for these to be
   tracked here; none is built):
   1. "Choose another frame" picker for a character's or place's reference: show several
@@ -665,9 +710,7 @@ re-render, leftover stage files, stored duration) and the broad
   4. Regenerate the clips with picture problems: scene 5's leaked "Evidence-Based Benefits"
      panel, scene 15's mother and baby (different look, no baby reference), the woman who
      changes between scenes. Needs credits and the characters-and-places form.
-  5. The 1:24 length against the 2:00 target - a script decision (more narration or scenes),
-     not a code change.
-  6. Fast title-card join. `TitleCardPrependService` joins the title card with FFmpeg's concat
+  5. Fast title-card join. `TitleCardPrependService` joins the title card with FFmpeg's concat
      FILTER, which re-encodes the whole finished render (libx264 medium, crf 20) to add a few
      seconds at the front - slow on this machine (the video pass alone took 28 min). It was
      chosen because a stream-copy join of mismatched files once silently cut the audio short.
@@ -679,7 +722,7 @@ re-render, leftover stage files, stored duration) and the broad
      but glitches at the seam or in some hardware players, a small audio click where two copied
      AAC streams meet; the main render is never touched and the fallback keeps today's quality.
      Needs real-FFmpeg tests. The export-variant end-clip join could reuse it later. Not built.
-  7. Room between scenes - a per-genre hold after each narrated line. Clips are sized to the
+  6. Room between scenes - a per-genre hold after each narrated line. Clips are sized to the
      narration (rounded up to the provider's lengths), so there is no designed pause between
      scenes, only accidental slack (the trailing silence in each voice file, the round-up,
      Muse's 3 s floor); genre only changes the pause style inside a line. Planned: the clip
@@ -690,7 +733,7 @@ re-render, leftover stage files, stored duration) and the broad
      10 s and trims; Flow clips are already 4/6/8 s); a Remedy-sized video grows by roughly
      5-10 s. Open: fixed numbers or settable per project. Touches clip sizing for both Flow
      and Muse and the audio timeline offsets; needs tests across both providers. Not built.
-  8. Uploaded watermark image looks like a picture overlay and starts at the wrong moment
+  7. Uploaded watermark image looks like a picture overlay and starts at the wrong moment
      (reported 2026-10-07 on Remedy's export variant). Cause in `ExportVariantRenderService.
      _watermark_image_clause`: the image is overlaid at full opacity at a fixed share of the
      frame width, and the overlay is enabled `between(t,0,...)` - by design "visible from the
@@ -700,7 +743,7 @@ re-render, leftover stage files, stored duration) and the broad
      like a watermark (semi-transparent, small, in a corner - an opacity setting) and start
      when the title card ends (title-card length known from the title-card clip/service), not
      at t=0. Not built.
-  9. Subtitle burning option on all three renders (requested 2026-10-07; the earlier "run
+  8. Subtitle burning option on all three renders (requested 2026-10-07; the earlier "run
      combinations / one button for everything" wish was dropped - the renders stay separate
      buttons as they are). Today subtitles are burned only inside the main render
      (`render_stage` -> `PostRenderSubtitleBurnService`, the Render tab's subtitle toggle), so
@@ -708,8 +751,28 @@ re-render, leftover stage files, stored duration) and the broad
      option, and wanting subtitles on a video that is already rendered means re-rendering it.
      Wanted: a subtitle burn option on each of the three - main render, title-card render and
      CTA render - that burns the project's subtitles (current caption style) at that point,
-     without touching the original file. Interacts with item 6 (each pass re-encodes today) and
-     item 8 (the watermark must start after the title card). Not built.
+     without touching the original file. Interacts with item 5 (each pass re-encodes today) and
+     item 7 (the watermark must start after the title card). Not built.
+  9. **PRIORITY - auto-generated project look and characters/places, picked or discarded by
+     the operator** (raised 2026-10-07; the operator cannot fill the two forms in Content
+     Studio > Production handoff by hand, so they must not start blank; not built). Behaviour
+     wanted: the app proposes entries on its own and each one can be accepted or discarded;
+     typing one by hand stays possible but is no longer the main route.
+     - Project look: candidate looks (lighting / colour palette / camera feel) shown as cards
+       with Use / Discard - from the genre's ready-made looks and, once clips exist, measured
+       from the generated footage (brightness, colour warmth, saturation written as words).
+       Deterministic, free. Using one fills and saves the look and recompiles the prompts.
+     - Characters and places: after the continuity bible and shot plan exist, one Claude call
+       over ALL scenes at once proposes the recurring people and places, each as an entry with
+       name, kind, description and scenes, with Accept / Discard (and edit before accepting).
+       Accepted entries become identities exactly as the manual form creates them (reference
+       picked from the generated clips of their scenes). Candidates and the accept/discard
+       state live on the VideoJob (not only in the window) so they survive a restart and a
+       discarded one is not proposed again. Later, the stronger detector: recurring faces
+       found in the generated clips (the already-downloaded, not yet used SFace model - it
+       would also tell people apart in a shared frame), offered as "Person A appears in scenes
+       3, 9, 12, 16" with a thumbnail; needs the model bundled in the installer.
+     Costs one small Claude call per suggestion run for characters; none for the look.
 - Negative constraints are stored on every compiled prompt but never sent to Muse or Flow
   (see IMPLEMENTATION_STATE, 2026-10-07). Needs a decision on what to send: an "Avoid:" line
   with the identity/subject/continuity rules and "no logos or watermarks", the exact-text rule
@@ -736,7 +799,8 @@ re-render, leftover stage files, stored duration) and the broad
   the cut. Touches clip sizing for both Flow and Muse and the audio timeline offsets.
 - Not code: clip content (a panel leaking into scene 5's clip, scene 15's different-looking
   mother and baby, the woman changing between scenes, AI-written infographic claims) needs
-  regenerating those clips, and the video length (1:24 against 2:00) is a script decision.
+  regenerating those clips. (The 1:24 length against the 2:00 target was dropped as a gap
+  on 2026-10-07 - left as it is.)
 - A Muse download that times out leaves an unfinished (UI_CHANGED) attempt that counts as
   in-flight and blocks the account; resuming the download of an already-generated video is
   not built, so it costs a regeneration.
