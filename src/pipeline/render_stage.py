@@ -227,6 +227,37 @@ class RenderPipelineStage(BasePipelineStage):
             started_at=start_time,
         )
 
+    @staticmethod
+    def _with_color_corrections(
+        job: VideoJob, timeline: VideoTimeline
+    ) -> VideoTimeline:
+        """The timeline to render: when the project has colour matching on, a copy whose
+        clips carry the corrections kept on the job's own clips. The timeline holds
+        snapshots of the clips from when it was built, so a correction measured later
+        would otherwise never reach the render. Off (the default) returns the timeline
+        itself."""
+
+        if not job.color_matching_enabled:
+            return timeline
+
+        corrections = {
+            (clip.scene_number, clip.clip_sequence_index): clip.color_correction
+            for clip in job.video_clips
+            if clip.color_correction is not None
+        }
+
+        if not corrections:
+            return timeline
+
+        updated = timeline.model_copy(deep=True)
+
+        for item in updated.items:
+            item.clip.color_correction = corrections.get(
+                (item.scene_number, item.clip_sequence_index)
+            )
+
+        return updated
+
     def _execute_production_render(
         self,
         *,
@@ -243,6 +274,8 @@ class RenderPipelineStage(BasePipelineStage):
 
         if video_timeline is None:
             raise RuntimeError("Production render requires " "VideoJob.video_timeline.")
+
+        video_timeline = self._with_color_corrections(context.job, video_timeline)
 
         unfiltered_audio_timeline = context.job.audio_timeline
 

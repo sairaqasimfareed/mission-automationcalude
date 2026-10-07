@@ -166,7 +166,13 @@ def test_bulk_assign_button_disabled_with_no_selection(
     view.set_job(job.id)
     view.refresh(job)
 
-    assert len(view.findChildren(QCheckBox)) == 3
+    # the three scene boxes (the colour matching option is a fourth checkbox)
+    scene_boxes = [
+        box
+        for box in view.findChildren(QCheckBox)
+        if not box.text().startswith("Match colours")
+    ]
+    assert len(scene_boxes) == 3
     assert _bulk_assign_button(view).isEnabled() is False
 
 

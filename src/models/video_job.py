@@ -110,6 +110,10 @@ class VideoJob(MissionBaseModel):
     # src/services/scene_hold.py). None = the genre's own default; 0 = off.
     scene_hold_seconds: float | None = Field(default=None, ge=0.0, le=3.0)
 
+    # Bring the clips toward one shared look when rendering (each clip's own
+    # correction is measured by ClipColorMatchingService and kept on the clip).
+    color_matching_enabled: bool = False
+
     # Distinct from production_mode above (render quality/cost
     # tradeoff) - this controls how much human review each content
     # decision point requires. Defaults to the conservative

@@ -62,6 +62,10 @@ from src.services.clip_attachment_verification_service import (
     ClipAttachmentVerificationService,
     clip_signature,
 )
+from src.services.clip_color_matching_service import (
+    ClipColorMatchingService,
+    ColorMatchingReport,
+)
 from src.services.google_flow_generation_orchestrator_service import (
     GoogleFlowAttemptCreditSensitiveError,
 )
@@ -291,6 +295,32 @@ class _ReferenceRefreshWorker(QObject):
         self.finished.emit((self._job, report))
 
 
+class _ColorMatchWorker(QObject):
+    """Measures the clips' colours off the Qt main thread (it decodes frames of every
+    generated clip). Works on a deep copy; the corrections are brought back onto the
+    real job on the GUI thread with ClipColorMatchingService.apply_to."""
+
+    finished = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, *, service: ClipColorMatchingService, job: VideoJob) -> None:
+        super().__init__()
+
+        self._service = service
+        self._job = job
+        self.job_id = job.id
+
+    def run(self) -> None:
+        try:
+            report = self._service.match(self._job)
+        except Exception as error:  # noqa: BLE001 - reported to the UI thread
+            self.failed.emit(str(error))
+
+            return
+
+        self.finished.emit((self._job, report))
+
+
 class ClipWorkspaceView(QWidget):
     """
     Clip Workspace: per-scene duration and resolved-clip review, plus
@@ -345,6 +375,10 @@ class ClipWorkspaceView(QWidget):
                 storage_root=Path("data/extracted_frames"),
             )
         )
+        self._color_matching_service = ClipColorMatchingService()
+        self._matching_job_ids: set[UUID] = set()
+        self._match_threads: dict[UUID, tuple[QThread, _ColorMatchWorker]] = {}
+        self._match_notices: dict[UUID, tuple[str, str]] = {}
         self._refreshing_job_ids: set[UUID] = set()
         self._refresh_threads: dict[UUID, tuple[QThread, _ReferenceRefreshWorker]] = {}
         # What the last refresh did, shown under the buttons. Feedback about an
@@ -506,6 +540,8 @@ class ClipWorkspaceView(QWidget):
 
         if notice is not None:
             layout.addWidget(status_label(notice[0], role=notice[1]))
+
+        self._build_color_matching_controls(layout, job, checking=checking)
 
         report = job.clip_verification_report
 
@@ -730,6 +766,144 @@ class ClipWorkspaceView(QWidget):
         line.addWidget(label, stretch=1)
 
         return line
+
+    # ------------------------------------------------------- colour matching
+
+    def _build_color_matching_controls(
+        self, layout: QVBoxLayout, job: VideoJob, *, checking: bool
+    ) -> None:
+        """Bring the generated clips toward one shared look. Off by default; the
+        measuring button works out each clip's mild correction, and the render applies
+        them while the checkbox is on. The clip files are never changed."""
+
+        matching = job.id in self._matching_job_ids
+        has_clips = any(clip.local_file for clip in job.video_clips)
+
+        checkbox = QCheckBox("Match colours between scenes when rendering")
+        checkbox.setChecked(job.color_matching_enabled)
+        checkbox.setToolTip(
+            "Each clip is nudged a little toward the typical brightness, colour and "
+            "warmth of the video so a bright clip does not jump out between dark ones."
+        )
+        checkbox.toggled.connect(self._handle_color_matching_toggled)
+        layout.addWidget(checkbox)
+
+        measure_button = button(
+            "Measuring..." if matching else "Measure clip colours", icon_name="clapper"
+        )
+        measure_button.setEnabled(
+            has_clips
+            and not matching
+            and not checking
+            and job.id not in self._generating_job_ids
+        )
+        measure_button.clicked.connect(self._handle_match_colours)
+        layout.addLayout(row(measure_button))
+
+        notice = self._match_notices.get(job.id)
+
+        if notice is not None:
+            layout.addWidget(status_label(notice[0], role=notice[1]))
+        elif any(clip.color_correction is not None for clip in job.video_clips):
+            layout.addWidget(
+                small_muted(
+                    "Corrections are measured - they are applied at render while the "
+                    "box above is ticked."
+                )
+            )
+
+    def _handle_color_matching_toggled(self, checked: bool) -> None:
+        job = self._current_job()
+
+        if job is None or job.color_matching_enabled == checked:
+            return
+
+        job.color_matching_enabled = checked
+        self._job_store.add(job)
+        self._on_change()
+
+    def _handle_match_colours(self) -> None:
+        job = self._current_job()
+
+        if job is None or job.id in self._matching_job_ids:
+            return
+
+        thread = QThread()
+        worker = _ColorMatchWorker(
+            service=self._color_matching_service, job=job.model_copy(deep=True)
+        )
+        worker.moveToThread(thread)
+        thread.job_id = job.id  # type: ignore[attr-defined]
+
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._handle_match_finished)
+        worker.failed.connect(self._handle_match_failed)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        thread.finished.connect(self._handle_match_thread_finished)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+
+        self._match_threads[job.id] = (thread, worker)
+        self._matching_job_ids.add(job.id)
+        self._match_notices.pop(job.id, None)
+
+        self._rebuild_card(job)
+
+        thread.start()
+
+    def _handle_match_finished(self, result: object) -> None:
+        worker = self.sender()
+
+        if not isinstance(worker, _ColorMatchWorker):
+            return
+
+        job_id = worker.job_id
+        self._matching_job_ids.discard(job_id)
+
+        if not isinstance(result, tuple) or len(result) != 2:
+            return
+
+        matched, report = result
+        job = self._job_store.get(job_id)
+
+        if job is not None and isinstance(report, ColorMatchingReport):
+            ClipColorMatchingService.apply_to(job, matched)
+
+            if report.corrected_count and not job.color_matching_enabled:
+                job.color_matching_enabled = True
+
+            self._job_store.add(job)
+            self._match_notices[job_id] = (
+                report.text(),
+                "success" if report.corrected_count else "warning",
+            )
+
+        if job_id == self._job_id:
+            self._on_change()
+
+    def _handle_match_failed(self, message: str) -> None:
+        worker = self.sender()
+
+        if not isinstance(worker, _ColorMatchWorker):
+            return
+
+        job_id = worker.job_id
+        self._matching_job_ids.discard(job_id)
+        self._match_notices[job_id] = (
+            f"Colours could not be measured: {message}",
+            "error",
+        )
+
+        if job_id == self._job_id:
+            self._on_change()
+
+    def _handle_match_thread_finished(self) -> None:
+        thread = self.sender()
+        job_id = getattr(thread, "job_id", None)
+
+        if job_id is not None:
+            self._match_threads.pop(job_id, None)
 
     def _handle_refresh_references(self) -> None:
         job = self._current_job()

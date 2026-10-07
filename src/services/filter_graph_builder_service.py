@@ -384,6 +384,51 @@ class FilterGraphBuilderService:
                 ),
             ]
 
+            correction = video_node.payload.get("color_correction")
+
+            if isinstance(correction, dict):
+                # Shot-to-shot colour matching: a mild correction after the clip is
+                # normalised, so it sits with the others (see ColorCorrection).
+                corrected_label = (
+                    f"scene_{scene_number}_{clip_sequence_index}_color_matched"
+                )
+                eq_label = f"scene_{scene_number}_{clip_sequence_index}_color_eq"
+                normalization_nodes.extend(
+                    [
+                        FilterNode(
+                            media_type=(FilterMediaType.VIDEO),
+                            filter_name="eq",
+                            input_labels=[normalized_label],
+                            output_labels=[eq_label],
+                            options={
+                                "brightness": self._format_number(
+                                    round(float(correction.get("brightness", 0.0)), 4)
+                                ),
+                                "saturation": self._format_number(
+                                    round(float(correction.get("saturation", 1.0)), 4)
+                                ),
+                            },
+                            source_render_node_id=str(video_node.id),
+                        ),
+                        FilterNode(
+                            media_type=(FilterMediaType.VIDEO),
+                            filter_name="colorchannelmixer",
+                            input_labels=[eq_label],
+                            output_labels=[corrected_label],
+                            options={
+                                "rr": self._format_number(
+                                    round(float(correction.get("red_gain", 1.0)), 4)
+                                ),
+                                "bb": self._format_number(
+                                    round(float(correction.get("blue_gain", 1.0)), 4)
+                                ),
+                            },
+                            source_render_node_id=str(video_node.id),
+                        ),
+                    ]
+                )
+                normalized_label = corrected_label
+
             chains.append(
                 FilterChain(
                     media_type=(FilterMediaType.VIDEO),

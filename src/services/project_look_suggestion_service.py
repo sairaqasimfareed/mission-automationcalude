@@ -251,7 +251,7 @@ class ProjectLookSuggestionService:
                 continue
 
             for frame in frames:
-                measured = _measure(frame.image)
+                measured = measure_frame(frame.image)
 
                 if measured is not None:
                     brightness.append(measured[0])
@@ -289,7 +289,7 @@ def _camera_feel_for(genre_id: str) -> str:
     return looks[0][3]
 
 
-def _measure(image: object) -> tuple[float, float, float] | None:
+def measure_frame(image: object) -> tuple[float, float, float] | None:
     """(brightness 0-255, saturation 0-255, warmth = red minus blue) of one frame."""
 
     try:

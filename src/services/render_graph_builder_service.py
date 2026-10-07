@@ -606,6 +606,15 @@ class RenderGraphBuilderService:
                 "local_file": (item.clip.local_file),
                 "source_url": (item.clip.source_url),
                 "clip_id": str(item.clip.id),
+                # Only a real correction is carried; None leaves the clip untouched.
+                "color_correction": (
+                    item.clip.color_correction.model_dump(
+                        include={"brightness", "saturation", "red_gain", "blue_gain"}
+                    )
+                    if item.clip.color_correction is not None
+                    and not item.clip.color_correction.is_identity
+                    else None
+                ),
             },
         )
 

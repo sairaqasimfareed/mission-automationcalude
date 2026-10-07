@@ -712,7 +712,8 @@ re-render, leftover stage files, stored duration) and the broad
      re-runs the automatic choice.
   2. One continuous music track per video instead of several separately generated pieces
      joined with 1 s fades (a piece can decay to near-silence before its slot ends).
-  3. A shared colour grade / shot-to-shot colour matching across scenes (see the locked
+  3. BUILT 2026-10-07 (see IMPLEMENTATION_STATE; mild nudge only, measured on demand) -
+     A shared colour grade / shot-to-shot colour matching across scenes (see the locked
      editing list).
   4. Regenerate the clips with picture problems: scene 5's leaked "Evidence-Based Benefits"
      panel, scene 15's mother and baby (different look, no baby reference), the woman who

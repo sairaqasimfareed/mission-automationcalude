@@ -813,6 +813,25 @@ section records what changed and why so a later session does not undo it.
     a successful stage) and opens `ReferenceCandidatesDialog` (thumbnails with scene and
     time, "Use this frame"). One frame per clip, not several per clip. Tests in
     `tests/test_recurring_identity_service.py`.
+  - **Shot-to-shot colour matching (2026-10-07).** Generated clips come back with their own
+    exposure and colour (Remedy: a bright daylight clip between dark warm ones). New
+    `ClipColorMatchingService` measures every generated live-action clip's brightness,
+    saturation and warmth (the same frame measuring as the look suggestions), takes the
+    median as the video's typical look and gives each clip a mild bounded
+    `ColorCorrection` (brightness at most +-0.12, saturation x0.8-1.25, red/blue gain
+    +-8%, 70% of the gap closed) kept on `VideoClip.color_correction` (None when already
+    close); graphic scenes, stock and manual clips are left alone; at least 3 clips
+    needed. `VideoJob.color_matching_enabled` (default off). At render
+    (`RenderPipelineStage._with_color_corrections`, a copy of the timeline carrying the
+    job's current corrections - the timeline's own clips are snapshots) the correction
+    reaches the node payload (`RenderGraphBuilderService._video_node`) and the filter
+    graph adds `eq` + `colorchannelmixer` right after the clip's normalisation. Clips tab:
+    "Match colours between scenes when rendering" checkbox and "Measure clip colours"
+    (off the GUI thread; turns matching on when it found something; reports what changed
+    in plain words). The clip files are never changed. Tests: `tests/test_color_matching.py`
+    (including a real FFmpeg check). Limits: it nudges, it does not re-grade, so a very
+    different clip ends up closer, not identical; measuring is manual (re-run after
+    regenerating clips); no per-scene override.
   - Fixed: a scroll-restore timer firing after its tab was deleted raised "Internal C++
     object already deleted" (seen in the full suite); the restore now ignores it.
   - The fallback to the composite render now catches only the new

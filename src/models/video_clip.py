@@ -6,6 +6,7 @@ from pydantic import Field, model_validator
 
 from src.models.asset_provenance import AssetQCStatus
 from src.models.base import MissionBaseModel
+from src.models.color_correction import ColorCorrection
 from src.models.media_strategy import (
     SceneSourceStatus,
     SceneSourceType,
@@ -50,6 +51,11 @@ class VideoClip(MissionBaseModel):
 
     acquisition_time_seconds: float = 0.0
     estimated_cost: float = 0.0
+
+    # A mild correction that brings this clip toward the video's typical colour
+    # (set by ClipColorMatchingService; applied at render when the project has
+    # colour matching on). None = left exactly as generated.
+    color_correction: ColorCorrection | None = None
 
     source_status: SceneSourceStatus = SceneSourceStatus.PENDING
     status: VideoClipStatus = VideoClipStatus.PENDING
