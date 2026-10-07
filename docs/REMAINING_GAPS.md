@@ -759,8 +759,9 @@ re-render, leftover stage files, stored duration) and the broad
      CTA render - that burns the project's subtitles (current caption style) at that point,
      without touching the original file. Interacts with item 5 (each pass re-encodes today) and
      item 7 (the watermark must start after the title card). Not built.
-  9. **PRIORITY - auto-generated project look and characters/places, picked or discarded by
-     the operator** (raised 2026-10-07; the operator cannot fill the two forms in Content
+  9. **Auto-generated project look and characters/places, picked or discarded by the
+     operator - BUILT 2026-10-07 (see IMPLEMENTATION_STATE); still to do: the face-based
+     detector below, and trying it on a real project.** Original request: (raised 2026-10-07; the operator cannot fill the two forms in Content
      Studio > Production handoff by hand, so they must not start blank; not built). Behaviour
      wanted: the app proposes entries on its own and each one can be accepted or discarded;
      typing one by hand stays possible but is no longer the main route.

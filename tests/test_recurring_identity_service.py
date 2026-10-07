@@ -507,7 +507,9 @@ def test_the_section_offers_a_form_for_a_new_character_or_place(qapp) -> None:  
     view._render_recurring_identities_section(layout, job)  # noqa: SLF001
 
     assert len(holder.findChildren(QLineEdit)) == 3
-    assert [b.text() for b in holder.findChildren(QPushButton)] == ["Add to the video"]
+    buttons = [b.text() for b in holder.findChildren(QPushButton)]
+    assert "Add to the video" in buttons
+    assert "Suggest characters and places" in buttons
 
 
 def test_saving_the_form_adds_the_identity_and_recompiles_the_prompts(qapp) -> None:  # type: ignore[no-untyped-def]

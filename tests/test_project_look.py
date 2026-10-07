@@ -261,7 +261,10 @@ def test_the_form_shows_three_separate_fields_filled_from_the_project(
         "muted, desaturated documentary colours",
         "handheld documentary realism",
     ]
-    assert [b.text() for b in holder.findChildren(QPushButton)] == ["Save project look"]
+    buttons = [b.text() for b in holder.findChildren(QPushButton)]
+    assert "Save project look" in buttons
+    # the suggested looks sit above the fields, each with Use / Discard
+    assert buttons.count("Use this look") == buttons.count("Discard") >= 1
 
 
 def test_saving_stores_the_look_and_recompiles_the_prompts(

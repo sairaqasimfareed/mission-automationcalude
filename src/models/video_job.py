@@ -62,6 +62,7 @@ from src.models.sound_design_plan import SoundDesignPlan
 from src.models.specification_enums import AspectRatio
 from src.models.story_angle import StoryAngle, StoryAngleEvaluation
 from src.models.story_blueprint import StoryBlueprint
+from src.models.suggestions import IdentitySuggestion, LookSuggestion
 from src.models.thumbnail import ThumbnailTextPosition
 from src.models.topic_candidate import TopicCandidate
 from src.models.video_clip import VideoClip
@@ -474,6 +475,12 @@ class VideoJob(MissionBaseModel):
     # repeated word for word in every scene's compiled prompt so the look
     # does not drift between separately generated clips. None = not set.
     project_look: ProjectLook | None = None
+
+    # Candidates the app proposes on its own for the operator to accept or discard
+    # (see src/models/suggestions.py). Their status is kept here so a discarded one is
+    # not proposed again and the list survives a restart.
+    look_suggestions: list[LookSuggestion] = Field(default_factory=list)
+    identity_suggestions: list[IdentitySuggestion] = Field(default_factory=list)
 
     policy_report: PolicyComplianceReport | None = None
 

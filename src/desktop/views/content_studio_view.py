@@ -63,6 +63,7 @@ from src.models.script_selection_edit import (
 )
 from src.models.script_version import ScriptVersionComparison
 from src.models.story_angle import StoryAngle, StoryAngleStyle
+from src.models.suggestions import IdentitySuggestion, SuggestionStatus
 from src.models.topic_candidate import TopicCandidate
 from src.models.video_job import VideoJob
 from src.models.video_provider import VideoProvider
@@ -79,6 +80,9 @@ from src.services.enriched_scene_prompt_service import EnrichedScenePromptServic
 from src.services.fact_check_service import FactCheckService
 from src.services.genre_profile_registry_service import (
     GenreProfileRegistryService,
+)
+from src.services.project_look_suggestion_service import (
+    ProjectLookSuggestionService,
 )
 from src.services.recurring_identity_service import (
     RecurringIdentityService,
@@ -346,6 +350,9 @@ class ContentStudioView(QWidget):
             "scenes": "",
         }
         self._editing_identity_name: str | None = None
+        # The suggestion the form was filled from, so saving marks it accepted.
+        self._form_suggestion_id: UUID | None = None
+        self._look_suggestion_service = ProjectLookSuggestionService()
 
         # True in the real app: a stage button runs its Claude call on a worker
         # thread and the window stays usable. False runs it inline - how the
@@ -2064,6 +2071,8 @@ class ContentStudioView(QWidget):
 
         look = job.project_look or ProjectLook()
 
+        self._ensure_look_suggestions(job)
+
         layout.addWidget(badge("Project look"))
         layout.addWidget(
             small_muted(
@@ -2106,6 +2115,7 @@ class ContentStudioView(QWidget):
             form.addRow(label, field)
 
         self._project_look_inputs = inputs
+        self._render_look_suggestions(layout, job)
         layout.addLayout(form)
 
         save_button = button("Save project look", variant="primary")
@@ -2363,12 +2373,12 @@ class ContentStudioView(QWidget):
             row.addStretch()
             layout.addLayout(row)
 
+        self._render_identity_suggestions(layout, job)
+
         editing = self._editing_identity_name
 
         layout.addWidget(
-            small_muted(
-                f"Editing {editing}." if editing else "Add a character or place:"
-            )
+            small_muted(f"Editing {editing}." if editing else "Or add one yourself:")
         )
 
         form = QFormLayout()
@@ -2428,6 +2438,246 @@ class ContentStudioView(QWidget):
         row.addStretch()
         layout.addLayout(row)
 
+    # ---------------------------------------------------- suggestions (look)
+
+    def _ensure_look_suggestions(self, job: VideoJob) -> None:
+        """The genre's ready-made looks are proposed the first time the section is
+        shown (free, no Claude call), so the operator never faces blank fields."""
+
+        if job.look_suggestions:
+            return
+
+        job.look_suggestions = self._look_suggestion_service.genre_suggestions(job)
+        self._job_store.add(job)
+
+    def _render_look_suggestions(self, layout: QVBoxLayout, job: VideoJob) -> None:
+        pending = [
+            s for s in job.look_suggestions if s.status == SuggestionStatus.PENDING
+        ]
+
+        layout.addWidget(
+            small_muted(
+                "Suggested looks - press Use to fill and save one, or Discard the ones "
+                "you do not want."
+                if pending
+                else "No more suggested looks."
+            )
+        )
+
+        for suggestion in pending:
+            layout.addWidget(badge(suggestion.label))
+            layout.addWidget(
+                small_muted(
+                    f"Lighting: {suggestion.lighting}  |  Colour palette: "
+                    f"{suggestion.color_palette}  |  Camera feel: {suggestion.camera_feel}"
+                )
+            )
+            row = QHBoxLayout()
+            use_button = button("Use this look", variant="primary")
+            use_button.clicked.connect(
+                lambda _checked=False, i=suggestion.id: self._handle_use_look(i)
+            )
+            discard_button = button("Discard", variant="ghost")
+            discard_button.clicked.connect(
+                lambda _checked=False, i=suggestion.id: self._handle_discard_look(i)
+            )
+            row.addWidget(use_button)
+            row.addWidget(discard_button)
+            row.addStretch()
+            layout.addLayout(row)
+
+        measure_button = button("Suggest a look from my clips", variant="ghost")
+        measure_button.clicked.connect(self._handle_suggest_look_from_clips)
+        layout.addWidget(measure_button, alignment=_LEFT)
+
+    def _handle_use_look(self, suggestion_id: UUID) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        suggestion = next(
+            (s for s in job.look_suggestions if s.id == suggestion_id), None
+        )
+
+        if suggestion is None:
+            return
+
+        suggestion.status = SuggestionStatus.ACCEPTED
+        self._apply_project_look(
+            job,
+            {
+                "lighting": suggestion.lighting,
+                "color_palette": suggestion.color_palette,
+                "camera_feel": suggestion.camera_feel,
+            },
+        )
+
+    def _handle_discard_look(self, suggestion_id: UUID) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        for suggestion in job.look_suggestions:
+            if suggestion.id == suggestion_id:
+                suggestion.status = SuggestionStatus.DISCARDED
+
+        self._job_store.add(job)
+        self._on_change()
+
+    def _handle_suggest_look_from_clips(self) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        service = self._look_suggestion_service
+
+        def runner(target: VideoJob) -> VideoJob:
+            fresh = service.clips_suggestion(target)
+
+            if fresh is None:
+                raise ValueError(
+                    "There are no generated clips to measure yet - generate a few "
+                    "clips first."
+                )
+
+            if fresh.key in {s.key for s in target.look_suggestions}:
+                raise ValueError("The look of your clips is already in the list.")
+
+            target.look_suggestions.insert(0, fresh)
+
+            return target
+
+        self._run_stage(
+            job,
+            runner,
+            label="looks from your clips",
+            failure="Could not suggest a look from your clips",
+        )
+
+    # ------------------------------------------- suggestions (characters, places)
+
+    def _render_identity_suggestions(self, layout: QVBoxLayout, job: VideoJob) -> None:
+        pending = [
+            s for s in job.identity_suggestions if s.status == SuggestionStatus.PENDING
+        ]
+
+        layout.addWidget(
+            small_muted(
+                "Suggested characters and places found in your script - Accept to add "
+                "one, Edit to change it first, or Discard."
+                if pending
+                else "No suggested characters or places right now."
+            )
+        )
+
+        for suggestion in pending:
+            scenes = format_scene_numbers(suggestion.scene_numbers)
+            layout.addWidget(
+                small_muted(
+                    f"{suggestion.kind.value.title()}: {suggestion.name} - "
+                    f"{suggestion.description}  |  Scenes: {scenes}"
+                )
+            )
+            row = QHBoxLayout()
+            accept_button = button("Accept", variant="primary")
+            accept_button.clicked.connect(
+                lambda _checked=False, i=suggestion.id: (
+                    self._handle_accept_identity_suggestion(i)
+                )
+            )
+            edit_button = button("Edit first", variant="ghost")
+            edit_button.clicked.connect(
+                lambda _checked=False, i=suggestion.id: (
+                    self._handle_edit_identity_suggestion(i)
+                )
+            )
+            discard_button = button("Discard", variant="ghost")
+            discard_button.clicked.connect(
+                lambda _checked=False, i=suggestion.id: (
+                    self._handle_discard_identity_suggestion(i)
+                )
+            )
+            row.addWidget(accept_button)
+            row.addWidget(edit_button)
+            row.addWidget(discard_button)
+            row.addStretch()
+            layout.addLayout(row)
+
+        suggest_button = button("Suggest characters and places", variant="ghost")
+        suggest_button.clicked.connect(self._handle_suggest_identities)
+        layout.addWidget(suggest_button, alignment=_LEFT)
+
+    def _identity_suggestion(self, suggestion_id: UUID) -> IdentitySuggestion | None:
+        job = self._current_job()
+
+        if job is None:
+            return None
+
+        return next(
+            (s for s in job.identity_suggestions if s.id == suggestion_id), None
+        )
+
+    def _fill_form_from_suggestion(self, suggestion_id: UUID) -> bool:
+        suggestion = self._identity_suggestion(suggestion_id)
+
+        if suggestion is None:
+            return False
+
+        self._editing_identity_name = None
+        self._form_suggestion_id = suggestion_id
+        self._recurring_form = {
+            "name": suggestion.name,
+            "kind": (
+                "person"
+                if suggestion.kind == CanonicalEntityType.PERSON
+                else "location"
+            ),
+            "description": suggestion.description,
+            "scenes": format_scene_numbers(suggestion.scene_numbers),
+        }
+
+        return True
+
+    def _handle_accept_identity_suggestion(self, suggestion_id: UUID) -> None:
+        if self._fill_form_from_suggestion(suggestion_id):
+            self._handle_save_identity()
+
+    def _handle_edit_identity_suggestion(self, suggestion_id: UUID) -> None:
+        job = self._current_job()
+
+        if job is not None and self._fill_form_from_suggestion(suggestion_id):
+            self.refresh(job)
+
+    def _handle_discard_identity_suggestion(self, suggestion_id: UUID) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        for suggestion in job.identity_suggestions:
+            if suggestion.id == suggestion_id:
+                suggestion.status = SuggestionStatus.DISCARDED
+
+        self._job_store.add(job)
+        self._on_change()
+
+    def _handle_suggest_identities(self) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        self._run_stage(
+            job,
+            self._content_intelligence_pipeline.run_identity_suggestions,
+            label="suggesting characters and places",
+            failure="Could not suggest characters and places",
+            retry=self._handle_suggest_identities,
+        )
+
     def _reset_recurring_form(self) -> None:
         self._recurring_form = {
             "name": "",
@@ -2436,6 +2686,7 @@ class ContentStudioView(QWidget):
             "scenes": "",
         }
         self._editing_identity_name = None
+        self._form_suggestion_id = None
 
     def _handle_edit_identity(self, name: str) -> None:
         job = self._current_job()
@@ -2481,6 +2732,7 @@ class ContentStudioView(QWidget):
 
         form = dict(self._recurring_form)
         editing = self._editing_identity_name
+        suggestion_id = self._form_suggestion_id
         service = self._recurring_identity_service
 
         try:
@@ -2519,6 +2771,13 @@ class ContentStudioView(QWidget):
                     description=form["description"],
                     scene_text=form["scenes"],
                 )
+
+            for suggestion in target.identity_suggestions:
+                if (
+                    suggestion.id == suggestion_id
+                    or suggestion.key == cleaned_name.lower()
+                ):
+                    suggestion.status = SuggestionStatus.ACCEPTED
 
             service.fill_reference(target, cleaned_name)
             self._recompile_prompts_if_present(target)

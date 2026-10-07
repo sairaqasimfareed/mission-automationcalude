@@ -727,6 +727,23 @@ section records what changed and why so a later session does not undo it.
     stored negative-constraint list, which no provider sends. Other negative
     constraints are still not sent. Plan steps 2 (Clip-check flag) and 3 (OCR / own
     text) are not built; verify the wording on the 9:16 infographic scene.
+  - **Auto-suggested project look and characters/places (2026-10-07).** The two
+    Content Studio forms no longer start blank; the app proposes entries and the operator
+    accepts or discards each (`src/models/suggestions.py`: `LookSuggestion`,
+    `IdentitySuggestion`, status pending/accepted/discarded, kept on
+    `VideoJob.look_suggestions` / `identity_suggestions` so they survive a restart and a
+    discarded one is not proposed again). *Look:* `ProjectLookSuggestionService` -
+    two ready-made looks per genre (shown the first time the section is opened, free) and
+    "Suggest a look from my clips", which measures brightness / saturation / warmth of the
+    generated clips and writes them as words (no Claude call); "Use this look" fills and
+    saves it and recompiles the prompts. *Characters and places:*
+    `IdentitySuggestionService` - one Claude call over ALL scenes that proposes recurring
+    people/places not already in the bible (needs 2+ scenes; unusable blocks dropped);
+    run automatically at the end of `run_visual_continuity` (best effort, never fails the
+    bible) and on demand with "Suggest characters and places" (`run_identity_suggestions`);
+    Accept (adds it exactly like the manual form, reference from its generated clips),
+    Edit first (fills the form) or Discard. Tests: `tests/test_suggestions.py`. Not built:
+    face-based detection of recurring people (the SFace model).
   - Fixed: a scroll-restore timer firing after its tab was deleted raised "Internal C++
     object already deleted" (seen in the full suite); the restore now ignores it.
   - The fallback to the composite render now catches only the new

@@ -48,6 +48,7 @@ from src.services.hook_evaluation_service import (
     select_winning_hook,
 )
 from src.services.hook_generation_service import HookGenerationService
+from src.services.identity_suggestion_service import IdentitySuggestionService
 from src.services.information_reveal_planning_service import (
     InformationRevealPlanningService,
 )
@@ -89,6 +90,7 @@ from src.services.visual_continuity_validation_service import (
     VisualContinuityValidationService,
 )
 from src.services.writing_directives_service import WritingDirectivesService
+from src.shared.logger import logger
 
 
 class ContentIntelligencePipeline:
@@ -224,6 +226,11 @@ class ContentIntelligencePipeline:
             estimated_cost_usd=estimated_cost_usd,
         )
         self.visual_continuity_validation_service = VisualContinuityValidationService()
+        self.identity_suggestion_service = IdentitySuggestionService(
+            llm_service=llm_service,
+            profile_ids=profile_ids,
+            estimated_cost_usd=estimated_cost_usd,
+        )
         self.shot_planning_service = ShotPlanningService(
             llm_service=llm_service,
             profile_ids=profile_ids,
@@ -1350,6 +1357,15 @@ class ContentIntelligencePipeline:
         # The characters and places the operator named by hand survive a regenerate.
         carry_over_manual_identities(previous_bible, job.visual_continuity_bible)
 
+        # Propose anyone the bible missed. Best effort: a failed suggestion call must
+        # never fail the bible itself.
+        try:
+            self.run_identity_suggestions(job)
+        except Exception as error:  # noqa: BLE001 - suggestions are optional
+            logger.warning(
+                "Suggesting characters and places failed: %s", type(error).__name__
+            )
+
         self.approval_gate_service.record_event(
             job=job,
             stage="visual_continuity",
@@ -1359,6 +1375,30 @@ class ContentIntelligencePipeline:
                 "entry(-ies))."
             ),
             category=DecisionCategory.GENERATION,
+        )
+
+        return job
+
+    def run_identity_suggestions(self, job: VideoJob) -> VideoJob:
+        """Propose recurring characters and places the continuity bible missed, as
+        candidates for the operator to accept or discard (one Claude call over all
+        scenes). Adds only NEW candidates: anything already pending, accepted or
+        discarded is not proposed again."""
+
+        if job.visual_continuity_bible is None:
+            raise RuntimeError("Suggesting characters needs a visual continuity bible.")
+
+        if not job.scenes:
+            raise RuntimeError("Suggesting characters needs planned scenes.")
+
+        seen = {suggestion.key for suggestion in job.identity_suggestions}
+        job.identity_suggestions.extend(
+            self.identity_suggestion_service.suggest(
+                scenes=job.scenes,
+                visual_continuity_bible=job.visual_continuity_bible,
+                topic=job.topic,
+                already_seen=seen,
+            )
         )
 
         return job
