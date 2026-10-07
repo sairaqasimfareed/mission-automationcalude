@@ -703,3 +703,113 @@ def test_a_set_but_missing_upload_raises_instead_of_silently_using_defaults(
             orientation=AspectRatio.LANDSCAPE,
             platform=Platform.YOUTUBE,
         )
+
+
+# ---- the uploaded watermark: semi-transparent, starts when the title card ends
+# (reported 2026-10-07 on Remedy: it looked like a picture overlay and showed over the
+# opening title card)
+
+
+class _TwoFileProbe:
+    """The variant's source is `with_card` seconds long; the card-free render is
+    `base` seconds long (the difference is the title card)."""
+
+    def __init__(self, *, source: float, base: float) -> None:
+        self._source = source
+        self._base = base
+
+    def validate(self, file_path: Path) -> MediaTechnicalValidationResult:
+        seconds = self._base if "card_free" in file_path.name else self._source
+
+        return MediaTechnicalValidationResult(
+            is_readable=True, duration_seconds=seconds
+        )
+
+
+def _watermarked_job(tmp_path: Path, *, with_title_card: bool) -> VideoJob:
+    image = tmp_path / "logo.png"
+    image.write_bytes(b"png")
+    job = _job()
+    job.cta_watermark_image_path = str(image)
+
+    if with_title_card:
+        job.render_result = RenderResult(
+            success=True,
+            output_file="F:/renders/job1/card_free.mp4",
+            render_engine="ffmpeg",
+            duration_seconds=60,
+        )
+
+    return job
+
+
+def _build_watermarked(job: VideoJob, probe: object):  # type: ignore[no-untyped-def]
+    service, execution = _service_with_probe(probe)
+    service.build(
+        job=job,
+        render_result=_render_result(output_file="F:/renders/job1/with_card.mp4"),
+        orientation=AspectRatio.LANDSCAPE,
+        platform=Platform.YOUTUBE,
+    )
+
+    return execution.calls[0][0].filter_complex
+
+
+def test_the_uploaded_watermark_is_semi_transparent(tmp_path: Path) -> None:
+    complex_ = _build_watermarked(
+        _watermarked_job(tmp_path, with_title_card=False),
+        _TwoFileProbe(source=60.0, base=60.0),
+    )
+
+    assert "format=rgba,colorchannelmixer=aa=0.7[wmimg]" in complex_
+
+
+def test_the_uploaded_watermark_starts_when_the_title_card_ends(tmp_path: Path) -> None:
+    complex_ = _build_watermarked(
+        _watermarked_job(tmp_path, with_title_card=True),
+        _TwoFileProbe(source=63.0, base=60.0),  # a 3 s title card on the front
+    )
+
+    assert "overlay=W-w-30:H-h-30:format=auto:enable='between(t,3," in complex_
+
+
+def test_without_a_title_card_the_uploaded_watermark_still_starts_at_the_beginning(
+    tmp_path: Path,
+) -> None:
+    complex_ = _build_watermarked(
+        _watermarked_job(tmp_path, with_title_card=False),
+        _TwoFileProbe(source=60.0, base=60.0),
+    )
+
+    assert "enable='between(t,0," in complex_
+
+
+def test_a_render_that_is_not_the_card_free_one_plus_a_card_is_not_taken_for_a_card(
+    tmp_path: Path,
+) -> None:
+    """A source 40 s longer than the stored render is some other render, not a title
+    card - the watermark stays at the beginning."""
+
+    complex_ = _build_watermarked(
+        _watermarked_job(tmp_path, with_title_card=True),
+        _TwoFileProbe(source=100.0, base=60.0),
+    )
+
+    assert "enable='between(t,0," in complex_
+
+
+def test_the_text_watermark_waits_its_hook_delay_after_the_title_card(
+    tmp_path: Path,
+) -> None:
+    job = _job()
+    job.render_result = RenderResult(
+        success=True,
+        output_file="F:/renders/job1/card_free.mp4",
+        render_engine="ffmpeg",
+        duration_seconds=60,
+    )
+
+    complex_ = _build_watermarked(job, _TwoFileProbe(source=63.0, base=60.0))
+
+    # 3 s card + the 4 s hook-skipping delay
+    assert "enable='between(t,7," in complex_

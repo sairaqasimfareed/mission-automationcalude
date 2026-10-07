@@ -88,6 +88,16 @@ _EXPORT_TEXT_CACHE_DIRECTORY = Path("data/export_variant_text_cache")
 # frame width (the text watermark is sized by font size instead).
 _WATERMARK_IMAGE_WIDTH_FRACTION = 0.15
 
+# An uploaded watermark is drawn semi-transparent, like a watermark - at full opacity
+# it read as a picture laid over the video (reported 2026-10-07, Remedy).
+_WATERMARK_IMAGE_OPACITY = 0.7
+
+# A title card the operator added is shorter than this; a bigger difference between the
+# finished render and the card-free one means something else (a different render), so
+# it is not treated as a title card.
+_MAX_TITLE_CARD_SECONDS = 30.0
+_MIN_TITLE_CARD_SECONDS = 0.5
+
 
 class ExportVariantRenderService:
     """
@@ -174,6 +184,38 @@ class ExportVariantRenderService:
             progress_callback=progress_callback,
             cancellation_check=cancellation_check,
         )
+
+    def _title_card_seconds(
+        self, job: VideoJob, source_file: str, source_duration_seconds: float
+    ) -> float:
+        """How long the opening title card at the start of `source_file` is, or 0.
+
+        The card-free render is kept on the job (`render_result`); the source of a
+        variant that was made after the card was added is that render plus the card,
+        so the card's length is the difference between the two files' real lengths."""
+
+        base = job.render_result
+
+        if base is None or not base.success or not base.output_file:
+            return 0.0
+
+        if Path(base.output_file).resolve() == Path(source_file).resolve():
+            return 0.0
+
+        try:
+            probed = self._media_validation_service.validate(Path(base.output_file))
+        except Exception:  # noqa: BLE001 - an unreadable base render means "no card"
+            return 0.0
+
+        if probed.duration_seconds is None:
+            return 0.0
+
+        extra = source_duration_seconds - float(probed.duration_seconds)
+
+        if _MIN_TITLE_CARD_SECONDS <= extra <= _MAX_TITLE_CARD_SECONDS:
+            return float(extra)
+
+        return 0.0
 
     @staticmethod
     def _master_orientation(job: VideoJob) -> AspectRatio:
@@ -269,23 +311,30 @@ class ExportVariantRenderService:
             # this design explicitly rules out. A real margin before
             # the true content end guarantees the frame that actually
             # gets frozen is clean.
+            # The watermark starts when the opening title card ends, not at t=0
+            # (reported 2026-10-07: it showed over the title card). The card's length
+            # is the difference between this file and the card-free render.
+            title_card_seconds = self._title_card_seconds(
+                job, source_file, duration_seconds
+            )
             watermark_end_seconds = max(
-                _WATERMARK_DELAY_SECONDS, content_duration - 1.0
+                title_card_seconds + _WATERMARK_DELAY_SECONDS, content_duration - 1.0
             )
 
             if watermark_image is not None:
                 extra_input_files.append(str(watermark_image))
-                # An uploaded image is a persistent badge: visible from
-                # the first frame (the text watermark's hook-skipping
-                # delay is a choice about generated text, not about a
-                # logo the operator deliberately supplied). With a CTA
-                # clip there is no frozen tail to keep clean - the clip
-                # is joined after this stream - so it runs to the end.
+                # An uploaded image is a persistent badge: visible as soon as the
+                # title card (if any) ends - the text watermark's hook-skipping
+                # delay is a choice about generated text, not about a logo the
+                # operator deliberately supplied. With a CTA clip there is no frozen
+                # tail to keep clean - the clip is joined after this stream - so it
+                # runs to the end.
                 watermark_clause, video_label = self._watermark_image_clause(
                     input_label=video_label,
                     image_input_index=len(extra_input_files),
                     orientation=orientation,
                     frame_width=target_width,
+                    start_seconds=title_card_seconds,
                     end_seconds=(
                         None if cta_clip is not None else watermark_end_seconds
                     ),
@@ -295,7 +344,7 @@ class ExportVariantRenderService:
                     input_label=video_label,
                     platform=platform,
                     orientation=orientation,
-                    start_seconds=_WATERMARK_DELAY_SECONDS,
+                    start_seconds=title_card_seconds + _WATERMARK_DELAY_SECONDS,
                     end_seconds=watermark_end_seconds,
                 )
 
@@ -647,6 +696,7 @@ class ExportVariantRenderService:
         orientation: AspectRatio,
         frame_width: int,
         end_seconds: float | None,
+        start_seconds: float = 0.0,
     ) -> tuple[str, str]:
         # Even width - some encoders reject odd dimensions.
         image_width = max(
@@ -658,15 +708,20 @@ class ExportVariantRenderService:
         else:
             x_expr = "W-w-30"
 
-        enable = (
-            ""
-            if end_seconds is None
-            else f":enable='between(t,0,{cls._number(end_seconds)})'"
-        )
+        if end_seconds is not None:
+            enable = (
+                f":enable='between(t,{cls._number(start_seconds)},"
+                f"{cls._number(end_seconds)})'"
+            )
+        elif start_seconds > 0:
+            enable = f":enable='gte(t,{cls._number(start_seconds)})'"
+        else:
+            enable = ""
 
         output_label = "watermarked"
         clause = (
-            f"[{image_input_index}:v]scale={image_width}:-2,format=rgba[wmimg];"
+            f"[{image_input_index}:v]scale={image_width}:-2,format=rgba,"
+            f"colorchannelmixer=aa={_WATERMARK_IMAGE_OPACITY}[wmimg];"
             f"[{input_label}][wmimg]overlay={x_expr}:H-h-30:format=auto"
             f"{enable}[{output_label}]"
         )

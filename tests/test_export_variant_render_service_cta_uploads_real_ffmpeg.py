@@ -152,7 +152,10 @@ def _is_red(pixel: tuple[int, int, int]) -> bool:
 
 
 def _is_magenta(pixel: tuple[int, int, int]) -> bool:
-    return pixel[0] > 200 and pixel[1] < 70 and pixel[2] > 200
+    """Magenta as seen through the watermark's 70% opacity (a pure magenta pixel is
+    blended with the video behind it, e.g. (175, 75, 253))."""
+
+    return pixel[0] > 140 and pixel[1] < 130 and pixel[2] > 140
 
 
 def _build(

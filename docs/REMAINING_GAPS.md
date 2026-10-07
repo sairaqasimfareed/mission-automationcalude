@@ -739,7 +739,8 @@ re-render, leftover stage files, stored duration) and the broad
      10 s and trims; Flow clips are already 4/6/8 s); a Remedy-sized video grows by roughly
      5-10 s. Open: fixed numbers or settable per project. Touches clip sizing for both Flow
      and Muse and the audio timeline offsets; needs tests across both providers. Not built.
-  7. Uploaded watermark image looks like a picture overlay and starts at the wrong moment
+  7. BUILT 2026-10-07 (see IMPLEMENTATION_STATE) - uploaded watermark image looks like a
+     picture overlay and starts at the wrong moment
      (reported 2026-10-07 on Remedy's export variant). Cause in `ExportVariantRenderService.
      _watermark_image_clause`: the image is overlaid at full opacity at a fixed share of the
      frame width, and the overlay is enabled `between(t,0,...)` - by design "visible from the

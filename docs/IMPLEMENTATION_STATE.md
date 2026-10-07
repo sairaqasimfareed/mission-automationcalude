@@ -744,6 +744,13 @@ section records what changed and why so a later session does not undo it.
     Accept (adds it exactly like the manual form, reference from its generated clips),
     Edit first (fills the form) or Discard. Tests: `tests/test_suggestions.py`. Not built:
     face-based detection of recurring people (the SFace model).
+  - **Uploaded watermark: semi-transparent and starts after the title card (2026-10-07).**
+    `ExportVariantRenderService`: the uploaded image is drawn at 70% opacity
+    (`colorchannelmixer=aa`) and its overlay starts when the opening title card ends
+    (the card's length = this file's real length minus the stored card-free
+    `job.render_result`, accepted between 0.5 s and 30 s), not at t=0; the generated text
+    watermark waits its 4 s hook-skipping delay after the card. Without a title card
+    nothing changes. Tests: `test_export_variant_render_service.py`.
   - Fixed: a scroll-restore timer firing after its tab was deleted raised "Internal C++
     object already deleted" (seen in the full suite); the restore now ignores it.
   - The fallback to the composite render now catches only the new
