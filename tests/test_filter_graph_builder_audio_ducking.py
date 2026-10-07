@@ -202,8 +202,9 @@ assert filter_graph.is_valid is True
 assert "sidechaincompress" not in filter_complex
 
 # Exactly one duckable track (music) -> exactly one gated volume node,
-# carrying the real voice-active window (voice spans the whole 0-8s clip).
-assert "between(t,0,8)" in filter_complex
+# carrying the real voice-active window (voice spans the whole 0-8s clip),
+# eased in and out over 0.3 s rather than switched.
+assert "(8.3-t)/0.3" in filter_complex
 
 voice_labels = _labels_for_track_type(filter_graph, "voiceover")
 music_labels = _labels_for_track_type(filter_graph, "background_music")
@@ -220,7 +221,11 @@ assert ducked_label is not None
 duck_node = duck_chain.nodes[0]
 assert duck_node.filter_name == "volume"
 assert duck_node.options is not None
-assert duck_node.options.get("enable") == "'between(t,0,8)'"
+assert (
+    duck_node.options.get("volume")
+    == "'1-0.7*min(1,min(1,max(0,(t-(-0.3))/0.3))*min(1,max(0,(8.3-t)/0.3)))'"
+)
+assert duck_node.options.get("eval") == "frame"
 
 # The ducked output, not the raw normalized music label, must reach the
 # final mix - and the raw music label must not appear there directly.
@@ -281,7 +286,7 @@ assert set(no_duck_mix_chain.input_labels) == {
 
 # Multiple voiceover tracks alongside a duckable track must gate the
 # duckable track's volume to the UNION of both voices' own windows - no
-# voice bus, no sidechain, just the two real time ranges OR'd together.
+# voice bus, no sidechain. Two back-to-back windows merge into one.
 voice_a = RenderNode(
     node_type=RenderNodeType.AUDIO_TRACK,
     status=RenderNodeStatus.READY,
@@ -348,7 +353,10 @@ assert multi_duck_chain.input_labels == [multi_music_labels[0]]
 multi_duck_node = multi_duck_chain.nodes[0]
 assert multi_duck_node.filter_name == "volume"
 assert multi_duck_node.options is not None
-assert multi_duck_node.options.get("enable") == "'between(t,0,4)+between(t,4,8)'"
+assert (
+    multi_duck_node.options.get("volume")
+    == "'1-0.7*min(1,min(1,max(0,(t-(-0.3))/0.3))*min(1,max(0,(8.3-t)/0.3)))'"
+)
 
 multi_final_mix_chain = _chain_with_operation(multi_voice_graph, "audio_mix")
 assert multi_duck_chain.output_label in multi_final_mix_chain.input_labels

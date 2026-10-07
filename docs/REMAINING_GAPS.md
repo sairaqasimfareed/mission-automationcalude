@@ -640,7 +640,103 @@ re-render, leftover stage files, stored duration) and the broad
   in scene 9 than in scene 3. Prompts do not yet state the wardrobe.
 - Muse text overlays: the generator added an unwanted text panel (scene 5) and an infographic
   with AI-written text including a claim not in the script (scene 6). There is no check for
-  on-screen text in generated clips.
+  on-screen text in generated clips. (2026-10-07: graphic scenes are now prompted with an
+  exact-text-only rule and can be switched to live footage, but the generator may still
+  ignore either; the generated text is still not checked.)
+- Project look (lighting / colour palette / camera feel) is only as good as the generator's
+  obedience to it; it is repeated word-for-word in every prompt but nothing verifies the
+  clip matched it. Projects compiled before it existed need "Save project look" (or a
+  prompt recompile) to pick it up.
+- "Show as live footage" uses the project's main place (a LOCATION with a reference); a
+  project with no place reference gets live-action framing and the look but no picture.
+- Scroll preservation covers the seven job tabs only. Providers, Voices, Settings,
+  Dashboard and the Flow/Muse panels rebuild lists rather than card stacks and were
+  not changed; if one of them jumps to the top it needs `keep_scroll_on_refresh`.
+  Confirmed in the offscreen tests, not yet re-checked by hand in the running app.
+- **To build - from the 2026-10-07 Remedy render review** (operator asked for these to be
+  tracked here; none is built):
+  1. "Choose another frame" picker for a character's or place's reference: show several
+     candidate frames and let the operator pick one. Today "Pick reference again" only
+     re-runs the automatic choice.
+  2. One continuous music track per video instead of several separately generated pieces
+     joined with 1 s fades (a piece can decay to near-silence before its slot ends).
+  3. A shared colour grade / shot-to-shot colour matching across scenes (see the locked
+     editing list).
+  4. Regenerate the clips with picture problems: scene 5's leaked "Evidence-Based Benefits"
+     panel, scene 15's mother and baby (different look, no baby reference), the woman who
+     changes between scenes. Needs credits and the characters-and-places form.
+  5. The 1:24 length against the 2:00 target - a script decision (more narration or scenes),
+     not a code change.
+  6. Fast title-card join. `TitleCardPrependService` joins the title card with FFmpeg's concat
+     FILTER, which re-encodes the whole finished render (libx264 medium, crf 20) to add a few
+     seconds at the front - slow on this machine (the video pass alone took 28 min). It was
+     chosen because a stream-copy join of mismatched files once silently cut the audio short.
+     Planned: re-encode only the title clip to the main video's real settings (read with
+     ffprobe: size, frame rate, pixel format, profile, audio rate/channels), join with the
+     concat demuxer and `-c copy` (+faststart), then verify - total length, audio and video
+     stream lengths, and a decode of a few seconds around the seam - and fall back to today's
+     full re-encode if any check fails. Risks discussed: a join that passes the length check
+     but glitches at the seam or in some hardware players, a small audio click where two copied
+     AAC streams meet; the main render is never touched and the fallback keeps today's quality.
+     Needs real-FFmpeg tests. The export-variant end-clip join could reuse it later. Not built.
+  7. Room between scenes - a per-genre hold after each narrated line. Clips are sized to the
+     narration (rounded up to the provider's lengths), so there is no designed pause between
+     scenes, only accidental slack (the trailing silence in each voice file, the round-up,
+     Muse's 3 s floor); genre only changes the pause style inside a line. Planned: the clip
+     runs a little longer than the line before the next scene - about 0.3-0.5 s for
+     medical/reaction/comedy, 0.8-1.2 s for horror/storytelling/survival, longer after reveal
+     lines, dropped when the line already fills a clip to the provider maximum - plus an
+     optional 0.2-0.3 s voice lead-in after the cut. No extra credits (Muse always generates
+     10 s and trims; Flow clips are already 4/6/8 s); a Remedy-sized video grows by roughly
+     5-10 s. Open: fixed numbers or settable per project. Touches clip sizing for both Flow
+     and Muse and the audio timeline offsets; needs tests across both providers. Not built.
+  8. Uploaded watermark image looks like a picture overlay and starts at the wrong moment
+     (reported 2026-10-07 on Remedy's export variant). Cause in `ExportVariantRenderService.
+     _watermark_image_clause`: the image is overlaid at full opacity at a fixed share of the
+     frame width, and the overlay is enabled `between(t,0,...)` - by design "visible from the
+     first frame" (the text watermark's 4 s hook-skipping delay was deliberately not applied to
+     an uploaded image). When the variant is made from a render that already has the opening
+     title card, the watermark therefore shows over the title card. Wanted: it should look
+     like a watermark (semi-transparent, small, in a corner - an opacity setting) and start
+     when the title card ends (title-card length known from the title-card clip/service), not
+     at t=0. Not built.
+  9. Subtitle burning option on all three renders (requested 2026-10-07; the earlier "run
+     combinations / one button for everything" wish was dropped - the renders stay separate
+     buttons as they are). Today subtitles are burned only inside the main render
+     (`render_stage` -> `PostRenderSubtitleBurnService`, the Render tab's subtitle toggle), so
+     the title-card render and the CTA/watermark (export-variant) render have no subtitle
+     option, and wanting subtitles on a video that is already rendered means re-rendering it.
+     Wanted: a subtitle burn option on each of the three - main render, title-card render and
+     CTA render - that burns the project's subtitles (current caption style) at that point,
+     without touching the original file. Interacts with item 6 (each pass re-encodes today) and
+     item 8 (the watermark must start after the title card). Not built.
+- Negative constraints are stored on every compiled prompt but never sent to Muse or Flow
+  (see IMPLEMENTATION_STATE, 2026-10-07). Needs a decision on what to send: an "Avoid:" line
+  with the identity/subject/continuity rules and "no logos or watermarks", the exact-text rule
+  for graphic scenes, and "no extra captions" instead of "no on-screen text" elsewhere.
+  Whether Muse follows a negative instruction is untested.
+- The characters-and-places form is built, but the optional "choose another frame" picker
+  (showing several candidate frames) is not: "Pick reference again" re-runs the automatic
+  choice only. A regenerated bible keeps manual identities but not their on-screen marks in
+  scenes that no longer exist.
+- Music is still several separately generated pieces stitched with 1 s fades; a piece can
+  decay to near-silence before its slot ends (Remedy's first one is quiet from about 8 s of
+  11). One continuous track per video is not built.
+- No shared colour grade across scenes (the filter is `clean_neutral`, a faint lift only):
+  the bright daylight clip still sits next to dark kitchen ones. Shot-to-shot colour
+  matching is on the locked editing list, not built.
+- The 1080p video pass took 1,695 s (28 min) for an 84 s video on this machine; the audio
+  re-mix is about 33 s. Not changed: needs a measurement on an idle machine first.
+- Pacing: clips are sized to the narration (rounded up to the provider's lengths), so
+  there is no pause between scenes - only accidental slack (the trailing silence in each
+  voice file, the round-up, Muse's 3 s floor). Genre only changes the pause style inside a
+  line. Locked for later, NOT built: a per-genre hold after each line (about 0.3-0.5 s
+  medical/reaction/comedy, 0.8-1.2 s horror/storytelling/survival, longer after reveals,
+  dropped when the line already fills a clip), and an optional 0.2-0.3 s voice lead-in after
+  the cut. Touches clip sizing for both Flow and Muse and the audio timeline offsets.
+- Not code: clip content (a panel leaking into scene 5's clip, scene 15's different-looking
+  mother and baby, the woman changing between scenes, AI-written infographic claims) needs
+  regenerating those clips, and the video length (1:24 against 2:00) is a script decision.
 - A Muse download that times out leaves an unfinished (UI_CHANGED) attempt that counts as
   in-flight and blocks the account; resuming the download of an already-generated video is
   not built, so it costs a regeneration.

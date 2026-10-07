@@ -151,9 +151,12 @@ class SEOContextBuilder:
                     "content-intelligence-pipeline project."
                 )
 
-            if job.research is None:
-                raise ValueError("SEO context requires a VideoJob with research.")
-
+            # Research is optional here: a project run in manual content mode
+            # skips the research stage on purpose, and its SEO text comes from
+            # the locked script itself (live, 2026-10-07: Remedy's title card,
+            # SEO and thumbnail all failed on "requires a VideoJob with
+            # research"). The legacy `job.script` branch below still has it
+            # guaranteed by VideoJob's own validator.
             script_title = job.topic
             script_content = job.generated_script.full_narration
             estimated_duration_seconds = job.generated_script.target_duration_seconds
@@ -210,8 +213,12 @@ class SEOContextBuilder:
             platform=platform or job.platform,
             script_title=script_title,
             script_content=script_content,
-            research_summary=job.research.research_summary,
-            key_facts=list(job.research.key_facts),
+            research_summary=(
+                job.research.research_summary if job.research is not None else ""
+            ),
+            key_facts=(
+                list(job.research.key_facts) if job.research is not None else []
+            ),
             scene_count=len(job.scenes),
             estimated_duration_seconds=estimated_duration_seconds,
             script_lock_hash=(

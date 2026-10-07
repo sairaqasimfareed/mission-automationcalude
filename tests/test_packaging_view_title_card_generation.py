@@ -837,6 +837,42 @@ def test_a_saved_clip_is_applied_without_any_background_image(
     assert fake_service.calls[0]["image_override"] is None
 
 
+def test_a_clip_is_applied_even_when_no_seo_context_can_be_built(
+    qapp: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Live, 2026-10-07: a project with no research could not add its own title
+    clip - "SEO context requires a VideoJob with research" - although a clip
+    needs no SEO text at all."""
+
+    class _NoContextBuilder:
+        def build(self, *args: object, **kwargs: object) -> object:
+            raise ValueError("SEO context requires a VideoJob with research.")
+
+    monkeypatch.setattr(
+        "src.desktop.views.packaging_view.SEOContextBuilder", _NoContextBuilder
+    )
+    fake_service = _FakeOpeningTitleCardService(
+        result=RenderResult(
+            success=True,
+            output_file="outputs/main_render_with_title_card.mp4",
+            render_engine="ffmpeg",
+            duration_seconds=63,
+            status=RenderStatus.COMPLETED,
+        )
+    )
+    view, job = _clip_view(qapp, tmp_path, service=fake_service)
+    job.title_card_clip_path = "C:/brand/intro.mp4"
+    view.refresh(job)
+    _flush_deferred_deletes(qapp)
+
+    _last_button(view, "Add my clip to the render").click()
+    _wait_for_generation(view, qapp)
+
+    assert len(fake_service.calls) == 1
+    assert fake_service.calls[0]["seo_context"] is None
+    assert job.errors == []
+
+
 def test_without_a_clip_or_image_the_apply_button_is_still_hidden(
     qapp: QApplication, tmp_path: Path
 ) -> None:

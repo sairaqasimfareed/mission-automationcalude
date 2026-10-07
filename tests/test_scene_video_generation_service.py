@@ -2605,3 +2605,84 @@ def test_a_location_still_gets_a_reference_when_nobody_is_in_the_scene(
     assert len(place.reference_asset_ids) == 1  # the place does not need one
     assert any("Jack Reid" in w for w in job.warnings)
     assert not any("Reid Farm" in w for w in job.warnings)
+
+
+def _place_only_bible(asset_id: str, scene_number: int) -> VisualContinuityBible:
+    """One place with a reference, and a scene the plan draws as a graphic: nobody
+    and nothing is listed on screen in it."""
+
+    return VisualContinuityBible(
+        script_lock_hash="a" * 64,
+        identities=[
+            CanonicalEntityIdentity(
+                entity_type=CanonicalEntityType.LOCATION,
+                name="Kitchen",
+                canonical_description="A warm family kitchen.",
+                reference_asset_ids=[asset_id],
+            )
+        ],
+        clip_entries=[
+            ClipContinuityEntry(
+                scene_number=scene_number,
+                incoming_state=VisualState(),
+                shot_action="An infographic.",
+                outgoing_state=VisualState(location="informational graphic/overlay"),
+                entity_names=[],
+                on_screen_entity_names=[],
+            )
+        ],
+    )
+
+
+def test_a_graphic_scene_gets_no_reference_by_default(tmp_path: Path) -> None:
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            GoogleFlowGenerationState.GENERATING,
+            GoogleFlowGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    provider.downloaded_file = str(_real_video_file(tmp_path))
+    asset_storage = AssetStorageService(
+        storage_root=tmp_path / "storage", asset_index=AssetIndex()
+    )
+    service = _service(provider, asset_storage_service=asset_storage)
+    job = _job(_scene(2))
+    job.visual_continuity_bible = _place_only_bible(
+        _stored_reference_asset(job, tmp_path), 2
+    )
+
+    service.generate_one(job, 2)
+
+    assert provider.submitted_requests[0].reference_assets == []
+
+
+def test_a_graphic_scene_switched_to_live_footage_attaches_the_main_places_reference(
+    tmp_path: Path,
+) -> None:
+    """The switch makes the scene a filmed shot of the project's main setting - so
+    that setting's reference picture goes with it, like any other filmed scene."""
+
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            GoogleFlowGenerationState.GENERATING,
+            GoogleFlowGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    provider.downloaded_file = str(_real_video_file(tmp_path))
+    asset_storage = AssetStorageService(
+        storage_root=tmp_path / "storage", asset_index=AssetIndex()
+    )
+    service = _service(provider, asset_storage_service=asset_storage)
+    scene = _scene(2)
+    scene.treat_as_live_footage = True
+    job = _job(scene)
+    job.visual_continuity_bible = _place_only_bible(
+        _stored_reference_asset(job, tmp_path), 2
+    )
+
+    service.generate_one(job, 2)
+
+    references = provider.submitted_requests[0].reference_assets
+    assert len(references) == 1
+    assert references[0].identity_name == "Kitchen"
+    assert references[0].role == GoogleFlowReferenceRole.LOCATION

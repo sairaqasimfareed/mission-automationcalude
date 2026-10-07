@@ -416,9 +416,8 @@ def test_submit_asks_muse_to_trim_when_narration_is_shorter_than_its_fixed_lengt
     service.generate_one(job, 1)
 
     prompt = provider.submitted_prompts[0]
-    assert "Also trim the generated 10 seconds video to only 4 seconds video." in (
-        prompt
-    )
+    assert "Duration: 4 seconds" in prompt
+    assert "trim the generated" not in prompt
 
 
 def test_submit_does_not_ask_for_a_trim_when_narration_fills_the_fixed_length(
@@ -1309,9 +1308,8 @@ def test_generate_one_trims_to_the_real_voice_length_when_the_scene_field_is_emp
     service.generate_one(job, 1)
 
     assert scene.real_narration_duration_seconds == 4.0
-    assert "Also trim the generated 10 seconds video to only 4 seconds video." in (
-        provider.submitted_prompts[0]
-    )
+    assert "Duration: 4 seconds" in provider.submitted_prompts[0]
+    assert "trim the generated" not in provider.submitted_prompts[0]
 
 
 def test_a_repeat_of_another_scenes_video_is_caught_even_after_it_is_trimmed(
@@ -1467,9 +1465,8 @@ def test_a_one_second_scene_is_generated_and_trimmed_to_three_seconds(
     assert entry.status == SceneCompletenessStatus.READY
 
     prompt = provider.submitted_prompts[0]
-    assert "Also trim the generated 10 seconds video to only 3 seconds video." in (
-        prompt
-    )
+    assert "Duration: 3 seconds" in prompt
+    assert "trim the generated" not in prompt
     assert len(commands) == 1
     trim_command = commands[0]
     assert float(trim_command[trim_command.index("-t") + 1]) == pytest.approx(3.0)
@@ -1492,7 +1489,8 @@ def test_a_scene_at_or_above_the_floor_is_sized_exactly_as_before(
 
     service.generate_one(job, 1)
 
-    assert "to only 4 seconds video." in provider.submitted_prompts[0]
+    assert "Duration: 4 seconds" in provider.submitted_prompts[0]
+    assert "to only" not in provider.submitted_prompts[0]
 
 
 # --- reference frame chosen by face quality (2026-10-05) ---
@@ -1816,6 +1814,96 @@ def test_a_narration_with_a_fraction_gets_a_clip_rounded_up_not_down(
     entry = service.generate_one(job, 1)
 
     assert entry.status == SceneCompletenessStatus.READY
-    assert "to only 8 seconds video." in provider.submitted_prompts[0]
+    assert "Duration: 8 seconds" in provider.submitted_prompts[0]
+    assert "to only" not in provider.submitted_prompts[0]
     trim = commands[0]
     assert float(trim[trim.index("-t") + 1]) == pytest.approx(8.0)
+
+
+def _place_only_bible(asset_id: str, scene_number: int) -> VisualContinuityBible:
+    """One place with a reference, and a scene the plan draws as a graphic: nobody
+    and nothing is listed on screen in it."""
+
+    return VisualContinuityBible(
+        script_lock_hash="a" * 64,
+        identities=[
+            CanonicalEntityIdentity(
+                entity_type=CanonicalEntityType.LOCATION,
+                name="Kitchen",
+                canonical_description="A warm family kitchen.",
+                reference_asset_ids=[asset_id],
+            )
+        ],
+        clip_entries=[
+            ClipContinuityEntry(
+                scene_number=scene_number,
+                incoming_state=VisualState(),
+                shot_action="An infographic.",
+                outgoing_state=VisualState(location="informational graphic/overlay"),
+                entity_names=[],
+                on_screen_entity_names=[],
+            )
+        ],
+    )
+
+
+def _muse_job_with_place_reference(tmp_path: Path, scene):  # type: ignore[no-untyped-def]
+    job = _job(scene)
+    storage = AssetStorageService(
+        storage_root=tmp_path / "storage", asset_index=job.extracted_frame_asset_index
+    )
+    source = tmp_path / "place_reference.jpg"
+    source.write_bytes(b"a kitchen")
+    stored = storage.store_extracted_frame(
+        source_path=source, project_id="p", scene_number=1, title="Reference"
+    )
+    assert stored.success and stored.asset is not None
+    job.visual_continuity_bible = _place_only_bible(
+        str(stored.asset.id), scene.scene_number
+    )
+
+    return job
+
+
+def test_muse_graphic_scene_gets_no_reference_by_default(tmp_path: Path) -> None:
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            MuseGenerationState.GENERATING,
+            MuseGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    provider.downloaded_file = str(_real_video_file(tmp_path))
+    asset_storage = AssetStorageService(
+        storage_root=tmp_path / "storage", asset_index=AssetIndex()
+    )
+    service = _service(provider, asset_storage_service=asset_storage)
+    job = _muse_job_with_place_reference(tmp_path, _scene(2))
+
+    service.generate_one(job, 2)
+
+    assert provider.submitted_requests[0].reference_assets == []
+
+
+def test_muse_graphic_scene_on_live_footage_attaches_the_main_places_reference(
+    tmp_path: Path,
+) -> None:
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            MuseGenerationState.GENERATING,
+            MuseGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    provider.downloaded_file = str(_real_video_file(tmp_path))
+    asset_storage = AssetStorageService(
+        storage_root=tmp_path / "storage", asset_index=AssetIndex()
+    )
+    service = _service(provider, asset_storage_service=asset_storage)
+    scene = _scene(2)
+    scene.treat_as_live_footage = True
+    job = _muse_job_with_place_reference(tmp_path, scene)
+
+    service.generate_one(job, 2)
+
+    references = provider.submitted_requests[0].reference_assets
+    assert len(references) == 1
+    assert references[0].identity_name == "Kitchen"

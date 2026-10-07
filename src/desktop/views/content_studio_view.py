@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from collections.abc import Callable
 from uuid import UUID
@@ -46,6 +46,7 @@ from src.models.creative_direction import CreativeDirection
 from src.models.enums import Platform, ProductionMode, ScriptOrigin, WorkflowStage
 from src.models.hook import HookCandidate, HookEvaluation
 from src.models.production_handoff import ProductionHandoffState
+from src.models.project_look import ProjectLook
 from src.models.research import ResearchResult, ResearchSource, SourceStatus
 from src.models.research_evidence import (
     EvidenceRecord,
@@ -65,6 +66,7 @@ from src.models.story_angle import StoryAngle, StoryAngleStyle
 from src.models.topic_candidate import TopicCandidate
 from src.models.video_job import VideoJob
 from src.models.video_provider import VideoProvider
+from src.models.visual_continuity import CanonicalEntityType
 from src.services.approval_gate_service import ApprovalGateService
 from src.services.content_intelligence_pipeline import ContentIntelligencePipeline
 from src.services.content_pipeline import ContentPipeline
@@ -77,6 +79,13 @@ from src.services.enriched_scene_prompt_service import EnrichedScenePromptServic
 from src.services.fact_check_service import FactCheckService
 from src.services.genre_profile_registry_service import (
     GenreProfileRegistryService,
+)
+from src.services.recurring_identity_service import (
+    RecurringIdentityService,
+    format_scene_numbers,
+)
+from src.services.reference_frame_selection_service import (
+    ReferenceFrameSelectionService,
 )
 from src.services.reviewer_service import ReviewerService
 from src.services.topic_candidate_generation_service import (
@@ -316,8 +325,27 @@ class ContentStudioView(QWidget):
         on_change: Callable[[], None],
         enriched_scene_prompt_service: EnrichedScenePromptService | None = None,
         run_stages_in_background: bool = False,
+        recurring_identity_service: RecurringIdentityService | None = None,
     ) -> None:
         super().__init__()
+
+        # Characters and places the operator names by hand (see
+        # RecurringIdentityService).
+        self._recurring_identity_service = (
+            recurring_identity_service
+            or RecurringIdentityService(
+                selection_service=ReferenceFrameSelectionService()
+            )
+        )
+        # The add/edit form's text lives here (not only in its widgets) because every
+        # refresh rebuilds the card and would otherwise wipe what was typed.
+        self._recurring_form: dict[str, str] = {
+            "name": "",
+            "kind": "person",
+            "description": "",
+            "scenes": "",
+        }
+        self._editing_identity_name: str | None = None
 
         # True in the real app: a stage button runs its Claude call on a worker
         # thread and the window stays usable. False runs it inline - how the
@@ -405,6 +433,7 @@ class ContentStudioView(QWidget):
         self._automation_threads: dict[UUID, tuple[QThread, _AutomationWorker]] = {}
         self._automation_progress: dict[UUID, str] = {}
         self._automation_progress_label: QLabel | None = None
+        self._project_look_inputs: dict[str, QLineEdit] = {}
 
         # Content Studio Redesign, Phase 18: Activity History filters -
         # plain strings persisted across refresh() (not live QComboBox
@@ -2001,6 +2030,9 @@ class ContentStudioView(QWidget):
 
         if job.script_lock is not None:
             layout.addWidget(separator())
+            self._render_project_look_section(layout, job)
+
+            layout.addWidget(separator())
             self._render_production_semantic_brief_section(layout, job)
 
         if job.script_lock is not None and job.scenes and job.continuity_bible:
@@ -2020,6 +2052,108 @@ class ContentStudioView(QWidget):
             self._render_clip_materialization_section(layout, job)
 
         self._layout.addWidget(frame)
+
+    def _render_project_look_section(self, layout: QVBoxLayout, job: VideoJob) -> None:
+        """
+        The video-wide visual style - lighting, colour palette, camera feel - written
+        once and repeated word for word in every scene's prompt. Without it each scene
+        is lit by its own vague phrase ("Soft, natural daylight" / "Natural daylight")
+        and the clips drift apart (live, 2026-10-06: overcast, muted scene 1 next to a
+        sunny, saturated scene 2).
+        """
+
+        look = job.project_look or ProjectLook()
+
+        layout.addWidget(badge("Project look"))
+        layout.addWidget(
+            small_muted(
+                "The style of the whole video, repeated word for word in every "
+                "scene's prompt so the clips match. Leave a field empty to leave "
+                "that to each scene. A scene that is truly at night keeps its own "
+                "lighting line - this is the look the video is graded in."
+            )
+        )
+
+        form = QFormLayout()
+        form.setSpacing(6)
+        inputs: dict[str, QLineEdit] = {}
+
+        for key, label, placeholder, value in (
+            (
+                "lighting",
+                "Lighting",
+                "e.g. overcast soft daylight, no harsh shadows",
+                look.lighting,
+            ),
+            (
+                "color_palette",
+                "Colour palette",
+                "e.g. muted, desaturated documentary colours",
+                look.color_palette,
+            ),
+            (
+                "camera_feel",
+                "Camera feel",
+                "e.g. handheld documentary realism, shallow depth of field",
+                look.camera_feel,
+            ),
+        ):
+            field = QLineEdit()
+            field.setText(value)
+            field.setPlaceholderText(placeholder)
+            field.setMaxLength(200)
+            inputs[key] = field
+            form.addRow(label, field)
+
+        self._project_look_inputs = inputs
+        layout.addLayout(form)
+
+        save_button = button("Save project look", variant="primary")
+        save_button.clicked.connect(self._handle_save_project_look)
+        layout.addWidget(save_button, alignment=_LEFT)
+
+    def _handle_save_project_look(self) -> None:
+        job = self._current_job()
+
+        if job is None or not self._project_look_inputs:
+            return
+
+        self._apply_project_look(
+            job,
+            {key: field.text() for key, field in self._project_look_inputs.items()},
+        )
+
+    def _apply_project_look(self, job: VideoJob, values: dict[str, str]) -> None:
+        """Save the look on the project, then rebuild the compiled prompts so every
+        scene carries it. Recompiling is deterministic (no Claude call), so it is
+        quick and free."""
+
+        try:
+            look = ProjectLook(
+                lighting=values.get("lighting", ""),
+                color_palette=values.get("color_palette", ""),
+                camera_feel=values.get("camera_feel", ""),
+            )
+        except ValueError as error:
+            self._record_error(job, f"The project look could not be saved: {error}")
+
+            return
+
+        job.project_look = None if look.is_empty else look
+
+        if job.cinematic_prompt_package is None:
+            # Nothing compiled yet - the look is picked up when prompts are compiled.
+            self._on_change()
+
+            return
+
+        self._run_stage(
+            job,
+            self._content_intelligence_pipeline.run_cinematic_prompt_compilation,
+            label="cinematic prompts",
+            failure="Could not recompile the prompts with the new look",
+            retry=lambda: self._apply_project_look(job, values),
+        )
 
     def _render_production_semantic_brief_section(
         self, layout: QVBoxLayout, job: VideoJob
@@ -2149,6 +2283,9 @@ class ContentStudioView(QWidget):
             )
 
         for identity in bible.identities:
+            if identity.is_manual:
+                continue
+
             layout.addWidget(
                 small_muted(
                     f"{identity.entity_type.value.title()}: {identity.name} - "
@@ -2161,6 +2298,295 @@ class ContentStudioView(QWidget):
         )
         regenerate_button.clicked.connect(self._handle_generate_visual_continuity)
         layout.addWidget(regenerate_button, alignment=_LEFT)
+
+        layout.addWidget(separator())
+        self._render_recurring_identities_section(layout, job)
+
+    def _render_recurring_identities_section(
+        self, layout: QVBoxLayout, job: VideoJob
+    ) -> None:
+        """
+        Characters and places the operator names by hand: the generated bible can
+        miss someone (live, 2026-10-07: Lake Nyos found one identity, so scenes 1-11
+        had no reference and drifted). Each one's description goes into the prompts
+        of the scenes it is marked in, and its reference picture is taken from the
+        generated footage by the same selection code as every other reference.
+        """
+
+        bible = job.visual_continuity_bible
+        assert bible is not None
+        service = self._recurring_identity_service
+
+        layout.addWidget(badge("Your characters and places"))
+        layout.addWidget(
+            small_muted(
+                "Add a recurring character or place the generated bible missed. Its "
+                "description is repeated in every scene you mark, and its reference "
+                "picture is taken from the generated clips of those scenes. "
+                "Regenerating the bible keeps what you add here."
+            )
+        )
+
+        for identity in bible.identities:
+            if not identity.is_manual:
+                continue
+
+            scenes = format_scene_numbers(service.scenes_of(job, identity.name))
+            layout.addWidget(
+                small_muted(
+                    f"{identity.entity_type.value.title()}: {identity.name} - "
+                    f"{identity.canonical_description}  |  Scenes: {scenes or 'none'}  |  "
+                    + (
+                        "Reference picture attached."
+                        if identity.reference_asset_ids
+                        else "No reference picture yet."
+                    )
+                )
+            )
+
+            row = QHBoxLayout()
+            edit_button = button("Edit", variant="ghost")
+            edit_button.clicked.connect(
+                lambda _checked=False, n=identity.name: self._handle_edit_identity(n)
+            )
+            repick_button = button("Pick reference again", variant="ghost")
+            repick_button.clicked.connect(
+                lambda _checked=False, n=identity.name: self._handle_repick_reference(n)
+            )
+            remove_button = button("Remove", variant="ghost")
+            remove_button.clicked.connect(
+                lambda _checked=False, n=identity.name: self._handle_remove_identity(n)
+            )
+            row.addWidget(edit_button)
+            row.addWidget(repick_button)
+            row.addWidget(remove_button)
+            row.addStretch()
+            layout.addLayout(row)
+
+        editing = self._editing_identity_name
+
+        layout.addWidget(
+            small_muted(
+                f"Editing {editing}." if editing else "Add a character or place:"
+            )
+        )
+
+        form = QFormLayout()
+        form.setSpacing(6)
+
+        name_field = QLineEdit(self._recurring_form["name"])
+        name_field.setPlaceholderText("e.g. Grandmother, or The kitchen")
+        name_field.setMaxLength(60)
+        name_field.textChanged.connect(
+            lambda text: self._recurring_form.__setitem__("name", text)
+        )
+        form.addRow("Name", name_field)
+
+        kind_field = QComboBox()
+        kind_field.addItem("Character (a person)", "person")
+        kind_field.addItem("Place", "location")
+        kind_field.setCurrentIndex(0 if self._recurring_form["kind"] == "person" else 1)
+        kind_field.setEnabled(editing is None)
+        kind_field.currentIndexChanged.connect(
+            lambda _index, box=kind_field: self._recurring_form.__setitem__(
+                "kind", str(box.currentData())
+            )
+        )
+        form.addRow("Kind", kind_field)
+
+        description_field = QLineEdit(self._recurring_form["description"])
+        description_field.setPlaceholderText(
+            "What it looks like - repeated word for word in each scene"
+        )
+        description_field.setMaxLength(400)
+        description_field.textChanged.connect(
+            lambda text: self._recurring_form.__setitem__("description", text)
+        )
+        form.addRow("Description", description_field)
+
+        scenes_field = QLineEdit(self._recurring_form["scenes"])
+        scenes_field.setPlaceholderText("Scenes it appears in, e.g. 1-11, 14")
+        scenes_field.textChanged.connect(
+            lambda text: self._recurring_form.__setitem__("scenes", text)
+        )
+        form.addRow("Scenes", scenes_field)
+
+        layout.addLayout(form)
+
+        row = QHBoxLayout()
+        save_button = button(
+            "Save changes" if editing else "Add to the video", variant="primary"
+        )
+        save_button.clicked.connect(self._handle_save_identity)
+        row.addWidget(save_button)
+
+        if editing:
+            cancel_button = button("Cancel", variant="ghost")
+            cancel_button.clicked.connect(self._handle_cancel_identity_edit)
+            row.addWidget(cancel_button)
+
+        row.addStretch()
+        layout.addLayout(row)
+
+    def _reset_recurring_form(self) -> None:
+        self._recurring_form = {
+            "name": "",
+            "kind": "person",
+            "description": "",
+            "scenes": "",
+        }
+        self._editing_identity_name = None
+
+    def _handle_edit_identity(self, name: str) -> None:
+        job = self._current_job()
+
+        if job is None or job.visual_continuity_bible is None:
+            return
+
+        identity = next(
+            (i for i in job.visual_continuity_bible.identities if i.name == name),
+            None,
+        )
+
+        if identity is None or not identity.is_manual:
+            return
+
+        self._editing_identity_name = name
+        self._recurring_form = {
+            "name": identity.name,
+            "kind": (
+                "person"
+                if identity.entity_type == CanonicalEntityType.PERSON
+                else "location"
+            ),
+            "description": identity.canonical_description,
+            "scenes": format_scene_numbers(
+                self._recurring_identity_service.scenes_of(job, name)
+            ),
+        }
+        self.refresh(job)
+
+    def _handle_cancel_identity_edit(self) -> None:
+        job = self._current_job()
+        self._reset_recurring_form()
+
+        if job is not None:
+            self.refresh(job)
+
+    def _handle_save_identity(self) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        form = dict(self._recurring_form)
+        editing = self._editing_identity_name
+        service = self._recurring_identity_service
+
+        try:
+            cleaned_name, _description, _scenes = service.validate(
+                job,
+                name=form["name"],
+                description=form["description"],
+                scene_text=form["scenes"],
+                existing_name=editing,
+            )
+        except ValueError as error:
+            self._record_error(job, f"Could not save: {error}")
+
+            return
+
+        kind = (
+            CanonicalEntityType.PERSON
+            if form["kind"] == "person"
+            else CanonicalEntityType.LOCATION
+        )
+
+        def runner(target: VideoJob) -> VideoJob:
+            if editing is None:
+                service.add(
+                    target,
+                    name=form["name"],
+                    kind=kind,
+                    description=form["description"],
+                    scene_text=form["scenes"],
+                )
+            else:
+                service.update(
+                    target,
+                    editing,
+                    new_name=form["name"],
+                    description=form["description"],
+                    scene_text=form["scenes"],
+                )
+
+            service.fill_reference(target, cleaned_name)
+            self._recompile_prompts_if_present(target)
+
+            return target
+
+        self._reset_recurring_form()
+        self._run_stage(
+            job,
+            runner,
+            label="characters and places",
+            failure="Could not save the character or place",
+            retry=self._handle_save_identity,
+        )
+
+    def _handle_remove_identity(self, name: str) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        service = self._recurring_identity_service
+
+        def runner(target: VideoJob) -> VideoJob:
+            service.remove(target, name)
+            self._recompile_prompts_if_present(target)
+
+            return target
+
+        if self._editing_identity_name == name:
+            self._reset_recurring_form()
+
+        self._run_stage(
+            job,
+            runner,
+            label="characters and places",
+            failure=f"Could not remove {name}",
+        )
+
+    def _handle_repick_reference(self, name: str) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        service = self._recurring_identity_service
+
+        def runner(target: VideoJob) -> VideoJob:
+            result = service.fill_reference(target, name, replace=True)
+
+            if not result.attached:
+                raise ValueError(result.detail)
+
+            return target
+
+        self._run_stage(
+            job,
+            runner,
+            label="reference picture",
+            failure=f"Could not pick a reference for {name}",
+        )
+
+    def _recompile_prompts_if_present(self, job: VideoJob) -> None:
+        """Rebuild the compiled prompts so the change reaches them. Deterministic -
+        no Claude call."""
+
+        if job.cinematic_prompt_package is not None:
+            self._content_intelligence_pipeline.run_cinematic_prompt_compilation(job)
 
     def _handle_generate_visual_continuity(self) -> None:
         job = self._current_job()

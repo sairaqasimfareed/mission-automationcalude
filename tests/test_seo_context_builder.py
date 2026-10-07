@@ -192,6 +192,25 @@ def test_build_returns_seo_context_for_a_content_intelligence_pipeline_job() -> 
     assert context.script_lock_version_number == 1
 
 
+def test_build_works_without_research_for_a_locked_generated_script() -> None:
+    """Manual content mode skips research on purpose; the SEO text then comes
+    from the locked script alone (live, 2026-10-07: title card, SEO and
+    thumbnail all failed on "requires a VideoJob with research")."""
+
+    job = _job_with_locked_generated_script()
+    job.research = None
+
+    context = SEOContextBuilder().build(
+        job,
+        genre_id="genre.documentary",
+        target_audience="Ocean enthusiasts",
+    )
+
+    assert context.research_summary == ""
+    assert context.key_facts == []
+    assert context.script_content.startswith("What lives in the deepest trenches?")
+
+
 def test_build_raises_for_an_unlocked_content_intelligence_pipeline_script() -> None:
     job = _job_with_locked_generated_script()
     job.script_lock = None

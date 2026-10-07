@@ -253,6 +253,7 @@ class ProjectWorkspaceView(QWidget):
             on_change=self.refresh,
             scene_video_generation_service=scene_generation_dispatch_service,
             provider_registry=provider_registry,
+            recompile_prompts=content_intelligence_pipeline.run_cinematic_prompt_compilation,
         )
         self.compiled_prompts = CompiledPromptView(
             job_store=job_store,

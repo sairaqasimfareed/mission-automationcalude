@@ -44,6 +44,7 @@ from src.models.packaging_hypothesis import PackagingHypothesis
 from src.models.policy import PolicyComplianceReport
 from src.models.production_ambiguity import ProductionAmbiguity
 from src.models.production_semantic_brief import ProductionSemanticBrief
+from src.models.project_look import ProjectLook
 from src.models.provider_preferences import ProviderPreferences
 from src.models.re_hook import ReHookPlan
 from src.models.render_result import RenderResult
@@ -460,6 +461,11 @@ class VideoJob(MissionBaseModel):
     # unattended still has its verdict waiting after an app restart.
     # clip_signature on the report says which clips it covered.
     clip_verification_report: ClipAttachmentVerificationReport | None = None
+
+    # The video-wide visual style (lighting, colour palette, camera feel),
+    # repeated word for word in every scene's compiled prompt so the look
+    # does not drift between separately generated clips. None = not set.
+    project_look: ProjectLook | None = None
 
     policy_report: PolicyComplianceReport | None = None
 

@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from src.desktop.job_store import JobStore
 from src.desktop.recovery_dialog import show_recoverable_error
+from src.desktop.scroll_preservation import keep_scroll_on_refresh
 from src.desktop.widgets import (
     ExpandableList,
     badge,
@@ -81,6 +82,7 @@ from src.services.scene_generation_dispatch_service import (
     SceneGenerationDispatchService,
 )
 from src.services.scene_prompt_export_service import ScenePromptExportService
+from src.services.scene_visual_treatment import is_graphic_scene
 from src.services.video_provider_rules import (
     muse_target_seconds,
     resolve_scene_video_provider,
@@ -320,8 +322,13 @@ class ClipWorkspaceView(QWidget):
         provider_registry: ProviderRegistry | None = None,
         clip_verification_service: ClipAttachmentVerificationService | None = None,
         reference_refresh_service: ReferenceRefreshService | None = None,
+        recompile_prompts: Callable[[VideoJob], object] | None = None,
     ) -> None:
         super().__init__()
+
+        # Rebuilds the compiled prompts (deterministic, no Claude call) after a
+        # scene is switched between graphic and live footage.
+        self._recompile_prompts = recompile_prompts
 
         self._job_store = job_store
         self._clip_verification_service = (
@@ -391,6 +398,10 @@ class ClipWorkspaceView(QWidget):
 
         scroll_area.setWidget(content_container)
         outer_layout.addWidget(scroll_area)
+
+        # Every action rebuilds this tab's cards; without this each one threw the
+        # operator back to the top (see src/desktop/scroll_preservation.py).
+        keep_scroll_on_refresh(self, scroll_area)
 
     def set_job(self, job_id: UUID) -> None:
         self._job_id = job_id
@@ -979,6 +990,8 @@ class ClipWorkspaceView(QWidget):
                     )
                 )
 
+            self._add_graphic_treatment_row(row_layout, job, scene)
+
             if not sub_clip_statuses:
                 plan_text = self._planned_split_text(job, scene)
 
@@ -1211,6 +1224,81 @@ class ClipWorkspaceView(QWidget):
 
             if index >= 0:
                 combo.setCurrentIndex(index)
+
+    def _add_graphic_treatment_row(
+        self, row_layout: QVBoxLayout, job: VideoJob, scene: Scene
+    ) -> None:
+        """For a scene the plan draws as a graphic (an infographic, a text overlay):
+        say so, and offer to show it as live footage instead.
+
+        Live, 2026-10-07 (Remedy scene 13): the plan asked for an infographic and
+        Muse made a flat cartoon card with a sentence the narration never said,
+        between photographic kitchen scenes. Off by default - nothing changes unless
+        the operator chooses it."""
+
+        entry = (
+            job.visual_continuity_bible.entry_for_scene(scene.scene_number)
+            if job.visual_continuity_bible is not None
+            else None
+        )
+        shot = (
+            job.cinematic_shot_plan.shot_for_scene(scene.scene_number)
+            if job.cinematic_shot_plan is not None
+            else None
+        )
+
+        if not (
+            scene.treat_as_live_footage or is_graphic_scene(entry=entry, shot=shot)
+        ):
+            return
+
+        row_layout.addWidget(
+            small_muted(
+                "Shown as live footage in the project's main setting."
+                if scene.treat_as_live_footage
+                else "Graphic scene - the plan draws this as an infographic or text "
+                "overlay, so its on-screen text is limited to the narration's own words."
+            )
+        )
+
+        switch = QCheckBox("Show as live footage instead of a graphic")
+        switch.setChecked(scene.treat_as_live_footage)
+        switch.setEnabled(job.id not in self._generating_job_ids)
+        switch.toggled.connect(
+            lambda checked, number=scene.scene_number: self._handle_toggle_live_footage(
+                number, checked
+            )
+        )
+        row_layout.addWidget(switch)
+
+    def _handle_toggle_live_footage(self, scene_number: int, checked: bool) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        scene = next((s for s in job.scenes if s.scene_number == scene_number), None)
+
+        if scene is None or scene.treat_as_live_footage == checked:
+            return
+
+        scene.treat_as_live_footage = checked
+
+        if (
+            self._recompile_prompts is not None
+            and job.cinematic_prompt_package is not None
+        ):
+            try:
+                self._recompile_prompts(job)
+            except (RuntimeError, ValueError) as error:
+                self._record_error(
+                    job, f"The prompts could not be rebuilt for this change: {error}"
+                )
+
+                return
+
+        self._job_store.add(job)
+        self._on_change()
 
     @staticmethod
     def _clip_length_text(job: VideoJob, scene: Scene) -> str:

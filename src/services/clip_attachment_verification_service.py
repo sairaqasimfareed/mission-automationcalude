@@ -28,6 +28,7 @@ from src.services.frame_extraction_service import FrameExtractionService
 from src.services.media_technical_validation_service import (
     MediaTechnicalValidationService,
 )
+from src.services.scene_visual_treatment import effective_on_screen_names
 from src.services.video_provider_rules import MUSE_MIN_CLIP_SECONDS
 
 # A clip may fall short of the narration by this much before it is flagged -
@@ -313,9 +314,9 @@ class ClipAttachmentVerificationService:
         if bible is None:
             return
 
-        entry = bible.entry_for_scene(scene.scene_number)
+        on_screen_names = effective_on_screen_names(bible, scene)
 
-        if entry is None or not entry.on_screen_entity_names:
+        if not on_screen_names:
             return
 
         sent = self._references_sent(job, scene)
@@ -325,7 +326,7 @@ class ClipAttachmentVerificationService:
 
         by_name = {identity.name: identity for identity in bible.identities}
 
-        for name in entry.on_screen_entity_names:
+        for name in on_screen_names:
             identity = by_name.get(name)
 
             if identity is None:

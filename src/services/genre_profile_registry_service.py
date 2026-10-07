@@ -1185,8 +1185,13 @@ class GenreProfileRegistryService:
                 ),
                 editing=GenreEditingProfile(
                     camera_preset_id="camera.none",
-                    transition_in_preset_id="transition.cross_dissolve",
-                    transition_out_preset_id="transition.cross_dissolve",
+                    # Live, 2026-10-07 (Remedy): the scene-to-scene crossfade
+                    # ghosted a photographic clip over an infographic and ate
+                    # ~10 s of the video's length (clips 94 s, render 83.8 s).
+                    # A narrated explainer reads cleaner with hard cuts; the
+                    # operator can still pick a dissolve per scene.
+                    transition_in_preset_id="transition.cut",
+                    transition_out_preset_id="transition.cut",
                     # REQ-11 (genre-adaptive color grading), 2026-09-22:
                     # visual.cool_blue_grade actually contradicted this
                     # REQ's own locked design - a real cool/blue tint,

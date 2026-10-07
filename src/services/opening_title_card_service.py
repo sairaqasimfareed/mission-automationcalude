@@ -83,7 +83,7 @@ class OpeningTitleCardService:
     def build(
         self,
         *,
-        seo_context: SEOContext,
+        seo_context: SEOContext | None,
         genre_id: str,
         channel_name: str,
         topic: str,
@@ -147,11 +147,17 @@ class OpeningTitleCardService:
 
         position = position_override or _DEFAULT_POSITION
 
+        if not image_override and seo_context is None:
+            raise ValueError(
+                "An auto-generated title card background needs the project's SEO "
+                "context - upload your own image or clip instead."
+            )
+
         image_file = (
             image_override
             if image_override
             else self._image_generation_service.generate(
-                seo_context,
+                seo_context,  # type: ignore[arg-type]
                 width=width,
                 height=height,
                 selected_seo_title=selected_seo_title,

@@ -128,3 +128,37 @@ def test_empty_tracks_are_clean() -> None:
     result = service.evaluate([])
 
     assert result.is_clean is True
+
+
+def _voice_track(*, start: float, duration: float) -> AudioTrack:
+    return AudioTrack(
+        track_type=AudioTrackType.VOICEOVER,
+        source_file="/tmp/voice.mp3",
+        start_time_seconds=start,
+        duration_seconds=duration,
+        volume=1.0,
+    )
+
+
+def test_a_ducked_effect_over_narration_is_judged_by_its_ducked_level() -> None:
+    """Live, 2026-10-07: a voice at 1.0 plus a 0.55 effect was flagged as 1.55 (over
+    the 1.5 ceiling), although the mix turns that effect down under narration."""
+
+    effect = _sfx_track(start=2.0, volume=0.55)
+    effect.duck_under_voice = True
+
+    result = AudioCuePolicyService().evaluate(
+        [_voice_track(start=0.0, duration=8.0), effect]
+    )
+
+    assert result.is_clean is True
+
+
+def test_an_effect_that_does_not_duck_still_counts_at_full_level() -> None:
+    effect = _sfx_track(start=2.0, volume=0.55)
+
+    result = AudioCuePolicyService().evaluate(
+        [_voice_track(start=0.0, duration=8.0), effect]
+    )
+
+    assert result.is_clean is False

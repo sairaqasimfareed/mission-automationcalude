@@ -26,6 +26,17 @@ from src.services.scene_video_generation_service import (
 MUSE_CLIP_DURATION_SECONDS = 10.0
 MUSE_SAFETY_NET_TRIM_TOLERANCE_SECONDS = 0.5
 
+# Live, 2026-10-07 (Remedy): the "Also trim the generated 10 seconds video to only
+# N seconds video." line made Muse build a full 10-second clip and cut it, so the
+# end of what it had planned was lost - a woman mid-sentence, then a different
+# scene (3-4 places in one video). Pasted into Muse without that line, our own
+# prompts came back at exactly their stated length: "Duration: 8 seconds" -> 8 s,
+# "Duration: 3 seconds" -> 3 s, and "generate a 4 second ..." -> 4 s. So the length
+# is now only stated (the "Duration: N seconds." line already in every prompt) and
+# the FFmpeg safety net trims a clip that still comes back too long. Flip this to
+# True to send the trim instruction again.
+MUSE_SEND_TRIM_INSTRUCTION = False
+
 # The shortest clip Muse is ever asked for, 2026-10-04. A one-word scene
 # (~1s of narration) would otherwise be a ~1s clip - shorter than the
 # crossfades around it, and the case Muse's "trim to N seconds" handles
@@ -126,8 +137,8 @@ class VideoProviderRules:
         The prompt exactly as a submission would send it: its stated
         duration and last shot beat corrected to the real target (both
         are baked in at compile time, before the real narration length
-        exists), plus - for Muse - the trim instruction when the target
-        is shorter than its fixed 10s clip.
+        exists). Muse is no longer sent a trim instruction (see
+        MUSE_SEND_TRIM_INSTRUCTION): the stated length is what it follows.
         """
 
         if self.provider == VideoProvider.MUSE:
@@ -142,6 +153,17 @@ class VideoProviderRules:
 
         if (
             self.provider == VideoProvider.MUSE
+            and not MUSE_SEND_TRIM_INSTRUCTION
+            and not _DURATION_STATEMENT_PATTERN.search(prompt)
+        ):
+            # A compiled prompt always states its duration, but a scene with no
+            # compiled prompt (or a hand-written one) does not - and the stated
+            # length is now the ONLY way Muse is told how long to make the clip.
+            prompt = f"{prompt}\n\nDuration: {target_seconds:.0f} seconds."
+
+        if (
+            self.provider == VideoProvider.MUSE
+            and MUSE_SEND_TRIM_INSTRUCTION
             and target_seconds
             < MUSE_CLIP_DURATION_SECONDS - MUSE_SAFETY_NET_TRIM_TOLERANCE_SECONDS
         ):

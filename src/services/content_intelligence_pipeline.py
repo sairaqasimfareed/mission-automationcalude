@@ -60,6 +60,7 @@ from src.services.production_semantic_brief_service import (
     ProductionSemanticBriefService,
 )
 from src.services.re_hook_planning_service import ReHookPlanningService
+from src.services.recurring_identity_service import carry_over_manual_identities
 from src.services.research_planning_service import ResearchPlanningService
 from src.services.retention_audit_service import RetentionAuditService
 from src.services.scene_sound_design_service import SceneSoundDesignService
@@ -1338,11 +1339,16 @@ class ContentIntelligencePipeline:
         if job.continuity_bible is None:
             raise RuntimeError("Visual continuity requires a continuity bible.")
 
+        previous_bible = job.visual_continuity_bible
+
         job.visual_continuity_bible = self.visual_continuity_service.build(
             scenes=job.scenes,
             continuity_bible=job.continuity_bible,
             script_lock_hash=job.script_lock.script_content_hash,
         )
+
+        # The characters and places the operator named by hand survive a regenerate.
+        carry_over_manual_identities(previous_bible, job.visual_continuity_bible)
 
         self.approval_gate_service.record_event(
             job=job,
@@ -1456,6 +1462,7 @@ class ContentIntelligencePipeline:
             # what scene_video_generation_service.py actually
             # requests, instead of the two drifting independently.
             duration_seconds_resolver=clamp_to_verified_duration,
+            project_look=job.project_look,
         )
 
         self.approval_gate_service.record_event(

@@ -45,6 +45,12 @@ class Scene(MissionBaseModel):
     # truth instead of a guess.
     real_narration_duration_seconds: float | None = None
 
+    # Operator switch for a scene the plan wants drawn as a graphic (an
+    # infographic, a text overlay). True = show it as live footage in the
+    # project's main setting instead, with that setting's reference picture
+    # attached - so it matches the filmed scenes around it. Default off.
+    treat_as_live_footage: bool = False
+
     camera_direction: str = ""
     sound_design: str = ""
 

@@ -68,6 +68,11 @@ class CanonicalEntityIdentity(MissionBaseModel):
     # attaches.
     reference_asset_ids: list[str] = Field(default_factory=list)
 
+    # True for a character or place the operator added by hand (Content Studio >
+    # Production handoff). Regenerating the bible replaces the generated identities;
+    # this marks the ones the operator can edit and remove.
+    is_manual: bool = False
+
     @field_validator("name", "canonical_description")
     @classmethod
     def clean_text(cls, value: str) -> str:

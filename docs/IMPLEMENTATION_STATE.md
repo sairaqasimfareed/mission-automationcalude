@@ -610,6 +610,100 @@ section records what changed and why so a later session does not undo it.
     including a test proving the old arguments really were not maximized). This
     applies to every Playwright-driven window (Flow and Muse); the separate
     real-Chrome "Open login" window is the operator's own Chrome and untouched.
+  - **Project look + graphic-scene fixes (2026-10-07, live: Lake Nyos scenes 1/2
+    lighting mismatch; Remedy scene 13 infographic).** (1) `VideoJob.project_look`
+    (`src/models/project_look.py`: `lighting`, `color_palette`, `camera_feel`, each
+    a short free-text field) - rendered as one "Visual style for the whole video"
+    sentence word-for-word into every compiled prompt (whole-scene and sub-clip),
+    after the lens/camera line. Edited in Content Studio > Production handoff
+    ("Save project look"), which recompiles prompts with no Claude call. (2) A scene
+    the plan draws as a graphic (`scene_visual_treatment.is_graphic_scene`) no longer
+    gets "no on-screen text" (which contradicted it, so the generator invented
+    words): its first negative constraint becomes `any text on screen must be
+    exactly: "<narration>" - no other words, numbers, claims or logos`. (3)
+    `Scene.treat_as_live_footage` (default False; Clips tab checkbox "Show as live
+    footage instead of a graphic"): the scene is compiled as live-action footage in
+    the project's main place (`main_place`: a LOCATION with a reference), plan beats
+    not used, and `effective_on_screen_names` makes that place count as on screen so
+    Flow, Muse, the Clip check and the reference refresh all attach/expect its
+    reference. Tests: `tests/test_project_look.py`,
+    `tests/test_graphic_scene_treatment.py`, plus Flow/Muse/Clip-check live-footage
+    reference cases. Not yet built: the "recurring character or place" form.
+  - **Scroll position kept on every workspace tab (2026-10-07, live: "any action
+    in any tab scrolls back to the top").** Only Content Studio had scroll
+    preservation (sixth-pass fix, 2026-09-26); Clips, Prompts, Audio, Timeline,
+    Render, Quality and Packaging rebuild every card on each refresh and threw the
+    operator to the top after any action. New `src/desktop/scroll_preservation.py`:
+    `ScrollKeeper` (captures the last real position - a collapsed range reads as a
+    false 0 during teardown - and re-applies it on every scroll-range change until
+    the range has been still for 200 ms, capped at 3 s; a different project starts
+    at the top) and `keep_scroll_on_refresh(view, scroll_area)`, which wraps the
+    view's own `refresh` so every caller (whole-project refresh, a view refreshing
+    itself after a background job) is covered. Wired into the seven tabs'
+    constructors. Content Studio keeps its own mechanism. Tests:
+    `tests/test_scroll_preservation.py` (stand-in tab + the real Audio tab;
+    repeated refreshes, project switch, operator scrolling between refreshes).
+  - **Fixes from the first full Remedy render review (2026-10-07).**
+    - *Title card / SEO on a project without research.* `SEOContextBuilder` no
+      longer requires `job.research` for a locked generated script (empty summary
+      and facts); `OpeningTitleCardService.build` takes `seo_context=None` (only
+      the AI-generated background needs it - a clip or image never does) and
+      Packaging builds the context only when it is needed, passing "General
+      audience" when the project has no audience promise (also for export
+      variants). Live failure: "SEO context requires a VideoJob with research".
+    - *Audio mix* (`FilterGraphBuilderService`): ducking is now a smooth gate -
+      voice windows within 1.5 s are merged (the duck is held across pauses) and
+      the duck eases over 0.3 s (`volume` expression, `eval=frame`) instead of
+      the old hard +10 dB jump in every gap; sound effects duck by x0.6, music
+      x0.3 (`MUSIC_/SOUND_EFFECT_DUCK_VOLUME_MULTIPLIER` in `audio_track.py`);
+      the finished mix passes `loudnorm` (I=-16, TP=-1.5, LRA=11) + `aresample`
+      before the limiter (Remedy measured -24.2 LUFS, a re-run of the same audio
+      lands at -17.2). `AudioCuePolicyService` now judges a ducked track by its
+      ducked level, so a voice plus a ducked effect no longer trips "1.55 over
+      1.5".
+    - *Transitions.* `genre.medical` uses hard cuts (was a 0.6 s crossfade that
+      ghosted clips over infographics and shortened the video by ~10 s). Existing
+      projects pick it up when "Build editing timeline" is run again.
+    - *Genre presets.* `EffectRegistryService.with_default_presets` registers a
+      GENRE preset for every genre profile, so only genre.default/horror no longer
+      resolve exactly - the "Requested effect preset is not registered:
+      genre.medical" warning is gone (the profile was always applied).
+    - *Provider name.* The Providers screen warns when a saved voice / music /
+      sound-effects / stock profile has a name nothing can use and no HTTP adapter
+      (`unrecognized_provider_name_message`) - the live "sfx" profile failed
+      silently with "No sound-effect provider is configured".
+    - *Render tab note* that the title card, watermark and CTA are added in
+      Packaging.
+    - *Characters and places by hand* (`RecurringIdentityService`,
+      `CanonicalEntityIdentity.is_manual`): Content Studio > Production handoff >
+      "Your characters and places" - name, kind, description, scenes ("1-11, 14").
+      The description goes into those scenes' prompts (marked on screen), the
+      reference picture is taken from their generated clips by the same selection
+      code (people by face, places by frame; nothing generated yet = taken by the
+      providers from the first scene made), prompts are recompiled without Claude,
+      "Pick reference again" / Edit / Remove, and a regenerated bible keeps them
+      (`carry_over_manual_identities`). Tests: `test_recurring_identity_service.py`,
+      `test_audio_mix_smooth_ducking_and_loudness.py`, plus cases in the SEO,
+      title-card, cue-policy, effect-registry, provider-manager and render-tab
+      test files.
+  - **Muse is told the length, not asked to trim (2026-10-07, live).** Every Muse
+    clip was generated at 10 s and cut with "Also trim the generated 10 seconds video
+    to only N seconds video.", which dropped the end of what Muse had planned (a
+    woman mid-sentence, then a different scene, in 3-4 places of one video). The
+    operator pasted our own prompts into Muse without that line: "Duration: 8
+    seconds" returned 8 s, "Duration: 3 seconds" returned 3 s, and "generate a 4
+    second ..." returned 4 s. `VideoProviderRules.finalize_prompt` no longer appends
+    the trim instruction (`MUSE_SEND_TRIM_INSTRUCTION = False`, one flag to restore
+    it); the stated "Duration: N seconds." line and the FFmpeg safety-net trim stay.
+    Verify on the next Muse run that the 5-7 s lengths also come back at length.
+  - **Negative constraints are never sent (found 2026-10-07, NOT fixed).** Every
+    compiled prompt carries `negative_constraints` (the "no on-screen text, logos or
+    watermarks" rule, identity/subject/continuity rules, and for graphic scenes the
+    exact-text rule) but `prompt_text` never includes them and neither the Muse nor
+    the Flow submission sends them; the Content tab's "Negative:" lines make it look
+    as if they were. So the graphic-scene exact-text rule built the same day does not
+    reach the generator yet. Decision pending: append a short "Avoid:" line, with the
+    text rule softened per scene type (the operator likes on-screen text).
   - The fallback to the composite render now catches only the new
     `ChunkedRenderRequiredError` (a `NotImplementedError` subclass raised
     by `render_video_only()` for command-length chunking); any other

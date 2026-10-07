@@ -3,6 +3,10 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from src.models.audio_track import (
+    MUSIC_DUCK_VOLUME_MULTIPLIER,
+    SOUND_EFFECT_DUCK_VOLUME_MULTIPLIER,
+)
 from src.models.ffmpeg_config import (
     FFmpegCapabilities,
     FFmpegResolvedConfig,
@@ -93,7 +97,31 @@ class FilterGraphBuilderService:
     # known union of voice-active time windows instead (see
     # _build_ducking_chains) - same creative effect, no dynamic
     # sidechain analysis, no multi-consumer defect.
-    _DUCK_VOLUME_MULTIPLIER = "0.3"
+    _DUCK_VOLUME_MULTIPLIER = MUSIC_DUCK_VOLUME_MULTIPLIER
+
+    # Live, 2026-10-07 (Remedy): the same -10 dB duck on sound effects left the
+    # four cues the operator paid for almost inaudible (nominal volume 0.4-0.55,
+    # then x0.3), so effects duck more gently than the music bed. They still
+    # duck - several cues over narration used to bury it (see
+    # sound_effect_stage).
+    _SOUND_EFFECT_DUCK_VOLUME_MULTIPLIER = SOUND_EFFECT_DUCK_VOLUME_MULTIPLIER
+
+    # The duck used to be a hard on/off switch per voice clip. Each voice file
+    # ends in 0.4-1 s of silence and clips are followed by short gaps, so the
+    # music jumped +10 dB in every gap and dropped again on the next line. Gaps
+    # up to this long now keep the duck held, and the duck eases in and out over
+    # _DUCK_RAMP_SECONDS instead of switching.
+    _DUCK_HOLD_GAP_SECONDS = 1.5
+    _DUCK_RAMP_SECONDS = 0.3
+
+    # Live, 2026-10-07: the mix came out at -24 LUFS (voices go in at their own
+    # file level and nothing normalised the sum). One single-pass loudness stage
+    # brings the finished mix to a common target before the limiter.
+    _LOUDNESS_TARGET_LUFS = "-16"
+    _LOUDNESS_TRUE_PEAK_DB = "-1.5"
+    _LOUDNESS_RANGE_LU = "11"
+    # loudnorm resamples its output to 192 kHz; bring it back to the delivery rate.
+    _LOUDNESS_OUTPUT_SAMPLE_RATE = "44100"
 
     def __init__(
         self,
@@ -924,6 +952,8 @@ class FilterGraphBuilderService:
 
         duckable_offsets: list[int] = []
 
+        duck_multipliers: dict[int, float] = {}
+
         for audio_offset, node in enumerate(audio_nodes):
             input_index = first_input_index + audio_offset
 
@@ -1120,6 +1150,11 @@ class FilterGraphBuilderService:
                 )
             elif bool(node.payload.get("duck_under_voice")):
                 duckable_offsets.append(audio_offset)
+                duck_multipliers[audio_offset] = (
+                    self._SOUND_EFFECT_DUCK_VOLUME_MULTIPLIER
+                    if track_type == "sound_effect"
+                    else self._DUCK_VOLUME_MULTIPLIER
+                )
 
         final_mix_labels = list(normalized_labels)
 
@@ -1129,6 +1164,7 @@ class FilterGraphBuilderService:
                     normalized_labels=(normalized_labels),
                     voice_windows=voice_windows,
                     duckable_offsets=(duckable_offsets),
+                    duck_multipliers=duck_multipliers,
                     final_mix_labels=(final_mix_labels),
                 )
             )
@@ -1168,10 +1204,39 @@ class FilterGraphBuilderService:
         # already computed. "audio_final" stays the graph's public
         # output label (FilterGraph.audio_output_label references it
         # directly) - only what feeds it changed.
+        loudness_node = FilterNode(
+            media_type=FilterMediaType.AUDIO,
+            filter_name="loudnorm",
+            input_labels=["audio_mixed"],
+            output_labels=["audio_loudnorm_raw"],
+            options={
+                "I": self._LOUDNESS_TARGET_LUFS,
+                "TP": self._LOUDNESS_TRUE_PEAK_DB,
+                "LRA": self._LOUDNESS_RANGE_LU,
+            },
+        )
+        resample_node = FilterNode(
+            media_type=FilterMediaType.AUDIO,
+            filter_name="aresample",
+            input_labels=["audio_loudnorm_raw"],
+            output_labels=["audio_loudnorm"],
+            raw_arguments=[self._LOUDNESS_OUTPUT_SAMPLE_RATE],
+        )
+
+        chains.append(
+            FilterChain(
+                media_type=FilterMediaType.AUDIO,
+                nodes=[loudness_node, resample_node],
+                input_labels=["audio_mixed"],
+                output_label="audio_loudnorm",
+                metadata={"operation": "audio_loudness"},
+            )
+        )
+
         limiter_node = FilterNode(
             media_type=FilterMediaType.AUDIO,
             filter_name="alimiter",
-            input_labels=["audio_mixed"],
+            input_labels=["audio_loudnorm"],
             output_labels=["audio_final"],
             options={"limit": "1.0"},
         )
@@ -1180,7 +1245,7 @@ class FilterGraphBuilderService:
             FilterChain(
                 media_type=FilterMediaType.AUDIO,
                 nodes=[limiter_node],
-                input_labels=["audio_mixed"],
+                input_labels=["audio_loudnorm"],
                 output_label="audio_final",
                 metadata={"operation": "audio_limiter"},
             )
@@ -1194,19 +1259,25 @@ class FilterGraphBuilderService:
         normalized_labels: list[str],
         voice_windows: list[tuple[float, float]],
         duckable_offsets: list[int],
+        duck_multipliers: dict[int, float],
         final_mix_labels: list[str],
     ) -> list[FilterChain]:
         """
-        Duck each duck_under_voice track during voice-active windows.
+        Duck each duck_under_voice track while narration is playing.
 
         Every voice track's own timing is already known deterministically
         (the same start_time_seconds/duration_seconds the caller uses to
         position it on the timeline), so ducking does not need dynamic
-        sidechain analysis at all: a flat volume multiplier, gated with
-        `enable` to the union of voice-active windows, produces the same
-        creative effect - quieter background audio while narration plays -
-        without sidechaincompress's confirmed multi-consumer defect (see
-        _DUCK_VOLUME_MULTIPLIER). final_mix_labels is mutated in place,
+        sidechain analysis at all: a volume multiplier that follows a gate built
+        from the voice-active windows produces the same creative effect -
+        quieter background audio while narration plays - without
+        sidechaincompress's confirmed multi-consumer defect (see
+        _DUCK_VOLUME_MULTIPLIER).
+
+        The gate is smooth: windows separated by a short gap are merged (the
+        duck is held across the pause between two lines) and every window
+        eases in and out over _DUCK_RAMP_SECONDS, so the background no longer
+        jumps 10 dB in each gap. final_mix_labels is mutated in place,
         replacing each ducked track's plain normalized label with its
         ducked output so the caller's final amix picks up the ducked
         version.
@@ -1214,14 +1285,14 @@ class FilterGraphBuilderService:
 
         chains: list[FilterChain] = []
 
-        voice_active_expression = "+".join(
-            f"between(t,{self._format_number(start)},{self._format_number(end)})"
-            for start, end in voice_windows
-        )
+        gate_expression = self._duck_gate_expression(voice_windows)
 
         for audio_offset in duckable_offsets:
             source_label = normalized_labels[audio_offset]
             ducked_label = f"audio_{audio_offset}_ducked"
+            reduction = 1.0 - duck_multipliers.get(
+                audio_offset, self._DUCK_VOLUME_MULTIPLIER
+            )
 
             duck_node = FilterNode(
                 media_type=FilterMediaType.AUDIO,
@@ -1229,8 +1300,8 @@ class FilterGraphBuilderService:
                 input_labels=[source_label],
                 output_labels=[ducked_label],
                 options={
-                    "volume": self._DUCK_VOLUME_MULTIPLIER,
-                    "enable": f"'{voice_active_expression}'",
+                    "volume": f"'1-{self._format_number(reduction)}*{gate_expression}'",
+                    "eval": "frame",
                 },
             )
 
@@ -1250,6 +1321,30 @@ class FilterGraphBuilderService:
             final_mix_labels[audio_offset] = ducked_label
 
         return chains
+
+    def _duck_gate_expression(self, voice_windows: list[tuple[float, float]]) -> str:
+        """An FFmpeg expression of `t` that is 1 while narration plays, 0 when it
+        does not, and eases between the two over _DUCK_RAMP_SECONDS."""
+
+        ramp = self._DUCK_RAMP_SECONDS
+        merged: list[list[float]] = []
+
+        for start, end in sorted(voice_windows):
+            if merged and start - merged[-1][1] <= self._DUCK_HOLD_GAP_SECONDS:
+                merged[-1][1] = max(merged[-1][1], end)
+            else:
+                merged.append([start, end])
+
+        ramp_text = self._format_number(ramp)
+        terms = [
+            (
+                f"min(1,max(0,(t-({self._format_number(start - ramp)}))/{ramp_text}))"
+                f"*min(1,max(0,({self._format_number(end + ramp)}-t)/{ramp_text}))"
+            )
+            for start, end in merged
+        ]
+
+        return f"min(1,{'+'.join(terms)})"
 
     def _scene_operation_nodes(
         self,

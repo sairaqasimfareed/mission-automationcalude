@@ -7,7 +7,12 @@ from src.models.audio_cue_policy import (
     AudioCueConflictType,
     AudioCuePolicyResult,
 )
-from src.models.audio_track import AudioTrack, AudioTrackType
+from src.models.audio_track import (
+    MUSIC_DUCK_VOLUME_MULTIPLIER,
+    SOUND_EFFECT_DUCK_VOLUME_MULTIPLIER,
+    AudioTrack,
+    AudioTrackType,
+)
 
 _DEFAULT_REPETITION_WINDOW_SECONDS = 3.0
 _DEFAULT_LOUDNESS_CEILING = 1.5
@@ -101,7 +106,9 @@ class AudioCuePolicyService:
             if not self._overlaps(first, second):
                 continue
 
-            combined_volume = first.volume + second.volume
+            combined_volume = self._heard_volume(first, second) + self._heard_volume(
+                second, first
+            )
 
             if combined_volume > self.loudness_ceiling:
                 conflicts.append(
@@ -117,6 +124,24 @@ class AudioCuePolicyService:
                 )
 
         return conflicts
+
+    @staticmethod
+    def _heard_volume(track: AudioTrack, other: AudioTrack) -> float:
+        """The level `track` actually reaches the mix at while `other` plays: a
+        duck_under_voice track is turned down under narration (live, 2026-10-07:
+        the check warned about a voice plus a ducked effect that the mix had
+        already lowered)."""
+
+        if track.duck_under_voice and other.track_type == AudioTrackType.VOICEOVER:
+            multiplier = (
+                SOUND_EFFECT_DUCK_VOLUME_MULTIPLIER
+                if track.track_type == AudioTrackType.SOUND_EFFECT
+                else MUSIC_DUCK_VOLUME_MULTIPLIER
+            )
+
+            return track.volume * multiplier
+
+        return track.volume
 
     @staticmethod
     def _overlaps(first: AudioTrack, second: AudioTrack) -> bool:

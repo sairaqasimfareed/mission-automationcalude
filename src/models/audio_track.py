@@ -6,6 +6,12 @@ from pydantic import Field
 
 from src.models.base import MissionBaseModel
 
+# How far the final mix turns a duck_under_voice track down while narration
+# plays (volume multipliers). Shared by the filter graph builder, which applies
+# them, and the audio cue policy, which must judge overlaps by the same levels.
+MUSIC_DUCK_VOLUME_MULTIPLIER = 0.3
+SOUND_EFFECT_DUCK_VOLUME_MULTIPLIER = 0.6
+
 
 class AudioTrackType(str, Enum):
     VOICEOVER = "voiceover"

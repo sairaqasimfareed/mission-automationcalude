@@ -296,3 +296,33 @@ assert (
 
 
 print("Effect Registry Service tests " "completed successfully.")
+
+
+def test_every_genre_profile_resolves_as_an_exact_genre_preset() -> None:
+    """Live, 2026-10-07: only genre.default and genre.horror were registered, so a
+    medical render logged "Requested effect preset is not registered:
+    genre.medical. Safe fallback 'genre.default' was selected." although the
+    medical profile was applied."""
+
+    from src.services.genre_profile_registry_service import (
+        GenreProfileRegistryService,
+    )
+
+    registry = EffectRegistryService.with_default_presets()
+
+    for profile in GenreProfileRegistryService.with_default_profiles().list_all():
+        resolution = registry.resolve(profile.genre_id)
+
+        assert resolution.found_exact_match is True, profile.genre_id
+        assert resolution.used_fallback is False, profile.genre_id
+        assert resolution.warning is None, profile.genre_id
+
+
+def test_a_genre_preset_carries_that_genres_own_editing_choices() -> None:
+    registry = EffectRegistryService.with_default_presets()
+
+    medical = registry.get("genre.medical").implementation
+
+    assert medical["transition_preset_id"] == "transition.cut"
+    assert medical["visual_preset_ids"] == ["visual.clean_neutral"]
+    assert medical["music_preset_id"] == "music.medical_calm_piano"

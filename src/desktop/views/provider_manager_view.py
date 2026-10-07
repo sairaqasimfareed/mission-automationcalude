@@ -84,6 +84,47 @@ _KNOWN_PROVIDER_NAMES: dict[ProviderCategory, list[str]] = {
     ProviderCategory.STOCK_IMAGE: ["pexels", "pixabay", "envato"],
 }
 
+# The categories whose adapter is chosen by provider_name alone (or by a generic
+# HTTP adapter config when that name is not a coded one).
+_ADAPTER_BY_NAME_CATEGORIES = (
+    ProviderCategory.VOICE,
+    ProviderCategory.MUSIC,
+    ProviderCategory.SOUND_EFFECTS,
+    ProviderCategory.STOCK_VIDEO,
+    ProviderCategory.STOCK_IMAGE,
+)
+
+
+def unrecognized_provider_name_message(
+    *,
+    category: ProviderCategory,
+    provider_name: str,
+    has_http_adapter_config: bool,
+) -> str | None:
+    """Why a saved profile would silently never be used, or None if it is fine.
+
+    Live, 2026-10-07: a sound-effects profile saved as "sfx" was accepted (the name
+    box takes any text), the app found no adapter for it, and generating effects
+    later failed with "No sound-effect provider is configured." - with nothing on
+    the Providers screen saying why."""
+
+    if category not in _ADAPTER_BY_NAME_CATEGORIES or has_http_adapter_config:
+        return None
+
+    name = provider_name.strip().lower()
+    known = _KNOWN_PROVIDER_NAMES.get(category, [])
+
+    if name in known:
+        return None
+
+    return (
+        f"The profile was saved, but '{provider_name.strip()}' is not a provider "
+        f"this app can use for {category.value.replace('_', ' ')} - nothing will "
+        f"be generated with it. Use one of: {', '.join(known)}; or fill in the "
+        "custom HTTP adapter settings."
+    )
+
+
 # Real model id suggestions for "Default model" - found this session's
 # real, live-discovered gap: leaving this field blank makes
 # create_llm_adapter() fall back to the literal request-level
@@ -792,6 +833,15 @@ class ProviderManagerView(QWidget):
 
         self._selected_profile_id = summary.profile_id
         self.refresh()
+
+        unusable_message = unrecognized_provider_name_message(
+            category=command.category,
+            provider_name=command.provider_name,
+            has_http_adapter_config=command.http_adapter_config is not None,
+        )
+
+        if unusable_message is not None:
+            QMessageBox.warning(self, "Provider will not be used", unusable_message)
 
     def _handle_test_clicked(self) -> None:
         if self._selected_profile_id is None:

@@ -8,7 +8,12 @@ from collections.abc import Iterator  # noqa: E402
 from pathlib import Path  # noqa: E402
 
 import pytest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QCheckBox, QRadioButton  # noqa: E402
+from PySide6.QtWidgets import (  # noqa: E402
+    QApplication,
+    QCheckBox,
+    QLabel,
+    QRadioButton,
+)
 
 from src.desktop.job_store import InMemoryJobStore  # noqa: E402
 from src.desktop.views.packaging_view import PackagingView  # noqa: E402
@@ -61,6 +66,20 @@ def _view(job: VideoJob, on_change=lambda: None) -> RenderWorkspaceView:
 
 def _checkbox(view: RenderWorkspaceView) -> QCheckBox:
     return next(c for c in view.findChildren(QCheckBox) if c.text() == _LABEL)
+
+
+def test_the_render_tab_says_where_the_title_card_and_cta_are_added(
+    qapp: QApplication,
+) -> None:
+    """Live, 2026-10-07: the operator looked for the opening card and CTA on the
+    Render tab; they are added to the finished render in Packaging."""
+
+    view = _view(_job())
+
+    assert any(
+        "Packaging tab" in label.text() and "title card" in label.text()
+        for label in view.findChildren(QLabel)
+    )
 
 
 def test_toggle_defaults_checked(qapp: QApplication) -> None:

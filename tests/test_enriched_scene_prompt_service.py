@@ -544,7 +544,8 @@ def test_a_muse_project_sizes_a_short_scene_to_its_exact_narration_and_asks_muse
     )
 
     assert entry.execution_duration_seconds == 7.0  # 6.4s rounded UP
-    assert entry.base_prompt_text.endswith(_MUSE_TRIM_9)
+    assert "Duration: 7 seconds" in entry.base_prompt_text
+    assert "trim the generated" not in entry.base_prompt_text
     assert entry.execution_provider_label is not None
     assert "Muse" in entry.execution_provider_label
     assert "Generates on: Muse" in entry.full_text()
@@ -616,8 +617,8 @@ def test_muse_splits_a_long_scene_evenly_with_exact_lengths_and_trim_instruction
 
     assert [entry.execution_duration_seconds for entry in entries] == [7.0, 7.0]
     assert all(
-        "Also trim the generated 10 seconds video to only 7 seconds video."
-        in entry.base_prompt_text
+        "Duration: 7 seconds" in entry.base_prompt_text
+        and "trim the generated" not in entry.base_prompt_text
         for entry in entries
     )
     assert "part 1 of 2" in entries[0].base_prompt_text.lower()

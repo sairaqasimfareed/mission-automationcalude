@@ -7,6 +7,9 @@ from src.models.effect_registry import (
     EffectResolutionResult,
     normalize_effect_id,
 )
+from src.services.genre_profile_registry_service import (
+    GenreProfileRegistryService,
+)
 
 
 class EffectRegistryService:
@@ -268,7 +271,37 @@ class EffectRegistryService:
     ) -> EffectRegistryService:
         """Create a registry with safe foundation presets."""
 
-        return cls(presets=cls._build_default_presets())
+        presets = cls._build_default_presets()
+        registered_ids = {preset.preset_id for preset in presets}
+
+        # Every genre profile is also a genre preset. Only genre.default and
+        # genre.horror were ever written out by hand, so every other genre (medical,
+        # comedy, ...) logged "Requested effect preset is not registered:
+        # genre.medical. Safe fallback 'genre.default' was selected." on every render
+        # - although the genre's own profile was applied (live, 2026-10-07).
+        for profile in GenreProfileRegistryService.with_default_profiles().list_all():
+            if profile.genre_id in registered_ids:
+                continue
+
+            editing = profile.editing
+
+            presets.append(
+                EffectPreset(
+                    preset_id=profile.genre_id,
+                    category=EffectCategory.GENRE,
+                    display_name=f"{profile.display_name} Genre",
+                    fallback_preset_id="genre.default",
+                    implementation={
+                        "camera_preset_id": editing.camera_preset_id,
+                        "transition_preset_id": editing.transition_in_preset_id,
+                        "visual_preset_ids": list(editing.visual_preset_ids),
+                        "music_preset_id": editing.music_preset_id,
+                    },
+                    tags=[profile.genre_id.split(".", maxsplit=1)[1]],
+                )
+            )
+
+        return cls(presets=presets)
 
     @staticmethod
     def _build_default_presets() -> list[EffectPreset]:

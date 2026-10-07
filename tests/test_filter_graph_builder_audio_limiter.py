@@ -144,7 +144,7 @@ def test_final_mix_is_routed_through_a_limiter() -> None:
     filter_complex = _build_graph_with_two_tracks()
 
     assert "alimiter" in filter_complex
-    assert "[audio_mixed]alimiter=limit=1.0[audio_final]" in filter_complex
+    assert "[audio_loudnorm]alimiter=limit=1.0[audio_final]" in filter_complex
 
 
 def test_amix_output_feeds_the_limiter_not_the_public_label_directly() -> None:

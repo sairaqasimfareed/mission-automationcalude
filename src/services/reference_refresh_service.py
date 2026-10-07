@@ -18,6 +18,7 @@ from src.services.reference_frame_selection_service import (
     ReferenceSelectionStatus,
     reference_kind_for,
 )
+from src.services.scene_visual_treatment import effective_on_screen_names
 from src.shared.logger import logger
 
 # A person's new frame must beat their current reference's face score by this much:
@@ -143,8 +144,13 @@ class ReferenceRefreshService:
             storage_root=self._storage_root,
             asset_index=job.extracted_frame_asset_index,
         )
+        scenes_by_number = {scene.scene_number: scene for scene in job.scenes}
         on_screen = {
-            entry.scene_number: list(entry.on_screen_entity_names)
+            entry.scene_number: (
+                effective_on_screen_names(bible, scenes_by_number[entry.scene_number])
+                if entry.scene_number in scenes_by_number
+                else list(entry.on_screen_entity_names)
+            )
             for entry in bible.clip_entries
         }
         clips_by_scene = self._generated_clips_by_scene(job)

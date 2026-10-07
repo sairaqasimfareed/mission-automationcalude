@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 
 from src.desktop.job_store import JobStore
 from src.desktop.recovery_dialog import show_recoverable_error
+from src.desktop.scroll_preservation import keep_scroll_on_refresh
 from src.desktop.widgets import badge, button, card, small_muted, status_label
 from src.models.blocker import BlockerSeverity
 from src.models.duration_mismatch_policy import DurationMismatchAction
@@ -121,6 +122,10 @@ class QualityCenterView(QWidget):
 
         scroll_area.setWidget(content_container)
         outer_layout.addWidget(scroll_area)
+
+        # Every action rebuilds this tab's cards; without this each one threw the
+        # operator back to the top (see src/desktop/scroll_preservation.py).
+        keep_scroll_on_refresh(self, scroll_area)
 
     def set_job(self, job_id: UUID) -> None:
         self._job_id = job_id

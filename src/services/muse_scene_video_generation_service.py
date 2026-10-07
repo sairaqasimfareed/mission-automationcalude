@@ -55,6 +55,7 @@ from src.services.scene_clip_split_planning_service import (
 )
 from src.services.scene_completeness_service import SceneCompletenessService
 from src.services.scene_prompt_export_service import ScenePromptExportService
+from src.services.scene_visual_treatment import effective_on_screen_names
 from src.services.video_provider_rules import (
     MUSE_CLIP_DURATION_SECONDS,
     MUSE_MIN_CLIP_SECONDS,
@@ -463,6 +464,7 @@ class MuseSceneVideoGenerationService:
             production_semantic_brief=job.production_semantic_brief,
             script_lock_hash=job.script_lock.script_content_hash,
             sub_clip_durations=durations,
+            project_look=job.project_look,
         )
 
     def _build_seam_reference_asset(
@@ -1175,15 +1177,15 @@ class MuseSceneVideoGenerationService:
         if bible is None:
             return
 
-        entry = bible.entry_for_scene(scene.scene_number)
+        on_screen_names = effective_on_screen_names(bible, scene)
 
-        if entry is None or not entry.on_screen_entity_names:
+        if not on_screen_names:
             return
 
         new_identities = [
             identity
             for identity in bible.identities
-            if identity.name in entry.on_screen_entity_names
+            if identity.name in on_screen_names
             and not self._has_valid_reference(job, identity)
         ]
 
@@ -1234,16 +1236,15 @@ class MuseSceneVideoGenerationService:
         if bible is None:
             return []
 
-        entry = bible.entry_for_scene(scene.scene_number)
+        on_screen_names = effective_on_screen_names(bible, scene)
 
-        if entry is None or not entry.on_screen_entity_names:
+        if not on_screen_names:
             return []
 
         featured_identities = [
             identity
             for identity in bible.identities
-            if identity.name in entry.on_screen_entity_names
-            and identity.reference_asset_ids
+            if identity.name in on_screen_names and identity.reference_asset_ids
         ]
 
         resolved: list[MuseReferenceAsset] = []

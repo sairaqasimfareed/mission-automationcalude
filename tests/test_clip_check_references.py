@@ -647,3 +647,26 @@ def test_the_reference_picture_is_shown_beside_its_line(
     ]
 
     assert len(thumbs) == 1
+
+
+def test_a_graphic_scene_on_live_footage_is_checked_for_the_main_places_reference(
+    tmp_path: Path,
+) -> None:
+    """The switch makes the main place count as on screen, so the Clip check holds
+    the scene to having that place's reference attached."""
+
+    job = _job(tmp_path)
+    _store_reference(job, tmp_path, "The Apiary", from_scene=1)
+    for entry in job.visual_continuity_bible.clip_entries:  # type: ignore[union-attr]
+        entry.on_screen_entity_names = []
+
+    job.muse_generation_attempts = [_muse_attempt(3, references=[])]
+
+    before = _result(_service(tmp_path).verify(job), 3)
+    assert before.references == []  # nobody on screen: nothing to hold it to
+
+    next(s for s in job.scenes if s.scene_number == 3).treat_as_live_footage = True
+
+    after = _result(_service(tmp_path).verify(job), 3)
+
+    assert _states(after) == {"The Apiary": ReferenceUse.NOT_ATTACHED}

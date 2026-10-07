@@ -264,7 +264,7 @@ def test_the_content_tab_shows_the_same_scene_as_one_trimmed_clip_on_muse(
     assert "part 1 of" not in text
     assert "9s" in text
     assert "Duration: 9 seconds." in text
-    assert "Also trim the generated 10 seconds video to only 9 seconds video." in text
+    assert "trim the generated" not in text
 
 
 def test_the_content_tab_duration_line_matches_the_chosen_provider(

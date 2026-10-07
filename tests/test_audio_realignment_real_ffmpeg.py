@@ -1,6 +1,7 @@
 """
 Voice drift fix, 2026-10-03: real FFmpeg, no mocking of the render. Three real
-colour clips (red, green, blue) with the medical genre's real 0.6s crossfades,
+colour clips (red, green, blue) with a genre's real 0.6s crossfades (documentary - medical
+switched to hard cuts on 2026-10-07, and this test is about the crossfade overlap),
 and three real voice files laid end to end the way the Audio tab lays them.
 
 The audio is measured in the finished MP4 - when each scene's voice tone
@@ -55,7 +56,7 @@ pytestmark = pytest.mark.skipif(
 
 _REGISTRY = GenreProfileRegistryService.with_default_profiles()
 _TRANSITION = _REGISTRY.resolve(
-    "genre.medical"
+    "genre.documentary"
 ).profile.editing.default_transition_duration_seconds
 _CLIP_SECONDS = 4
 _NARRATION_SECONDS = 3.0  # shorter than the clip, like real narration
@@ -180,7 +181,7 @@ def _render(tmp_path: Path) -> Path:
                 effect_registry=EffectRegistryService.with_default_presets()
             ),
         )
-        .build(scenes=scenes, clips=clips, genre_id="genre.medical")
+        .build(scenes=scenes, clips=clips, genre_id="genre.documentary")
         .timeline
     )
 

@@ -94,10 +94,25 @@ class TestFinalizePrompt:
     def test_flow_never_adds_a_trim_instruction(self) -> None:
         assert "trim" not in _FLOW.finalize_prompt(self._PROMPT, 6.0)
 
-    def test_muse_asks_to_trim_a_clip_shorter_than_its_fixed_length(self) -> None:
+    def test_muse_only_states_the_length_of_a_clip_shorter_than_its_fixed_length(
+        self,
+    ) -> None:
+        """Live, 2026-10-07: asking Muse to trim a 10 s clip cut off what it had
+        planned; stating the length alone returned exactly that length."""
+
         text = _MUSE.finalize_prompt(self._PROMPT, 7.0)
 
-        assert text.endswith(
+        assert "Duration: 7 seconds." in text
+        assert "trim" not in text
+
+    def test_the_trim_instruction_can_be_switched_back_on(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "src.services.video_provider_rules.MUSE_SEND_TRIM_INSTRUCTION", True
+        )
+
+        assert _MUSE.finalize_prompt(self._PROMPT, 7.0).endswith(
             "Also trim the generated 10 seconds video to only 7 seconds video."
         )
 
@@ -113,7 +128,8 @@ class TestFinalizePrompt:
     def test_muse_trims_when_the_rounded_target_is_clearly_under_ten(self) -> None:
         text = _MUSE.finalize_prompt(self._PROMPT, 8.4)
 
-        assert text.endswith("to only 9 seconds video.")
+        assert "Duration: 9 seconds." in text
+        assert "trim" not in text
 
 
 class TestFlatActionIsTimeBoxed:
@@ -137,7 +153,7 @@ class TestFlatActionIsTimeBoxed:
         )
         assert "Action progression:" not in text
         assert "Duration: 4 seconds." in text
-        assert text.endswith("to only 4 seconds video.")
+        assert "trim" not in text
 
     def test_flow_gets_the_same_time_box_for_its_clip_length(self) -> None:
         text = _FLOW.finalize_prompt(self._FLAT, 6.0)
@@ -274,7 +290,7 @@ class TestMuseMinimumClipLength:
 
         assert "Duration: 3 seconds." in text
         assert "[0-3s] A jar of honey." in text
-        assert text.endswith("to only 3 seconds video.")
+        assert "trim" not in text
 
 
 class TestSplitScenesDurationLine:
@@ -292,7 +308,7 @@ class TestSplitScenesDurationLine:
 
         assert "Duration: 7 seconds (part 1 of 2)." in text
         assert "Duration: 6 seconds" not in text
-        assert text.endswith("to only 7 seconds video.")
+        assert "trim" not in text
 
     def test_the_part_label_survives(self) -> None:
         text = _MUSE.finalize_prompt(
@@ -310,3 +326,24 @@ class TestSplitScenesDurationLine:
         text = _MUSE.finalize_prompt("Composition: x. Duration: 8 seconds.", 7.0)
 
         assert "Duration: 7 seconds." in text
+
+
+class TestMuseStatesItsLengthWhenThePromptHasNone:
+    """With the trim instruction gone, the stated "Duration: N seconds." is the only
+    way Muse is told the length - so a prompt without one (no compiled prompt, or a
+    hand-written one) gets it added."""
+
+    def test_a_missing_duration_line_is_added(self) -> None:
+        text = _MUSE.finalize_prompt("A jar of honey on a counter.", 5.0)
+
+        assert text.endswith("Duration: 5 seconds.")
+        assert "trim" not in text
+
+    def test_an_existing_duration_line_is_not_repeated(self) -> None:
+        text = _MUSE.finalize_prompt("A jar. Duration: 8 seconds.", 5.0)
+
+        assert text.count("Duration:") == 1
+        assert "Duration: 5 seconds." in text
+
+    def test_flow_prompts_are_left_alone(self) -> None:
+        assert "Duration" not in _FLOW.finalize_prompt("A jar of honey.", 6.0)

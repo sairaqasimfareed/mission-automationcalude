@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 
 from src.desktop.job_store import JobStore
 from src.desktop.recovery_dialog import show_recoverable_error
+from src.desktop.scroll_preservation import keep_scroll_on_refresh
 from src.desktop.widgets import (
     button,
     card,
@@ -157,6 +158,16 @@ def _script_is_approved(job: VideoJob) -> bool:
     return job.script is not None and job.script.status.value == "approved"
 
 
+def _audience_fallback(job: VideoJob) -> str | None:
+    """The audience to hand the SEO builder when the project has no audience promise.
+
+    None keeps the project's own audience. Otherwise the same neutral default the
+    SEO and thumbnail cards pre-fill, so the title card and export variants do not
+    fail where those cards work (live, 2026-10-07)."""
+
+    return None if job.audience_promise is not None else "General audience"
+
+
 class _PackageProvenance(Protocol):
     """
     The dependency-tracking fields SEOPackage and ThumbnailArtifact
@@ -249,7 +260,7 @@ class _TitleCardWorker(QObject):
         service: OpeningTitleCardService,
         job_id: UUID,
         render_orchestration_result: RenderOrchestrationResult,
-        seo_context: SEOContext,
+        seo_context: SEOContext | None,
         genre_id: str,
         channel_name: str,
         topic: str,
@@ -389,6 +400,10 @@ class PackagingView(QWidget):
 
         scroll_area.setWidget(content_container)
         outer_layout.addWidget(scroll_area)
+
+        # Every action rebuilds this tab's cards; without this each one threw the
+        # operator back to the top (see src/desktop/scroll_preservation.py).
+        keep_scroll_on_refresh(self, scroll_area)
 
     def set_job(self, job_id: UUID) -> None:
         self._job_id = job_id
@@ -808,19 +823,26 @@ class PackagingView(QWidget):
             )
         )
 
-        try:
-            context = SEOContextBuilder().build(
-                job,
-                genre_id=_resolved_genre_id(job),
-            )
-        except (RuntimeError, ValueError) as error:
-            self._record_error(
-                job,
-                f"Title card generation failed: {error}",
-                on_retry=self._handle_generate_title_card,
-            )
+        # The SEO context only feeds the AI-generated card background: the
+        # operator's own clip or image never needs it (live, 2026-10-07: a
+        # project without research could not use its own title clip).
+        context: SEOContext | None = None
 
-            return
+        if not (job.title_card_clip_path or job.title_card_image_path):
+            try:
+                context = SEOContextBuilder().build(
+                    job,
+                    genre_id=_resolved_genre_id(job),
+                    target_audience=_audience_fallback(job),
+                )
+            except (RuntimeError, ValueError) as error:
+                self._record_error(
+                    job,
+                    f"Title card generation failed: {error}",
+                    on_retry=self._handle_generate_title_card,
+                )
+
+                return
 
         thread = QThread()
         worker = _TitleCardWorker(
@@ -1980,6 +2002,7 @@ class PackagingView(QWidget):
                 context = SEOContextBuilder().build(
                     job,
                     genre_id=_resolved_genre_id(job),
+                    target_audience=_audience_fallback(job),
                     platform=platform,
                 )
                 thumbnail_result = self._thumbnail_package_service.build(

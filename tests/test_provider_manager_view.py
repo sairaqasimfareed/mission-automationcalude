@@ -321,3 +321,52 @@ def test_the_view_tells_the_operator_changes_need_an_app_restart(
     assert any(
         "restart" in text.lower() and "api keys" in text.lower() for text in texts
     )
+
+
+def test_a_sound_effects_profile_with_an_unknown_name_is_reported_as_unusable() -> None:
+    """Live, 2026-10-07: a profile saved as "sfx" was accepted and then never used."""
+
+    from src.desktop.views.provider_manager_view import (
+        unrecognized_provider_name_message,
+    )
+
+    message = unrecognized_provider_name_message(
+        category=ProviderCategory.SOUND_EFFECTS,
+        provider_name="sfx",
+        has_http_adapter_config=False,
+    )
+
+    assert message is not None
+    assert "'sfx'" in message
+    assert "elevenlabs" in message
+
+
+def test_known_names_and_custom_http_adapters_are_not_reported() -> None:
+    from src.desktop.views.provider_manager_view import (
+        unrecognized_provider_name_message,
+    )
+
+    assert (
+        unrecognized_provider_name_message(
+            category=ProviderCategory.SOUND_EFFECTS,
+            provider_name=" ElevenLabs ",
+            has_http_adapter_config=False,
+        )
+        is None
+    )
+    assert (
+        unrecognized_provider_name_message(
+            category=ProviderCategory.SOUND_EFFECTS,
+            provider_name="my-own-sfx",
+            has_http_adapter_config=True,
+        )
+        is None
+    )
+    assert (
+        unrecognized_provider_name_message(
+            category=ProviderCategory.EXTERNAL_UI_VIDEO,
+            provider_name="Muse",
+            has_http_adapter_config=False,
+        )
+        is None
+    )

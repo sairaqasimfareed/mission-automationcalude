@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
+
 from src.models.enums import Platform
 from src.models.genre_profile import GenreSEOProfile, GenreThumbnailProfile
 from src.models.media_technical_validation import MediaTechnicalValidationResult
@@ -498,6 +500,48 @@ def test_an_uploaded_clip_skips_every_generation_step() -> None:
     assert music.calls == []
     assert render.calls == []
     assert len(prepend.calls) == 1
+
+
+def test_an_uploaded_clip_needs_no_seo_context() -> None:
+    """The SEO context only feeds the AI-generated background, so a project
+    without research or an audience can still use its own clip."""
+
+    service, _image, _music, _render, prepend = _service_for_uploaded_clip(
+        _FakeClipProbe()
+    )
+
+    result = service.build(
+        seo_context=None,
+        genre_id="genre.documentary",
+        channel_name="Test Channel",
+        topic="A topic",
+        main_video_file="/renders/main.mp4",
+        main_video_duration_seconds=60.0,
+        output_file="/renders/final.mp4",
+        title_clip_override="/uploads/my_title.mp4",
+    )
+
+    assert result.success is True
+    assert len(prepend.calls) == 1
+
+
+def test_an_auto_generated_background_without_seo_context_fails_clearly() -> None:
+    service, image, _music, _render, _prepend = _service_for_uploaded_clip(
+        _FakeClipProbe()
+    )
+
+    with pytest.raises(ValueError, match="needs the project's SEO context"):
+        service.build(
+            seo_context=None,
+            genre_id="genre.documentary",
+            channel_name="Test Channel",
+            topic="A topic",
+            main_video_file="/renders/main.mp4",
+            main_video_duration_seconds=60.0,
+            output_file="/renders/final.mp4",
+        )
+
+    assert image.calls == []
 
 
 def test_an_uploaded_clip_is_joined_fitted_to_the_main_videos_real_frame() -> None:

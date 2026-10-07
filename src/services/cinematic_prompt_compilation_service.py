@@ -5,6 +5,7 @@ from typing import NamedTuple
 
 from src.models.cinematic_prompt import CinematicPromptPackage, ResolvedCinematicPrompt
 from src.models.production_semantic_brief import ProductionSemanticBrief
+from src.models.project_look import ProjectLook
 from src.models.scene import Scene
 from src.models.shot_planning import (
     CinematicShotPlan,
@@ -12,6 +13,11 @@ from src.models.shot_planning import (
     TemporalActionBeat,
 )
 from src.models.visual_continuity import VisualContinuityBible
+from src.services.scene_visual_treatment import (
+    exact_text_for,
+    main_place,
+    renders_as_graphic,
+)
 
 
 class _ResolvedSceneFields(NamedTuple):
@@ -36,6 +42,12 @@ class _ResolvedSceneFields(NamedTuple):
     camera: str
     reveal_note: str
     action: str
+    look: str = ""
+    # False for a graphic scene shown as live footage: its shot plan's beats
+    # describe the graphic, so they are not used.
+    use_beats: bool = True
+    # The only words a graphic scene may show on screen (None = not a graphic).
+    graphic_text: str | None = None
 
 
 _STANDARD_NEGATIVE_CONSTRAINTS = (
@@ -78,6 +90,23 @@ def _beat_window(start: float, end: float) -> str:
     return f"[{start_text}-{end_text}s]"
 
 
+def _negative_constraints(graphic_text: str | None) -> list[str]:
+    """The standard "do not" list - except for a graphic scene, whose own purpose
+    is text on screen. Left as "no on-screen text" it contradicts the scene and
+    the generator resolves the contradiction by inventing words; instead it is told
+    the exact words allowed and nothing else."""
+
+    constraints = list(_STANDARD_NEGATIVE_CONSTRAINTS)
+
+    if graphic_text:
+        constraints[0] = (
+            f'any text on screen must be exactly: "{graphic_text}" - no other '
+            "words, numbers, claims or logos"
+        )
+
+    return constraints
+
+
 class CinematicPromptCompilationService:
     """
     Post-Script-Approval Production Plan, Phase 4: "Compile shot,
@@ -104,6 +133,7 @@ class CinematicPromptCompilationService:
         script_lock_hash: str,
         duration_seconds_resolver: Callable[[float], float] | None = None,
         use_shot_by_shot_beats: bool = _USE_SHOT_BY_SHOT_BEATS,
+        project_look: ProjectLook | None = None,
     ) -> CinematicPromptPackage:
         """
         duration_seconds_resolver, when given, overrides the shot
@@ -132,6 +162,7 @@ class CinematicPromptCompilationService:
                 script_lock_hash=script_lock_hash,
                 duration_seconds_resolver=duration_seconds_resolver,
                 use_shot_by_shot_beats=use_shot_by_shot_beats,
+                project_look=project_look,
             )
             for scene in sorted(scenes, key=lambda s: s.scene_number)
         ]
@@ -147,6 +178,7 @@ class CinematicPromptCompilationService:
         shot_plan: CinematicShotPlan,
         visual_continuity_bible: VisualContinuityBible,
         production_semantic_brief: ProductionSemanticBrief | None,
+        project_look: ProjectLook | None = None,
     ) -> _ResolvedSceneFields:
         shot = shot_plan.shot_for_scene(scene.scene_number)
         continuity = visual_continuity_bible.entry_for_scene(scene.scene_number)
@@ -196,6 +228,41 @@ class CinematicPromptCompilationService:
             else ""
         )
         action = shot.action if shot is not None else scene.narration
+        use_beats = True
+        graphic_text: str | None = None
+
+        if scene.treat_as_live_footage:
+            # A graphic scene the operator switched to live footage: shown as the
+            # project's main setting, filmed, so it matches the scenes around it.
+            # The plan's own wording for this scene describes the graphic, so it is
+            # replaced rather than appended to.
+            place = main_place(visual_continuity_bible)
+
+            if place is not None:
+                environment = place.name
+
+                if place.canonical_description not in identities:
+                    identities = [*identities, place.canonical_description]
+
+                reference_asset_ids = [
+                    *reference_asset_ids,
+                    *[
+                        asset_id
+                        for asset_id in place.reference_asset_ids
+                        if asset_id not in reference_asset_ids
+                    ],
+                ]
+
+            lighting = (
+                project_look.lighting
+                if project_look is not None and project_look.lighting
+                else "natural light, consistent with the surrounding scenes"
+            )
+            composition = "live-action documentary framing"
+            action = f"Live-action footage that illustrates: {scene.narration}"
+            use_beats = False
+        elif renders_as_graphic(scene=scene, entry=continuity, shot=shot):
+            graphic_text = exact_text_for(scene)
 
         return _ResolvedSceneFields(
             shot=shot,
@@ -208,6 +275,11 @@ class CinematicPromptCompilationService:
             camera=camera,
             reveal_note=reveal_note,
             action=action,
+            look=(
+                project_look.as_prompt_sentence() if project_look is not None else ""
+            ),
+            use_beats=use_beats,
+            graphic_text=graphic_text,
         )
 
     @staticmethod
@@ -220,12 +292,14 @@ class CinematicPromptCompilationService:
         script_lock_hash: str,
         duration_seconds_resolver: Callable[[float], float] | None = None,
         use_shot_by_shot_beats: bool = _USE_SHOT_BY_SHOT_BEATS,
+        project_look: ProjectLook | None = None,
     ) -> ResolvedCinematicPrompt:
         common = CinematicPromptCompilationService._resolve_common_fields(
             scene=scene,
             shot_plan=shot_plan,
             visual_continuity_bible=visual_continuity_bible,
             production_semantic_brief=production_semantic_brief,
+            project_look=project_look,
         )
 
         raw_duration = (
@@ -245,7 +319,7 @@ class CinematicPromptCompilationService:
                 duration,
                 raw_duration_seconds=raw_duration,
             )
-            if use_shot_by_shot_beats and common.shot is not None
+            if use_shot_by_shot_beats and common.use_beats and common.shot is not None
             else None
         )
         action_line = (
@@ -259,6 +333,7 @@ class CinematicPromptCompilationService:
             f"Environment: {common.environment}. Lighting: {common.lighting}. "
             f"{action_line} Composition: {common.composition}. "
             f"Lens/camera: {common.lens}, {common.camera}. "
+            f"{common.look + ' ' if common.look else ''}"
             f"Duration: {duration:.0f} seconds."
             f"{common.reveal_note}"
         )
@@ -267,7 +342,7 @@ class CinematicPromptCompilationService:
             scene_number=scene.scene_number,
             script_lock_hash=script_lock_hash,
             prompt_text=prompt_text,
-            negative_constraints=list(_STANDARD_NEGATIVE_CONSTRAINTS),
+            negative_constraints=_negative_constraints(common.graphic_text),
             reference_asset_ids=common.reference_asset_ids,
         )
 
@@ -280,6 +355,7 @@ class CinematicPromptCompilationService:
         production_semantic_brief: ProductionSemanticBrief | None,
         script_lock_hash: str,
         sub_clip_durations: list[float],
+        project_look: ProjectLook | None = None,
     ) -> list[ResolvedCinematicPrompt]:
         """
         Phase 5 (multi-clip scene splitting): one ResolvedCinematicPrompt
@@ -315,6 +391,7 @@ class CinematicPromptCompilationService:
             shot_plan=shot_plan,
             visual_continuity_bible=visual_continuity_bible,
             production_semantic_brief=production_semantic_brief,
+            project_look=project_look,
         )
 
         prompts: list[ResolvedCinematicPrompt] = []
@@ -330,7 +407,7 @@ class CinematicPromptCompilationService:
                     window_start_seconds=window_start,
                     window_end_seconds=window_end,
                 )
-                if common.shot is not None
+                if common.shot is not None and common.use_beats
                 else None
             )
             action_line = (
@@ -353,6 +430,7 @@ class CinematicPromptCompilationService:
                 f"Environment: {common.environment}. Lighting: {common.lighting}. "
                 f"{action_line} Composition: {common.composition}. "
                 f"Lens/camera: {common.lens}, {common.camera}. "
+                f"{common.look + ' ' if common.look else ''}"
                 f"Duration: {sub_duration:.0f} seconds "
                 f"(part {index + 1} of {total_sub_clips})."
                 f"{common.reveal_note}{continuation_note}"
@@ -364,7 +442,7 @@ class CinematicPromptCompilationService:
                     clip_sequence_index=index,
                     script_lock_hash=script_lock_hash,
                     prompt_text=prompt_text,
-                    negative_constraints=list(_STANDARD_NEGATIVE_CONSTRAINTS),
+                    negative_constraints=_negative_constraints(common.graphic_text),
                     reference_asset_ids=common.reference_asset_ids,
                 )
             )
