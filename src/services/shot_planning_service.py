@@ -9,6 +9,7 @@ from src.models.shot_planning import (
     ShotSpecification,
     TemporalActionBeat,
 )
+from src.models.specification_enums import AspectRatio
 from src.models.visual_continuity import VisualContinuityBible
 from src.services.llm.labeled_block_parser import extract_labeled_field, split_blocks
 from src.services.llm.llm_service import LLMService
@@ -93,6 +94,7 @@ class ShotPlanningService:
         visual_continuity_bible: VisualContinuityBible,
         script_lock_hash: str,
         topic: str,
+        aspect_ratio: AspectRatio = AspectRatio.LANDSCAPE,
     ) -> CinematicShotPlan:
         if not scenes:
             raise ValueError("Shot planning requires at least one scene.")
@@ -100,7 +102,9 @@ class ShotPlanningService:
         request = LLMRequest(
             provider=LLMProvider.OPENAI,
             model="provider-default-model",
-            prompt=self._build_prompt(scenes, visual_continuity_bible, topic),
+            prompt=self._build_prompt(
+                scenes, visual_continuity_bible, topic, aspect_ratio
+            ),
             system_prompt=(
                 "You are a director of photography turning a sequence "
                 "of shots into precise cinematic specifications - shot "
@@ -166,6 +170,7 @@ class ShotPlanningService:
         scenes: list[Scene],
         visual_continuity_bible: VisualContinuityBible,
         topic: str,
+        aspect_ratio: AspectRatio = AspectRatio.LANDSCAPE,
     ) -> str:
         scene_lines = []
 
@@ -185,8 +190,18 @@ class ShotPlanningService:
 
         scenes_block = "\n\n".join(scene_lines)
 
+        frame_note = (
+            "This video is VERTICAL 9:16 (a tall phone screen). Write every "
+            "COMPOSITION and BLOCKING for a tall frame: stack subjects vertically, "
+            "centre the main subject, keep it fully inside the frame, and avoid "
+            "side-by-side wide arrangements that only work in a wide frame.\n\n"
+            if aspect_ratio == AspectRatio.PORTRAIT
+            else ""
+        )
+
         return (
             f"Topic: {topic}\n\n"
+            f"{frame_note}"
             f"Scenes with continuity state:\n{scenes_block}\n\n"
             "For each scene, return one block separated by a line of "
             "three or more dashes, with exactly these labeled lines:\n"

@@ -1407,6 +1407,7 @@ class ContentIntelligencePipeline:
             visual_continuity_bible=job.visual_continuity_bible,
             script_lock_hash=job.script_lock.script_content_hash,
             topic=job.topic,
+            aspect_ratio=job.aspect_ratio,
         )
 
         self.approval_gate_service.record_event(

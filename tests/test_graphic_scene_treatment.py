@@ -544,3 +544,78 @@ def test_a_failed_rebuild_is_reported_and_the_change_is_not_saved(
     assert shown.called
     assert "needs a shot plan" in str(shown.call_args)
     assert not view._job_store.added  # noqa: SLF001
+
+
+# ---- the rule is IN the prompt (the constraint list is never sent to Muse or Flow)
+
+
+def test_a_graphic_scenes_prompt_text_carries_the_on_screen_text_rule() -> None:
+    """Live, 2026-10-07: the exact-text rule only lived in the stored constraint list,
+    which no provider sends - so Muse wrote its own text ("safely", an invented
+    "Source:" line, a "Trusted Info" badge). The rule is now part of the prompt."""
+
+    prompt = _compile(_scene(1), _GRAPHIC_ENTRY).prompt_for_scene(1)
+
+    assert prompt is not None
+    assert prompt.prompt_text.endswith(
+        'Keep its qualifiers such as "can", "may" and "modestly".'
+    )
+    assert (
+        "On-screen text rule: use only the words of this narration: "
+        '"Evidence in adults is limited."' in prompt.prompt_text
+    )
+    assert "add no other words, numbers, sources, citations, badges" in (
+        prompt.prompt_text
+    )
+    assert "make no claim stronger than the narration's own wording" in (
+        prompt.prompt_text
+    )
+
+
+def test_a_filmed_scenes_prompt_text_has_no_text_rule() -> None:
+    prompt = _compile(
+        _scene(1), _entry(1, "A rural village"), graphic_shot=False
+    ).prompt_for_scene(1)
+
+    assert prompt is not None
+    assert "On-screen text rule" not in prompt.prompt_text
+
+
+def test_every_part_of_a_split_graphic_scene_carries_the_text_rule_in_its_prompt() -> (
+    None
+):
+    plan = CinematicShotPlan(
+        script_lock_hash="a" * 64,
+        shots=[_shot(1, composition="Clean diagram recap")],
+    )
+
+    prompts = CinematicPromptCompilationService().compile_sub_clip_prompts(
+        scene=_scene(1),
+        shot_plan=plan,
+        visual_continuity_bible=_bible([_GRAPHIC_ENTRY]),
+        production_semantic_brief=None,
+        script_lock_hash="a" * 64,
+        sub_clip_durations=[2.0, 2.0],
+    )
+
+    assert len(prompts) == 2
+    assert all("On-screen text rule" in p.prompt_text for p in prompts)
+
+
+def test_a_vertical_graphic_prompt_ends_with_the_vertical_sentence_after_the_rule() -> (
+    None
+):
+    from src.models.specification_enums import AspectRatio
+    from src.models.video_provider import VideoProvider
+    from src.services.video_provider_rules import MUSE_PORTRAIT_SENTENCE, rules_for
+
+    prompt = _compile(_scene(1), _GRAPHIC_ENTRY).prompt_for_scene(1)
+    assert prompt is not None
+
+    text = rules_for(VideoProvider.MUSE).finalize_prompt(
+        prompt.prompt_text, 8.0, AspectRatio.PORTRAIT
+    )
+
+    assert text.endswith(MUSE_PORTRAIT_SENTENCE)
+    assert text.index("On-screen text rule") < text.index(MUSE_PORTRAIT_SENTENCE)
+    assert "Duration: 8 seconds" in text

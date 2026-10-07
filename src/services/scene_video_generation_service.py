@@ -31,6 +31,7 @@ from src.models.scene_completeness import (
     SceneCompletenessReport,
     SceneCompletenessStatus,
 )
+from src.models.specification_enums import AspectRatio
 from src.models.video_job import VideoJob
 from src.models.visual_continuity import CanonicalEntityIdentity, CanonicalEntityType
 from src.providers.external_ui_generation_provider import ExternalUIGenerationProvider
@@ -1003,8 +1004,8 @@ class SceneVideoGenerationService:
                         if duration is not None
                         else float(scene.estimated_duration_seconds)
                     ),
-                    resolution="1920x1080",
-                    aspect_ratio="16:9",
+                    resolution=job.nominal_clip_resolution,
+                    aspect_ratio=job.aspect_ratio.value,
                 )
             )
 
@@ -1184,6 +1185,11 @@ class SceneVideoGenerationService:
                 execution_settings=GoogleFlowExecutionSettings(
                     model_family=self._configured_model_family(),
                     duration_seconds=float(duration_seconds),
+                    # Only a 9:16 project sets Flow's aspect control (verified
+                    # vocabulary: "16:9" / "9:16"); 16:9 leaves it as it always was.
+                    aspect_ratio=(
+                        "9:16" if job.aspect_ratio == AspectRatio.PORTRAIT else None
+                    ),
                 ),
                 reference_assets=reference_assets,
                 locked_script_hash=(

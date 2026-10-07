@@ -2686,3 +2686,38 @@ def test_a_graphic_scene_switched_to_live_footage_attaches_the_main_places_refer
     assert len(references) == 1
     assert references[0].identity_name == "Kitchen"
     assert references[0].role == GoogleFlowReferenceRole.LOCATION
+
+
+def test_a_vertical_project_sets_flows_aspect_control() -> None:
+    from src.models.specification_enums import AspectRatio
+
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            GoogleFlowGenerationState.GENERATING,
+            GoogleFlowGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    service = _service(provider)
+    job = _job(_scene(1))
+    job.aspect_ratio = AspectRatio.PORTRAIT
+
+    service.generate_one(job, 1)
+
+    request = job.flow_generation_attempts[0].request
+    assert request.execution_settings.aspect_ratio == "9:16"
+
+
+def test_a_landscape_project_leaves_flows_aspect_control_alone() -> None:
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            GoogleFlowGenerationState.GENERATING,
+            GoogleFlowGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    service = _service(provider)
+    job = _job(_scene(1))
+
+    service.generate_one(job, 1)
+
+    request = job.flow_generation_attempts[0].request
+    assert request.execution_settings.aspect_ratio is None

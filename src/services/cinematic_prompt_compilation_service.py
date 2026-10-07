@@ -90,6 +90,28 @@ def _beat_window(start: float, end: float) -> str:
     return f"[{start_text}-{end_text}s]"
 
 
+def _graphic_text_rule(graphic_text: str | None) -> str:
+    """The sentence a graphic scene's prompt ends with, telling the generator which
+    words it may put on screen.
+
+    The negative-constraint list is stored on each prompt but never sent to Muse or
+    Flow, so the exact-text rule it carried never reached the generator - and Muse
+    wrote its own text (live, 2026-10-07, medical content: "safely" for "can be
+    given", "modestly" dropped, an invented "Source:" line and a "Trusted Info"
+    badge). Muse follows plain sentences, so the rule is part of the prompt itself."""
+
+    if not graphic_text:
+        return ""
+
+    return (
+        f' On-screen text rule: use only the words of this narration: "{graphic_text}". '
+        "You may arrange them as a headline and short points, but add no other "
+        'words, numbers, sources, citations, badges, "trusted" labels or labels on '
+        "icons, and make no claim stronger than the narration's own wording. Keep "
+        'its qualifiers such as "can", "may" and "modestly".'
+    )
+
+
 def _negative_constraints(graphic_text: str | None) -> list[str]:
     """The standard "do not" list - except for a graphic scene, whose own purpose
     is text on screen. Left as "no on-screen text" it contradicts the scene and
@@ -336,6 +358,7 @@ class CinematicPromptCompilationService:
             f"{common.look + ' ' if common.look else ''}"
             f"Duration: {duration:.0f} seconds."
             f"{common.reveal_note}"
+            f"{_graphic_text_rule(common.graphic_text)}"
         )
 
         return ResolvedCinematicPrompt(
@@ -434,6 +457,7 @@ class CinematicPromptCompilationService:
                 f"Duration: {sub_duration:.0f} seconds "
                 f"(part {index + 1} of {total_sub_clips})."
                 f"{common.reveal_note}{continuation_note}"
+                f"{_graphic_text_rule(common.graphic_text)}"
             )
 
             prompts.append(

@@ -5,6 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from src.models.scene import Scene
+from src.models.specification_enums import AspectRatio
 from src.models.video_job import VideoJob
 from src.models.video_provider import VideoProvider
 from src.providers.google_flow.locators import (
@@ -36,6 +37,18 @@ MUSE_SAFETY_NET_TRIM_TOLERANCE_SECONDS = 0.5
 # the FFmpeg safety net trims a clip that still comes back too long. Flip this to
 # True to send the trim instruction again.
 MUSE_SEND_TRIM_INSTRUCTION = False
+
+# Live, 2026-10-07: "Resolution 9:16." at the end of a prompt came back as a 16:9
+# picture with blurred bars top and bottom; this explicit sentence, in words, returned
+# a true native vertical clip (720x1280, nothing cropped or padded) on three scenes -
+# the operator confirmed it works in Muse. The last half is about composition (a face
+# cut by the frame edge was what read as "cropped"). Added to every Muse clip prompt of
+# a 9:16 project, at the end; a 16:9 project adds nothing.
+MUSE_PORTRAIT_SENTENCE = (
+    "Vertical 9:16 portrait video, true full-frame vertical composition, no crop, "
+    "no letterbox, no blurred bars. Compose natively for vertical: main subject "
+    "centered and fully inside the frame."
+)
 
 # The shortest clip Muse is ever asked for, 2026-10-04. A one-word scene
 # (~1s of narration) would otherwise be a ~1s clip - shorter than the
@@ -132,7 +145,12 @@ class VideoProviderRules:
 
         return float(clamp_to_verified_duration(narration_seconds))
 
-    def finalize_prompt(self, prompt: str, target_seconds: float) -> str:
+    def finalize_prompt(
+        self,
+        prompt: str,
+        target_seconds: float,
+        aspect_ratio: AspectRatio = AspectRatio.LANDSCAPE,
+    ) -> str:
         """
         The prompt exactly as a submission would send it: its stated
         duration and last shot beat corrected to the real target (both
@@ -178,6 +196,12 @@ class VideoProviderRules:
                 f"{MUSE_CLIP_DURATION_SECONDS:.0f} seconds video to "
                 f"only {target_seconds:.0f} seconds video."
             )
+
+        if self.provider == VideoProvider.MUSE and aspect_ratio == AspectRatio.PORTRAIT:
+            # Muse is a chat agent that follows plain words, not a setting; Flow has
+            # its own aspect control (set by the Flow submission), so it gets nothing
+            # here.
+            prompt = f"{prompt}\n\n{MUSE_PORTRAIT_SENTENCE}"
 
         return prompt
 

@@ -44,6 +44,7 @@ from src.models.provider_preferences import (
     ReviewerConfiguration,
 )
 from src.models.provider_profile import ProviderCategory
+from src.models.specification_enums import AspectRatio
 from src.models.upload_settings import UploadPlatform, UploadSettings
 from src.models.video_settings import VideoSettings
 from src.models.visual_settings import VisualSettings
@@ -70,6 +71,9 @@ _PLATFORM_CHOICES = [
 ]
 
 _NO_PROVIDER_CHOICE = "System default"
+
+# The output size a new 9:16 project starts at (the Render tab can change it).
+PORTRAIT_FULL_HD = "1080x1920"
 
 _LEFT = Qt.AlignmentFlag.AlignLeft
 
@@ -197,6 +201,15 @@ class ProjectFormView(QWidget):
         self._platform = QComboBox()
         self._platform.addItems(_PLATFORM_CHOICES)
         form.addRow("Platform", self._platform)
+
+        # 16:9 is every provider's default and adds nothing to a prompt; 9:16 makes
+        # the clips true vertical video (see VideoProviderRules.finalize_prompt).
+        self._aspect_ratio = QComboBox()
+        self._aspect_ratio.addItem("16:9 - landscape (default)", AspectRatio.LANDSCAPE)
+        self._aspect_ratio.addItem(
+            "9:16 - vertical (TikTok, Reels, Shorts)", AspectRatio.PORTRAIT
+        )
+        form.addRow("Video shape", self._aspect_ratio)
 
         self._approval_mode = QComboBox()
         self._approval_mode.addItems(list(APPROVAL_MODE_PRESETS))
@@ -390,6 +403,7 @@ class ProjectFormView(QWidget):
         self._target_audience.setText("General audience")
 
         self._platform.setCurrentIndex(0)
+        self._aspect_ratio.setCurrentIndex(0)
         self._approval_mode.setCurrentText("Custom Approval")
 
         self._top10_image_path_display.clear()
@@ -464,6 +478,10 @@ class ProjectFormView(QWidget):
             job = self._job_mapper.map(specification, niche=self._niche.text())
             job.genre_id = self._genre.currentText()
             job.approval_policy = self._build_approval_policy()
+            job.aspect_ratio = self._aspect_ratio.currentData()
+
+            if job.aspect_ratio == AspectRatio.PORTRAIT:
+                job.output_resolution = PORTRAIT_FULL_HD
 
             if job.genre_id == "genre.top10":
                 image_path = self._top10_image_path_display.text().strip()

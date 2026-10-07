@@ -1907,3 +1907,45 @@ def test_muse_graphic_scene_on_live_footage_attaches_the_main_places_reference(
     references = provider.submitted_requests[0].reference_assets
     assert len(references) == 1
     assert references[0].identity_name == "Kitchen"
+
+
+def test_a_vertical_project_sends_muse_the_vertical_sentence(tmp_path: Path) -> None:
+    from src.models.specification_enums import AspectRatio
+    from src.services.video_provider_rules import MUSE_PORTRAIT_SENTENCE
+
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            MuseGenerationState.GENERATING,
+            MuseGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    provider.downloaded_file = str(_real_video_file(tmp_path))
+    service = _service(provider)
+    scene = _scene(1)
+    scene.real_narration_duration_seconds = 5.0
+    job = _job(scene)
+    job.aspect_ratio = AspectRatio.PORTRAIT
+
+    service.generate_one(job, 1)
+
+    prompt = provider.submitted_prompts[0]
+    assert prompt.endswith(MUSE_PORTRAIT_SENTENCE)
+    assert "Duration: 5 seconds" in prompt
+
+
+def test_a_landscape_project_sends_muse_nothing_about_the_shape(tmp_path: Path) -> None:
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            MuseGenerationState.GENERATING,
+            MuseGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    provider.downloaded_file = str(_real_video_file(tmp_path))
+    service = _service(provider)
+    scene = _scene(1)
+    scene.real_narration_duration_seconds = 5.0
+    job = _job(scene)
+
+    service.generate_one(job, 1)
+
+    assert "9:16" not in provider.submitted_prompts[0]

@@ -704,6 +704,31 @@ section records what changed and why so a later session does not undo it.
     as if they were. So the graphic-scene exact-text rule built the same day does not
     reach the generator yet. Decision pending: append a short "Avoid:" line, with the
     text rule softened per scene type (the operator likes on-screen text).
+  - **Video shape: 16:9 / 9:16 chosen at project creation (2026-10-07).**
+    `VideoJob.aspect_ratio` (default 16:9, old projects load unchanged); the New
+    Project form has a "Video shape" choice (a 9:16 project starts at
+    `output_resolution` 1080x1920). For a 9:16 project: Muse prompts end with
+    `MUSE_PORTRAIT_SENTENCE` (the operator-confirmed wording - a bare "Resolution
+    9:16." came back as a 16:9 picture with blurred bars; this sentence returned true
+    720x1280 clips) added by `VideoProviderRules.finalize_prompt`; Flow's own aspect
+    control is set to "9:16" (verified vocabulary, not yet exercised live); shot
+    planning is told to write tall-frame compositions; the Render tab offers portrait
+    sizes (720x1280 ... 2160x3840); the generated title card is made at the render's
+    size; and `ExportVariantRenderService` works from a vertical master (portrait
+    variant = the render itself, landscape variant = fitted over a blurred copy, the
+    landscape path unchanged). A 16:9 project adds nothing anywhere. Tests:
+    `tests/test_aspect_ratio_portrait.py` plus Muse/Flow submission cases.
+  - **Graphic-scene text rule now reaches the generator (2026-10-07).**
+    `CinematicPromptCompilationService` ends a graphic scene's prompt (whole-scene and
+    every sub-clip) with an "On-screen text rule: use only the words of this
+    narration: ..., add no other words, numbers, sources, citations, badges, 'trusted'
+    labels or labels on icons, make no claim stronger than the narration's wording,
+    keep its qualifiers ('can', 'may', 'modestly')." The rule used to live only in the
+    stored negative-constraint list, which no provider sends. Other negative
+    constraints are still not sent. Plan steps 2 (Clip-check flag) and 3 (OCR / own
+    text) are not built; verify the wording on the 9:16 infographic scene.
+  - Fixed: a scroll-restore timer firing after its tab was deleted raised "Internal C++
+    object already deleted" (seen in the full suite); the restore now ignores it.
   - The fallback to the composite render now catches only the new
     `ChunkedRenderRequiredError` (a `NotImplementedError` subclass raised
     by `render_video_only()` for command-length chunking); any other

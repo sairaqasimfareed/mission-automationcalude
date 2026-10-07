@@ -189,7 +189,9 @@ class EnrichedScenePromptService:
 
         # Worded exactly as a submission would send it (stated duration,
         # last shot beat, and - for Muse - the trim instruction).
-        base_prompt_text = rules.finalize_prompt(base_prompt_text, duration_seconds)
+        base_prompt_text = rules.finalize_prompt(
+            base_prompt_text, duration_seconds, job.aspect_ratio
+        )
 
         return EnrichedScenePrompt(
             scene_number=scene.scene_number,

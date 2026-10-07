@@ -158,6 +158,18 @@ def _script_is_approved(job: VideoJob) -> bool:
     return job.script is not None and job.script.status.value == "approved"
 
 
+def _render_size(job: VideoJob) -> tuple[int, int]:
+    """The (width, height) the project renders at, e.g. "1080x1920" -> (1080, 1920)."""
+
+    try:
+        width_text, height_text = job.output_resolution.lower().split("x")
+        width, height = int(width_text), int(height_text)
+    except ValueError:
+        return 1920, 1080
+
+    return (width, height) if width > 0 and height > 0 else (1920, 1080)
+
+
 def _audience_fallback(job: VideoJob) -> str | None:
     """The audience to hand the SEO builder when the project has no audience promise.
 
@@ -272,10 +284,14 @@ class _TitleCardWorker(QObject):
         title_override: str | None = None,
         position_override: ThumbnailTextPosition | None = None,
         title_clip_override: str | None = None,
+        width: int = 1920,
+        height: int = 1080,
     ) -> None:
         super().__init__()
 
         self._service = service
+        self._width = width
+        self._height = height
         self._seo_context = seo_context
         self._genre_id = genre_id
         self._channel_name = channel_name
@@ -312,6 +328,8 @@ class _TitleCardWorker(QObject):
                 title_override=self._title_override,
                 position_override=self._position_override,
                 title_clip_override=self._title_clip_override,
+                width=self._width,
+                height=self._height,
                 progress_callback=self.progress.emit,
                 cancellation_check=self._cancel_event.is_set,
             )
@@ -814,6 +832,7 @@ class PackagingView(QWidget):
         assert render_result.output_file is not None
 
         seo_package = self._job_store.get_seo_package(self._job_id)
+        render_width, render_height = _render_size(job)
 
         main_video_path = Path(render_result.output_file)
 
@@ -874,6 +893,9 @@ class PackagingView(QWidget):
             title_override=job.title_card_text,
             position_override=job.title_card_text_position,
             title_clip_override=job.title_card_clip_path,
+            # A 9:16 project's generated title card is made at the render's own size.
+            width=render_width,
+            height=render_height,
         )
         worker.moveToThread(thread)
 

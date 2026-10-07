@@ -41,6 +41,7 @@ from src.models.asset_state import SceneAssetState
 from src.models.render_orchestration_result import RenderOrchestrationResult
 from src.models.render_progress import RenderProgress
 from src.models.scene import Scene
+from src.models.specification_enums import AspectRatio
 from src.models.video_job import VideoJob
 from src.services.caption_style_options_service import CaptionStyleOptionsService
 from src.services.policy_service import PolicyService
@@ -68,6 +69,14 @@ _OUTPUT_RESOLUTION_PRESETS: list[tuple[str, str]] = [
     ("1080p (1920x1080)", "1920x1080"),
     ("1440p (2560x1440)", "2560x1440"),
     ("4K (3840x2160)", "3840x2160"),
+]
+
+# The same tiers for a 9:16 project (width and height swapped).
+_PORTRAIT_OUTPUT_RESOLUTION_PRESETS: list[tuple[str, str]] = [
+    ("720p (720x1280)", "720x1280"),
+    ("1080p (1080x1920)", "1080x1920"),
+    ("1440p (1440x2560)", "1440x2560"),
+    ("4K (2160x3840)", "2160x3840"),
 ]
 
 
@@ -413,7 +422,13 @@ class RenderWorkspaceView(QWidget):
 
         combo = QComboBox()
 
-        for label, value in _OUTPUT_RESOLUTION_PRESETS:
+        presets = (
+            _PORTRAIT_OUTPUT_RESOLUTION_PRESETS
+            if job.aspect_ratio == AspectRatio.PORTRAIT
+            else _OUTPUT_RESOLUTION_PRESETS
+        )
+
+        for label, value in presets:
             combo.addItem(label, userData=value)
 
         index = combo.findData(job.output_resolution)

@@ -90,8 +90,13 @@ class ScrollKeeper:
         quiet_timer.setInterval(_QUIET_MILLISECONDS)
 
         def apply() -> None:
-            if not cancelled and scroll_bar.maximum() > 0:
-                scroll_bar.setValue(value)
+            try:
+                if not cancelled and scroll_bar.maximum() > 0:
+                    scroll_bar.setValue(value)
+            except RuntimeError:
+                # The tab was closed while the restore was still waiting: its scroll
+                # bar no longer exists, so there is nothing to put back.
+                pass
 
         def stop(*, finished: bool) -> None:
             nonlocal cancelled

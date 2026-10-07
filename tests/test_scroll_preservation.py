@@ -217,3 +217,33 @@ def test_the_real_audio_tab_keeps_its_position(qapp: QApplication) -> None:
     _settle(qapp, view)
 
     assert bar.value() == wanted
+
+
+def test_a_restore_still_waiting_when_the_tab_is_closed_does_not_raise(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Seen in the full suite: the settle timer fired after the view (and its scroll
+    bar) had been deleted and raised "Internal C++ object already deleted"."""
+
+    import sys
+
+    import shiboken6
+
+    import src.desktop.scroll_preservation as module
+
+    monkeypatch.setattr(module, "_MAX_SETTLE_MILLISECONDS", 60)
+    monkeypatch.setattr(module, "_QUIET_MILLISECONDS", 30)
+    errors: list[object] = []
+    monkeypatch.setattr(sys, "excepthook", lambda *args: errors.append(args))
+
+    view = _TabView()
+    job = _Job()
+    view.refresh(job)
+    view.refresh(job)  # starts a restore that is still waiting
+    shiboken6.delete(view.scroll_area)
+
+    for _ in range(30):
+        qapp.processEvents()
+        QThread.msleep(10)
+
+    assert errors == []

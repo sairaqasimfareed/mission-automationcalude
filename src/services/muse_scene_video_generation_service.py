@@ -639,8 +639,8 @@ class MuseSceneVideoGenerationService:
                         if duration is not None
                         else float(scene.estimated_duration_seconds)
                     ),
-                    resolution="1920x1080",
-                    aspect_ratio="16:9",
+                    resolution=job.nominal_clip_resolution,
+                    aspect_ratio=job.aspect_ratio.value,
                 )
             )
 
@@ -998,7 +998,9 @@ class MuseSceneVideoGenerationService:
         # (the trim instruction for a target shorter than Muse's fixed
         # clip is part of the same shared rules - see
         # VideoProviderRules.finalize_prompt for the live finding behind it)
-        prompt = rules_for(VideoProvider.MUSE).finalize_prompt(prompt, target_seconds)
+        prompt = rules_for(VideoProvider.MUSE).finalize_prompt(
+            prompt, target_seconds, job.aspect_ratio
+        )
 
         reference_assets = self._resolve_reference_assets(job, scene) + list(
             extra_reference_assets or []

@@ -162,7 +162,7 @@ class ExportVariantRenderService:
 
         source_file = render_result.output_file
 
-        if orientation == AspectRatio.LANDSCAPE and platform is None:
+        if orientation == self._master_orientation(job) and platform is None:
             return ExportVariant(orientation=orientation, output_file=source_file)
 
         return self._build_processed_variant(
@@ -173,6 +173,17 @@ class ExportVariantRenderService:
             fallback_duration_seconds=render_result.duration_seconds,
             progress_callback=progress_callback,
             cancellation_check=cancellation_check,
+        )
+
+    @staticmethod
+    def _master_orientation(job: VideoJob) -> AspectRatio:
+        """The orientation of the finished render: 9:16 for a vertical project,
+        landscape for everything else (every render used to be landscape)."""
+
+        return (
+            AspectRatio.PORTRAIT
+            if job.aspect_ratio == AspectRatio.PORTRAIT
+            else AspectRatio.LANDSCAPE
         )
 
     def _build_processed_variant(
@@ -207,23 +218,28 @@ class ExportVariantRenderService:
         resolved_config = self._capability_service.resolve()
         source_width, source_height = self._parse_resolution(job.output_resolution)
 
-        # Swap the same resolution tier the user already chose for the
-        # base render (e.g. 1920x1080 -> 1080x1920) rather than
-        # introducing a separate portrait-resolution picker.
+        # The same resolution tier the user already chose for the base render, in
+        # the variant's own orientation (1920x1080 <-> 1080x1920), rather than a
+        # separate picker. Taken from the long and short sides so it is right whether
+        # the master is landscape or a 9:16 project's portrait render.
+        long_side = max(source_width, source_height)
+        short_side = min(source_width, source_height)
         target_width, target_height = (
-            (source_height, source_width)
+            (short_side, long_side)
             if orientation == AspectRatio.PORTRAIT
-            else (source_width, source_height)
+            else (long_side, short_side)
         )
+        master_orientation = self._master_orientation(job)
 
         clauses: list[str] = []
         video_label = "0:v"
 
-        if orientation == AspectRatio.PORTRAIT:
+        if orientation != master_orientation:
             clause, video_label = self._reformat_clause(
                 input_label=video_label,
                 width=target_width,
                 height=target_height,
+                fit_height=orientation == AspectRatio.LANDSCAPE,
             )
             clauses.append(clause)
 
@@ -464,8 +480,12 @@ class ExportVariantRenderService:
 
     @staticmethod
     def _reformat_clause(
-        *, input_label: str, width: int, height: int
+        *, input_label: str, width: int, height: int, fit_height: bool = False
     ) -> tuple[str, str]:
+        # Landscape -> portrait fits the picture to the width over a blurred copy;
+        # portrait -> landscape (a 9:16 project's landscape variant) fits it to the
+        # height instead, or the tall picture would overflow the frame.
+        foreground_scale = f"-2:{height}" if fit_height else f"{width}:-2"
         output_label = "reformatted"
         clause = (
             f"[{input_label}]split=2[bg][fg];"
@@ -473,7 +493,7 @@ class ExportVariantRenderService:
             f"force_original_aspect_ratio=increase,"
             f"crop={width}:{height},"
             f"gblur=sigma={_BACKGROUND_BLUR_SIGMA}[bgv];"
-            f"[fg]scale={width}:-2[fgv];"
+            f"[fg]scale={foreground_scale}[fgv];"
             f"[bgv][fgv]overlay=(W-w)/2:(H-h)/2:format=auto[{output_label}]"
         )
 

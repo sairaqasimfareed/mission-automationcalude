@@ -653,8 +653,9 @@ re-render, leftover stage files, stored duration) and the broad
   Dashboard and the Flow/Muse panels rebuild lists rather than card stacks and were
   not changed; if one of them jumps to the top it needs `keep_scroll_on_refresh`.
   Confirmed in the offscreen tests, not yet re-checked by hand in the running app.
-- **PRIORITY - aspect ratio (16:9 / 9:16) chosen when a project is created, for YouTube,
-  Facebook and TikTok** (requested 2026-10-07; not built). The New Project form has only a
+- **Aspect ratio (16:9 / 9:16) chosen when a project is created - BUILT 2026-10-07 (see
+  IMPLEMENTATION_STATE); what is left is listed at the end of this item.** (Original
+  request and findings follow.) The New Project form has only a
   Platform dropdown; output is fixed at 1920x1080 and prompts say nothing about the shape.
   Wanted: after choosing the platform, offer 16:9 or 9:16 (stored on the project, default
   16:9); for 9:16 every clip prompt gets an explicit vertical sentence, for 16:9 nothing is
@@ -680,8 +681,13 @@ re-render, leftover stage files, stored duration) and the broad
   decision 2026-10-07); changing the ratio after clips exist must warn and invalidate them. Related: the
   graphic-scene text rule is still not sent, and the 9:16 infographic repeated the problem
   (added "safely", dropped "modestly", an invented "Source:" line and a "Trusted Info" badge).
-- **PRIORITY (build with the 9:16 work) - AI-written claims on infographic (graphic) scenes**
-  (found 2026-10-07; plan agreed, not built). The graphic-scene text rule exists on the stored
+  *Left to do after the build:* a warning (and invalidation of existing clips) when the shape
+  is changed after clips exist - today it is chosen at creation only; subtitle placement and
+  the thumbnail have not been checked/adapted for a portrait frame; Flow's "9:16" click is
+  unverified against the live product; the sentence is unproven in a fresh Muse chat; stock
+  or manually uploaded 16:9 clips in a 9:16 project are not letterboxed.
+- **AI-written claims on infographic (graphic) scenes** (found 2026-10-07; plan step 1 BUILT
+  the same day - the text rule is now in the prompt - steps 2 and 3 not built). The graphic-scene text rule exists on the stored
   prompt but is never sent, so Muse writes its own text. Remedy and the 9:16 test infographic
   both showed it: "safely" where the narration said "can be given", "modestly" dropped from
   "modestly reduce nighttime coughing", "Strongest clinical evidence" for "most of the

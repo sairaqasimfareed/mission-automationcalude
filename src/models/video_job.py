@@ -59,6 +59,7 @@ from src.models.script_quality_report import ScriptQualityReport
 from src.models.script_version import ScriptVersionHistory
 from src.models.shot_planning import CinematicShotPlan
 from src.models.sound_design_plan import SoundDesignPlan
+from src.models.specification_enums import AspectRatio
 from src.models.story_angle import StoryAngle, StoryAngleEvaluation
 from src.models.story_blueprint import StoryBlueprint
 from src.models.thumbnail import ThumbnailTextPosition
@@ -96,6 +97,13 @@ class VideoJob(MissionBaseModel):
     # constrains the picker to a fixed preset list rather than free
     # text, so no format validator is needed here.
     output_resolution: str = "1920x1080"
+
+    # The shape of the video, chosen when the project is created (16:9, or 9:16 for
+    # TikTok / Reels / Shorts). Drives the prompts (Muse is told to make a true
+    # vertical clip, Flow's aspect control is set), the shot planning's composition
+    # advice, and the sizes the title card and export variants use. LANDSCAPE adds
+    # nothing to a prompt - it is every provider's default.
+    aspect_ratio: AspectRatio = AspectRatio.LANDSCAPE
 
     # Distinct from production_mode above (render quality/cost
     # tradeoff) - this controls how much human review each content
@@ -503,6 +511,15 @@ class VideoJob(MissionBaseModel):
             raise ValueError("Caption style override requires a name.")
 
         return normalized
+
+    @property
+    def nominal_clip_resolution(self) -> str:
+        """The size recorded for a generated clip, in the project's own orientation."""
+
+        if self.aspect_ratio == AspectRatio.PORTRAIT:
+            return "1080x1920"
+
+        return "1920x1080"
 
     @model_validator(mode="after")
     def validate_workflow_state(self) -> VideoJob:
