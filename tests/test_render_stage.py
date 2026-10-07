@@ -1808,3 +1808,80 @@ def test_the_composite_fallback_render_also_gets_realigned_audio() -> None:
 
     # Scene 1 really starts at 0.0 in the video, not 5.0 where it was laid.
     assert sent.tracks[0].start_time_seconds == 0.0
+
+
+# ---- the subtitle lines are kept on the render, burned in or not (2026-10-07)
+
+
+def _render_with_cues(*, subtitles_enabled: bool):  # type: ignore[no-untyped-def]
+    job = _staged_job_with_real_cues()
+    job.audio_timeline = _all_track_types_timeline()
+
+    production = MagicMock()
+    production.output_file = "outputs/final_video.mp4"
+    production.render_video_only.return_value = _staged_stage1_result(
+        output_file="outputs/final_video.stage1.mp4"
+    )
+
+    mux = MagicMock()
+    mux.mux.return_value = RenderResult(
+        success=True,
+        output_file=(
+            "outputs/final_video.stage2.mp4"
+            if subtitles_enabled
+            else "outputs/final_video.mp4"
+        ),
+        render_engine="ffmpeg",
+        render_time_seconds=0.1,
+        duration_seconds=10,
+        status=RenderStatus.COMPLETED,
+    )
+
+    burn = MagicMock()
+    burn.burn.return_value = RenderResult(
+        success=True,
+        output_file="outputs/final_video.mp4",
+        render_engine="ffmpeg",
+        render_time_seconds=0.1,
+        duration_seconds=10,
+        status=RenderStatus.COMPLETED,
+    )
+
+    stage = RenderPipelineStage(
+        production_render_service=production,
+        voice_blueprints=[_staged_voice_blueprint()],
+        subtitles_enabled=subtitles_enabled,
+        audio_mux_render_service=mux,
+        subtitle_burn_service=burn,
+    )
+    result = stage.execute(build_context(job))
+
+    return result, job, burn
+
+
+def test_a_render_with_subtitles_keeps_their_lines_and_says_they_are_burned_in() -> (
+    None
+):
+    result, job, burn = _render_with_cues(subtitles_enabled=True)
+
+    assert result.successful is True
+    burn.burn.assert_called_once()
+    assert job.render_result is not None
+    assert job.render_result.subtitle_cues
+    assert job.render_result.subtitles_burned is True
+
+
+def test_a_render_without_subtitles_still_keeps_their_lines_for_later() -> None:
+    """So subtitles can be burned onto it - or onto a copy with a title card, or an
+    export variant - at any later stage without re-rendering."""
+
+    result, job, burn = _render_with_cues(subtitles_enabled=False)
+
+    assert result.successful is True
+    burn.burn.assert_not_called()
+    assert job.render_result is not None
+    assert job.render_result.subtitle_cues
+    assert job.render_result.subtitles_burned is False
+    assert all(
+        cue.end_seconds > cue.start_seconds for cue in job.render_result.subtitle_cues
+    )

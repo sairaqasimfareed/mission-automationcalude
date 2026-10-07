@@ -16,6 +16,8 @@ import subprocess
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
+
 from src.models.enums import Platform
 from src.models.genre_profile import GenreSEOProfile, GenreThumbnailProfile
 from src.models.music_generation import (
@@ -221,4 +223,15 @@ def test_real_opening_title_card_end_to_end_produces_one_correct_final_file(
         ]
     ).stdout
 
-    assert f"duration={expected_total_seconds:.6f}" in probe
+    # The card is now joined to the render by a stream copy (see FastTitleCardJoin), so
+    # the total is the two lengths plus at most a frame or two of AAC padding - not the
+    # frame-exact sum the old full re-encode produced.
+    total_seconds = float(
+        next(
+            line.split("=", 1)[1]
+            for line in probe.splitlines()
+            if line.startswith("duration=")
+        )
+    )
+
+    assert total_seconds == pytest.approx(expected_total_seconds, abs=0.1)

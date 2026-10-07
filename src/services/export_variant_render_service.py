@@ -26,6 +26,7 @@ from src.services.join_segments_filter import JoinSegment, build_join_filter
 from src.services.media_technical_validation_service import (
     MediaTechnicalValidationService,
 )
+from src.services.title_card_offset import title_card_seconds
 from src.shared.logger import logger
 
 # The background-blur-fill sigma - high enough that the padded frame
@@ -91,12 +92,6 @@ _WATERMARK_IMAGE_WIDTH_FRACTION = 0.15
 # An uploaded watermark is drawn semi-transparent, like a watermark - at full opacity
 # it read as a picture laid over the video (reported 2026-10-07, Remedy).
 _WATERMARK_IMAGE_OPACITY = 0.7
-
-# A title card the operator added is shorter than this; a bigger difference between the
-# finished render and the card-free one means something else (a different render), so
-# it is not treated as a title card.
-_MAX_TITLE_CARD_SECONDS = 30.0
-_MIN_TITLE_CARD_SECONDS = 0.5
 
 
 class ExportVariantRenderService:
@@ -188,34 +183,11 @@ class ExportVariantRenderService:
     def _title_card_seconds(
         self, job: VideoJob, source_file: str, source_duration_seconds: float
     ) -> float:
-        """How long the opening title card at the start of `source_file` is, or 0.
+        """How long the opening title card at the start of `source_file` is, or 0."""
 
-        The card-free render is kept on the job (`render_result`); the source of a
-        variant that was made after the card was added is that render plus the card,
-        so the card's length is the difference between the two files' real lengths."""
-
-        base = job.render_result
-
-        if base is None or not base.success or not base.output_file:
-            return 0.0
-
-        if Path(base.output_file).resolve() == Path(source_file).resolve():
-            return 0.0
-
-        try:
-            probed = self._media_validation_service.validate(Path(base.output_file))
-        except Exception:  # noqa: BLE001 - an unreadable base render means "no card"
-            return 0.0
-
-        if probed.duration_seconds is None:
-            return 0.0
-
-        extra = source_duration_seconds - float(probed.duration_seconds)
-
-        if _MIN_TITLE_CARD_SECONDS <= extra <= _MAX_TITLE_CARD_SECONDS:
-            return float(extra)
-
-        return 0.0
+        return title_card_seconds(
+            job, source_file, source_duration_seconds, self._media_validation_service
+        )
 
     @staticmethod
     def _master_orientation(job: VideoJob) -> AspectRatio:

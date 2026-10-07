@@ -751,7 +751,8 @@ re-render, leftover stage files, stored duration) and the broad
      like a watermark (semi-transparent, small, in a corner - an opacity setting) and start
      when the title card ends (title-card length known from the title-card clip/service), not
      at t=0. Not built.
-  8. Subtitle burning option on all three renders (requested 2026-10-07; the earlier "run
+  8. BUILT 2026-10-07 (see IMPLEMENTATION_STATE; limits listed there: default caption style
+     only, old variants, old renders) - Subtitle burning option on all three renders (requested 2026-10-07; the earlier "run
      combinations / one button for everything" wish was dropped - the renders stay separate
      buttons as they are). Today subtitles are burned only inside the main render
      (`render_stage` -> `PostRenderSubtitleBurnService`, the Render tab's subtitle toggle), so

@@ -62,6 +62,11 @@ from src.services.render_result_resolution_service import (
 )
 from src.services.seo.seo_context_builder import SEOContext, SEOContextBuilder
 from src.services.seo.seo_package_service import SEOPackageService
+from src.services.subtitle_burn_action_service import SubtitleBurnActionService
+from src.services.subtitle_burn_targets import (
+    SubtitleBurnTarget,
+    subtitle_burn_targets,
+)
 from src.services.thumbnail.thumbnail_package_service import ThumbnailPackageService
 from src.services.title_card_text_resolution_service import resolve_title_card_text
 
@@ -259,6 +264,59 @@ class _ExportVariantWorker(QObject):
         self._cancel_event.set()
 
 
+class _SubtitleBurnWorker(QObject):
+    """Burns the subtitles onto a copy of one finished video off the GUI thread."""
+
+    finished = Signal(object)
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        *,
+        service: SubtitleBurnActionService,
+        job: VideoJob,
+        job_id: UUID,
+        source_file: str,
+        output_file: str,
+        after_title_card_file: str | None,
+    ) -> None:
+        super().__init__()
+
+        self._service = service
+        self._job = job
+        self._source_file = source_file
+        self._output_file = output_file
+        # When set, the subtitles are shifted past the opening title card that the render
+        # at this path starts with (an export variant starts with the same card).
+        self._after_title_card_file = after_title_card_file
+        self.job_id = job_id
+        self._cancel_event = threading.Event()
+
+    def run(self) -> None:
+        try:
+            offset = (
+                self._service.offset_seconds(self._job, self._after_title_card_file)
+                if self._after_title_card_file
+                else 0.0
+            )
+            result = self._service.burn(
+                job=self._job,
+                source_file=self._source_file,
+                output_file=self._output_file,
+                offset_seconds=offset,
+                cancellation_check=self._cancel_event.is_set,
+            )
+        except Exception as error:  # noqa: BLE001 - reported to the UI thread
+            self.failed.emit(str(error))
+
+            return
+
+        self.finished.emit(result)
+
+    def request_cancel(self) -> None:
+        self._cancel_event.set()
+
+
 class _TitleCardWorker(QObject):
     """Same real pattern/crash-avoidance reasoning as _ExportVariantWorker above."""
 
@@ -364,6 +422,7 @@ class PackagingView(QWidget):
         on_change: Callable[[], None],
         approval_gate_service: ApprovalGateService | None = None,
         export_variant_render_service: ExportVariantRenderService | None = None,
+        subtitle_burn_action_service: SubtitleBurnActionService | None = None,
         opening_title_card_service: OpeningTitleCardService | None = None,
     ) -> None:
         super().__init__()
@@ -403,6 +462,16 @@ class PackagingView(QWidget):
         self._generating_export_variant_job_ids: set[UUID] = set()
         self._title_card_threads: dict[UUID, tuple[QThread, _TitleCardWorker]] = {}
         self._generating_title_card_job_ids: set[UUID] = set()
+        # Burning subtitles onto a finished video (any of the renders).
+        self._subtitle_burn_action_service = (
+            subtitle_burn_action_service or SubtitleBurnActionService()
+        )
+        self._subtitle_threads: dict[UUID, tuple[QThread, _SubtitleBurnWorker]] = {}
+        self._burning_subtitle_job_ids: set[UUID] = set()
+        # What the last burn did, shown under the button: (role, text).
+        self._subtitle_notices: dict[UUID, tuple[str, str]] = {}
+        self._subtitle_target_combo: QComboBox | None = None
+        self._subtitle_targets: list[SubtitleBurnTarget] = []
 
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -430,6 +499,7 @@ class PackagingView(QWidget):
         if (
             job.id in self._generating_export_variant_job_ids
             or job.id in self._generating_title_card_job_ids
+            or job.id in self._burning_subtitle_job_ids
         ):
             # A generation is in flight for this job - its progress
             # widgets are being updated live by the signal handlers
@@ -460,6 +530,7 @@ class PackagingView(QWidget):
         self._build_title_card_card(job)
         self._build_thumbnail_card(job)
         self._build_export_variants_card(job)
+        self._build_subtitle_burn_card(job)
         self._build_final_export_card(job)
 
     def _build_seo_card(self, job: VideoJob) -> None:
@@ -1307,6 +1378,198 @@ class PackagingView(QWidget):
         reject_button = button("Reject")
         reject_button.clicked.connect(on_reject)
         layout.addWidget(reject_button, alignment=_LEFT)
+
+    # ----------------------------------------------------------- subtitles
+
+    def _effective_render(self, job: VideoJob) -> RenderResult | None:
+        assert self._job_id is not None
+
+        orchestration = resolve_effective_render_orchestration_result(
+            job, self._job_store.get_render_result(self._job_id)
+        )
+
+        return orchestration.render_result if orchestration is not None else None
+
+    def _build_subtitle_burn_card(self, job: VideoJob) -> None:
+        """
+        Burn the project's subtitles onto a finished video at any stage - the main render,
+        the render with its title card, or an export variant. A copy is made; the original
+        stays as it is. (Subtitles used to be burned in only inside the main render.)
+        """
+
+        frame, layout = card("Subtitles", icon_name="clapper")
+
+        assert self._job_id is not None
+
+        layout.addWidget(
+            small_muted(
+                "Burn this project's subtitles onto any finished video. A copy named "
+                "..._subtitled is made next to it; the original is not changed."
+            )
+        )
+
+        reason = SubtitleBurnActionService.unavailable_reason(job)
+
+        if reason is not None:
+            layout.addWidget(small_muted(reason))
+            self._layout.addWidget(frame)
+
+            return
+
+        if job.id in self._burning_subtitle_job_ids:
+            layout.addWidget(subheading("Burning subtitles..."))
+            layout.addWidget(small_muted("This takes about as long as a short render."))
+            self._layout.addWidget(frame)
+
+            return
+
+        assert job.render_result is not None
+
+        if job.render_result.subtitles_burned:
+            layout.addWidget(
+                small_muted(
+                    "The main render already has subtitles burned in, and so does "
+                    "everything made from it."
+                )
+            )
+            self._layout.addWidget(frame)
+
+            return
+
+        self._subtitle_targets = subtitle_burn_targets(
+            job,
+            self._effective_render(job),
+            self._job_store.get_export_variants(self._job_id),
+        )
+
+        if not self._subtitle_targets:
+            layout.addWidget(small_muted("There is no finished video file to use."))
+            self._layout.addWidget(frame)
+
+            return
+
+        combo = QComboBox()
+
+        for target in self._subtitle_targets:
+            combo.addItem(target.label, userData=target.file)
+
+        self._subtitle_target_combo = combo
+        layout.addWidget(combo)
+
+        burn_button = button("Burn subtitles onto this video", variant="primary")
+        burn_button.clicked.connect(self._handle_burn_subtitles)
+        layout.addWidget(burn_button, alignment=_LEFT)
+
+        notice = self._subtitle_notices.get(job.id)
+
+        if notice is not None:
+            role, text = notice
+            layout.addWidget(status_label(text, role=role))
+
+        self._layout.addWidget(frame)
+
+    def _handle_burn_subtitles(self) -> None:
+        job = self._current_job()
+
+        if (
+            job is None
+            or self._job_id is None
+            or job.id in self._burning_subtitle_job_ids
+            or self._subtitle_target_combo is None
+        ):
+            return
+
+        index = self._subtitle_target_combo.currentIndex()
+
+        if not 0 <= index < len(self._subtitle_targets):
+            return
+
+        target = self._subtitle_targets[index]
+        effective = self._effective_render(job)
+        service = self._subtitle_burn_action_service
+
+        thread = QThread()
+        worker = _SubtitleBurnWorker(
+            service=service,
+            job=job.model_copy(deep=True),
+            job_id=job.id,
+            source_file=target.file,
+            output_file=service.output_file_for(target.file),
+            after_title_card_file=(
+                effective.output_file
+                if target.after_title_card
+                and effective is not None
+                and effective.output_file
+                else None
+            ),
+        )
+        worker.moveToThread(thread)
+        thread.job_id = job.id  # type: ignore[attr-defined]
+
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._handle_subtitle_burn_finished)
+        worker.failed.connect(self._handle_subtitle_burn_failed)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        thread.finished.connect(self._handle_subtitle_thread_finished)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+
+        self._subtitle_threads[job.id] = (thread, worker)
+        self._burning_subtitle_job_ids.add(job.id)
+        self._subtitle_notices.pop(job.id, None)
+        self._rebuild_all(job)
+
+        thread.start()
+
+    def _handle_subtitle_burn_finished(self, result: RenderResult) -> None:
+        worker = self.sender()
+
+        if not isinstance(worker, _SubtitleBurnWorker):
+            return
+
+        job_id = worker.job_id
+        self._burning_subtitle_job_ids.discard(job_id)
+
+        if result.success and result.output_file:
+            self._subtitle_notices[job_id] = (
+                "success",
+                f"Subtitles burned into a copy: {result.output_file}",
+            )
+        else:
+            self._subtitle_notices[job_id] = (
+                "error",
+                result.error_message or "Burning the subtitles failed.",
+            )
+
+        job = self._job_store.get(job_id)
+
+        if job is not None and job_id == self._job_id:
+            self._rebuild_all(job)
+
+    def _handle_subtitle_burn_failed(self, message: str) -> None:
+        worker = self.sender()
+
+        if not isinstance(worker, _SubtitleBurnWorker):
+            return
+
+        job_id = worker.job_id
+        self._burning_subtitle_job_ids.discard(job_id)
+        self._subtitle_notices[job_id] = (
+            "error",
+            f"Subtitles were not burned: {message}",
+        )
+        job = self._job_store.get(job_id)
+
+        if job is not None and job_id == self._job_id:
+            self._rebuild_all(job)
+
+    def _handle_subtitle_thread_finished(self) -> None:
+        thread = self.sender()
+        job_id = getattr(thread, "job_id", None)
+
+        if job_id is not None:
+            self._subtitle_threads.pop(job_id, None)
 
     def _build_export_variants_card(self, job: VideoJob) -> None:
         """
@@ -2328,9 +2591,11 @@ class PackagingView(QWidget):
         self._on_change()
 
     def _all_generation_threads(self) -> list[QThread]:
-        return [thread for thread, _worker in self._export_variant_threads.values()] + [
-            thread for thread, _worker in self._title_card_threads.values()
-        ]
+        return (
+            [thread for thread, _worker in self._export_variant_threads.values()]
+            + [thread for thread, _worker in self._title_card_threads.values()]
+            + [thread for thread, _worker in self._subtitle_threads.values()]
+        )
 
     def has_pending_generations(self) -> bool:
         """
@@ -2361,6 +2626,9 @@ class PackagingView(QWidget):
 
         for _thread, title_card_worker in list(self._title_card_threads.values()):
             title_card_worker.request_cancel()
+
+        for _thread, subtitle_worker in list(self._subtitle_threads.values()):
+            subtitle_worker.request_cancel()
 
     def wait_for_pending_generations(self, *, timeout_ms: int = 60_000) -> bool:
         """

@@ -572,16 +572,24 @@ class RenderPipelineStage(BasePipelineStage):
 
         has_muxed_audio = bool(muxed_audio_timeline.tracks)
 
-        cues = (
-            resolve_absolute_subtitle_cues(
+        # The lines are worked out and kept on the result even when subtitles are off
+        # (best effort then - it must never fail a render that would otherwise succeed),
+        # so they can be burned onto this render or a copy of it later.
+        try:
+            all_cues = resolve_absolute_subtitle_cues(
                 video_timeline=video_timeline,
                 voice_blueprints=self._voice_blueprints,
                 scene_timings=stage1_result.scene_timings,
                 transition_duration_seconds=self._transition_duration_seconds,
             )
-            if self._subtitles_enabled
-            else []
-        )
+        except Exception:  # noqa: BLE001
+            if self._subtitles_enabled:
+                raise
+
+            logger.info("Subtitle lines could not be worked out; none are kept.")
+            all_cues = []
+
+        cues = all_cues if self._subtitles_enabled else []
 
         needs_subtitle_burn = bool(cues)
 
@@ -610,13 +618,20 @@ class RenderPipelineStage(BasePipelineStage):
                     "Successful staged render did not " "provide an output file."
                 )
 
-            return self._subtitle_burn_service.burn(
+            burned_result = self._subtitle_burn_service.burn(
                 input_video_file=stage2_result.output_file,
                 cues=cues,
                 output_file=target_output_file,
                 video_duration_seconds=float(stage2_result.duration_seconds),
                 has_audio=has_muxed_audio,
                 progress_callback=progress_callback,
+            )
+
+            return burned_result.model_copy(
+                update={
+                    "subtitle_cues": all_cues,
+                    "subtitles_burned": bool(burned_result.success),
+                }
             )
 
         # stage2_result is the final result. When it was never routed
@@ -631,10 +646,13 @@ class RenderPipelineStage(BasePipelineStage):
             )
 
             return stage2_result.model_copy(
-                update={"output_file": promoted_output_file}
+                update={
+                    "output_file": promoted_output_file,
+                    "subtitle_cues": all_cues,
+                }
             )
 
-        return stage2_result
+        return stage2_result.model_copy(update={"subtitle_cues": all_cues})
 
     @staticmethod
     def _stage_output_file(target_output_file: str, stage_name: str) -> str:

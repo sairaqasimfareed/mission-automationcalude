@@ -765,6 +765,25 @@ section records what changed and why so a later session does not undo it.
     unchanged full re-encode; `fast_join_enabled=False` forces the old path. The render's
     own H.264 stream is verified byte for byte intact in the joined file. Tests:
     `tests/test_fast_title_card_join.py` (real FFmpeg, plus scripted-probe rejection cases).
+  - **Subtitles can be burned onto any render, at any stage (2026-10-07).**
+    `RenderResult.subtitle_cues` (absolute seconds of that render's own timeline) and
+    `subtitles_burned` are now kept on every render - the lines are worked out even when
+    subtitles are off (best effort there, never failing the render) - so nothing has to be
+    re-rendered. `SubtitleBurnActionService` shifts the stored lines past the opening title
+    card (`title_card_offset.title_card_seconds`: the card's length is this video's real
+    length minus the card-free render's) and burns them onto a COPY named `..._subtitled`
+    next to the chosen video through the existing `PostRenderSubtitleBurnService`; the
+    original is untouched. Packaging has a "Subtitles" card with a dropdown of the three
+    renders that exist - Main render, Render with the opening title card, each export
+    variant (`subtitle_burn_targets`; a video already carrying subtitles is not offered) -
+    and a "Burn subtitles onto this video" button that runs on a worker thread and reports
+    where the copy is or why it failed. Verified on real pixels: a cue stored at 0.5-1.5 s
+    shows at 2.5-3.5 s in the video with a 2 s card and not before. Tests:
+    `tests/test_subtitle_burn_action.py`, `tests/test_render_stage.py`. Known limits: the
+    burn uses `subtitle.default` (the same style the in-render burn uses - the per-project
+    caption style does not reach the post-render burn); an export variant made BEFORE a
+    title card was added is shifted as if it had the card (regenerate it); a render made
+    before this existed has no stored lines and must be rendered once more.
   - Fixed: a scroll-restore timer firing after its tab was deleted raised "Internal C++
     object already deleted" (seen in the full suite); the restore now ignores it.
   - The fallback to the composite render now catches only the new

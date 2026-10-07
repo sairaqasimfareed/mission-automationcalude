@@ -4,6 +4,7 @@ from enum import Enum
 
 from pydantic import Field
 
+from src.models.absolute_subtitle_cue import AbsoluteSubtitleCue
 from src.models.base import MissionBaseModel
 from src.models.render_failure_diagnosis import RenderFailureCategory
 
@@ -91,3 +92,12 @@ class RenderResult(MissionBaseModel):
     # Empty by default - only render_video_only() currently populates
     # this; every other existing caller/renderer is unaffected.
     scene_timings: list[SceneRenderTiming] = Field(default_factory=list)
+
+    # The subtitle lines for this render, in ABSOLUTE seconds of its own timeline, kept
+    # whether or not they were burned in - so subtitles can be burned onto this render,
+    # or one made from it (with a title card, an export variant), at any later stage
+    # without re-rendering. Empty for a render made before this existed.
+    subtitle_cues: list[AbsoluteSubtitleCue] = Field(default_factory=list)
+
+    # True when this render already has the subtitles burned into its picture.
+    subtitles_burned: bool = False
