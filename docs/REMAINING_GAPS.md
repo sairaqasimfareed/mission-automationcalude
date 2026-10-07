@@ -716,7 +716,8 @@ re-render, leftover stage files, stored duration) and the broad
   4. Regenerate the clips with picture problems: scene 5's leaked "Evidence-Based Benefits"
      panel, scene 15's mother and baby (different look, no baby reference), the woman who
      changes between scenes. Needs credits and the characters-and-places form.
-  5. Fast title-card join. `TitleCardPrependService` joins the title card with FFmpeg's concat
+  5. BUILT 2026-10-07 (see IMPLEMENTATION_STATE; the export-variant end-clip join could still
+     reuse it) - Fast title-card join. `TitleCardPrependService` joined the title card with FFmpeg's concat
      FILTER, which re-encodes the whole finished render (libx264 medium, crf 20) to add a few
      seconds at the front - slow on this machine (the video pass alone took 28 min). It was
      chosen because a stream-copy join of mismatched files once silently cut the audio short.

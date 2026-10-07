@@ -751,6 +751,20 @@ section records what changed and why so a later session does not undo it.
     `job.render_result`, accepted between 0.5 s and 30 s), not at t=0; the generated text
     watermark waits its 4 s hook-skipping delay after the card. Without a title card
     nothing changes. Tests: `test_export_variant_render_service.py`.
+  - **Fast title-card join (2026-10-07).** `TitleCardPrependService` used to join the card
+    with FFmpeg's concat FILTER, re-encoding the whole finished render (libx264 medium,
+    crf 20) to add a few seconds. `src/services/fast_title_card_join.py`
+    (`FastTitleCardJoin`) now tries first: it reads the render's real settings with
+    ffprobe (H.264 + AAC required; size, frame rate, pixel format, sample rate, channels,
+    time base), re-encodes ONLY the card to match (letterboxed, silence added if the card
+    has no audio), joins with the concat demuxer and `-c copy` (+faststart), then verifies
+    the result - frame size, total length within 0.35 s of card + render, video and audio
+    stream lengths (the old stream-copy bug cut audio short), video/audio skew under
+    0.45 s, and a clean decode of 3.5 s around the seam. Any failure (or a render that is
+    not H.264/AAC, or a cancelled/failed step) removes the output and falls back to the
+    unchanged full re-encode; `fast_join_enabled=False` forces the old path. The render's
+    own H.264 stream is verified byte for byte intact in the joined file. Tests:
+    `tests/test_fast_title_card_join.py` (real FFmpeg, plus scripted-probe rejection cases).
   - Fixed: a scroll-restore timer firing after its tab was deleted raised "Internal C++
     object already deleted" (seen in the full suite); the restore now ignores it.
   - The fallback to the composite render now catches only the new

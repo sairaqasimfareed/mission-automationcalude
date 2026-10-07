@@ -6,6 +6,7 @@ from src.models.ffmpeg_command import FFmpegCommandPlan
 from src.models.ffmpeg_input import FFmpegInputPlan
 from src.models.render_failure_diagnosis import classify_render_failure
 from src.models.render_result import RenderResult, RenderStatus
+from src.services.fast_title_card_join import FastTitleCardJoin, Runner
 from src.services.ffmpeg_capability_service import FFmpegCapabilityService
 from src.services.ffmpeg_execution_service import (
     CancellationCheck,
@@ -15,6 +16,7 @@ from src.services.ffmpeg_execution_service import (
 from src.services.join_segments_filter import JoinSegment, build_join_filter
 from src.services.production_render_service import ProductionRenderService
 from src.services.title_card_render_service import TOTAL_DURATION_SECONDS
+from src.shared.logger import logger
 
 
 class TitleCardPrependService:
@@ -39,8 +41,15 @@ class TitleCardPrependService:
         *,
         capability_service: FFmpegCapabilityService | None = None,
         execution_service: FFmpegExecutionService | None = None,
+        fast_join_enabled: bool = True,
+        fast_join_runner: Runner | None = None,
     ) -> None:
         self._capability_service = capability_service or FFmpegCapabilityService()
+        # The fast join (re-encode only the card, join with a stream copy, verify) is
+        # tried first; anything it cannot do or verify falls back to the full
+        # re-encode below. Off for callers that must always take the full path.
+        self._fast_join_enabled = fast_join_enabled
+        self._fast_join_runner = fast_join_runner
 
         self._execution_service = execution_service or FFmpegExecutionService()
 
@@ -85,6 +94,50 @@ class TitleCardPrependService:
         resolved_config = self._capability_service.resolve()
 
         config = resolved_config.config
+
+        if self._fast_join_enabled:
+            fast = FastTitleCardJoin(
+                ffmpeg_path=resolved_config.capabilities.ffmpeg_path or "ffmpeg",
+                ffprobe_path=resolved_config.capabilities.ffprobe_path or "ffprobe",
+                preset=config.preset,
+                crf=config.crf,
+                pixel_format=str(config.pixel_format.value),
+                audio_bitrate=config.audio_bitrate,
+                extra_video_args=list(config.extra_video_args),
+                extra_audio_args=list(config.extra_audio_args),
+                runner=self._fast_join_runner,
+            )
+            outcome = fast.try_join(
+                title_card_file=Path(title_card_file).resolve().as_posix(),
+                main_video_file=Path(main_video_file).resolve().as_posix(),
+                output_file=staging_output_file,
+                title_card_has_audio=title_card_has_audio,
+                cancellation_check=cancellation_check,
+            )
+
+            if outcome.joined:
+                promoted_output_file = ProductionRenderService._promote_staged_output(
+                    staging_output_file=staging_output_file,
+                    target_output_file=target_output_file,
+                )
+
+                return RenderResult(
+                    success=True,
+                    output_file=promoted_output_file,
+                    render_engine="ffmpeg",
+                    render_time_seconds=outcome.elapsed_seconds,
+                    duration_seconds=int(outcome.duration_seconds or 0),
+                    status=RenderStatus.COMPLETED,
+                    ffmpeg_command=outcome.command,
+                    exit_code=0,
+                    selected_video_codec=resolved_config.selected_video_codec,
+                    selected_audio_codec=resolved_config.selected_audio_codec,
+                )
+
+            logger.info(
+                "Fast title card join not used (%s); re-encoding the whole video.",
+                outcome.reason,
+            )
 
         segment_files = [title_card_file, main_video_file]
 
