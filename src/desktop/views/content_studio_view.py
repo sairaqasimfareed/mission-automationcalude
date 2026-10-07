@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QPushButton,
     QScrollArea,
     QSpinBox,
     QTextEdit,
@@ -2363,6 +2364,7 @@ class ContentStudioView(QWidget):
             )
             frame_row = QHBoxLayout()
             frame_button = button("Choose a reference frame", variant="ghost")
+            self._gate_frame_button(frame_button, job, identity.name)
             frame_button.clicked.connect(
                 lambda _checked=False, n=identity.name: self._handle_choose_frame(n)
             )
@@ -2431,6 +2433,7 @@ class ContentStudioView(QWidget):
                 lambda _checked=False, n=identity.name: self._handle_repick_reference(n)
             )
             choose_button = button("Choose another frame", variant="ghost")
+            self._gate_frame_button(choose_button, job, identity.name)
             choose_button.clicked.connect(
                 lambda _checked=False, n=identity.name: self._handle_choose_frame(n)
             )
@@ -2911,6 +2914,24 @@ class ContentStudioView(QWidget):
             label="reference picture",
             failure=f"Could not pick a reference for {name}",
         )
+
+    def _gate_frame_button(
+        self, frame_button: QPushButton, job: VideoJob, name: str
+    ) -> None:
+        """Frames can only be picked from clips that exist, so without one the button is
+        off and says why, instead of failing with an error dialog when pressed."""
+
+        try:
+            has_clips = self._recurring_identity_service.has_generated_clips(job, name)
+        except ValueError:
+            has_clips = False
+
+        if not has_clips:
+            frame_button.setEnabled(False)
+            frame_button.setToolTip(
+                f"No clip has been generated yet for a scene {name} appears in - "
+                "generate the clips first, then pick a frame."
+            )
 
     def _handle_choose_frame(self, name: str) -> None:
         """Offer a few frames from the identity's generated clips and let the operator

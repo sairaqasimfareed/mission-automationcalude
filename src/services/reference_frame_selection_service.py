@@ -429,7 +429,13 @@ class ReferenceFrameSelectionService:
         video_path: str,
         output_path: str,
         kind: ReferenceKind = ReferenceKind.PERSON,
+        lenient: bool = False,
     ) -> ReferenceFrameSelection:
+        """The best frame of the clip. `lenient` keeps a person reference useful when no
+        frame shows a clear front-facing face (a group, people seen from behind, a wide
+        shot): the sharpest frame is returned instead of refusing, for the operator to
+        judge in the picker. Automatic selection never uses it."""
+
         if not self._is_available():
             return ReferenceFrameSelection(
                 status=ReferenceSelectionStatus.UNAVAILABLE,
@@ -475,6 +481,9 @@ class ReferenceFrameSelectionService:
 
             if score >= self._min_score and (best is None or score > best[0]):
                 best = (score, frame)
+
+        if best is None and lenient:
+            return self._select_environment(frames, output_path)
 
         if best is None:
             return ReferenceFrameSelection(

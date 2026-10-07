@@ -42,7 +42,12 @@ class _Selector(Protocol):
     def is_available(self) -> bool: ...
 
     def select(
-        self, *, video_path: str, output_path: str, kind: ReferenceKind
+        self,
+        *,
+        video_path: str,
+        output_path: str,
+        kind: ReferenceKind,
+        lenient: bool = False,
     ) -> ReferenceFrameSelection: ...
 
 
@@ -64,6 +69,9 @@ class ReferenceCandidate:
     image_path: str
     value: float
     time_seconds: float
+    # False for a frame offered only because no frame showed a clear face: it is the
+    # sharpest one, not a checked likeness.
+    clear_face: bool = True
 
 
 def parse_scene_numbers(text: str, valid_numbers: set[int]) -> list[int]:
@@ -434,6 +442,14 @@ class RecurringIdentityService:
 
         return ReferenceFillResult(True, f"Reference taken from scene {from_scene}.")
 
+    def has_generated_clips(self, job: VideoJob, name: str) -> bool:
+        """Whether any scene this identity appears in has a generated clip - without one
+        there is no frame to pick, so the picker's button stays off."""
+
+        clips_by_scene = self._generated_clips_by_scene(job)
+
+        return any(n in clips_by_scene for n in self.scenes_of(job, name))
+
     def candidates(
         self,
         job: VideoJob,
@@ -467,6 +483,38 @@ class RecurringIdentityService:
             )
 
         cache_directory.mkdir(parents=True, exist_ok=True)
+        found = self._candidate_frames(
+            name, kind, scenes, clips_by_scene, cache_directory, lenient=False
+        )
+
+        if not found and kind == ReferenceKind.PERSON:
+            # No clear, front-facing face anywhere (a group such as "Adults", people
+            # seen from behind): offer the sharpest frame of each clip anyway, so the
+            # operator can still pick one by eye instead of being told nothing exists.
+            found = self._candidate_frames(
+                name, kind, scenes, clips_by_scene, cache_directory, lenient=True
+            )
+
+        found.sort(key=lambda item: item[0], reverse=True)
+
+        if not found:
+            raise ValueError(
+                f"No frame of {name}'s generated clips could be read to offer."
+            )
+
+        return [candidate for _value, candidate in found[:limit]]
+
+    def _candidate_frames(
+        self,
+        name: str,
+        kind: ReferenceKind,
+        scenes: list[int],
+        clips_by_scene: dict[int, list[VideoClip]],
+        cache_directory: Path,
+        *,
+        lenient: bool,
+    ) -> list[tuple[float, ReferenceCandidate]]:
+        assert self._selection is not None
         found: list[tuple[float, ReferenceCandidate]] = []
 
         for scene_number in scenes:
@@ -476,11 +524,19 @@ class RecurringIdentityService:
                 )
 
                 try:
-                    selection = self._selection.select(
-                        video_path=clip.local_file or "",
-                        output_path=str(output),
-                        kind=kind,
-                    )
+                    if lenient:
+                        selection = self._selection.select(
+                            video_path=clip.local_file or "",
+                            output_path=str(output),
+                            kind=kind,
+                            lenient=True,
+                        )
+                    else:
+                        selection = self._selection.select(
+                            video_path=clip.local_file or "",
+                            output_path=str(output),
+                            kind=kind,
+                        )
                 except Exception as error:  # noqa: BLE001 - one bad clip is not fatal
                     logger.warning(
                         "Offering a frame of %s from scene %s failed: %s",
@@ -502,18 +558,12 @@ class RecurringIdentityService:
                             image_path=str(selection.output_path or output),
                             value=selection.raw_value,
                             time_seconds=selection.time_seconds,
+                            clear_face=not lenient,
                         ),
                     )
                 )
 
-        found.sort(key=lambda item: item[0], reverse=True)
-
-        if not found:
-            raise ValueError(
-                f"No frame in {name}'s generated clips is clear enough to offer."
-            )
-
-        return [candidate for _value, candidate in found[:limit]]
+        return found
 
     def use_candidate(
         self, job: VideoJob, name: str, candidate: ReferenceCandidate

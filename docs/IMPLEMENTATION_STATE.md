@@ -819,7 +819,15 @@ section records what changed and why so a later session does not undo it.
     the GUI thread (`_run_stage` gained an optional `on_done`, run on the GUI thread after
     a successful stage) and opens `ReferenceCandidatesDialog` (thumbnails with scene and
     time, "Use this frame"). One frame per clip, not several per clip. Tests in
-    `tests/test_recurring_identity_service.py`.
+    `tests/test_recurring_identity_service.py`. Live fix (2026-10-07, "Adults"): a group
+    or people seen from behind had no frame with a clear front-facing face, so the picker
+    failed with "No frame ... is clear enough to offer". `select(..., lenient=True)` now
+    falls back to the sharpest frame of each clip for a person when no face qualifies
+    (only the picker uses it - automatic reference picking still refuses); those candidates
+    carry `clear_face=False` and the dialog says "No frame shows a clear, front-facing
+    face ... pick the one that looks right". The buttons are also disabled, with a tooltip,
+    when no scene the identity appears in has a generated clip yet
+    (`RecurringIdentityService.has_generated_clips`), instead of failing when pressed.
   - **Shot-to-shot colour matching (2026-10-07).** Generated clips come back with their own
     exposure and colour (Remedy: a bright daylight clip between dark warm ones). New
     `ClipColorMatchingService` measures every generated live-action clip's brightness,

@@ -677,6 +677,77 @@ def test_the_picker_says_why_when_there_is_nothing_to_offer(tmp_path: Path) -> N
         )
 
 
+class _FaceShy(_Selector):
+    """Finds no clear face in any frame unless asked to be lenient - like a group of
+    adults seen from behind."""
+
+    def select(  # type: ignore[override]
+        self,
+        *,
+        video_path: str,
+        output_path: str,
+        kind: ReferenceKind,
+        lenient: bool = False,
+    ) -> ReferenceFrameSelection:
+        if not lenient:
+            return ReferenceFrameSelection(
+                status=ReferenceSelectionStatus.NO_QUALIFYING_FACE,
+                reason="No sampled frame shows a clear, front-facing face",
+            )
+
+        return super().select(video_path=video_path, output_path=output_path, kind=kind)
+
+
+def test_the_picker_still_offers_frames_when_no_frame_has_a_clear_face(
+    tmp_path: Path,
+) -> None:
+    """Live, 2026-10-07: 'Adults' (a group) gave 'No frame ... is clear enough to
+    offer' and the operator could not pick anything."""
+
+    job, _service_with_faces = _bible_job_with_clips(tmp_path)
+    service = RecurringIdentityService(
+        selection_service=_FaceShy(tmp_path), storage_root=tmp_path / "frames"
+    )
+
+    candidates = service.candidates(
+        job, "Grandmother", cache_directory=tmp_path / "cache"
+    )
+
+    assert [c.scene_number for c in candidates] == [4, 3, 2, 1]
+    assert all(c.clear_face is False for c in candidates)
+    assert service.use_candidate(job, "Grandmother", candidates[0]).attached is True
+
+
+def test_frames_with_a_clear_face_are_marked_as_such(tmp_path: Path) -> None:
+    job, service = _bible_job_with_clips(tmp_path)
+
+    candidates = service.candidates(
+        job, "Grandmother", cache_directory=tmp_path / "cache"
+    )
+
+    assert all(c.clear_face for c in candidates)
+
+
+def test_the_picker_knows_whether_any_clip_exists_for_an_identity(
+    tmp_path: Path,
+) -> None:
+    job = _job()
+    service = _service(tmp_path)
+    service.add(
+        job,
+        name="Grandmother",
+        kind=CanonicalEntityType.PERSON,
+        description="An elderly woman.",
+        scene_text="1-2",
+    )
+
+    assert service.has_generated_clips(job, "Grandmother") is False
+
+    _add_clip(job, tmp_path, 1)
+
+    assert service.has_generated_clips(job, "Grandmother") is True
+
+
 def test_a_frame_that_disappeared_cannot_be_chosen(tmp_path: Path) -> None:
     job, service = _bible_job_with_clips(tmp_path)
     candidate = service.candidates(
@@ -789,3 +860,76 @@ def test_the_picker_buttons_are_on_every_identity_row(qapp) -> None:  # type: ig
     texts = [b.text() for b in holder.findChildren(QPushButton)]
     assert "Choose a reference frame" in texts  # the generated "Lake Nyos"
     assert "Choose another frame" in texts  # the operator's "Grandmother"
+
+
+def test_the_picker_buttons_are_off_until_a_clip_exists(  # type: ignore[no-untyped-def]
+    qapp, tmp_path: Path
+) -> None:
+    """Pressing it with no clip used to end in an error dialog; with a clip it works."""
+
+    from PySide6.QtWidgets import QPushButton, QVBoxLayout, QWidget
+
+    view, job, _errors = _studio_view_with_bible()
+    view._recurring_identity_service.add(  # noqa: SLF001
+        job,
+        name="Grandmother",
+        kind=CanonicalEntityType.PERSON,
+        description="An elderly woman.",
+        scene_text="1-2",
+    )
+
+    def frame_buttons() -> list[QPushButton]:
+        holder = QWidget()
+        layout = QVBoxLayout(holder)
+        view._render_visual_continuity_section(layout, job)  # noqa: SLF001
+        found = [
+            b
+            for b in holder.findChildren(QPushButton)
+            if b.text() in ("Choose a reference frame", "Choose another frame")
+        ]
+        return [(b.isEnabled(), b.toolTip()) for b in found]  # type: ignore[misc]
+
+    before = frame_buttons()
+
+    assert before and all(not enabled for enabled, _tip in before)  # type: ignore[misc]
+    assert all("generate the clips first" in tip for _e, tip in before)  # type: ignore[misc]
+
+    for number in (1, 2):
+        _add_clip(job, tmp_path, number)
+
+    after = frame_buttons()
+
+    # Grandmother (scenes 1-2) now has clips; the generated identity's scenes may not.
+    assert any(enabled for enabled, _tip in after)  # type: ignore[misc]
+
+
+def test_the_dialog_says_when_the_frames_are_only_the_sharpest(  # type: ignore[no-untyped-def]
+    qapp, tmp_path: Path
+) -> None:
+    from PySide6.QtWidgets import QLabel
+
+    from src.desktop.views.reference_candidates_dialog import (
+        ReferenceCandidatesDialog,
+    )
+    from src.services.recurring_identity_service import ReferenceCandidate
+
+    def dialog_for(clear: bool) -> list[str]:
+        dialog = ReferenceCandidatesDialog(
+            None,
+            identity_name="Adults",
+            candidates=[
+                ReferenceCandidate(
+                    scene_number=1,
+                    clip_sequence_index=0,
+                    image_path=str(tmp_path / "missing.png"),
+                    value=1.0,
+                    time_seconds=0.0,
+                    clear_face=clear,
+                )
+            ],
+        )
+
+        return [label.text() for label in dialog.findChildren(QLabel)]
+
+    assert any("No frame shows a clear" in t for t in dialog_for(False))
+    assert not any("No frame shows a clear" in t for t in dialog_for(True))

@@ -49,6 +49,14 @@ class ReferenceCandidatesDialog(QDialog):
             )
         )
 
+        if any(not candidate.clear_face for candidate in self._candidates):
+            note = QLabel(
+                "No frame shows a clear, front-facing face, so these are the sharpest "
+                "frame of each clip - pick the one that looks right."
+            )
+            note.setWordWrap(True)
+            outer.addWidget(note)
+
         grid_host = QWidget()
         grid = QGridLayout(grid_host)
         self.use_buttons: list[QPushButton] = []

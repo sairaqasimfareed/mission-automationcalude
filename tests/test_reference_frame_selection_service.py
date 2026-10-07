@@ -735,3 +735,35 @@ def test_the_real_model_finds_a_clear_face_in_real_clips(tmp_path: Path) -> None
     for selection, out in selected:
         assert selection.score >= REFERENCE_MIN_SCORE
         assert out.stat().st_size > 5_000  # a real JPEG, not an empty file
+
+
+def test_lenient_offers_the_sharpest_frame_when_no_face_qualifies(
+    tmp_path: Path,
+) -> None:
+    """A group seen from behind has no clear face; the picker still needs a frame to
+    show. Automatic selection (not lenient) keeps refusing."""
+
+    sharpness = {0: 1.0, 1: 5.0, 2: 2.0}
+    service, _ = _service(
+        {0: [], 1: [], 2: []},
+        sharpness_scorer=lambda image: sharpness[image],
+        spread_scorer=lambda _image: 1.0,
+    )
+    out = tmp_path / "ref.jpg"
+
+    strict = service.select(video_path="c.mp4", output_path=str(out))
+    lenient = service.select(video_path="c.mp4", output_path=str(out), lenient=True)
+
+    assert strict.status == ReferenceSelectionStatus.NO_QUALIFYING_FACE
+    assert lenient.status == ReferenceSelectionStatus.SELECTED
+    assert out.read_bytes() == b"frame-1"  # the sharpest one
+
+
+def test_lenient_still_prefers_a_clear_face_when_there_is_one(tmp_path: Path) -> None:
+    service, _ = _service({0: [], 1: [_face()]})
+    out = tmp_path / "ref.jpg"
+
+    selection = service.select(video_path="c.mp4", output_path=str(out), lenient=True)
+
+    assert selection.score == pytest.approx(0.95)
+    assert out.read_bytes() == b"frame-1"
