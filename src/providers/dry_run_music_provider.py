@@ -28,3 +28,11 @@ class DryRunMusicProvider(MusicProvider):
         slug = "_".join(library_query.strip().lower().split()) or "untitled"
 
         return f"dry-run://music/{slug}.mp3"
+
+    def generate_composed_music(
+        self,
+        *,
+        prompt: str,
+        duration_seconds: float,
+    ) -> str:
+        return "dry-run://music/composed_continuous_track.mp3"

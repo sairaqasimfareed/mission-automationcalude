@@ -39,6 +39,7 @@ from src.models.media_strategy import (
     VoiceStrategy,
 )
 from src.models.muse_generation import MuseGenerationAttempt
+from src.models.music_mode import MusicMode
 from src.models.originality import OriginalityResult
 from src.models.packaging_hypothesis import PackagingHypothesis
 from src.models.policy import PolicyComplianceReport
@@ -113,6 +114,9 @@ class VideoJob(MissionBaseModel):
     # Bring the clips toward one shared look when rendering (each clip's own
     # correction is measured by ClipColorMatchingService and kept on the clip).
     color_matching_enabled: bool = False
+
+    # One continuous composed track, or one piece per mood (the default).
+    music_mode: MusicMode = MusicMode.PIECES
 
     # Distinct from production_mode above (render quality/cost
     # tradeoff) - this controls how much human review each content

@@ -32,3 +32,24 @@ class MusicProvider(BaseProvider):
         Returns:
             Path to the produced audio file.
         """
+
+    def generate_composed_music(
+        self,
+        *,
+        prompt: str,
+        duration_seconds: float,
+    ) -> str:
+        """
+        Compose ONE track of the full requested length from a description of how it
+        should move (a continuous track for a whole video).
+
+        Optional: a provider that can only make short clips (or only searches a library)
+        leaves this as it is, and the caller falls back to short pieces.
+
+        Returns:
+            Path to the produced audio file.
+        """
+
+        raise NotImplementedError(
+            f"{self.provider_name} cannot compose a full-length music track."
+        )

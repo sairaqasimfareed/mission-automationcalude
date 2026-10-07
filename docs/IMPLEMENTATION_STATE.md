@@ -832,6 +832,31 @@ section records what changed and why so a later session does not undo it.
     (including a real FFmpeg check). Limits: it nudges, it does not re-grade, so a very
     different clip ends up closer, not identical; measuring is manual (re-run after
     regenerating clips); no per-scene override.
+  - **One continuous music track (2026-10-07; NOT yet tried against the live ElevenLabs
+    account).** Music was one ElevenLabs sound-generation clip per planned mood (the
+    endpoint makes about 30 s at most; the code caps a request at 18 s and loops it),
+    joined with 1 s fades - seven pieces for Remedy, one of which faded to silence early.
+    `ElevenLabsMusicProvider.generate_composed_music` now calls the documented music
+    composition endpoint (`POST /v1/music`: `prompt`, `music_length_ms` 3 s-10 min,
+    `force_instrumental`); `MusicProvider.generate_composed_music` is an optional method
+    (the dry-run provider has it; others raise NotImplementedError ->
+    `MusicGenerationService.generate(..., composed=True)` fails with reason
+    `composition_unsupported`). `ContinuousMusicService` builds ONE description (the
+    genre's style plus each planned mood in order with the time it covers, up to 1,800
+    characters), asks for one track the length of the video (less crossfade overlap),
+    attaches it as the only background-music track (fades 1 s / 2 s, ducked under the
+    voice) and marks every planned mood covered. `VideoJob.music_mode` (`MusicMode.PIECES`
+    default / `CONTINUOUS`), set in Project settings > "Background music". In continuous
+    mode "Generate background music" / "Generate all audio" / the Audio tab's "Generate all
+    music" make the one track, a single mood cannot be regenerated (it says why), and the
+    render pipeline's music stage tries it first and falls back to the separate pieces with
+    a warning if the provider cannot compose or the call fails - a video never loses its
+    music because of the option. Tests: `tests/test_continuous_music.py`. To try it:
+    Project settings > Background music > One continuous track, then the Audio tab's
+    "Generate background music" - one ElevenLabs music generation of the video's length
+    (the documentation does not state its price or plan requirements). Not done: the
+    default stays "pieces" until it has been tried live; a mood cannot be regenerated alone
+    inside a continuous track.
   - Fixed: a scroll-restore timer firing after its tab was deleted raised "Internal C++
     object already deleted" (seen in the full suite); the restore now ignores it.
   - The fallback to the composite render now catches only the new

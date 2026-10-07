@@ -47,6 +47,7 @@ from src.models.content_decision_record import ContentDecisionRecord, DecisionCa
 from src.models.creative_direction import CreativeDirection
 from src.models.enums import Platform, ProductionMode, ScriptOrigin, WorkflowStage
 from src.models.hook import HookCandidate, HookEvaluation
+from src.models.music_mode import MusicMode
 from src.models.production_handoff import ProductionHandoffState
 from src.models.project_look import ProjectLook
 from src.models.research import ResearchResult, ResearchSource, SourceStatus
@@ -1584,6 +1585,24 @@ class ContentStudioView(QWidget):
         )
         form.addRow("Pause after each line", hold_select)
 
+        # One composed track for the whole video, or one piece per planned mood.
+        music_mode_select = QComboBox()
+        music_mode_select.addItem(
+            "Separate pieces, one per mood (default)", MusicMode.PIECES
+        )
+        music_mode_select.addItem(
+            "One continuous track for the whole video", MusicMode.CONTINUOUS
+        )
+        music_mode_select.setCurrentIndex(
+            max(0, music_mode_select.findData(job.music_mode))
+        )
+        music_mode_select.setToolTip(
+            "One continuous track flows from start to finish instead of several "
+            "pieces joined together. It is composed by ElevenLabs' music model; if "
+            "that is not available the separate pieces are made instead."
+        )
+        form.addRow("Background music", music_mode_select)
+
         approval_mode_select = QComboBox()
         approval_mode_select.addItems(list(_APPROVAL_MODE_PRESETS))
         approval_mode_select.setCurrentText(_approval_mode_label(job.approval_policy))
@@ -1630,6 +1649,7 @@ class ContentStudioView(QWidget):
                 language_input=language_input,
                 target_country_input=target_country_input,
                 hold_select=hold_select,
+                music_mode_select=music_mode_select,
             )
         )
         layout.addWidget(save_button, alignment=_LEFT)
@@ -6033,6 +6053,7 @@ class ContentStudioView(QWidget):
         target_country_input: QLineEdit,
         video_provider_select: QComboBox | None = None,
         hold_select: QComboBox | None = None,
+        music_mode_select: QComboBox | None = None,
     ) -> None:
         job = self._current_job()
 
@@ -6066,6 +6087,8 @@ class ContentStudioView(QWidget):
                 job.video_provider = VideoProvider(video_provider_select.currentData())
             if hold_select is not None:
                 job.scene_hold_seconds = hold_select.currentData()
+            if music_mode_select is not None:
+                job.music_mode = MusicMode(music_mode_select.currentData())
             job.approval_policy = _APPROVAL_MODE_PRESETS[
                 approval_mode_select.currentText()
             ]()
@@ -6087,6 +6110,7 @@ class ContentStudioView(QWidget):
                     language_input=language_input,
                     target_country_input=target_country_input,
                     hold_select=hold_select,
+                    music_mode_select=music_mode_select,
                 ),
             )
 

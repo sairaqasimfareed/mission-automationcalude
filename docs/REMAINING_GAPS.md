@@ -710,7 +710,8 @@ re-render, leftover stage files, stored duration) and the broad
      "Choose another frame" picker for a character's or place's reference: show several
      candidate frames and let the operator pick one. Today "Pick reference again" only
      re-runs the automatic choice.
-  2. One continuous music track per video instead of several separately generated pieces
+  2. BUILT 2026-10-07, NOT yet tried against the live ElevenLabs account (see
+     IMPLEMENTATION_STATE; Project settings > Background music) - One continuous music track per video instead of several separately generated pieces
      joined with 1 s fades (a piece can decay to near-silence before its slot ends).
   3. BUILT 2026-10-07 (see IMPLEMENTATION_STATE; mild nudge only, measured on demand) -
      A shared colour grade / shot-to-shot colour matching across scenes (see the locked

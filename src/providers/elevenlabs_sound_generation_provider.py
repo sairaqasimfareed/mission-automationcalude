@@ -85,6 +85,52 @@ class _ElevenLabsSoundGenerationCore:
 
         return str(destination.resolve())
 
+    def compose(self, *, prompt: str, duration_seconds: float) -> str:
+        """One instrumental track of the requested length from /v1/music."""
+
+        milliseconds = int(round(duration_seconds * 1000))
+
+        if not _MIN_COMPOSED_MUSIC_MS <= milliseconds <= _MAX_COMPOSED_MUSIC_MS:
+            raise ValueError(
+                "ElevenLabs composes music between 3 seconds and 10 minutes long; "
+                f"{duration_seconds:.0f} seconds was requested."
+            )
+
+        request = PreparedHttpRequest(
+            method="POST",
+            url=f"{self._base_url}/v1/music",
+            headers={
+                "xi-api-key": self._api_key,
+                "Content-Type": "application/json",
+            },
+            json_body={
+                "prompt": prompt,
+                "music_length_ms": milliseconds,
+                "force_instrumental": True,
+            },
+            timeout_seconds=max(float(self._profile.timeout_seconds), 300.0),
+        )
+
+        response = self._transport(request)
+
+        if response.status_code >= 400:
+            raise HttpProviderExecutionError(
+                describe_http_failure("ElevenLabs music composition request", response)
+            )
+
+        self._output_directory.mkdir(parents=True, exist_ok=True)
+        destination = self._output_directory / f"{uuid4()}.mp3"
+        destination.write_bytes(response.content)
+
+        return str(destination.resolve())
+
+
+# ElevenLabs' music composition endpoint (POST /v1/music): a prompt and a length of
+# 3 s to 10 min. Separate from the sound-generation endpoint above, which only makes
+# short clips (about 30 s at most) and is why music used to be several short pieces.
+_MIN_COMPOSED_MUSIC_MS = 3_000
+_MAX_COMPOSED_MUSIC_MS = 600_000
+
 
 class ElevenLabsMusicProvider(MusicProvider):
     """MusicProvider wrapper over ElevenLabs' shared sound-generation call."""
@@ -115,6 +161,9 @@ class ElevenLabsMusicProvider(MusicProvider):
         return self._core.generate(
             prompt=library_query, duration_seconds=duration_seconds
         )
+
+    def generate_composed_music(self, *, prompt: str, duration_seconds: float) -> str:
+        return self._core.compose(prompt=prompt, duration_seconds=duration_seconds)
 
 
 class ElevenLabsSoundEffectProvider(SoundEffectProvider):

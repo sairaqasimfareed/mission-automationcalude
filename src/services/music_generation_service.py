@@ -38,9 +38,15 @@ class MusicGenerationService:
         duration_seconds: float,
         provider_name: str | None = None,
         track_duration_seconds: float | None = None,
+        composed: bool = False,
     ) -> MusicGenerationResult:
         """
         Generate one background-music track.
+
+        composed=True asks the provider to COMPOSE one track of the full duration from
+        the instruction's description (a continuous track for a whole video) instead of
+        making a short clip to be looped; a provider that cannot fails with
+        reason "composition_unsupported" so the caller can fall back to short pieces.
 
         duration_seconds is what gets requested from the provider -
         real-world finding, 2026-09-13: ElevenLabs's sound-generation
@@ -106,9 +112,24 @@ class MusicGenerationService:
         library_query = self._resolve_library_query(instruction)
 
         try:
-            output_file = provider.generate_music(
-                library_query=library_query,
-                duration_seconds=duration_seconds,
+            if composed:
+                output_file = provider.generate_composed_music(
+                    prompt=library_query,
+                    duration_seconds=duration_seconds,
+                )
+            else:
+                output_file = provider.generate_music(
+                    library_query=library_query,
+                    duration_seconds=duration_seconds,
+                )
+        except NotImplementedError:
+            return self._fail(
+                reason="composition_unsupported",
+                message=(
+                    f"{provider.provider_name} cannot compose a full-length music "
+                    "track."
+                ),
+                provider=provider.provider_name,
             )
         except Exception as exc:
             return self._fail(
@@ -148,7 +169,9 @@ class MusicGenerationService:
         # flag, or the clip plays once and goes silent for the
         # remainder - exactly the original duration-cap bug this
         # track_duration_seconds split exists to prevent.
-        needs_loop_to_fill_track = resolved_track_duration_seconds > duration_seconds
+        needs_loop_to_fill_track = (
+            resolved_track_duration_seconds > duration_seconds and not composed
+        )
 
         audio_track = AudioTrack(
             track_type=AudioTrackType.BACKGROUND_MUSIC,
@@ -159,7 +182,10 @@ class MusicGenerationService:
             fade_in_seconds=instruction.fade_in_seconds,
             fade_out_seconds=instruction.fade_out_seconds,
             loop_enabled=(
-                bool(instruction.preset.implementation.get("loop", False))
+                (
+                    bool(instruction.preset.implementation.get("loop", False))
+                    and not composed
+                )
                 or needs_loop_to_fill_track
             ),
             duck_under_voice=instruction.duck_under_voice,

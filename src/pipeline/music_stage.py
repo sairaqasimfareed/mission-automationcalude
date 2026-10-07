@@ -4,6 +4,7 @@ import time
 
 from src.models.audio_timeline import AudioTimeline
 from src.models.audio_track import AudioTrackType
+from src.models.music_mode import MusicMode
 from src.models.resolved_editing_blueprint import (
     ResolvedMusicInstruction,
     ResolvedPresetReference,
@@ -14,6 +15,7 @@ from src.pipeline.base_stage import BasePipelineStage
 from src.pipeline.pipeline_stage import PipelineStageName, PipelineStageStatus
 from src.pipeline.stage_context import StageContext
 from src.pipeline.stage_result import StageResult
+from src.services.continuous_music_service import ContinuousMusicService
 from src.services.music_generation_service import MusicGenerationService
 
 # Real-world finding, 2026-09-13: requesting a clip anywhere near a
@@ -188,6 +190,40 @@ class MusicPipelineStage(BasePipelineStage):
         warnings: list[str] = []
         attached_count = 0
         skipped_existing_count = 0
+
+        if context.job.music_mode == MusicMode.CONTINUOUS and not any(
+            segment.audio_track_id is not None
+            and segment.status == SoundDesignItemStatus.GENERATED
+            for segment in music_segments
+        ):
+            # One composed track for the whole video. When the provider cannot make
+            # one (or it fails) the pieces below are generated instead, so a video
+            # never ends up without music because of the continuous option.
+            try:
+                continuous = ContinuousMusicService(
+                    music_generation_service=self._generation_service
+                )
+                track = continuous.generate(
+                    context.job,
+                    provider_name=self._provider_name,
+                    transition_seconds=self._transition_duration_seconds,
+                )
+                continuous.attach(context.job, track)
+
+                return StageResult(
+                    stage=self.stage_name,
+                    status=PipelineStageStatus.COMPLETED,
+                    duration_seconds=time.perf_counter() - started_at,
+                    progress_percent=100,
+                    warnings=[],
+                    errors=[],
+                    metadata={"attached_count": 1, "continuous": True},
+                )
+            except Exception as error:  # noqa: BLE001 - fall back to the pieces
+                warnings.append(
+                    "One continuous music track could not be made "
+                    f"({error}); generating separate pieces instead."
+                )
 
         # Real-world finding, same root cause already fixed for SFX
         # (SoundEffectPipelineStage): a job whose music was first

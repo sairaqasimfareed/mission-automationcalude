@@ -34,6 +34,7 @@ from src.models.audio_generation_summary import (
     AudioGenerationSummary,
 )
 from src.models.audio_track import AudioTrack, AudioTrackType
+from src.models.music_mode import MusicMode
 from src.models.sound_design_plan import (
     MusicMoodSegment,
     SoundDesignItemStatus,
@@ -836,6 +837,19 @@ class ProductionAudioView(QWidget):
         plan = job.sound_design_plan
 
         if plan is None:
+            return
+
+        if job.music_mode == MusicMode.CONTINUOUS:
+            # One composed track covers every planned mood.
+            try:
+                self._media_generation_pipeline.run_music(job)
+            except (RuntimeError, ValueError) as error:
+                self._record_error(job, f"Music generation failed: {error}")
+
+                return
+
+            self._on_change()
+
             return
 
         for segment in list(plan.music_segments):

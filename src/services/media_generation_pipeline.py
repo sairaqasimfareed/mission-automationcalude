@@ -13,6 +13,7 @@ from src.models.manual_audio_requirement import (
     ManualAudioRequirementType,
 )
 from src.models.media_strategy import VoiceStatus
+from src.models.music_mode import MusicMode
 from src.models.resolved_editing_blueprint import ResolvedSoundEffectInstruction
 from src.models.sound_design_plan import SoundDesignItemStatus
 from src.models.video_job import VideoJob
@@ -30,6 +31,7 @@ from src.services.audio_realignment_service import (
     mark_position_basis,
 )
 from src.services.budget.provider_budget_service import ProviderBudgetService
+from src.services.continuous_music_service import ContinuousMusicService
 from src.services.genre_timeline_pipeline_service import GenreTimelinePipelineService
 from src.services.genre_voice_directive_generation_service import (
     GenreVoiceDirectiveGenerationService,
@@ -237,6 +239,41 @@ class MediaGenerationPipeline:
 
         return job
 
+    def _run_continuous_music(
+        self, job: VideoJob, *, estimated_cost_usd: float = 0.0
+    ) -> VideoJob:
+        """One composed track for the whole video (see ContinuousMusicService)."""
+
+        assert self.music_generation_service is not None
+        assert job.video_timeline is not None
+
+        self._gate_budget(
+            self.music_profile_id, estimated_cost_usd, stage="Music generation"
+        )
+
+        try:
+            instruction_item = self._first_enabled_music_item(job.video_timeline.items)
+            style_hint = ""
+
+            if instruction_item is not None and instruction_item.editing_blueprint:
+                query = instruction_item.editing_blueprint.music.preset.implementation
+                style_hint = str(query.get("library_query") or "")
+
+            service = ContinuousMusicService(
+                music_generation_service=self.music_generation_service
+            )
+            track = service.generate(job, style_hint=style_hint)
+            service.attach(job, track)
+        except Exception:
+            self._release_budget(self.music_profile_id, estimated_cost_usd)
+            raise
+
+        self.invalidation_service.on_audio_regenerated(
+            job, reason="Background music was regenerated as one continuous track."
+        )
+
+        return job
+
     def run_music(self, job: VideoJob, *, estimated_cost_usd: float = 0.0) -> VideoJob:
         """Stage 3: generate one whole-video background-music track."""
 
@@ -247,6 +284,11 @@ class MediaGenerationPipeline:
             raise RuntimeError(
                 "Music generation requires a built video timeline - run "
                 "Timeline first."
+            )
+
+        if job.music_mode == MusicMode.CONTINUOUS:
+            return self._run_continuous_music(
+                job, estimated_cost_usd=estimated_cost_usd
             )
 
         instruction_item = self._first_enabled_music_item(job.video_timeline.items)
@@ -515,6 +557,13 @@ class MediaGenerationPipeline:
             raise RuntimeError(
                 "Music generation requires a built video timeline - run "
                 "Timeline first."
+            )
+
+        if job.music_mode == MusicMode.CONTINUOUS:
+            raise RuntimeError(
+                "Music is set to one continuous track for the whole video - use "
+                "Generate background music, or switch Project settings to separate "
+                "pieces to generate a single mood."
             )
 
         segment = next(
