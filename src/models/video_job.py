@@ -106,6 +106,10 @@ class VideoJob(MissionBaseModel):
     # nothing to a prompt - it is every provider's default.
     aspect_ratio: AspectRatio = AspectRatio.LANDSCAPE
 
+    # Seconds the picture stays after each narrated line (see
+    # src/services/scene_hold.py). None = the genre's own default; 0 = off.
+    scene_hold_seconds: float | None = Field(default=None, ge=0.0, le=3.0)
+
     # Distinct from production_mode above (render quality/cost
     # tradeoff) - this controls how much human review each content
     # decision point requires. Defaults to the conservative

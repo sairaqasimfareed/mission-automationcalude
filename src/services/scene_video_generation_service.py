@@ -69,6 +69,7 @@ from src.services.scene_clip_split_planning_service import (
     SceneClipSplitPlanningService,
 )
 from src.services.scene_completeness_service import SceneCompletenessService
+from src.services.scene_hold import clip_sizing_seconds
 from src.services.scene_prompt_export_service import ScenePromptExportService
 from src.services.scene_visual_treatment import effective_on_screen_names
 from src.shared.logger import logger
@@ -361,11 +362,12 @@ class SceneVideoGenerationService:
         # single-clip path below (matching this class's own existing
         # "fall back to the estimate" behavior for that case), only
         # ever reconsidering the split question once real data exists.
-        if (
-            scene.real_narration_duration_seconds is not None
-            and SceneClipSplitPlanningService.needs_split(
-                scene.real_narration_duration_seconds
-            )
+        sizing_seconds = clip_sizing_seconds(
+            job, scene, SceneClipSplitPlanningService.plan
+        )
+
+        if sizing_seconds is not None and SceneClipSplitPlanningService.needs_split(
+            sizing_seconds
         ):
             return self._generate_split_scene(job, scene)
 
@@ -670,7 +672,9 @@ class SceneVideoGenerationService:
         seam in this codebase rather than raising.
         """
 
-        real_duration = scene.real_narration_duration_seconds
+        real_duration = clip_sizing_seconds(
+            job, scene, SceneClipSplitPlanningService.plan
+        )
         assert real_duration is not None  # narrowed by generate_one()'s own check
 
         durations = SceneClipSplitPlanningService.plan(real_duration)
@@ -1086,7 +1090,10 @@ class SceneVideoGenerationService:
             # using that instead means the real Google Flow clip is
             # sized from truth, not a guess (the actual root cause of
             # the destructive narration-trimming this replaces).
-            target_seconds = scene.real_narration_duration_seconds
+            target_seconds = (
+                clip_sizing_seconds(job, scene, SceneClipSplitPlanningService.plan)
+                or scene.real_narration_duration_seconds
+            )
         else:
             # Falls back to the old estimate only defensively, for a
             # scene somehow submitted before voice ran - normal

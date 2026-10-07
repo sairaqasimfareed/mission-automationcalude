@@ -729,7 +729,8 @@ re-render, leftover stage files, stored duration) and the broad
      but glitches at the seam or in some hardware players, a small audio click where two copied
      AAC streams meet; the main render is never touched and the fallback keeps today's quality.
      Needs real-FFmpeg tests. The export-variant end-clip join could reuse it later. Not built.
-  6. Room between scenes - a per-genre hold after each narrated line. Clips are sized to the
+  6. BUILT 2026-10-07 (see IMPLEMENTATION_STATE; only the optional voice lead-in is left) -
+     Room between scenes - a per-genre hold after each narrated line. Clips are sized to the
      narration (rounded up to the provider's lengths), so there is no designed pause between
      scenes, only accidental slack (the trailing silence in each voice file, the round-up,
      Muse's 3 s floor); genre only changes the pause style inside a line. Planned: the clip

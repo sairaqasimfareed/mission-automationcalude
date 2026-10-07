@@ -41,6 +41,7 @@ def _row(view, scene_number: int) -> str:  # type: ignore[no-untyped-def]
 def _view(provider: VideoProvider, narration: float | None, *, estimate: int = 8):  # type: ignore[no-untyped-def]
     job = _job(1)
     job.video_provider = provider
+    job.scene_hold_seconds = 0.0  # these labels are pinned without a hold
     job.scenes[0].estimated_duration_seconds = estimate
     job.scenes[0].real_narration_duration_seconds = narration
     view = _build_view(job, service=_FakeSceneVideoGenerationService())
@@ -166,3 +167,18 @@ def test_a_scene_that_already_has_clips_does_not_repeat_the_split_plan(
     # no attempt exists in this fixture, so the planned-split line may appear; what
     # must hold is that the row itself reports the real clips, not a plan.
     assert "clips 7s + 7s = 14s" in _row(view, 1)
+
+
+def test_the_planned_length_includes_the_projects_hold(
+    qapp: QApplication,  # noqa: F811
+) -> None:
+    """6.7 s of narration is a 7 s Muse clip; with a 0.4 s hold after the line it is 8 s."""
+
+    view, job = _view(VideoProvider.MUSE, narration=6.7)
+    assert "planned 7s" in _row(view, 1)
+
+    job.scene_hold_seconds = 0.4
+    view.refresh(job)
+
+    assert "planned 8s" in _row(view, 1)
+    assert "narration 6.7s" in _row(view, 1)

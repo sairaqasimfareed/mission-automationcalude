@@ -87,6 +87,7 @@ def _view(
 
 def _job(provider: VideoProvider = VideoProvider.GOOGLE_FLOW) -> VideoJob:
     job = VideoJob(
+        scene_hold_seconds=0.0,  # these tests pin the sizing without a hold
         project_name="Remedy video",
         channel_name="Health Channel",
         niche="health",

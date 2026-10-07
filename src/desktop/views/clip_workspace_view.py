@@ -81,6 +81,7 @@ from src.services.scene_completeness_service import SceneCompletenessService
 from src.services.scene_generation_dispatch_service import (
     SceneGenerationDispatchService,
 )
+from src.services.scene_hold import clip_sizing_seconds
 from src.services.scene_prompt_export_service import ScenePromptExportService
 from src.services.scene_visual_treatment import is_graphic_scene
 from src.services.video_provider_rules import (
@@ -1328,10 +1329,9 @@ class ClipWorkspaceView(QWidget):
 
         provider = resolve_scene_video_provider(job, scene)
         rules = rules_for(provider)
+        sized = clip_sizing_seconds(job, scene, rules.plan_clips)
         seconds = (
-            narration
-            if narration is not None
-            else float(scene.estimated_duration_seconds)
+            sized if sized is not None else float(scene.estimated_duration_seconds)
         )
 
         if rules.needs_split(seconds):
@@ -1354,10 +1354,9 @@ class ClipWorkspaceView(QWidget):
 
         provider = resolve_scene_video_provider(job, scene)
         rules = rules_for(provider)
+        sized = clip_sizing_seconds(job, scene, rules.plan_clips)
         seconds = (
-            scene.real_narration_duration_seconds
-            if scene.real_narration_duration_seconds is not None
-            else float(scene.estimated_duration_seconds)
+            sized if sized is not None else float(scene.estimated_duration_seconds)
         )
 
         if not rules.needs_split(seconds):

@@ -92,6 +92,7 @@ from src.services.reference_frame_selection_service import (
     ReferenceFrameSelectionService,
 )
 from src.services.reviewer_service import ReviewerService
+from src.services.scene_hold import HOLD_CHOICES
 from src.services.topic_candidate_generation_service import (
     TopicCandidateGenerationService,
 )
@@ -1561,6 +1562,23 @@ class ContentStudioView(QWidget):
         )
         form.addRow("Video provider", video_provider_select)
 
+        # How long the picture stays after each narrated line (src/services/
+        # scene_hold.py): clips are sized to the narration, so without this a video is
+        # the narration back to back. The genre's own value unless chosen here.
+        hold_select = QComboBox()
+
+        for label, value in HOLD_CHOICES:
+            hold_select.addItem(label, value)
+
+        hold_select.setCurrentIndex(
+            max(0, hold_select.findData(job.scene_hold_seconds))
+        )
+        hold_select.setToolTip(
+            "A short pause after each line before the next scene. It only changes clips "
+            "generated afterwards."
+        )
+        form.addRow("Pause after each line", hold_select)
+
         approval_mode_select = QComboBox()
         approval_mode_select.addItems(list(_APPROVAL_MODE_PRESETS))
         approval_mode_select.setCurrentText(_approval_mode_label(job.approval_policy))
@@ -1606,6 +1624,7 @@ class ContentStudioView(QWidget):
                 content_mode_select=content_mode_select,
                 language_input=language_input,
                 target_country_input=target_country_input,
+                hold_select=hold_select,
             )
         )
         layout.addWidget(save_button, alignment=_LEFT)
@@ -5918,6 +5937,7 @@ class ContentStudioView(QWidget):
         language_input: QLineEdit,
         target_country_input: QLineEdit,
         video_provider_select: QComboBox | None = None,
+        hold_select: QComboBox | None = None,
     ) -> None:
         job = self._current_job()
 
@@ -5949,6 +5969,8 @@ class ContentStudioView(QWidget):
             if video_provider_select is not None:
                 # Qt returns a str-enum's value as a plain str; store the enum.
                 job.video_provider = VideoProvider(video_provider_select.currentData())
+            if hold_select is not None:
+                job.scene_hold_seconds = hold_select.currentData()
             job.approval_policy = _APPROVAL_MODE_PRESETS[
                 approval_mode_select.currentText()
             ]()
@@ -5969,6 +5991,7 @@ class ContentStudioView(QWidget):
                     content_mode_select=content_mode_select,
                     language_input=language_input,
                     target_country_input=target_country_input,
+                    hold_select=hold_select,
                 ),
             )
 

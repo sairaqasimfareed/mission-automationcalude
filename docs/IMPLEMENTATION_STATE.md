@@ -784,6 +784,22 @@ section records what changed and why so a later session does not undo it.
     caption style does not reach the post-render burn); an export variant made BEFORE a
     title card was added is shifted as if it had the card (regenerate it); a render made
     before this existed has no stored lines and must be rendered once more.
+  - **Room between scenes - a per-genre hold after each line (2026-10-07).** Clips were
+    sized to the narration (rounded up to the provider's lengths), so a video was the
+    narration back to back. `src/services/scene_hold.py`: `GENRE_HOLD_SECONDS` (0.3-0.5 s
+    medical / reaction / comedy / top10 / documentary / travel, 0.6-0.9 s history /
+    survival / storytelling, 1.0 s horror / mystery, 0 for the default genre),
+    `VideoJob.scene_hold_seconds` (None = the genre's; 0 = off; max 3 s) and
+    `clip_sizing_seconds(job, scene, plan_clips)` = narration + hold, or just the narration
+    when the hold would change how many clips the scene needs (a line already filling a
+    clip). Used by the Flow and Muse services (split decision, split plan, single-clip
+    target), `EnrichedScenePromptService` (Prompts / Content previews) and the Clips tab
+    labels, with each provider's own split planning. Project settings has "Pause after each
+    line" (Genre default / None / Short 0.4 / Medium 0.8 / Long 1.2 s). It only changes
+    clips generated afterwards; the voice still starts at the start of the scene and the
+    extra picture time sits after it. No extra credits (Muse generates 10 s and trims, Flow
+    clips are already 4/6/8 s). Tests: `tests/test_scene_hold.py`; the existing sizing tests
+    pin the hold to 0. Not built: the optional 0.2-0.3 s voice lead-in after the cut.
   - Fixed: a scroll-restore timer firing after its tab was deleted raised "Internal C++
     object already deleted" (seen in the full suite); the restore now ignores it.
   - The fallback to the composite render now catches only the new

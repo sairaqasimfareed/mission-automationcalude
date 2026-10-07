@@ -11,6 +11,7 @@ from src.providers.google_flow.locators import VERIFIED_DURATIONS_SECONDS
 from src.services.narration_duration_sync_service import (
     sync_real_narration_durations,
 )
+from src.services.scene_hold import clip_sizing_seconds
 from src.services.scene_video_generation_service import SceneVideoGenerationService
 from src.services.video_provider_rules import (
     VideoProviderRules,
@@ -70,7 +71,9 @@ class EnrichedScenePromptService:
             job=job,
             scene=scene,
             resolved_prompt=resolved_prompt,
-            duration_seconds=rules.single_clip_seconds(self._duration_seconds(scene)),
+            duration_seconds=rules.single_clip_seconds(
+                self._duration_seconds(job, scene, rules.plan_clips)
+            ),
             rules=rules,
         )
 
@@ -100,8 +103,8 @@ class EnrichedScenePromptService:
         """
 
         sync_real_narration_durations(job)
-        duration_seconds = self._duration_seconds(scene)
         rules = rules_for(self.provider_for(job, scene))
+        duration_seconds = self._duration_seconds(job, scene, rules.plan_clips)
 
         if not rules.needs_split(duration_seconds):
             return [self.build_entry(job=job, scene=scene)]
@@ -255,12 +258,12 @@ class EnrichedScenePromptService:
         )
 
     @staticmethod
-    def _duration_seconds(scene: Scene) -> float:
-        return (
-            scene.real_narration_duration_seconds
-            if scene.real_narration_duration_seconds is not None
-            else float(scene.estimated_duration_seconds)
-        )
+    def _duration_seconds(
+        job: VideoJob, scene: Scene, plan_clips: Callable[[float], list[float]]
+    ) -> float:
+        sized = clip_sizing_seconds(job, scene, plan_clips)
+
+        return sized if sized is not None else float(scene.estimated_duration_seconds)
 
     @staticmethod
     def _resolved_prompt_for(

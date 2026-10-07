@@ -54,6 +54,7 @@ from src.services.scene_clip_split_planning_service import (
     SceneClipSplitPlanningService,
 )
 from src.services.scene_completeness_service import SceneCompletenessService
+from src.services.scene_hold import clip_sizing_seconds
 from src.services.scene_prompt_export_service import ScenePromptExportService
 from src.services.scene_visual_treatment import effective_on_screen_names
 from src.services.video_provider_rules import (
@@ -97,6 +98,16 @@ _POLLABLE_STATES = frozenset(
 )
 
 _PROMPT_VERSION = "muse_scene_video_generation_prompt_v1.0.0"
+
+
+def _plan_muse_clips(seconds: float) -> list[float]:
+    """Muse's own clip split planning: its 10 s ceiling and no duration grid."""
+
+    return SceneClipSplitPlanningService.plan(
+        seconds,
+        max_single_clip_seconds=_MUSE_CLIP_DURATION_SECONDS,
+        clamp=lambda value: value,
+    )
 
 
 class MuseSceneVideoGenerationService:
@@ -200,12 +211,11 @@ class MuseSceneVideoGenerationService:
         # back to the estimate" behavior for that case), only ever
         # reconsidering the split question once real data exists.
         # Same reasoning as Google Flow's own generate_one().
-        if (
-            scene.real_narration_duration_seconds is not None
-            and SceneClipSplitPlanningService.needs_split(
-                scene.real_narration_duration_seconds,
-                max_single_clip_seconds=_MUSE_CLIP_DURATION_SECONDS,
-            )
+        sizing_seconds = clip_sizing_seconds(job, scene, _plan_muse_clips)
+
+        if sizing_seconds is not None and SceneClipSplitPlanningService.needs_split(
+            sizing_seconds,
+            max_single_clip_seconds=_MUSE_CLIP_DURATION_SECONDS,
         ):
             return self._generate_split_scene(job, scene)
 
@@ -358,14 +368,10 @@ class MuseSceneVideoGenerationService:
         the ledger by (scene_number, clip_sequence_index).
         """
 
-        real_duration = scene.real_narration_duration_seconds
+        real_duration = clip_sizing_seconds(job, scene, _plan_muse_clips)
         assert real_duration is not None  # narrowed by generate_one()'s own check
 
-        durations = SceneClipSplitPlanningService.plan(
-            real_duration,
-            max_single_clip_seconds=_MUSE_CLIP_DURATION_SECONDS,
-            clamp=lambda seconds: seconds,
-        )
+        durations = _plan_muse_clips(real_duration)
 
         sub_clip_prompt_texts = self._resolve_sub_clip_prompt_texts(
             job, scene, durations
@@ -842,7 +848,7 @@ class MuseSceneVideoGenerationService:
         return None
 
     def _resolve_target_duration_seconds(
-        self, scene: Scene, *, duration_override: float | None = None
+        self, job: VideoJob, scene: Scene, *, duration_override: float | None = None
     ) -> float:
         """
         The real duration this scene's clip should end up at - real
@@ -864,7 +870,10 @@ class MuseSceneVideoGenerationService:
         if duration_override is not None:
             target_seconds = duration_override
         elif scene.real_narration_duration_seconds is not None:
-            target_seconds = scene.real_narration_duration_seconds
+            target_seconds = (
+                clip_sizing_seconds(job, scene, _plan_muse_clips)
+                or scene.real_narration_duration_seconds
+            )
         else:
             target_seconds = float(scene.estimated_duration_seconds)
 
@@ -920,7 +929,7 @@ class MuseSceneVideoGenerationService:
             return attempt
 
         target_seconds = self._resolve_target_duration_seconds(
-            scene, duration_override=duration_override
+            job, scene, duration_override=duration_override
         )
         real_duration = attempt.technical_validation.duration_seconds
 
@@ -986,7 +995,7 @@ class MuseSceneVideoGenerationService:
         )
 
         target_seconds = self._resolve_target_duration_seconds(
-            scene, duration_override=duration_override
+            job, scene, duration_override=duration_override
         )
 
         # Same real-world finding as Google Flow's own _submit(): the

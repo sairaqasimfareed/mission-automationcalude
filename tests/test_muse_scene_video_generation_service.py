@@ -73,6 +73,7 @@ def _scene(number: int = 1) -> Scene:
 
 def _job(*scenes: Scene) -> VideoJob:
     job = VideoJob(
+        scene_hold_seconds=0.0,  # these tests pin the sizing without a hold
         project_name="Test",
         channel_name="Channel",
         niche="testing",
