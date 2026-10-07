@@ -299,6 +299,49 @@ def test_every_part_of_a_split_graphic_scene_gets_the_exact_text_rule() -> None:
     assert all("must be exactly" in p.negative_constraints[0] for p in prompts)
 
 
+_AVOID_SENTENCE = "Do not show any text, captions, logos or watermarks"
+
+
+def test_a_filmed_scenes_prompt_tells_the_generator_what_not_to_show() -> None:
+    """The stored negative constraints never reach Muse or Flow, so the one that
+    matters is said in the prompt itself."""
+
+    prompt = _compile(
+        _scene(1), _entry(1, "A rural village"), graphic_shot=False
+    ).prompt_for_scene(1)
+
+    assert prompt is not None
+    assert _AVOID_SENTENCE in prompt.prompt_text
+    assert prompt.prompt_text.rstrip().endswith("nothing unrelated to this scene.")
+
+
+def test_a_graphic_scene_is_not_told_to_avoid_text() -> None:
+    prompt = _compile(_scene(1), _GRAPHIC_ENTRY).prompt_for_scene(1)
+
+    assert prompt is not None
+    assert _AVOID_SENTENCE not in prompt.prompt_text
+    assert "On-screen text rule" in prompt.prompt_text
+
+
+def test_every_part_of_a_split_filmed_scene_is_told_what_not_to_show() -> None:
+    plan = CinematicShotPlan(
+        script_lock_hash="a" * 64,
+        shots=[_shot(1, composition="Wide view of the village")],
+    )
+
+    prompts = CinematicPromptCompilationService().compile_sub_clip_prompts(
+        scene=_scene(1),
+        shot_plan=plan,
+        visual_continuity_bible=_bible([_entry(1, "A rural village")]),
+        production_semantic_brief=None,
+        script_lock_hash="a" * 64,
+        sub_clip_durations=[2.0, 2.0],
+    )
+
+    assert len(prompts) == 2
+    assert all(_AVOID_SENTENCE in p.prompt_text for p in prompts)
+
+
 def test_a_scene_switched_to_live_footage_is_filmed_in_the_main_setting() -> None:
     scene = _scene(1, "Evidence in adults is limited.")
     scene.treat_as_live_footage = True

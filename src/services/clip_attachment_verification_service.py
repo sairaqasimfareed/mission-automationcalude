@@ -18,6 +18,7 @@ from src.models.google_flow_generation import GoogleFlowGenerationState
 from src.models.media_technical_validation import MediaTechnicalValidationResult
 from src.models.muse_generation import MuseGenerationState
 from src.models.scene import Scene
+from src.models.specification_enums import AspectRatio
 from src.models.video_clip import VideoClip
 from src.models.video_job import VideoJob
 from src.models.visual_continuity import (
@@ -150,7 +151,7 @@ class ClipAttachmentVerificationService:
         measured_all = True
 
         for clip in clips:
-            seconds = self._check_clip_file(clip, result)
+            seconds = self._check_clip_file(clip, result, job)
 
             if seconds is None:
                 measured_all = False
@@ -174,7 +175,7 @@ class ClipAttachmentVerificationService:
         return result
 
     def _check_clip_file(
-        self, clip: VideoClip, result: SceneClipVerification
+        self, clip: VideoClip, result: SceneClipVerification, job: VideoJob
     ) -> float | None:
         label = (
             f"Clip part {clip.clip_sequence_index + 1}"
@@ -217,7 +218,47 @@ class ClipAttachmentVerificationService:
 
             return None
 
+        self._check_shape(job, label, validation, result)
+
         return validation.duration_seconds
+
+    def _check_shape(
+        self,
+        job: VideoJob,
+        label: str,
+        validation: MediaTechnicalValidationResult,
+        result: SceneClipVerification,
+    ) -> None:
+        """Is the footage the project's shape? A clip that comes back landscape in a
+        9:16 project (the provider ignored the shape, or it is a landscape stock or manual
+        clip) would be stretched or cropped in the render. Only the clear orientation
+        mismatch is flagged - a 4:3 clip in a landscape project is not."""
+
+        width, height = validation.width, validation.height
+
+        if not width or not height:
+            return
+
+        wants_portrait = job.aspect_ratio == AspectRatio.PORTRAIT
+        is_portrait = height > width
+
+        if wants_portrait and not is_portrait:
+            self._add(
+                result,
+                ClipVerificationIssueCode.WRONG_SHAPE,
+                ClipVerificationSeverity.WARNING,
+                f"{label} is {width}x{height}, not vertical - this project is 9:16, "
+                "so it would be cropped or stretched in the render. Regenerate it "
+                "(or use footage that is vertical).",
+            )
+        elif not wants_portrait and is_portrait:
+            self._add(
+                result,
+                ClipVerificationIssueCode.WRONG_SHAPE,
+                ClipVerificationSeverity.WARNING,
+                f"{label} is {width}x{height}, vertical - this project is landscape, "
+                "so it would be cropped or stretched in the render.",
+            )
 
     @staticmethod
     def _is_muse_scene(job: VideoJob, scene: Scene) -> bool:

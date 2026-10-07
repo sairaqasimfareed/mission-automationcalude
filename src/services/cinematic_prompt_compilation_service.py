@@ -112,6 +112,25 @@ def _graphic_text_rule(graphic_text: str | None) -> str:
     )
 
 
+def _avoid_rule(graphic_text: str | None) -> str:
+    """The sentence a live-action scene's prompt ends with, saying what must not appear.
+
+    The stored negative-constraint list never reached Muse or Flow (see
+    _graphic_text_rule), so a generated clip could carry captions, logos or watermarks
+    the scene never asked for (live, 2026-10-07: a stray text panel in a kitchen scene).
+    Said in plain words and in the prompt itself, short enough to cost nothing. A graphic
+    scene gets its own exact-text rule instead, so it is not given this one.
+    """
+
+    if graphic_text:
+        return ""
+
+    return (
+        " Do not show any text, captions, logos or watermarks, and nothing unrelated "
+        "to this scene."
+    )
+
+
 def _negative_constraints(graphic_text: str | None) -> list[str]:
     """The standard "do not" list - except for a graphic scene, whose own purpose
     is text on screen. Left as "no on-screen text" it contradicts the scene and
@@ -359,6 +378,7 @@ class CinematicPromptCompilationService:
             f"Duration: {duration:.0f} seconds."
             f"{common.reveal_note}"
             f"{_graphic_text_rule(common.graphic_text)}"
+            f"{_avoid_rule(common.graphic_text)}"
         )
 
         return ResolvedCinematicPrompt(
@@ -458,6 +478,7 @@ class CinematicPromptCompilationService:
                 f"(part {index + 1} of {total_sub_clips})."
                 f"{common.reveal_note}{continuation_note}"
                 f"{_graphic_text_rule(common.graphic_text)}"
+                f"{_avoid_rule(common.graphic_text)}"
             )
 
             prompts.append(

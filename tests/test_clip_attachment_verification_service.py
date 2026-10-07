@@ -43,7 +43,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _make_clip(path: Path, colour: str, seconds: float) -> None:
+def _make_clip(path: Path, colour: str, seconds: float, size: str = "320x180") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(
         [
@@ -53,7 +53,7 @@ def _make_clip(path: Path, colour: str, seconds: float) -> None:
             "-f",
             "lavfi",
             "-i",
-            f"color=c={colour}:size=320x180:rate=30:duration={seconds}",
+            f"color=c={colour}:size={size}:rate=30:duration={seconds}",
             "-c:v",
             "libx264",
             "-pix_fmt",
@@ -430,3 +430,70 @@ def test_the_same_clip_on_a_non_muse_scene_is_still_flagged_as_too_long(
     report = _service(tmp_path).verify(job)
 
     assert ClipVerificationIssueCode.TOO_LONG in _codes(report, 1)
+
+
+# ---- the footage is the project's shape (9:16 project: a landscape clip is flagged)
+
+
+def _one_scene_job(tmp_path: Path, size: str, *, portrait: bool) -> VideoJob:
+    from src.models.specification_enums import AspectRatio
+
+    file = tmp_path / "clips" / "1.mp4"
+    _make_clip(file, "red", 4.0, size)
+    job = _job([_scene(1)], [_clip(1, file)])
+
+    if portrait:
+        job.aspect_ratio = AspectRatio.PORTRAIT
+
+    return job
+
+
+def test_a_landscape_clip_in_a_vertical_project_is_flagged(tmp_path: Path) -> None:
+    job = _one_scene_job(tmp_path, "320x180", portrait=True)
+
+    report = _service(tmp_path).verify(job)
+
+    assert ClipVerificationIssueCode.WRONG_SHAPE in _codes(report, 1)
+    issue = next(
+        i for i in _scene_result(report, 1).issues
+        if i.code == ClipVerificationIssueCode.WRONG_SHAPE
+    )  # fmt: skip
+    assert issue.severity == ClipVerificationSeverity.WARNING
+    assert "320x180" in issue.message
+    assert "9:16" in issue.message
+
+
+def test_a_vertical_clip_in_a_vertical_project_is_fine(tmp_path: Path) -> None:
+    job = _one_scene_job(tmp_path, "180x320", portrait=True)
+
+    assert ClipVerificationIssueCode.WRONG_SHAPE not in _codes(
+        _service(tmp_path).verify(job), 1
+    )
+
+
+def test_a_vertical_clip_in_a_landscape_project_is_flagged(tmp_path: Path) -> None:
+    job = _one_scene_job(tmp_path, "180x320", portrait=False)
+
+    assert ClipVerificationIssueCode.WRONG_SHAPE in _codes(
+        _service(tmp_path).verify(job), 1
+    )
+
+
+def test_a_landscape_clip_in_a_landscape_project_is_fine(tmp_path: Path) -> None:
+    job = _one_scene_job(tmp_path, "320x180", portrait=False)
+
+    assert ClipVerificationIssueCode.WRONG_SHAPE not in _codes(
+        _service(tmp_path).verify(job), 1
+    )
+
+
+def test_a_four_by_three_clip_in_a_landscape_project_is_not_flagged(
+    tmp_path: Path,
+) -> None:
+    """Only a clear orientation mismatch is flagged, not every odd aspect ratio."""
+
+    job = _one_scene_job(tmp_path, "320x240", portrait=False)
+
+    assert ClipVerificationIssueCode.WRONG_SHAPE not in _codes(
+        _service(tmp_path).verify(job), 1
+    )

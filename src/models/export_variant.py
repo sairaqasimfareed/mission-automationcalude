@@ -37,6 +37,12 @@ class ExportVariant(MissionBaseModel):
 
     output_file: str = Field(min_length=1)
 
+    # How long the opening title card at the start of THIS video was when it was made
+    # (0 = it had none). None = made before this was recorded, so the length is worked out
+    # from the current render instead. Subtitles are timed against it, so a variant made
+    # before a title card was added is not shifted as if it had one.
+    title_card_seconds: float | None = Field(default=None, ge=0)
+
     seo_package: SEOPackage | None = None
     thumbnail_artifact: ThumbnailArtifact | None = None
 

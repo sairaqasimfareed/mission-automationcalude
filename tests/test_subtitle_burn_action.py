@@ -169,6 +169,31 @@ def test_burning_uses_the_stored_lines_and_writes_a_copy_next_to_the_original(
     assert call["cues"][0].start_seconds == 0.5  # no title card, no shift
 
 
+def _burn_preset(job: VideoJob, tmp_path: Path) -> str:
+    service, burner = _service({"final_video.mp4": 60.0})
+    source = job.render_result.output_file  # type: ignore[union-attr]
+    service.burn(
+        job=job, source_file=source, output_file=service.output_file_for(source)
+    )
+
+    return burner.calls[0]["preset_id"]
+
+
+def test_the_burn_uses_the_projects_own_caption_style_override(tmp_path: Path) -> None:
+    job = _job(tmp_path)
+    job.subtitle_style_override_preset_id = "subtitle.cinematic"
+
+    assert _burn_preset(job, tmp_path) == "subtitle.cinematic"
+
+
+def test_without_an_override_the_burn_uses_the_genres_style(tmp_path: Path) -> None:
+    job = _job(tmp_path)
+    job.genre_id = "genre.top10"
+
+    assert _burn_preset(job, tmp_path) == "subtitle.bold_punchy"
+    assert _burn_preset(_job(tmp_path), tmp_path) == "subtitle.default"
+
+
 def test_a_video_with_a_title_card_gets_the_lines_after_the_card(
     tmp_path: Path,
 ) -> None:
@@ -653,6 +678,75 @@ def test_the_export_variants_section_burns_subtitles_onto_a_variant(
     assert len(actions.calls) == 1
     assert actions.calls[0]["source_file"] == str(variant_file)
     assert actions.calls[0]["output_file"].endswith("variant_tiktok_subtitled.mp4")
+
+
+def test_a_variant_made_before_the_title_card_is_not_shifted_past_one(
+    qapp,  # type: ignore[no-untyped-def]
+    tmp_path: Path,
+) -> None:
+    """The variant recorded that it was made with no title card, so its subtitles start
+    where the narration does even though the current render now has a card."""
+
+    actions = _FakeActions()
+    view = _packaging_view(tmp_path, actions)
+    job = _job(tmp_path)
+    variant_file = tmp_path / "variant_old.mp4"
+    variant_file.write_bytes(b"variant")
+    view._job_store.add(job)  # noqa: SLF001
+    _store_render(view, job, job.render_result)  # type: ignore[arg-type]
+    view._job_store.set_export_variants(  # noqa: SLF001
+        job.id,
+        ExportVariantCollection(
+            variants=[
+                ExportVariant(
+                    orientation=AspectRatio.PORTRAIT,
+                    platform=Platform.TIKTOK,
+                    output_file=str(variant_file),
+                    title_card_seconds=0.0,
+                )
+            ]
+        ),
+    )
+    view.set_job(job.id)
+    view.refresh(job)
+
+    _click(view, "Burn subtitles onto this variant")
+    _wait(view, qapp)
+
+    assert actions.calls[0]["offset_seconds"] == 0.0
+
+
+def test_a_variant_with_a_recorded_card_uses_its_length(
+    qapp,  # type: ignore[no-untyped-def]
+    tmp_path: Path,
+) -> None:
+    actions = _FakeActions()
+    view = _packaging_view(tmp_path, actions)
+    job = _job(tmp_path)
+    variant_file = tmp_path / "variant_card.mp4"
+    variant_file.write_bytes(b"variant")
+    view._job_store.add(job)  # noqa: SLF001
+    _store_render(view, job, job.render_result)  # type: ignore[arg-type]
+    view._job_store.set_export_variants(  # noqa: SLF001
+        job.id,
+        ExportVariantCollection(
+            variants=[
+                ExportVariant(
+                    orientation=AspectRatio.LANDSCAPE,
+                    platform=Platform.YOUTUBE,
+                    output_file=str(variant_file),
+                    title_card_seconds=4.0,
+                )
+            ]
+        ),
+    )
+    view.set_job(job.id)
+    view.refresh(job)
+
+    _click(view, "Burn subtitles onto this variant")
+    _wait(view, qapp)
+
+    assert actions.calls[0]["offset_seconds"] == 4.0
 
 
 def test_the_export_variants_section_asks_for_a_variant_first(

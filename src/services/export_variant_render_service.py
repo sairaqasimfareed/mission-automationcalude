@@ -168,7 +168,13 @@ class ExportVariantRenderService:
         source_file = render_result.output_file
 
         if orientation == self._master_orientation(job) and platform is None:
-            return ExportVariant(orientation=orientation, output_file=source_file)
+            return ExportVariant(
+                orientation=orientation,
+                output_file=source_file,
+                title_card_seconds=self._title_card_seconds_of(
+                    job, source_file, float(render_result.duration_seconds)
+                ),
+            )
 
         return self._build_processed_variant(
             job=job,
@@ -179,6 +185,20 @@ class ExportVariantRenderService:
             progress_callback=progress_callback,
             cancellation_check=cancellation_check,
         )
+
+    def _title_card_seconds_of(
+        self, job: VideoJob, source_file: str, fallback_duration_seconds: float
+    ) -> float:
+        """The title card length of a file, probing its real length first."""
+
+        probed = self._media_validation_service.validate(Path(source_file))
+        duration = (
+            float(probed.duration_seconds)
+            if probed.duration_seconds is not None
+            else fallback_duration_seconds
+        )
+
+        return self._title_card_seconds(job, source_file, duration)
 
     def _title_card_seconds(
         self, job: VideoJob, source_file: str, source_duration_seconds: float
@@ -228,6 +248,8 @@ class ExportVariantRenderService:
             if probed.duration_seconds is not None
             else float(fallback_duration_seconds)
         )
+
+        card_seconds = self._title_card_seconds(job, source_file, duration_seconds)
 
         resolved_config = self._capability_service.resolve()
         source_width, source_height = self._parse_resolution(job.output_resolution)
@@ -286,9 +308,7 @@ class ExportVariantRenderService:
             # The watermark starts when the opening title card ends, not at t=0
             # (reported 2026-10-07: it showed over the title card). The card's length
             # is the difference between this file and the card-free render.
-            title_card_seconds = self._title_card_seconds(
-                job, source_file, duration_seconds
-            )
+            title_card_seconds = card_seconds
             watermark_end_seconds = max(
                 title_card_seconds + _WATERMARK_DELAY_SECONDS, content_duration - 1.0
             )
@@ -475,6 +495,7 @@ class ExportVariantRenderService:
             orientation=orientation,
             platform=platform,
             output_file=output_file,
+            title_card_seconds=card_seconds,
         )
 
     @staticmethod

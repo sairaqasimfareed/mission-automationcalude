@@ -57,6 +57,12 @@ class VideoClip(MissionBaseModel):
     # colour matching on). None = left exactly as generated.
     color_correction: ColorCorrection | None = None
 
+    # The footage's own size, read from the file just before a render so the clip can be
+    # fitted to the frame without being stretched (see clip_fit_policy). None = unknown,
+    # which keeps the plain scaling every clip used to get.
+    source_width: int | None = Field(default=None, ge=1)
+    source_height: int | None = Field(default=None, ge=1)
+
     source_status: SceneSourceStatus = SceneSourceStatus.PENDING
     status: VideoClipStatus = VideoClipStatus.PENDING
 

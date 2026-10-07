@@ -25,6 +25,7 @@ class ClipVerificationIssueCode(str, Enum):
     LAST_ATTEMPT_FAILED = "last_attempt_failed"
     CHARACTER_WITHOUT_REFERENCE = "character_without_reference"
     REFERENCE_NOT_ATTACHED = "reference_not_attached"
+    WRONG_SHAPE = "wrong_shape"
 
 
 class ClipVerificationIssue(MissionBaseModel):

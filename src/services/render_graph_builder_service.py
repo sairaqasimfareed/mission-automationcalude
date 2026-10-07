@@ -606,6 +606,8 @@ class RenderGraphBuilderService:
                 "local_file": (item.clip.local_file),
                 "source_url": (item.clip.source_url),
                 "clip_id": str(item.clip.id),
+                "source_width": item.clip.source_width,
+                "source_height": item.clip.source_height,
                 # Only a real correction is carried; None leaves the clip untouched.
                 "color_correction": (
                     item.clip.color_correction.model_dump(

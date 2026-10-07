@@ -26,6 +26,7 @@ from src.models.transition_execution import (
     TransitionExecution,
     TransitionPlacement,
 )
+from src.services.clip_fit_policy import ClipFit, clip_fit
 from src.services.video_filter_translation_service import (
     VideoFilterTranslationService,
 )
@@ -347,16 +348,13 @@ class FilterGraphBuilderService:
             normalized_label = f"scene_{scene_number}_{clip_sequence_index}_normalized"
 
             normalization_nodes = [
-                FilterNode(
-                    media_type=(FilterMediaType.VIDEO),
-                    filter_name="scale",
-                    input_labels=[source_label],
-                    output_labels=[scale_label],
-                    options={
-                        "w": str(width),
-                        "h": str(height),
-                    },
-                    source_render_node_id=str(video_node.id),
+                *self._fit_nodes(
+                    video_node=video_node,
+                    source_label=source_label,
+                    scale_label=scale_label,
+                    width=width,
+                    height=height,
+                    prefix=f"scene_{scene_number}_{clip_sequence_index}",
                 ),
                 FilterNode(
                     media_type=(FilterMediaType.VIDEO),
@@ -532,6 +530,127 @@ class FilterGraphBuilderService:
             translated_operation_count,
             translated_transition_count,
         )
+
+    # How strongly the enlarged copy behind a fitted clip is blurred (the same as the
+    # vertical export variant's background).
+    _BACKGROUND_BLUR_SIGMA = 20
+
+    @classmethod
+    def _fit_nodes(
+        cls,
+        *,
+        video_node: RenderNode,
+        source_label: str,
+        scale_label: str,
+        width: int,
+        height: int,
+        prefix: str,
+    ) -> list[FilterNode]:
+        """The filters that bring one clip to the frame size, ending at `scale_label`.
+        A clip of the frame's shape (or of unknown shape) is scaled as it always was;
+        another shape is cropped to fill or fitted over a blurred copy, never stretched
+        (see clip_fit_policy)."""
+
+        source_width = video_node.payload.get("source_width")
+        source_height = video_node.payload.get("source_height")
+        fit = clip_fit(
+            source_width=source_width if isinstance(source_width, int) else None,
+            source_height=source_height if isinstance(source_height, int) else None,
+            frame_width=width,
+            frame_height=height,
+        )
+        node_id = str(video_node.id)
+        size = {"w": str(width), "h": str(height)}
+        video = FilterMediaType.VIDEO
+
+        if fit == ClipFit.COVER:
+            covered = f"{prefix}_cover"
+
+            return [
+                FilterNode(
+                    media_type=video,
+                    filter_name="scale",
+                    input_labels=[source_label],
+                    output_labels=[covered],
+                    options={**size, "force_original_aspect_ratio": "increase"},
+                    source_render_node_id=node_id,
+                ),
+                FilterNode(
+                    media_type=video,
+                    filter_name="crop",
+                    input_labels=[covered],
+                    output_labels=[scale_label],
+                    options=size,
+                    source_render_node_id=node_id,
+                ),
+            ]
+
+        if fit == ClipFit.BLUR_FIT:
+            back_in, front_in = f"{prefix}_back_in", f"{prefix}_front_in"
+            back_big, back_crop = f"{prefix}_back_big", f"{prefix}_back_crop"
+            back, front = f"{prefix}_back", f"{prefix}_front"
+
+            return [
+                FilterNode(
+                    media_type=video,
+                    filter_name="split",
+                    input_labels=[source_label],
+                    output_labels=[back_in, front_in],
+                    raw_arguments=["2"],
+                    source_render_node_id=node_id,
+                ),
+                FilterNode(
+                    media_type=video,
+                    filter_name="scale",
+                    input_labels=[back_in],
+                    output_labels=[back_big],
+                    options={**size, "force_original_aspect_ratio": "increase"},
+                    source_render_node_id=node_id,
+                ),
+                FilterNode(
+                    media_type=video,
+                    filter_name="crop",
+                    input_labels=[back_big],
+                    output_labels=[back_crop],
+                    options=size,
+                    source_render_node_id=node_id,
+                ),
+                FilterNode(
+                    media_type=video,
+                    filter_name="gblur",
+                    input_labels=[back_crop],
+                    output_labels=[back],
+                    options={"sigma": str(cls._BACKGROUND_BLUR_SIGMA)},
+                    source_render_node_id=node_id,
+                ),
+                FilterNode(
+                    media_type=video,
+                    filter_name="scale",
+                    input_labels=[front_in],
+                    output_labels=[front],
+                    options={**size, "force_original_aspect_ratio": "decrease"},
+                    source_render_node_id=node_id,
+                ),
+                FilterNode(
+                    media_type=video,
+                    filter_name="overlay",
+                    input_labels=[back, front],
+                    output_labels=[scale_label],
+                    options={"x": "(W-w)/2", "y": "(H-h)/2", "format": "auto"},
+                    source_render_node_id=node_id,
+                ),
+            ]
+
+        return [
+            FilterNode(
+                media_type=video,
+                filter_name="scale",
+                input_labels=[source_label],
+                output_labels=[scale_label],
+                options=size,
+                source_render_node_id=node_id,
+            )
+        ]
 
     _LETTERBOX_ASPECT_RATIO = 2.35
 

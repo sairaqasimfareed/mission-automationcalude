@@ -114,6 +114,10 @@ class VideoJob(MissionBaseModel):
     # Bring the clips toward one shared look when rendering (each clip's own
     # correction is measured by ClipColorMatchingService and kept on the clip).
     color_matching_enabled: bool = False
+    # Which clip files the corrections were measured from (see
+    # ClipColorMatchingService.fingerprint). A regenerated clip changes it, so the
+    # corrections are known to be out of date. None = never measured.
+    color_matching_fingerprint: str | None = None
 
     # One continuous composed track, or one piece per mood (the default).
     music_mode: MusicMode = MusicMode.PIECES

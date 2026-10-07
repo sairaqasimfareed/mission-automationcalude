@@ -804,6 +804,15 @@ class ClipWorkspaceView(QWidget):
 
         if notice is not None:
             layout.addWidget(status_label(notice[0], role=notice[1]))
+        elif self._colours_are_stale(job):
+            layout.addWidget(
+                status_label(
+                    "A clip was regenerated since the colours were measured, so the "
+                    "corrections are out of date. They are measured again when you "
+                    "render, or press the button to do it now.",
+                    role="warning",
+                )
+            )
         elif any(clip.color_correction is not None for clip in job.video_clips):
             layout.addWidget(
                 small_muted(
@@ -811,6 +820,13 @@ class ClipWorkspaceView(QWidget):
                     "box above is ticked."
                 )
             )
+
+    @staticmethod
+    def _colours_are_stale(job: VideoJob) -> bool:
+        try:
+            return ClipColorMatchingService.is_stale(job)
+        except OSError:
+            return False
 
     def _handle_color_matching_toggled(self, checked: bool) -> None:
         job = self._current_job()

@@ -26,6 +26,9 @@ class SubtitleBurnTarget:
     # "variant" - lets the title card section and the export variants section offer only
     # their own video.
     kind: str = "main"
+    # The title card length recorded when this video was made, when known (export
+    # variants); None = work it out from the current render.
+    known_offset_seconds: float | None = None
 
 
 def subtitle_burn_targets(
@@ -45,12 +48,23 @@ def subtitle_burn_targets(
     targets: list[SubtitleBurnTarget] = []
     seen: set[str] = set()
 
-    def add(label: str, file: str | None, *, after_title_card: bool, kind: str) -> None:
+    def add(
+        label: str,
+        file: str | None,
+        *,
+        after_title_card: bool,
+        kind: str,
+        known_offset_seconds: float | None = None,
+    ) -> None:
         if not file or file in seen or not Path(file).is_file():
             return
 
         seen.add(file)
-        targets.append(SubtitleBurnTarget(label, file, after_title_card, kind))
+        targets.append(
+            SubtitleBurnTarget(
+                label, file, after_title_card, kind, known_offset_seconds
+            )
+        )
 
     add("Main render", base.output_file, after_title_card=False, kind="main")
 
@@ -72,6 +86,12 @@ def subtitle_burn_targets(
         platform = variant.platform.value if variant.platform is not None else None
         shape = variant.orientation.value
         label = f"Export variant {shape}" + (f" - {platform}" if platform else "")
-        add(label, variant.output_file, after_title_card=True, kind="variant")
+        add(
+            label,
+            variant.output_file,
+            after_title_card=True,
+            kind="variant",
+            known_offset_seconds=variant.title_card_seconds,
+        )
 
     return targets

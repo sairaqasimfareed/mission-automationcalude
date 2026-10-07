@@ -813,3 +813,40 @@ def test_the_text_watermark_waits_its_hook_delay_after_the_title_card(
 
     # 3 s card + the 4 s hook-skipping delay
     assert "enable='between(t,7," in complex_
+
+
+# ---- the variant remembers its own title card length (subtitles are timed against it)
+
+
+def test_a_variant_records_the_title_card_it_was_made_with(tmp_path: Path) -> None:
+    service, _execution = _service_with_probe(_TwoFileProbe(source=63.0, base=60.0))
+    variant = service.build(
+        job=_watermarked_job(tmp_path, with_title_card=True),
+        render_result=_render_result(output_file="F:/renders/job1/with_card.mp4"),
+        orientation=AspectRatio.LANDSCAPE,
+        platform=Platform.YOUTUBE,
+    )
+
+    assert variant.title_card_seconds == pytest.approx(3.0)
+
+
+def test_a_variant_made_without_a_title_card_records_zero(tmp_path: Path) -> None:
+    service, _execution = _service_with_probe(_TwoFileProbe(source=60.0, base=60.0))
+    variant = service.build(
+        job=_watermarked_job(tmp_path, with_title_card=False),
+        render_result=_render_result(output_file="F:/renders/job1/plain.mp4"),
+        orientation=AspectRatio.LANDSCAPE,
+        platform=Platform.YOUTUBE,
+    )
+
+    assert variant.title_card_seconds == 0.0
+
+
+def test_a_variant_without_the_recorded_value_is_still_valid() -> None:
+    """Variants saved before this was recorded load with None (work it out later)."""
+
+    from src.models.export_variant import ExportVariant
+
+    variant = ExportVariant(orientation=AspectRatio.LANDSCAPE, output_file="x.mp4")
+
+    assert variant.title_card_seconds is None

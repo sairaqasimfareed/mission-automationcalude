@@ -14,6 +14,9 @@ from pathlib import Path
 from src.models.absolute_subtitle_cue import AbsoluteSubtitleCue
 from src.models.render_result import RenderResult
 from src.models.video_job import VideoJob
+from src.services.caption_style_options_service import (
+    CaptionStyleOptionsService,
+)
 from src.services.ffmpeg_execution_service import (
     CancellationCheck,
     ProgressCallback,
@@ -33,8 +36,12 @@ class SubtitleBurnActionService:
         *,
         burn_service: PostRenderSubtitleBurnService | None = None,
         media_validation_service: MediaTechnicalValidationService | None = None,
+        caption_style_options_service: CaptionStyleOptionsService | None = None,
     ) -> None:
         self._burn_service = burn_service or PostRenderSubtitleBurnService()
+        self._caption_styles = (
+            caption_style_options_service or CaptionStyleOptionsService()
+        )
         self._media_validation_service = (
             media_validation_service or MediaTechnicalValidationService()
         )
@@ -109,6 +116,12 @@ class SubtitleBurnActionService:
             output_file=output_file,
             video_duration_seconds=duration,
             has_audio=bool(probed.has_audio_stream),
+            # The project's own caption style (its override, else its genre's) - the
+            # same one the in-render burn uses.
+            preset_id=self._caption_styles.effective_preset_id(
+                genre_id=job.genre_id,
+                override_preset_id=job.subtitle_style_override_preset_id,
+            ),
             progress_callback=progress_callback,
             cancellation_check=cancellation_check,
         )

@@ -17,7 +17,11 @@ from src.services.ffmpeg_execution_service import (
     FFmpegExecutionService,
     ProgressCallback,
 )
+from src.services.media_technical_validation_service import (
+    MediaTechnicalValidationService,
+)
 from src.services.production_render_service import ProductionRenderService
+from src.services.subtitle_line_wrap import wrap_for_frame
 from src.services.video_filter_translation_service import (
     VideoFilterTranslationService,
 )
@@ -66,8 +70,12 @@ class PostRenderSubtitleBurnService:
         *,
         capability_service: FFmpegCapabilityService | None = None,
         execution_service: FFmpegExecutionService | None = None,
+        media_validation_service: MediaTechnicalValidationService | None = None,
     ) -> None:
         self._capability_service = capability_service or FFmpegCapabilityService()
+        self._media_validation_service = (
+            media_validation_service or MediaTechnicalValidationService()
+        )
 
         self._execution_service = execution_service or FFmpegExecutionService()
 
@@ -79,6 +87,8 @@ class PostRenderSubtitleBurnService:
         output_file: str,
         video_duration_seconds: float,
         has_audio: bool = True,
+        frame_width: int | None = None,
+        preset_id: str = _DEFAULT_SUBTITLE_PRESET_ID,
         progress_callback: ProgressCallback | None = None,
         cancellation_check: CancellationCheck | None = None,
     ) -> RenderResult:
@@ -105,14 +115,27 @@ class PostRenderSubtitleBurnService:
 
         resolved_config = self._capability_service.resolve()
 
-        style = VideoFilterTranslationService._subtitle_style(
-            _DEFAULT_SUBTITLE_PRESET_ID
-        )
+        try:
+            style = VideoFilterTranslationService._subtitle_style(preset_id)
+        except ValueError:
+            # A style that is no longer registered must not stop the subtitles.
+            style = VideoFilterTranslationService._subtitle_style(
+                _DEFAULT_SUBTITLE_PRESET_ID
+            )
 
         font_file = VideoFilterTranslationService._resolve_subtitle_font_file()
 
         if font_file is not None:
             style = {**style, "fontfile": f"'{font_file}'"}
+
+        # A line too wide for the picture (a vertical video) is broken into rows; the
+        # width is probed from the video itself unless the caller knows it.
+        width = frame_width or self._probe_width(input_video_file)
+
+        try:
+            fontsize = int(style.get("fontsize", "48"))
+        except ValueError:
+            fontsize = 48
 
         clauses: list[str] = []
         current_label = "0:v"
@@ -124,7 +147,9 @@ class PostRenderSubtitleBurnService:
                 **style,
                 "textfile": (
                     "'"
-                    + VideoFilterTranslationService._write_subtitle_text_file(cue.text)
+                    + VideoFilterTranslationService._write_subtitle_text_file(
+                        wrap_for_frame(cue.text, frame_width=width, fontsize=fontsize)
+                    )
                     + "'"
                 ),
                 "enable": VideoFilterTranslationService._enable_expression(
@@ -273,3 +298,11 @@ class PostRenderSubtitleBurnService:
             failure_category=classify_render_failure(failure_stage),
             selected_video_codec=resolved_config.selected_video_codec,
         )
+
+    def _probe_width(self, video_file: str) -> int | None:
+        try:
+            probed = self._media_validation_service.validate(Path(video_file))
+        except Exception:  # noqa: BLE001 - no width just means no wrapping
+            return None
+
+        return probed.width

@@ -155,3 +155,31 @@ def test_rejects_empty_output_file() -> None:
             output_file="   ",
             video_duration_seconds=6.0,
         )
+
+
+def _fontsize(preset_id: str | None, tmp_path: Path) -> str:
+    service, execution = _service()
+    extra = {} if preset_id is None else {"preset_id": preset_id}
+
+    service.burn(
+        input_video_file="in.mp4",
+        cues=[AbsoluteSubtitleCue(text="Hi.", start_seconds=0.0, end_seconds=2.0)],
+        output_file=str(tmp_path) + "/out.mp4",
+        video_duration_seconds=2.0,
+        **extra,  # type: ignore[arg-type]
+    )
+    filter_complex = execution.calls[0][0].filter_complex
+
+    return filter_complex.split("fontsize=")[1].split(":")[0]
+
+
+def test_the_style_preset_decides_how_the_text_looks(tmp_path: Path) -> None:
+    assert _fontsize(None, tmp_path) == "48"  # subtitle.default
+    assert _fontsize("subtitle.cinematic", tmp_path) == "54"
+    assert _fontsize("subtitle.bold_punchy", tmp_path) == "60"
+
+
+def test_a_style_that_is_no_longer_registered_falls_back_to_the_default(
+    tmp_path: Path,
+) -> None:
+    assert _fontsize("subtitle.gone", tmp_path) == "48"

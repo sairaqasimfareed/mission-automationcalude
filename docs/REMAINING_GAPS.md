@@ -681,11 +681,15 @@ re-render, leftover stage files, stored duration) and the broad
   decision 2026-10-07); changing the ratio after clips exist must warn and invalidate them. Related: the
   graphic-scene text rule is still not sent, and the 9:16 infographic repeated the problem
   (added "safely", dropped "modestly", an invented "Source:" line and a "Trusted Info" badge).
-  *Left to do after the build:* a warning (and invalidation of existing clips) when the shape
-  is changed after clips exist - today it is chosen at creation only; subtitle placement and
-  the thumbnail have not been checked/adapted for a portrait frame; Flow's "9:16" click is
-  unverified against the live product; the sentence is unproven in a fresh Muse chat; stock
-  or manually uploaded 16:9 clips in a 9:16 project are not letterboxed.
+  *Left to do after the build (updated 2026-10-07, "small known gaps" pass):* the shape
+  cannot be changed after creation (there is no such control), so the planned "warn when it
+  changes" became a Clip check finding instead - BUILT: a clip whose orientation is not the
+  project's (e.g. a landscape clip in a 9:16 project) is flagged `WRONG_SHAPE`. Subtitles in
+  a vertical frame - BUILT: long lines are now broken into rows
+  (`subtitle_line_wrap.py`; a line used to run edge to edge). Stock / manual / wrong-shape
+  clips - BUILT: fitted, not stretched (`clip_fit_policy.py`). Still open: Flow's "9:16"
+  click is unverified against the live product; the sentence is unproven in a fresh Muse
+  chat. (The portrait thumbnail shape was dropped as a gap by the operator, 2026-10-08.)
 - **AI-written claims on infographic (graphic) scenes** (found 2026-10-07; plan step 1 BUILT
   the same day - the text rule is now in the prompt - steps 2 and 3 not built). The graphic-scene text rule exists on the stored
   prompt but is never sent, so Muse writes its own text. Remedy and the 9:16 test infographic
@@ -787,30 +791,28 @@ re-render, leftover stage files, stored duration) and the broad
        would also tell people apart in a shared frame), offered as "Person A appears in scenes
        3, 9, 12, 16" with a thumbnail; needs the model bundled in the installer.
      Costs one small Claude call per suggestion run for characters; none for the look.
-- Negative constraints are stored on every compiled prompt but never sent to Muse or Flow
-  (see IMPLEMENTATION_STATE, 2026-10-07). Needs a decision on what to send: an "Avoid:" line
-  with the identity/subject/continuity rules and "no logos or watermarks", the exact-text rule
-  for graphic scenes, and "no extra captions" instead of "no on-screen text" elsewhere.
-  Whether Muse follows a negative instruction is untested.
-- The characters-and-places form is built, but the optional "choose another frame" picker
-  (showing several candidate frames) is not: "Pick reference again" re-runs the automatic
-  choice only. A regenerated bible keeps manual identities but not their on-screen marks in
-  scenes that no longer exist.
-- Music is still several separately generated pieces stitched with 1 s fades; a piece can
-  decay to near-silence before its slot ends (Remedy's first one is quiet from about 8 s of
-  11). One continuous track per video is not built.
-- No shared colour grade across scenes (the filter is `clean_neutral`, a faint lift only):
-  the bright daylight clip still sits next to dark kitchen ones. Shot-to-shot colour
-  matching is on the locked editing list, not built.
+- Negative constraints are stored on every compiled prompt; most are still never sent to
+  Muse or Flow. Sent now (2026-10-07): the exact-text rule for graphic scenes, and for a
+  live-action scene one plain sentence ("Do not show any text, captions, logos or
+  watermarks, and nothing unrelated to this scene."). Not sent: "no identity drift" and "no
+  continuity discontinuities" (the generator has nothing to act on there). Whether Muse and
+  Flow actually follow the negative sentence is untested.
+- The "choose another frame" picker is BUILT (2026-10-07). A regenerated bible keeps manual
+  identities but not their on-screen marks in scenes that no longer exist.
+- Music defaults to several separately generated pieces stitched with 1 s fades (a piece
+  can decay to near-silence before its slot ends - Remedy's first one). One continuous track
+  per video is BUILT as an option (Project settings > Background music; untried against the
+  live ElevenLabs account); a single mood cannot be regenerated on its own inside it.
+- Shot-to-shot colour matching is BUILT (Clips tab, off by default). Corrections that were
+  measured before a clip was regenerated are now detected (`color_matching_fingerprint`):
+  the Clips tab warns, and the render measures again by itself.
 - The 1080p video pass took 1,695 s (28 min) for an 84 s video on this machine; the audio
   re-mix is about 33 s. Not changed: needs a measurement on an idle machine first.
 - Pacing: clips are sized to the narration (rounded up to the provider's lengths), so
   there is no pause between scenes - only accidental slack (the trailing silence in each
   voice file, the round-up, Muse's 3 s floor). Genre only changes the pause style inside a
-  line. Locked for later, NOT built: a per-genre hold after each line (about 0.3-0.5 s
-  medical/reaction/comedy, 0.8-1.2 s horror/storytelling/survival, longer after reveals,
-  dropped when the line already fills a clip), and an optional 0.2-0.3 s voice lead-in after
-  the cut. Touches clip sizing for both Flow and Muse and the audio timeline offsets.
+  line. The per-genre hold after each line is BUILT (2026-10-07). Not built: an optional
+  0.2-0.3 s voice lead-in after the cut (touches the audio timeline offsets).
 - Not code: clip content (a panel leaking into scene 5's clip, scene 15's different-looking
   mother and baby, the woman changing between scenes, AI-written infographic claims) needs
   regenerating those clips. (The 1:24 length against the 2:00 target was dropped as a gap

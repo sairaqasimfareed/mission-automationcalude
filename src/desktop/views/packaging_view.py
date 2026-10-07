@@ -279,10 +279,13 @@ class _SubtitleBurnWorker(QObject):
         source_file: str,
         output_file: str,
         after_title_card_file: str | None,
+        known_offset_seconds: float | None = None,
     ) -> None:
         super().__init__()
 
         self._service = service
+        # The title card length recorded when this video was made, if it was.
+        self._known_offset_seconds = known_offset_seconds
         self._job = job
         self._source_file = source_file
         self._output_file = output_file
@@ -294,11 +297,14 @@ class _SubtitleBurnWorker(QObject):
 
     def run(self) -> None:
         try:
-            offset = (
-                self._service.offset_seconds(self._job, self._after_title_card_file)
-                if self._after_title_card_file
-                else 0.0
-            )
+            if self._known_offset_seconds is not None:
+                offset = self._known_offset_seconds
+            elif self._after_title_card_file:
+                offset = self._service.offset_seconds(
+                    self._job, self._after_title_card_file
+                )
+            else:
+                offset = 0.0
             result = self._service.burn(
                 job=self._job,
                 source_file=self._source_file,
@@ -1550,6 +1556,7 @@ class PackagingView(QWidget):
                 and effective.output_file
                 else None
             ),
+            known_offset_seconds=target.known_offset_seconds,
         )
         worker.moveToThread(thread)
         thread.job_id = job.id  # type: ignore[attr-defined]

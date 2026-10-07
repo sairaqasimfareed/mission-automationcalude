@@ -497,3 +497,208 @@ def test_the_clips_tab_offers_matching_and_saves_the_choice(qapp) -> None:  # ty
 from tests.test_clip_workspace_clip_length_labels_gui import (  # noqa: E402
     qapp as qapp,  # noqa: PLC0414 - fixture
 )
+
+# ------------------------------------------- corrections that are out of date
+
+
+def test_a_project_never_measured_is_not_stale(tmp_path: Path) -> None:
+    job = _job(tmp_path, [_DARK_WARM] * 5)
+
+    assert job.color_matching_fingerprint is None
+    assert ClipColorMatchingService.is_stale(job) is False
+
+
+def test_measuring_records_which_clips_it_was_measured_from(tmp_path: Path) -> None:
+    colours = [_DARK_WARM] * 4 + [_BRIGHT_COOL]
+    job = _job(tmp_path, colours)
+
+    _service(colours).match(job)
+
+    assert job.color_matching_fingerprint is not None
+    assert ClipColorMatchingService.is_stale(job) is False
+
+
+def test_a_regenerated_clip_makes_the_corrections_stale(tmp_path: Path) -> None:
+    colours = [_DARK_WARM] * 4 + [_BRIGHT_COOL]
+    job = _job(tmp_path, colours)
+    _service(colours).match(job)
+
+    # scene 3 is regenerated: a new file replaces the old one
+    replacement = tmp_path / "clip_3_regenerated.mp4"
+    replacement.write_bytes(b"a different clip")
+    job.video_clips[2].local_file = str(replacement)
+
+    assert ClipColorMatchingService.is_stale(job) is True
+
+
+def test_a_clip_file_rewritten_in_place_is_also_noticed(tmp_path: Path) -> None:
+    colours = [_DARK_WARM] * 4 + [_BRIGHT_COOL]
+    job = _job(tmp_path, colours)
+    _service(colours).match(job)
+
+    Path(job.video_clips[1].local_file or "").write_bytes(b"longer, new content")
+
+    assert ClipColorMatchingService.is_stale(job) is True
+
+
+def test_measuring_again_makes_them_current(tmp_path: Path) -> None:
+    colours = [_DARK_WARM] * 4 + [_BRIGHT_COOL]
+    job = _job(tmp_path, colours)
+    service = _service(colours)
+    service.match(job)
+    Path(job.video_clips[1].local_file or "").write_bytes(b"new")
+    assert ClipColorMatchingService.is_stale(job) is True
+
+    service.match(job)
+
+    assert ClipColorMatchingService.is_stale(job) is False
+
+
+def test_the_fingerprint_comes_back_from_a_measured_copy(tmp_path: Path) -> None:
+    colours = [_DARK_WARM] * 4 + [_BRIGHT_COOL]
+    job = _job(tmp_path, colours)
+    copy = job.model_copy(deep=True)
+    _service(colours).match(copy)
+
+    ClipColorMatchingService.apply_to(job, copy)
+
+    assert job.color_matching_fingerprint == copy.color_matching_fingerprint
+    assert ClipColorMatchingService.is_stale(job) is False
+
+
+def test_a_project_saved_before_the_fingerprint_existed_still_loads() -> None:
+    job = VideoJob(project_name="Old", channel_name="C", niche="n", topic="t")
+
+    reloaded = VideoJob.model_validate(
+        {
+            k: v
+            for k, v in job.model_dump(mode="json").items()
+            if k != "color_matching_fingerprint"
+        }
+    )
+
+    assert reloaded.color_matching_fingerprint is None
+
+
+def test_the_render_measures_again_when_the_clips_changed(  # type: ignore[no-untyped-def]
+    tmp_path: Path, monkeypatch
+) -> None:
+    from src.pipeline.render_stage import RenderPipelineStage
+
+    colours = [_DARK_WARM] * 4 + [_BRIGHT_COOL]
+    job = _job(tmp_path, colours)
+    job.color_matching_enabled = True
+    _service(colours).match(job)
+    Path(job.video_clips[1].local_file or "").write_bytes(b"regenerated")
+    calls: list[VideoJob] = []
+
+    def fake_match(self, target):  # type: ignore[no-untyped-def]
+        calls.append(target)
+        target.color_matching_fingerprint = ClipColorMatchingService.fingerprint(target)
+
+    monkeypatch.setattr(ClipColorMatchingService, "match", fake_match)
+    timeline = _timeline_for(job)
+
+    RenderPipelineStage._with_color_corrections(job, timeline)  # noqa: SLF001
+
+    assert calls == [job]
+
+
+def test_the_render_does_not_measure_again_when_nothing_changed(  # type: ignore[no-untyped-def]
+    tmp_path: Path, monkeypatch
+) -> None:
+    from src.pipeline.render_stage import RenderPipelineStage
+
+    colours = [_DARK_WARM] * 4 + [_BRIGHT_COOL]
+    job = _job(tmp_path, colours)
+    job.color_matching_enabled = True
+    _service(colours).match(job)
+    calls: list[VideoJob] = []
+    monkeypatch.setattr(
+        ClipColorMatchingService, "match", lambda self, target: calls.append(target)
+    )
+
+    RenderPipelineStage._with_color_corrections(job, _timeline_for(job))  # noqa: SLF001
+
+    assert calls == []
+
+
+def test_a_failed_measurement_before_the_render_does_not_fail_the_render(  # type: ignore[no-untyped-def]
+    tmp_path: Path, monkeypatch
+) -> None:
+    from src.pipeline.render_stage import RenderPipelineStage
+
+    colours = [_DARK_WARM] * 4 + [_BRIGHT_COOL]
+    job = _job(tmp_path, colours)
+    job.color_matching_enabled = True
+    _service(colours).match(job)
+    Path(job.video_clips[1].local_file or "").write_bytes(b"regenerated")
+
+    def boom(self, target):  # type: ignore[no-untyped-def]
+        raise RuntimeError("cannot read frames")
+
+    monkeypatch.setattr(ClipColorMatchingService, "match", boom)
+    timeline = _timeline_for(job)
+
+    result = RenderPipelineStage._with_color_corrections(job, timeline)  # noqa: SLF001
+
+    assert result is timeline  # no corrections left to apply
+    assert all(clip.color_correction is None for clip in job.video_clips)
+
+
+def _timeline_for(job: VideoJob):  # type: ignore[no-untyped-def]
+    from src.models.video_timeline import VideoTimeline
+    from src.models.video_timeline_item import VideoTimelineItem
+
+    return VideoTimeline(
+        items=[
+            VideoTimelineItem(
+                scene_number=clip.scene_number,
+                clip_sequence_index=clip.clip_sequence_index,
+                clip=clip,
+                start_time_seconds=index * 8.0,
+                end_time_seconds=(index + 1) * 8.0,
+            )
+            for index, clip in enumerate(job.video_clips)
+        ]
+    )
+
+
+def test_the_clips_tab_warns_when_the_measured_colours_are_out_of_date(  # type: ignore[no-untyped-def]
+    qapp, tmp_path: Path
+) -> None:
+    from PySide6.QtWidgets import QLabel
+
+    from src.models.video_provider import VideoProvider
+    from tests.test_clip_workspace_clip_length_labels_gui import _view
+
+    view, job = _view(VideoProvider.MUSE, narration=5.0)
+    clip_file = tmp_path / "scene1.mp4"
+    clip_file.write_bytes(b"clip")
+    job.video_clips = [
+        VideoClip(
+            scene_number=1,
+            source_type=SceneSourceType.AI_GENERATE,
+            duration_seconds=5,
+            local_file=str(clip_file),
+        )
+    ]
+
+    def texts() -> list[str]:
+        from PySide6.QtCore import QCoreApplication, QEvent
+
+        view.refresh(job)
+        # the previous refresh's labels are only deleted once Qt gets to them
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+
+        return [label.text() for label in view.findChildren(QLabel)]
+
+    assert not any("colours were measured" in t for t in texts())  # never measured
+
+    job.color_matching_fingerprint = "measured-from-other-clips"
+
+    assert any("colours were measured" in t for t in texts())
+
+    job.color_matching_fingerprint = ClipColorMatchingService.fingerprint(job)
+
+    assert not any("colours were measured" in t for t in texts())

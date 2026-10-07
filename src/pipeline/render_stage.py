@@ -24,6 +24,7 @@ from src.services.audio_inclusion_filter_service import (
 )
 from src.services.audio_mux_render_service import AudioMuxRenderService
 from src.services.audio_realignment_service import realign_audio_to_scene_timings
+from src.services.clip_color_matching_service import ClipColorMatchingService
 from src.services.ffmpeg_execution_service import ProgressCallback
 from src.services.media_technical_validation_service import (
     MediaTechnicalValidationService,
@@ -240,6 +241,19 @@ class RenderPipelineStage(BasePipelineStage):
         if not job.color_matching_enabled:
             return timeline
 
+        if ClipColorMatchingService.is_stale(job):
+            # A clip was regenerated since the colours were measured: the old
+            # corrections were worked out against the old clips, so measure again
+            # rather than render with them.
+            try:
+                ClipColorMatchingService().match(job)
+            except Exception as error:  # noqa: BLE001 - a render must not fail on this
+                logger.warning(
+                    "Re-measuring clip colours before the render failed: %s",
+                    type(error).__name__,
+                )
+                ClipColorMatchingService.clear(job)
+
         corrections = {
             (clip.scene_number, clip.clip_sequence_index): clip.color_correction
             for clip in job.video_clips
@@ -257,6 +271,41 @@ class RenderPipelineStage(BasePipelineStage):
             )
 
         return updated
+
+    def _with_clip_dimensions(self, timeline: VideoTimeline) -> VideoTimeline:
+        """The timeline to render, with each clip's real width and height read from its
+        file, so a clip that is not the frame's shape is fitted instead of stretched.
+        A clip that cannot be read keeps unknown dimensions (plain scaling)."""
+
+        dimensions: dict[str, tuple[int, int] | None] = {}
+        updated = timeline.model_copy(deep=True)
+
+        for item in updated.items:
+            path = item.clip.local_file
+
+            if not path:
+                continue
+
+            if path not in dimensions:
+                dimensions[path] = self._probe_dimensions(path)
+
+            size = dimensions[path]
+
+            if size is not None:
+                item.clip.source_width, item.clip.source_height = size
+
+        return updated
+
+    def _probe_dimensions(self, path: str) -> tuple[int, int] | None:
+        try:
+            probed = self._media_validation_service.validate(Path(path))
+        except Exception:  # noqa: BLE001 - an unreadable clip is simply not fitted
+            return None
+
+        if probed.width and probed.height:
+            return probed.width, probed.height
+
+        return None
 
     def _execute_production_render(
         self,
@@ -276,6 +325,7 @@ class RenderPipelineStage(BasePipelineStage):
             raise RuntimeError("Production render requires " "VideoJob.video_timeline.")
 
         video_timeline = self._with_color_corrections(context.job, video_timeline)
+        video_timeline = self._with_clip_dimensions(video_timeline)
 
         unfiltered_audio_timeline = context.job.audio_timeline
 

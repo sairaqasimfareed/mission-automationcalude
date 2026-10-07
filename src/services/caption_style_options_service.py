@@ -63,6 +63,14 @@ class CaptionStyleOptionsService:
             for preset in presets
         ]
 
+    def effective_preset_id(
+        self, *, genre_id: str, override_preset_id: str | None
+    ) -> str:
+        """The caption style a render actually uses: the project's own override when it
+        has one, otherwise its genre's. The same choice the in-render burn makes."""
+
+        return override_preset_id or self._resolve_genre_default_preset_id(genre_id)
+
     def _resolve_genre_default_preset_id(self, genre_id: str) -> str:
         resolution = self._genre_registry.resolve(genre_id, allow_fallback=True)
 

@@ -13,6 +13,7 @@ Graphic scenes (infographics) are left alone - their colours are designed, not s
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -169,6 +170,8 @@ class ClipColorMatchingService:
                 )
             )
 
+        job.color_matching_fingerprint = self.fingerprint(job)
+
         return ColorMatchingReport(
             entries=entries, measured=len(stats), skipped_graphic=skipped_graphic
         )
@@ -178,9 +181,46 @@ class ClipColorMatchingService:
         for clip in job.video_clips:
             clip.color_correction = None
 
+        job.color_matching_fingerprint = None
+
+    @classmethod
+    def fingerprint(cls, job: VideoJob) -> str:
+        """Identifies the clip files the corrections are measured against: every
+        measurable clip's scene, file, size and modified time. Regenerating a clip
+        replaces its file, so the fingerprint changes and the old corrections - which
+        were worked out relative to the old set of clips - are known to be out of date.
+        """
+
+        eligible, _skipped = cls._eligible_clips(job)
+        parts: list[str] = []
+
+        for clip in sorted(
+            eligible, key=lambda c: (c.scene_number, c.clip_sequence_index)
+        ):
+            stat = Path(clip.local_file or "").stat()
+            parts.append(
+                f"{clip.scene_number}:{clip.clip_sequence_index}:{clip.local_file}:"
+                f"{stat.st_size}:{stat.st_mtime_ns}"
+            )
+
+        return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
+
+    @classmethod
+    def is_stale(cls, job: VideoJob) -> bool:
+        """True when colours were measured before and the clips have changed since.
+        A project that was never measured is not stale - there is nothing to be out of
+        date."""
+
+        if job.color_matching_fingerprint is None:
+            return False
+
+        return job.color_matching_fingerprint != cls.fingerprint(job)
+
     @staticmethod
     def apply_to(job: VideoJob, matched: VideoJob) -> None:
         """Bring the corrections measured on a copy back onto the real job."""
+
+        job.color_matching_fingerprint = matched.color_matching_fingerprint
 
         corrections = {
             (clip.scene_number, clip.clip_sequence_index): clip.color_correction

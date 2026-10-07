@@ -187,7 +187,17 @@ def test_the_look_sits_before_the_duration_so_the_duration_line_still_works() ->
     assert prompt is not None
     text = prompt.prompt_text
     assert text.index("Visual style for the whole video") < text.index("Duration:")
-    assert text.rstrip().endswith("Duration: 8 seconds.")
+    assert "Duration: 8 seconds." in text
+
+    # the real sizing step rewrites that line to the clip's real length, even with the
+    # "do not show text" sentence now following it
+    from src.models.video_provider import VideoProvider
+    from src.services.video_provider_rules import rules_for
+
+    rewritten = rules_for(VideoProvider.GOOGLE_FLOW).finalize_prompt(text, 6)
+
+    assert "Duration: 6 seconds" in rewritten
+    assert "Duration: 8 seconds" not in rewritten
 
 
 def test_without_a_look_the_prompt_is_exactly_what_it_was() -> None:

@@ -807,6 +807,39 @@ section records what changed and why so a later session does not undo it.
     extra picture time sits after it. No extra credits (Muse generates 10 s and trims, Flow
     clips are already 4/6/8 s). Tests: `tests/test_scene_hold.py`; the existing sizing tests
     pin the hold to 0. Not built: the optional 0.2-0.3 s voice lead-in after the cut.
+  - **Small known gaps pass (2026-10-07).** Seven fixes, each with tests:
+    1. *Variant subtitle timing.* `ExportVariant.title_card_seconds` records the opening
+       title card's length when the variant is made (None for older ones, which fall back to
+       the old calculation); the burn uses it, so a variant made before a card was added is no
+       longer shifted as if it had one (`SubtitleBurnTarget.known_offset_seconds`).
+    2. *Burned subtitles use the project's caption style* (its override, else its genre's,
+       via `CaptionStyleOptionsService.effective_preset_id`); an unregistered style falls back
+       to the default.
+    3. *Stale colour corrections.* `VideoJob.color_matching_fingerprint` (scene, file, size
+       and modified time of every measurable clip); `ClipColorMatchingService.is_stale`. The
+       Clips tab warns, and `RenderPipelineStage._with_color_corrections` measures again
+       before rendering when the clips changed (a failure there never fails the render).
+    4. *Wrong-shape clips.* The video shape can only be set at creation, so instead of a
+       "shape changed" warning the Clip check flags a clip whose orientation is not the
+       project's (`ClipVerificationIssueCode.WRONG_SHAPE`, a warning).
+    5. *Negative constraints.* A live-action scene's prompt (whole and every sub-clip) ends
+       with "Do not show any text, captions, logos or watermarks, and nothing unrelated to
+       this scene." (`_avoid_rule`); graphic scenes keep their exact-text rule instead.
+    6. *Subtitles in a vertical frame.* A line of up to 8 words ran edge to edge in a 1080
+       wide picture (measured x=22..1056). `subtitle_line_wrap.wrap_for_frame` breaks it into
+       balanced rows from the real frame width (probed from the video); a landscape picture
+       is unchanged. Real pixels checked: the same line now spans x=274..804.
+    7. *Clips are fitted, not stretched.* Every clip used to be `scale=W:H` - a 16:9 clip in a
+       9:16 video came out squashed. `clip_fit_policy`: same shape = plain scaling (as
+       before), a slightly different shape (within 1.45x) fills the frame and is cropped, a
+       very different one is fitted whole over a blurred copy of itself (the look the vertical
+       export variant already uses). The render reads each clip's real size just before
+       rendering (`RenderPipelineStage._with_clip_dimensions`, `VideoClip.source_width/
+       height`); an unreadable clip keeps the plain scaling.
+    Not done in this pass (the portrait thumbnail shape was dropped by the operator on
+    2026-10-08): wardrobe in the prompts, places that are really objects, telling two people in one frame apart, the
+    infographic text check, the Render tab's audio/video buttons and chunk length, a single
+    mood inside continuous music, the voice lead-in, Flow's live 9:16 click.
   - **"Choose another frame" picker for references (2026-10-07).**
     `RecurringIdentityService.candidates()` returns the best frame of EACH generated clip
     an identity appears in (same selection code as the automatic pick - people by face,
