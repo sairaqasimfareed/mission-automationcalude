@@ -567,3 +567,225 @@ def test_removing_from_the_list_takes_the_identity_out(qapp) -> None:  # type: i
 
     assert errors == []
     assert [i.name for i in job.visual_continuity_bible.identities] == ["Lake Nyos"]  # type: ignore[union-attr]
+
+
+# ---------------------------------------------------- choose another frame (picker)
+
+
+def _bible_job_with_clips(tmp_path: Path) -> tuple[VideoJob, RecurringIdentityService]:
+    job = _job()
+    service = _service(tmp_path)
+    service.add(
+        job,
+        name="Grandmother",
+        kind=CanonicalEntityType.PERSON,
+        description="An elderly woman.",
+        scene_text="1-4",
+    )
+
+    for number in (1, 2, 3, 4, 5):
+        _add_clip(job, tmp_path, number)
+
+    return job, service
+
+
+def test_the_picker_offers_the_best_frame_of_each_clip_best_first(
+    tmp_path: Path,
+) -> None:
+    from src.services.recurring_identity_service import ReferenceCandidate
+
+    job, service = _bible_job_with_clips(tmp_path)
+
+    candidates = service.candidates(
+        job, "Grandmother", cache_directory=tmp_path / "cache", limit=3
+    )
+
+    assert [c.scene_number for c in candidates] == [4, 3, 2]  # scene 5 is not hers
+    assert all(isinstance(c, ReferenceCandidate) for c in candidates)
+    assert all(Path(c.image_path).is_file() for c in candidates)
+    assert candidates[0].value > candidates[1].value > candidates[2].value
+
+
+def test_the_picker_also_works_for_an_identity_the_bible_generated(
+    tmp_path: Path,
+) -> None:
+    job, service = _bible_job_with_clips(tmp_path)
+    bible = job.visual_continuity_bible
+    assert bible is not None
+    bible.entry_for_scene(2).on_screen_entity_names.append("Lake Nyos")  # type: ignore[union-attr]
+
+    candidates = service.candidates(
+        job, "Lake Nyos", cache_directory=tmp_path / "cache"
+    )
+
+    assert [c.scene_number for c in candidates] == [2]
+
+
+def test_choosing_a_frame_makes_it_the_reference(tmp_path: Path) -> None:
+    job, service = _bible_job_with_clips(tmp_path)
+    candidates = service.candidates(
+        job, "Grandmother", cache_directory=tmp_path / "cache"
+    )
+    chosen = candidates[-1]  # not the best one - the operator's own choice
+
+    result = service.use_candidate(job, "Grandmother", chosen)
+
+    identity = next(
+        i for i in job.visual_continuity_bible.identities if i.name == "Grandmother"  # type: ignore[union-attr]
+    )
+    assert result.attached is True
+    assert len(identity.reference_asset_ids) == 1
+    stored = job.extracted_frame_asset_index.get(identity.reference_asset_ids[0])
+    assert stored is not None
+    assert stored.metadata["chosen_by_operator"] is True
+    assert stored.metadata["scene_number"] == chosen.scene_number
+
+
+def test_choosing_replaces_an_existing_reference(tmp_path: Path) -> None:
+    job, service = _bible_job_with_clips(tmp_path)
+    identity = next(
+        i for i in job.visual_continuity_bible.identities if i.name == "Grandmother"  # type: ignore[union-attr]
+    )
+    identity.reference_asset_ids = ["old-asset"]
+    candidate = service.candidates(
+        job, "Grandmother", cache_directory=tmp_path / "cache"
+    )[0]
+
+    service.use_candidate(job, "Grandmother", candidate)
+
+    assert identity.reference_asset_ids != ["old-asset"]
+    assert len(identity.reference_asset_ids) == 1
+
+
+def test_the_picker_says_why_when_there_is_nothing_to_offer(tmp_path: Path) -> None:
+    job = _job()
+    service = _service(tmp_path)
+    service.add(
+        job,
+        name="Grandmother",
+        kind=CanonicalEntityType.PERSON,
+        description="An elderly woman.",
+        scene_text="1-2",
+    )
+
+    with pytest.raises(ValueError, match="no generated clip|nothing to choose"):
+        service.candidates(job, "Grandmother", cache_directory=tmp_path / "cache")
+
+    with pytest.raises(ValueError, match="not available"):
+        _service(tmp_path, available=False).candidates(
+            job, "Grandmother", cache_directory=tmp_path / "cache"
+        )
+
+
+def test_a_frame_that_disappeared_cannot_be_chosen(tmp_path: Path) -> None:
+    job, service = _bible_job_with_clips(tmp_path)
+    candidate = service.candidates(
+        job, "Grandmother", cache_directory=tmp_path / "cache"
+    )[0]
+    Path(candidate.image_path).unlink()
+
+    with pytest.raises(ValueError, match="no longer available"):
+        service.use_candidate(job, "Grandmother", candidate)
+
+
+def test_the_dialog_offers_one_button_per_frame_and_reports_the_choice(  # type: ignore[no-untyped-def]
+    qapp, tmp_path: Path
+) -> None:
+    from PySide6.QtGui import QImage
+
+    from src.desktop.views.reference_candidates_dialog import (
+        ReferenceCandidatesDialog,
+    )
+    from src.services.recurring_identity_service import ReferenceCandidate
+
+    candidates = []
+
+    for number in (1, 2):
+        path = tmp_path / f"frame_{number}.png"
+        image = QImage(40, 30, QImage.Format.Format_RGB32)
+        image.fill(0xFF00FF)
+        image.save(str(path))
+        candidates.append(
+            ReferenceCandidate(
+                scene_number=number,
+                clip_sequence_index=0,
+                image_path=str(path),
+                value=0.9 - number / 10,
+                time_seconds=1.5,
+            )
+        )
+
+    dialog = ReferenceCandidatesDialog(
+        None, identity_name="Grandmother", candidates=candidates
+    )
+    picked: list[int] = []
+    dialog.chosen.connect(picked.append)
+
+    assert len(dialog.use_buttons) == 2
+
+    dialog.use_buttons[1].click()
+
+    assert picked == [1]
+
+
+def test_choosing_a_frame_in_content_studio_opens_the_picker_and_applies_the_choice(  # type: ignore[no-untyped-def]
+    qapp, tmp_path: Path, monkeypatch
+) -> None:
+    from src.desktop.views import reference_candidates_dialog as dialog_module
+
+    opened: list[object] = []
+    monkeypatch.setattr(
+        dialog_module.ReferenceCandidatesDialog,
+        "open",
+        lambda self: opened.append(self),
+    )
+
+    view, job, errors = _studio_view_with_bible()
+    selector_service = _service(tmp_path)
+    view._recurring_identity_service = selector_service  # noqa: SLF001
+
+    for number in (1, 2, 3):
+        _add_clip(job, tmp_path, number)
+
+    selector_service.add(
+        job,
+        name="Grandmother",
+        kind=CanonicalEntityType.PERSON,
+        description="An elderly woman.",
+        scene_text="1-3",
+    )
+
+    view._handle_choose_frame("Grandmother")  # noqa: SLF001
+
+    assert errors == []
+    assert len(opened) == 1
+    dialog = opened[0]
+    assert len(dialog.use_buttons) == 3  # type: ignore[attr-defined]
+
+    dialog.use_buttons[2].click()  # type: ignore[attr-defined]
+
+    identity = next(
+        i for i in job.visual_continuity_bible.identities if i.name == "Grandmother"  # type: ignore[union-attr]
+    )
+    assert len(identity.reference_asset_ids) == 1
+
+
+def test_the_picker_buttons_are_on_every_identity_row(qapp) -> None:  # type: ignore[no-untyped-def]
+    from PySide6.QtWidgets import QPushButton, QVBoxLayout, QWidget
+
+    view, job, _errors = _studio_view_with_bible()
+    view._recurring_identity_service.add(  # noqa: SLF001
+        job,
+        name="Grandmother",
+        kind=CanonicalEntityType.PERSON,
+        description="An elderly woman.",
+        scene_text="1-2",
+    )
+    holder = QWidget()
+    layout = QVBoxLayout(holder)
+
+    view._render_visual_continuity_section(layout, job)  # noqa: SLF001
+
+    texts = [b.text() for b in holder.findChildren(QPushButton)]
+    assert "Choose a reference frame" in texts  # the generated "Lake Nyos"
+    assert "Choose another frame" in texts  # the operator's "Grandmother"

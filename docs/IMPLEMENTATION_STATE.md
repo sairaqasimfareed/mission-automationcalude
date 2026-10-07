@@ -800,6 +800,19 @@ section records what changed and why so a later session does not undo it.
     extra picture time sits after it. No extra credits (Muse generates 10 s and trims, Flow
     clips are already 4/6/8 s). Tests: `tests/test_scene_hold.py`; the existing sizing tests
     pin the hold to 0. Not built: the optional 0.2-0.3 s voice lead-in after the cut.
+  - **"Choose another frame" picker for references (2026-10-07).**
+    `RecurringIdentityService.candidates()` returns the best frame of EACH generated clip
+    an identity appears in (same selection code as the automatic pick - people by face,
+    places by frame), best first, up to 6, written to the derived cache
+    `data/reference_candidates/<job>/`; `use_candidate()` stores the chosen frame as the
+    identity's reference (`chosen_by_operator` in the asset metadata) and replaces any
+    existing one. Works for every identity of the bible, generated ones ("Adults",
+    "Kitchen") and the operator's own. Content Studio: "Choose a reference frame" on each
+    generated identity, "Choose another frame" on the operator's; finding frames runs off
+    the GUI thread (`_run_stage` gained an optional `on_done`, run on the GUI thread after
+    a successful stage) and opens `ReferenceCandidatesDialog` (thumbnails with scene and
+    time, "Use this frame"). One frame per clip, not several per clip. Tests in
+    `tests/test_recurring_identity_service.py`.
   - Fixed: a scroll-restore timer firing after its tab was deleted raised "Internal C++
     object already deleted" (seen in the full suite); the restore now ignores it.
   - The fallback to the composite render now catches only the new

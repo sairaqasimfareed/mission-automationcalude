@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from uuid import UUID
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
@@ -29,6 +30,7 @@ from src.desktop.approval_mode_labels import (
 )
 from src.desktop.job_store import JobStore
 from src.desktop.recovery_dialog import show_recoverable_error
+from src.desktop.views.reference_candidates_dialog import ReferenceCandidatesDialog
 from src.desktop.widgets import (
     badge,
     button,
@@ -86,6 +88,7 @@ from src.services.project_look_suggestion_service import (
 )
 from src.services.recurring_identity_service import (
     RecurringIdentityService,
+    ReferenceCandidate,
     format_scene_numbers,
 )
 from src.services.reference_frame_selection_service import (
@@ -353,6 +356,7 @@ class ContentStudioView(QWidget):
         self._editing_identity_name: str | None = None
         # The suggestion the form was filled from, so saving marks it accepted.
         self._form_suggestion_id: UUID | None = None
+        self._candidate_dialog: ReferenceCandidatesDialog | None = None
         self._look_suggestion_service = ProjectLookSuggestionService()
 
         # True in the real app: a stage button runs its Claude call on a worker
@@ -360,6 +364,7 @@ class ContentStudioView(QWidget):
         # many existing tests drive these handlers synchronously.
         self._run_stages_in_background = run_stages_in_background
         self._stage_threads: dict[UUID, tuple[QThread, _StageWorker]] = {}
+        self._stage_done_callbacks: dict[UUID, Callable[[], None]] = {}
         self._stage_labels: dict[UUID, str] = {}
 
         # When supplied, the cinematic prompt section shows each scene as it
@@ -1742,9 +1747,13 @@ class ContentStudioView(QWidget):
         label: str,
         failure: str,
         retry: Callable[[], None] | None = None,
+        on_done: Callable[[], None] | None = None,
     ) -> None:
         """
-        Run one stage. In the real app that happens on a worker thread (the
+        Run one stage. `on_done` runs on the GUI thread after the stage succeeded and
+        its result was saved (not after a failure) - used to show something the runner
+        worked out, such as the candidate reference frames. In the real app the stage
+        happens on a worker thread (the
         window stays usable and shows what is running); with
         run_stages_in_background=False it runs inline, exactly as before. One
         stage at a time per project, so a second click while one is running is
@@ -1764,7 +1773,13 @@ class ContentStudioView(QWidget):
 
             self._on_change()
 
+            if on_done is not None:
+                on_done()
+
             return
+
+        if on_done is not None:
+            self._stage_done_callbacks[job.id] = on_done
 
         thread = QThread()
         worker = _StageWorker(
@@ -1801,9 +1816,13 @@ class ContentStudioView(QWidget):
         job_id = worker.job_id
         self._stage_labels.pop(job_id, None)
         self._job_store.add(worker.job)
+        on_done = self._stage_done_callbacks.pop(job_id, None)
 
         if job_id == self._job_id:
             self._on_change()
+
+            if on_done is not None:
+                on_done()
 
     def _handle_stage_failed(self, message: str) -> None:
         worker = self.sender()
@@ -1813,6 +1832,7 @@ class ContentStudioView(QWidget):
 
         job_id = worker.job_id
         self._stage_labels.pop(job_id, None)
+        self._stage_done_callbacks.pop(job_id, None)
         # Whatever the stage changed before failing is kept, as when it ran inline.
         self._job_store.add(worker.job)
 
@@ -2321,6 +2341,14 @@ class ContentStudioView(QWidget):
                     f"{identity.canonical_description}"
                 )
             )
+            frame_row = QHBoxLayout()
+            frame_button = button("Choose a reference frame", variant="ghost")
+            frame_button.clicked.connect(
+                lambda _checked=False, n=identity.name: self._handle_choose_frame(n)
+            )
+            frame_row.addWidget(frame_button)
+            frame_row.addStretch()
+            layout.addLayout(frame_row)
 
         regenerate_button = button(
             "Regenerate visual continuity bible", variant="ghost"
@@ -2382,12 +2410,17 @@ class ContentStudioView(QWidget):
             repick_button.clicked.connect(
                 lambda _checked=False, n=identity.name: self._handle_repick_reference(n)
             )
+            choose_button = button("Choose another frame", variant="ghost")
+            choose_button.clicked.connect(
+                lambda _checked=False, n=identity.name: self._handle_choose_frame(n)
+            )
             remove_button = button("Remove", variant="ghost")
             remove_button.clicked.connect(
                 lambda _checked=False, n=identity.name: self._handle_remove_identity(n)
             )
             row.addWidget(edit_button)
             row.addWidget(repick_button)
+            row.addWidget(choose_button)
             row.addWidget(remove_button)
             row.addStretch()
             layout.addLayout(row)
@@ -2857,6 +2890,68 @@ class ContentStudioView(QWidget):
             runner,
             label="reference picture",
             failure=f"Could not pick a reference for {name}",
+        )
+
+    def _handle_choose_frame(self, name: str) -> None:
+        """Offer a few frames from the identity's generated clips and let the operator
+        pick the one that becomes its reference. Finding them decodes video, so it runs
+        off the GUI thread; the picker opens when it is done."""
+
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        service = self._recurring_identity_service
+        cache_directory = Path("data/reference_candidates") / str(job.id)
+        found: list[ReferenceCandidate] = []
+
+        def runner(target: VideoJob) -> VideoJob:
+            found[:] = service.candidates(target, name, cache_directory=cache_directory)
+
+            return target
+
+        self._run_stage(
+            job,
+            runner,
+            label=f"finding frames of {name}",
+            failure=f"Could not find frames for {name}",
+            on_done=lambda: self._show_reference_candidates(name, list(found)),
+        )
+
+    def _show_reference_candidates(
+        self, name: str, candidates: list[ReferenceCandidate]
+    ) -> None:
+        if not candidates:
+            return
+
+        dialog = ReferenceCandidatesDialog(
+            self, identity_name=name, candidates=candidates
+        )
+        dialog.chosen.connect(
+            lambda index: self._handle_use_candidate(name, candidates[index])
+        )
+        self._candidate_dialog = dialog
+        dialog.open()
+
+    def _handle_use_candidate(self, name: str, candidate: ReferenceCandidate) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        service = self._recurring_identity_service
+
+        def runner(target: VideoJob) -> VideoJob:
+            service.use_candidate(target, name, candidate)
+
+            return target
+
+        self._run_stage(
+            job,
+            runner,
+            label=f"setting the reference of {name}",
+            failure=f"Could not set the reference of {name}",
         )
 
     def _recompile_prompts_if_present(self, job: VideoJob) -> None:

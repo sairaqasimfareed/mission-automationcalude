@@ -706,7 +706,8 @@ re-render, leftover stage files, stored duration) and the broad
   alone - the operator likes on-screen text there.
 - **To build - from the 2026-10-07 Remedy render review** (operator asked for these to be
   tracked here; none is built):
-  1. "Choose another frame" picker for a character's or place's reference: show several
+  1. BUILT 2026-10-07 (see IMPLEMENTATION_STATE; one frame per clip, not several per clip) -
+     "Choose another frame" picker for a character's or place's reference: show several
      candidate frames and let the operator pick one. Today "Pick reference again" only
      re-runs the automatic choice.
   2. One continuous music track per video instead of several separately generated pieces

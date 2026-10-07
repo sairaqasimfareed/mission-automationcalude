@@ -54,6 +54,18 @@ class ReferenceFillResult:
     detail: str
 
 
+@dataclass(frozen=True)
+class ReferenceCandidate:
+    """One frame from a generated clip the operator can choose as an identity's
+    reference. `value` is the selection code's own score for it (higher = clearer)."""
+
+    scene_number: int
+    clip_sequence_index: int
+    image_path: str
+    value: float
+    time_seconds: float
+
+
 def parse_scene_numbers(text: str, valid_numbers: set[int]) -> list[int]:
     """ "1-11, 14" -> [1, 2, ..., 11, 14]. Raises ValueError with a plain message
     for anything that is not a list of scene numbers/ranges that exist."""
@@ -112,6 +124,14 @@ def format_scene_numbers(numbers: list[int]) -> str:
         index = end + 1
 
     return ", ".join(parts)
+
+
+def _file_stem(name: str) -> str:
+    """A safe file-name stem for an identity's name."""
+
+    cleaned = re.sub(r"[^A-Za-z0-9]+", "_", name).strip("_")
+
+    return (cleaned or "identity")[:40]
 
 
 def carry_over_manual_identities(
@@ -414,7 +434,144 @@ class RecurringIdentityService:
 
         return ReferenceFillResult(True, f"Reference taken from scene {from_scene}.")
 
+    def candidates(
+        self,
+        job: VideoJob,
+        name: str,
+        *,
+        cache_directory: Path,
+        limit: int = 6,
+    ) -> list[ReferenceCandidate]:
+        """The best frame of each generated clip the identity appears in, best first, up
+        to `limit` - for the "choose another frame" picker. Works for any identity of
+        the bible (a generated one such as "Adults" or "Kitchen" too, not only the ones
+        the operator added). The images are written under `cache_directory`, a derived
+        cache that can be deleted at any time."""
+
+        identity = self._identity(job, name)
+        kind = reference_kind_for(identity)
+
+        if self._selection is None or not self._selection.is_available():
+            raise ValueError(
+                "Face and frame detection is not available on this machine, so frames "
+                "cannot be offered."
+            )
+
+        clips_by_scene = self._generated_clips_by_scene(job)
+        scenes = [n for n in self.scenes_of(job, name) if n in clips_by_scene]
+
+        if not scenes:
+            raise ValueError(
+                f"None of {name}'s scenes has a generated clip yet - there is nothing "
+                "to choose from."
+            )
+
+        cache_directory.mkdir(parents=True, exist_ok=True)
+        found: list[tuple[float, ReferenceCandidate]] = []
+
+        for scene_number in scenes:
+            for clip in clips_by_scene[scene_number]:
+                output = cache_directory / (
+                    f"{_file_stem(name)}_{scene_number}_{clip.clip_sequence_index}.jpg"
+                )
+
+                try:
+                    selection = self._selection.select(
+                        video_path=clip.local_file or "",
+                        output_path=str(output),
+                        kind=kind,
+                    )
+                except Exception as error:  # noqa: BLE001 - one bad clip is not fatal
+                    logger.warning(
+                        "Offering a frame of %s from scene %s failed: %s",
+                        name,
+                        scene_number,
+                        type(error).__name__,
+                    )
+                    continue
+
+                if selection.status != ReferenceSelectionStatus.SELECTED:
+                    continue
+
+                found.append(
+                    (
+                        selection.raw_value,
+                        ReferenceCandidate(
+                            scene_number=scene_number,
+                            clip_sequence_index=clip.clip_sequence_index,
+                            image_path=str(selection.output_path or output),
+                            value=selection.raw_value,
+                            time_seconds=selection.time_seconds,
+                        ),
+                    )
+                )
+
+        found.sort(key=lambda item: item[0], reverse=True)
+
+        if not found:
+            raise ValueError(
+                f"No frame in {name}'s generated clips is clear enough to offer."
+            )
+
+        return [candidate for _value, candidate in found[:limit]]
+
+    def use_candidate(
+        self, job: VideoJob, name: str, candidate: ReferenceCandidate
+    ) -> ReferenceFillResult:
+        """Make the chosen frame the identity's reference picture."""
+
+        identity = self._identity(job, name)
+        kind = reference_kind_for(identity)
+
+        if not Path(candidate.image_path).is_file():
+            raise ValueError(
+                "That frame is no longer available - ask for frames again."
+            )
+
+        storage = AssetStorageService(
+            storage_root=self._storage_root,
+            asset_index=job.extracted_frame_asset_index,
+        )
+        stored = storage.store_extracted_frame(
+            source_path=candidate.image_path,
+            project_id=str(job.id),
+            scene_number=candidate.scene_number,
+            title=f"Reference - {name} (scene {candidate.scene_number}, chosen)",
+            metadata={
+                "selection_method": "chosen_by_operator",
+                "reference_kind": kind.value,
+                "reference_score": round(candidate.value, 3),
+                "scene_number": candidate.scene_number,
+                "named_by_operator": True,
+                "chosen_by_operator": True,
+            },
+        )
+
+        if not stored.success or stored.asset is None:
+            raise ValueError(f"The picture could not be saved: {stored.message}")
+
+        identity.reference_asset_ids = [str(stored.asset.id)]
+
+        return ReferenceFillResult(
+            True, f"Reference set to the frame from scene {candidate.scene_number}."
+        )
+
     # ----------------------------------------------------------------- internal
+
+    @staticmethod
+    def _identity(job: VideoJob, name: str) -> CanonicalEntityIdentity:
+        """Any identity of the bible, generated or added by the operator."""
+
+        bible = job.visual_continuity_bible
+
+        if bible is None:
+            raise ValueError("There is no visual continuity bible.")
+
+        for identity in bible.identities:
+            if identity.name == name:
+                return identity
+
+        raise ValueError(f"There is no character or place named {name}.")
 
     @staticmethod
     def _manual_identity(job: VideoJob, name: str) -> CanonicalEntityIdentity:
