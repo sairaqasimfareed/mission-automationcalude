@@ -778,7 +778,14 @@ section records what changed and why so a later session does not undo it.
     variant (`subtitle_burn_targets`; a video already carrying subtitles is not offered) -
     and a "Burn subtitles onto this video" button that runs on a worker thread and reports
     where the copy is or why it failed. Verified on real pixels: a cue stored at 0.5-1.5 s
-    shows at 2.5-3.5 s in the video with a 2 s card and not before. Tests:
+    shows at 2.5-3.5 s in the video with a 2 s card and not before, and the burned copy
+    is the same length as the video it came from (checked with ffprobe). The lines are
+    always timed against the MAIN render's narration, never from the start of the card
+    video: a video with a title card gets them pushed past the card, a CTA end-card at the
+    back just gets no lines. The same button also sits inside the "Opening title card"
+    section (for the render with the card) and the "Export variants" section (for a
+    variant), not only in the bottom Subtitles card (`_build_subtitle_burn_controls`, one
+    picker per place; `SubtitleBurnTarget.kind` = main / title_card / variant). Tests:
     `tests/test_subtitle_burn_action.py`, `tests/test_render_stage.py`. Known limits: the
     burn uses `subtitle.default` (the same style the in-render burn uses - the per-project
     caption style does not reach the post-render burn); an export variant made BEFORE a

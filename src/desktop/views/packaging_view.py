@@ -470,8 +470,12 @@ class PackagingView(QWidget):
         self._burning_subtitle_job_ids: set[UUID] = set()
         # What the last burn did, shown under the button: (role, text).
         self._subtitle_notices: dict[UUID, tuple[str, str]] = {}
-        self._subtitle_target_combo: QComboBox | None = None
-        self._subtitle_targets: list[SubtitleBurnTarget] = []
+        # Which section's button started the last burn, so its result shows there.
+        self._subtitle_notice_section: dict[UUID, str] = {}
+        # One picker per place the burn button appears: (picker, the videos it offers).
+        self._subtitle_sections: dict[
+            str, tuple[QComboBox, list[SubtitleBurnTarget]]
+        ] = {}
 
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -515,6 +519,8 @@ class PackagingView(QWidget):
         self._rebuild_all(job)
 
     def _rebuild_all(self, job: VideoJob) -> None:
+        self._subtitle_sections = {}
+
         while self._layout.count():
             item = self._layout.takeAt(0)
 
@@ -813,6 +819,20 @@ class PackagingView(QWidget):
                         self._handle_generate_title_card
                     )
                     layout.addWidget(generate_title_card_button, alignment=_LEFT)
+
+        if job.title_card_enabled:
+            layout.addWidget(subheading("Subtitles"))
+            self._build_subtitle_burn_controls(
+                layout,
+                job,
+                section="title_card",
+                kinds={"title_card"},
+                button_text="Burn subtitles onto the render with the title card",
+                empty_hint=(
+                    "Add the title card to the render first - then subtitles can be "
+                    "burned onto it here."
+                ),
+            )
 
         self._layout.addWidget(frame)
 
@@ -1395,11 +1415,11 @@ class PackagingView(QWidget):
         Burn the project's subtitles onto a finished video at any stage - the main render,
         the render with its title card, or an export variant. A copy is made; the original
         stays as it is. (Subtitles used to be burned in only inside the main render.)
+        The title card and export variants sections carry the same button for their own
+        video, so it is where the operator is already working.
         """
 
         frame, layout = card("Subtitles", icon_name="clapper")
-
-        assert self._job_id is not None
 
         layout.addWidget(
             small_muted(
@@ -1407,19 +1427,41 @@ class PackagingView(QWidget):
                 "..._subtitled is made next to it; the original is not changed."
             )
         )
+        self._build_subtitle_burn_controls(
+            layout,
+            job,
+            section="all",
+            kinds=None,
+            button_text="Burn subtitles onto this video",
+            empty_hint="There is no finished video file to use.",
+        )
+        self._layout.addWidget(frame)
+
+    def _build_subtitle_burn_controls(
+        self,
+        layout: QVBoxLayout,
+        job: VideoJob,
+        *,
+        section: str,
+        kinds: set[str] | None,
+        button_text: str,
+        empty_hint: str,
+    ) -> None:
+        """The picker and button that burn subtitles onto a copy of a finished video.
+        `kinds` limits which videos are offered (None = all three)."""
+
+        assert self._job_id is not None
 
         reason = SubtitleBurnActionService.unavailable_reason(job)
 
         if reason is not None:
             layout.addWidget(small_muted(reason))
-            self._layout.addWidget(frame)
 
             return
 
         if job.id in self._burning_subtitle_job_ids:
             layout.addWidget(subheading("Burning subtitles..."))
             layout.addWidget(small_muted("This takes about as long as a short render."))
-            self._layout.addWidget(frame)
 
             return
 
@@ -1432,59 +1474,65 @@ class PackagingView(QWidget):
                     "everything made from it."
                 )
             )
-            self._layout.addWidget(frame)
 
             return
 
-        self._subtitle_targets = subtitle_burn_targets(
-            job,
-            self._effective_render(job),
-            self._job_store.get_export_variants(self._job_id),
-        )
+        targets = [
+            target
+            for target in subtitle_burn_targets(
+                job,
+                self._effective_render(job),
+                self._job_store.get_export_variants(self._job_id),
+            )
+            if kinds is None or target.kind in kinds
+        ]
 
-        if not self._subtitle_targets:
-            layout.addWidget(small_muted("There is no finished video file to use."))
-            self._layout.addWidget(frame)
+        if not targets:
+            layout.addWidget(small_muted(empty_hint))
 
             return
 
         combo = QComboBox()
 
-        for target in self._subtitle_targets:
+        for target in targets:
             combo.addItem(target.label, userData=target.file)
 
-        self._subtitle_target_combo = combo
-        layout.addWidget(combo)
+        self._subtitle_sections[section] = (combo, targets)
 
-        burn_button = button("Burn subtitles onto this video", variant="primary")
-        burn_button.clicked.connect(self._handle_burn_subtitles)
+        if len(targets) > 1 or kinds is None:
+            layout.addWidget(combo)
+
+        burn_button = button(button_text, variant="primary")
+        burn_button.clicked.connect(
+            lambda _checked=False, name=section: self._handle_burn_subtitles(name)
+        )
         layout.addWidget(burn_button, alignment=_LEFT)
 
         notice = self._subtitle_notices.get(job.id)
 
-        if notice is not None:
+        if notice is not None and self._subtitle_notice_section.get(job.id) == section:
             role, text = notice
             layout.addWidget(status_label(text, role=role))
 
-        self._layout.addWidget(frame)
-
-    def _handle_burn_subtitles(self) -> None:
+    def _handle_burn_subtitles(self, section: str = "all") -> None:
         job = self._current_job()
+        picked = self._subtitle_sections.get(section)
 
         if (
             job is None
             or self._job_id is None
             or job.id in self._burning_subtitle_job_ids
-            or self._subtitle_target_combo is None
+            or picked is None
         ):
             return
 
-        index = self._subtitle_target_combo.currentIndex()
+        combo, targets = picked
+        index = combo.currentIndex()
 
-        if not 0 <= index < len(self._subtitle_targets):
+        if not 0 <= index < len(targets):
             return
 
-        target = self._subtitle_targets[index]
+        target = targets[index]
         effective = self._effective_render(job)
         service = self._subtitle_burn_action_service
 
@@ -1518,6 +1566,7 @@ class PackagingView(QWidget):
         self._subtitle_threads[job.id] = (thread, worker)
         self._burning_subtitle_job_ids.add(job.id)
         self._subtitle_notices.pop(job.id, None)
+        self._subtitle_notice_section[job.id] = section
         self._rebuild_all(job)
 
         thread.start()
@@ -1687,6 +1736,18 @@ class PackagingView(QWidget):
             layout.addWidget(platform_combo)
             self._build_cta_upload_controls(layout, job)
             layout.addWidget(generate_button, alignment=_LEFT)
+
+        layout.addWidget(subheading("Subtitles"))
+        self._build_subtitle_burn_controls(
+            layout,
+            job,
+            section="variants",
+            kinds={"variant"},
+            button_text="Burn subtitles onto this variant",
+            empty_hint=(
+                "Generate a variant first - then subtitles can be burned onto it here."
+            ),
+        )
 
         self._layout.addWidget(frame)
 

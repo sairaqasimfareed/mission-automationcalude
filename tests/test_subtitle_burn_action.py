@@ -352,6 +352,24 @@ def test_subtitles_really_appear_after_the_title_card_in_a_real_video(
     assert offset == pytest.approx(2.0, abs=0.15)
     assert result.success is True, result.error_message
 
+    def duration(path: str) -> float:
+        return float(
+            subprocess.run(
+                [
+                    "ffprobe", "-v", "error", "-show_entries", "format=duration",
+                    "-of", "default=nw=1:nk=1", path,
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+        )  # fmt: skip
+
+    # burning only adds the text: the copy runs exactly as long as the video it came from
+    assert duration(result.output_file or "") == pytest.approx(
+        duration(str(with_card)), abs=0.1
+    )
+
     out = Path(result.output_file or "")
 
     def bright_pixels(at: float) -> int:
@@ -510,6 +528,146 @@ def test_a_render_that_already_has_subtitles_says_so(qapp, tmp_path: Path) -> No
 
     assert any("already has subtitles burned in" in t for t in _card_texts(view))
     assert "Burn subtitles onto this video" not in _card_texts(view)
+
+
+# --------------------------- the button inside the title card and variants sections
+
+
+def _store_render(view, job: VideoJob, render: RenderResult) -> None:  # type: ignore[no-untyped-def]
+    """Put `render` in the view's job store as the project's finished render. Built
+    without the job's full cross-validation (that needs a whole timeline) - the card only
+    reads the render's file."""
+
+    from src.models.enums import JobStatus, WorkflowStage
+    from src.models.render_orchestration_result import RenderOrchestrationResult
+
+    view._job_store.set_render_result(  # noqa: SLF001
+        job.id,
+        RenderOrchestrationResult.model_construct(
+            success=True,
+            status=JobStatus.COMPLETED,
+            current_stage=WorkflowStage.READY_FOR_UPLOAD,
+            job=job,
+            render_result=render,
+        ),
+    )
+
+
+def _button_texts(view) -> list[str]:  # type: ignore[no-untyped-def]
+    from PySide6.QtWidgets import QPushButton
+
+    return [b.text() for b in view.findChildren(QPushButton)]
+
+
+def _click(view, text: str) -> None:  # type: ignore[no-untyped-def]
+    from PySide6.QtWidgets import QPushButton
+
+    next(b for b in view.findChildren(QPushButton) if b.text() == text).click()
+
+
+def test_the_title_card_section_burns_subtitles_onto_the_render_with_the_card(
+    qapp,  # type: ignore[no-untyped-def]
+    tmp_path: Path,
+) -> None:
+    actions = _FakeActions()
+    view = _packaging_view(tmp_path, actions)
+    job = _job(tmp_path)
+    job.title_card_enabled = True
+    with_card = tmp_path / "final_video_with_title_card.mp4"
+    with_card.write_bytes(b"card")
+    view._job_store.add(job)  # noqa: SLF001
+    _store_render(
+        view,
+        job,
+        RenderResult(
+            success=True,
+            output_file=str(with_card),
+            render_engine="ffmpeg",
+            status=RenderStatus.COMPLETED,
+        ),
+    )
+    view.set_job(job.id)
+    view.refresh(job)
+
+    assert "Burn subtitles onto the render with the title card" in _button_texts(view)
+
+    _click(view, "Burn subtitles onto the render with the title card")
+    _wait(view, qapp)
+
+    assert len(actions.calls) == 1
+    assert actions.calls[0]["source_file"] == str(with_card)
+    assert actions.calls[0]["output_file"].endswith(
+        "final_video_with_title_card_subtitled.mp4"
+    )
+    assert any("Subtitles burned into a copy" in t for t in _card_texts(view))
+
+
+def test_the_title_card_section_says_what_to_do_first_when_there_is_no_card_video(
+    qapp,  # type: ignore[no-untyped-def]
+    tmp_path: Path,
+) -> None:
+    view = _packaging_view(tmp_path, _FakeActions())
+    job = _job(tmp_path)
+    job.title_card_enabled = True
+    view._job_store.add(job)  # noqa: SLF001
+    view.set_job(job.id)
+    view.refresh(job)
+
+    assert "Burn subtitles onto the render with the title card" not in _button_texts(
+        view
+    )
+    assert any("Add the title card to the render first" in t for t in _card_texts(view))
+
+
+def test_the_export_variants_section_burns_subtitles_onto_a_variant(
+    qapp,  # type: ignore[no-untyped-def]
+    tmp_path: Path,
+) -> None:
+    actions = _FakeActions()
+    view = _packaging_view(tmp_path, actions)
+    job = _job(tmp_path)
+    variant_file = tmp_path / "variant_tiktok.mp4"
+    variant_file.write_bytes(b"variant")
+    view._job_store.add(job)  # noqa: SLF001
+    _store_render(view, job, job.render_result)  # type: ignore[arg-type]
+    view._job_store.set_export_variants(  # noqa: SLF001
+        job.id,
+        ExportVariantCollection(
+            variants=[
+                ExportVariant(
+                    orientation=AspectRatio.PORTRAIT,
+                    platform=Platform.TIKTOK,
+                    output_file=str(variant_file),
+                )
+            ]
+        ),
+    )
+    view.set_job(job.id)
+    view.refresh(job)
+
+    assert "Burn subtitles onto this variant" in _button_texts(view)
+
+    _click(view, "Burn subtitles onto this variant")
+    _wait(view, qapp)
+
+    assert len(actions.calls) == 1
+    assert actions.calls[0]["source_file"] == str(variant_file)
+    assert actions.calls[0]["output_file"].endswith("variant_tiktok_subtitled.mp4")
+
+
+def test_the_export_variants_section_asks_for_a_variant_first(
+    qapp,  # type: ignore[no-untyped-def]
+    tmp_path: Path,
+) -> None:
+    view = _packaging_view(tmp_path, _FakeActions())
+    job = _job(tmp_path)
+    view._job_store.add(job)  # noqa: SLF001
+    _store_render(view, job, job.render_result)  # type: ignore[arg-type]
+    view.set_job(job.id)
+    view.refresh(job)
+
+    assert "Burn subtitles onto this variant" not in _button_texts(view)
+    assert any("Generate a variant first" in t for t in _card_texts(view))
 
 
 from tests.test_packaging_view_title_card_generation import (  # noqa: E402

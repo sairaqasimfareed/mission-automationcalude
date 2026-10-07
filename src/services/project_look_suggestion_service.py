@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from src.models.media_strategy import SceneSourceType
 from src.models.suggestions import LookSuggestion
@@ -289,7 +290,7 @@ def _camera_feel_for(genre_id: str) -> str:
     return looks[0][3]
 
 
-def measure_frame(image: object) -> tuple[float, float, float] | None:
+def measure_frame(image: Any) -> tuple[float, float, float] | None:
     """(brightness 0-255, saturation 0-255, warmth = red minus blue) of one frame."""
 
     try:

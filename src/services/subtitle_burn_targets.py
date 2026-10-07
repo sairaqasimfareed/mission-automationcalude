@@ -22,6 +22,10 @@ class SubtitleBurnTarget:
     # True when the video starts with whatever the effective render starts with (a title
     # card), so the subtitles are shifted past it. The main render has none.
     after_title_card: bool
+    # Which of the three: "main", "title_card" (the render with its opening title card) or
+    # "variant" - lets the title card section and the export variants section offer only
+    # their own video.
+    kind: str = "main"
 
 
 def subtitle_burn_targets(
@@ -41,14 +45,14 @@ def subtitle_burn_targets(
     targets: list[SubtitleBurnTarget] = []
     seen: set[str] = set()
 
-    def add(label: str, file: str | None, *, after_title_card: bool) -> None:
+    def add(label: str, file: str | None, *, after_title_card: bool, kind: str) -> None:
         if not file or file in seen or not Path(file).is_file():
             return
 
         seen.add(file)
-        targets.append(SubtitleBurnTarget(label, file, after_title_card))
+        targets.append(SubtitleBurnTarget(label, file, after_title_card, kind))
 
-    add("Main render", base.output_file, after_title_card=False)
+    add("Main render", base.output_file, after_title_card=False, kind="main")
 
     if (
         effective_render is not None
@@ -61,12 +65,13 @@ def subtitle_burn_targets(
             "Render with the opening title card",
             effective_render.output_file,
             after_title_card=True,
+            kind="title_card",
         )
 
     for variant in variants.variants if variants is not None else []:
         platform = variant.platform.value if variant.platform is not None else None
         shape = variant.orientation.value
         label = f"Export variant {shape}" + (f" - {platform}" if platform else "")
-        add(label, variant.output_file, after_title_card=True)
+        add(label, variant.output_file, after_title_card=True, kind="variant")
 
     return targets
