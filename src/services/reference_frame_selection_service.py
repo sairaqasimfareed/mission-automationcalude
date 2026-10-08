@@ -26,6 +26,11 @@ from src.shared.logger import logger
 REFERENCE_MIN_SCORE = 0.5
 
 DEFAULT_SAMPLE_COUNT = 8
+# The picker looks at more frames of a clip than the automatic pick does, so it can
+# offer several that differ (a clip with a text overlay late on has clean frames too).
+PICKER_SAMPLE_COUNT = 16
+PICKER_FRAMES_PER_CLIP = 3
+PICKER_MIN_GAP_SECONDS = 0.9
 
 # Frames are shrunk to this width before detection - about 4x faster than full
 # 1280 wide, and plenty to find a face.
@@ -516,6 +521,91 @@ class ReferenceFrameSelectionService:
             frames_sampled=len(frames),
             frames_with_face=with_face,
         )
+
+    def select_many(
+        self,
+        *,
+        video_path: str,
+        output_stem: str,
+        kind: ReferenceKind = ReferenceKind.PERSON,
+        count: int = PICKER_FRAMES_PER_CLIP,
+        min_gap_seconds: float = PICKER_MIN_GAP_SECONDS,
+        lenient: bool = False,
+    ) -> list[ReferenceFrameSelection]:
+        """Up to `count` good frames of one clip, best first, no two closer in time than
+        `min_gap_seconds` - for the operator's frame picker, which used to be offered a
+        single frame per clip (so a bad automatic pick, such as a frame with a text
+        overlay, could not be avoided). Each is written to `<output_stem>_<n>.jpg`.
+        People: frames with a clear face (as `select`); `lenient` falls back to the
+        sharpest frames when none qualifies. Places: the best-scoring frames."""
+
+        if not self._is_available():
+            return []
+
+        try:
+            frames = self._read_frames(video_path, PICKER_SAMPLE_COUNT)
+        except (
+            Exception
+        ) as error:  # noqa: BLE001 - a bad clip must not crash the picker
+            logger.warning(
+                "Reading frames for the picker failed: %s", type(error).__name__
+            )
+            return []
+
+        scored: list[tuple[float, SampledFrame]] = []
+
+        if kind == ReferenceKind.PERSON:
+            for frame in frames:
+                try:
+                    faces = self._detector.detect(frame.image)
+                except Exception:  # noqa: BLE001
+                    continue
+
+                score = max((score_face(face) for face in faces), default=0.0)
+
+                if score >= self._min_score:
+                    scored.append((score, frame))
+
+        if not scored and (kind == ReferenceKind.ENVIRONMENT or lenient):
+            for frame in frames:
+                try:
+                    scored.append((self.environment_value(frame.image)[0], frame))
+                except Exception:  # noqa: BLE001
+                    continue
+
+        chosen: list[tuple[float, SampledFrame]] = []
+
+        for value, frame in sorted(scored, key=lambda item: item[0], reverse=True):
+            if all(
+                abs(frame.time_seconds - other.time_seconds) >= min_gap_seconds
+                for _v, other in chosen
+            ):
+                chosen.append((value, frame))
+
+            if len(chosen) >= count:
+                break
+
+        selections: list[ReferenceFrameSelection] = []
+
+        for position, (value, frame) in enumerate(chosen):
+            output_path = f"{output_stem}_{position}.jpg"
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+
+            if not self._write_image(frame.image, output_path):
+                continue
+
+            selections.append(
+                ReferenceFrameSelection(
+                    status=ReferenceSelectionStatus.SELECTED,
+                    output_path=output_path,
+                    score=value,
+                    raw_value=value,
+                    time_seconds=frame.time_seconds,
+                    frames_sampled=len(frames),
+                )
+            )
+
+        return selections
 
     def environment_value(self, image: Any) -> tuple[float, int]:
         """(value, number of faces) of one frame as a LOCATION reference:

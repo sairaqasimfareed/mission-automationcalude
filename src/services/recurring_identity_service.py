@@ -50,6 +50,16 @@ class _Selector(Protocol):
         lenient: bool = False,
     ) -> ReferenceFrameSelection: ...
 
+    def select_many(
+        self,
+        *,
+        video_path: str,
+        output_stem: str,
+        kind: ReferenceKind,
+        count: int = 3,
+        lenient: bool = False,
+    ) -> list[ReferenceFrameSelection]: ...
+
 
 @dataclass(frozen=True)
 class ReferenceFillResult:
@@ -456,7 +466,7 @@ class RecurringIdentityService:
         name: str,
         *,
         cache_directory: Path,
-        limit: int = 6,
+        limit: int = 9,
     ) -> list[ReferenceCandidate]:
         """The best frame of each generated clip the identity appears in, best first, up
         to `limit` - for the "choose another frame" picker. Works for any identity of
@@ -522,6 +532,44 @@ class RecurringIdentityService:
                 output = cache_directory / (
                     f"{_file_stem(name)}_{scene_number}_{clip.clip_sequence_index}.jpg"
                 )
+
+                if hasattr(self._selection, "select_many"):
+                    # Several different frames of this clip, so a bad one (a text
+                    # overlay, a blurred moment) is not the only choice.
+                    try:
+                        many = self._selection.select_many(
+                            video_path=clip.local_file or "",
+                            output_stem=str(output.with_suffix("")),
+                            kind=kind,
+                            lenient=lenient,
+                        )
+                    except (
+                        Exception
+                    ) as error:  # noqa: BLE001 - one bad clip is not fatal
+                        logger.warning(
+                            "Offering frames of %s from scene %s failed: %s",
+                            name,
+                            scene_number,
+                            type(error).__name__,
+                        )
+                        continue
+
+                    for chosen in many:
+                        found.append(
+                            (
+                                chosen.raw_value,
+                                ReferenceCandidate(
+                                    scene_number=scene_number,
+                                    clip_sequence_index=clip.clip_sequence_index,
+                                    image_path=str(chosen.output_path),
+                                    value=chosen.raw_value,
+                                    time_seconds=chosen.time_seconds,
+                                    clear_face=not lenient,
+                                ),
+                            )
+                        )
+
+                    continue
 
                 try:
                     if lenient:

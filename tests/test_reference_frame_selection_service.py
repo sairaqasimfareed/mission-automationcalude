@@ -9,6 +9,8 @@ real YuNet model on real generated clips when they and the model are present.
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -767,3 +769,162 @@ def test_lenient_still_prefers_a_clear_face_when_there_is_one(tmp_path: Path) ->
 
     assert selection.score == pytest.approx(0.95)
     assert out.read_bytes() == b"frame-1"
+
+
+# ---- several frames of one clip, for the picker -------------------------------------
+
+
+def test_select_many_offers_the_best_frames_spaced_apart_in_time(
+    tmp_path: Path,
+) -> None:
+    """Frames are 0.5 s apart; with a 0.9 s minimum gap the best frame is taken, its
+    close neighbours are skipped, and the next best clear of it follows."""
+
+    sharpness = {0: 1.0, 1: 5.0, 2: 4.0, 3: 3.0}
+    service, _ = _service(
+        {0: [], 1: [], 2: [], 3: []},
+        sharpness_scorer=lambda image: sharpness[image],
+        spread_scorer=lambda _image: 1.0,
+    )
+
+    many = service.select_many(
+        video_path="c.mp4",
+        output_stem=str(tmp_path / "pick"),
+        kind=ReferenceKind.ENVIRONMENT,
+        count=3,
+    )
+
+    assert [m.time_seconds for m in many] == [0.5, 1.5]
+    assert all(m.status == ReferenceSelectionStatus.SELECTED for m in many)
+    assert [Path(m.output_path or "").name for m in many] == [
+        "pick_0.jpg",
+        "pick_1.jpg",
+    ]
+    assert (tmp_path / "pick_0.jpg").read_bytes() == b"frame-1"
+    assert (tmp_path / "pick_1.jpg").read_bytes() == b"frame-3"
+
+
+def test_select_many_stops_at_the_requested_count(tmp_path: Path) -> None:
+    service, _ = _service(
+        {i: [] for i in range(8)},  # 8 frames, 0.5 s apart over 3.5 s
+        sharpness_scorer=lambda image: float(image),
+        spread_scorer=lambda _image: 1.0,
+    )
+
+    many = service.select_many(
+        video_path="c.mp4",
+        output_stem=str(tmp_path / "p"),
+        kind=ReferenceKind.ENVIRONMENT,
+        count=2,
+        min_gap_seconds=0.4,
+    )
+
+    assert len(many) == 2
+
+
+def test_select_many_for_a_person_offers_only_frames_with_a_clear_face(
+    tmp_path: Path,
+) -> None:
+    service, _ = _service(
+        {
+            0: [_face(nose_offset=0.5)],  # turned
+            1: [_face()],  # clear
+            2: [],  # nobody
+            3: [_face()],  # clear
+        }
+    )
+
+    many = service.select_many(
+        video_path="c.mp4", output_stem=str(tmp_path / "w"), kind=ReferenceKind.PERSON
+    )
+
+    assert [m.time_seconds for m in many] == [0.5, 1.5]
+
+
+def test_select_many_for_a_person_with_no_clear_face_is_empty_unless_lenient(
+    tmp_path: Path,
+) -> None:
+    sharpness = {0: 1.0, 1: 3.0, 2: 2.0}
+    service, _ = _service(
+        {0: [], 1: [], 2: []},
+        sharpness_scorer=lambda image: sharpness[image],
+        spread_scorer=lambda _image: 1.0,
+    )
+    stem = str(tmp_path / "g")
+
+    assert service.select_many(video_path="c.mp4", output_stem=stem) == []
+
+    lenient = service.select_many(video_path="c.mp4", output_stem=stem, lenient=True)
+
+    assert lenient and lenient[0].time_seconds == 0.5  # the sharpest frame first
+
+
+def test_select_many_is_empty_when_detection_is_unavailable_or_the_clip_unreadable(
+    tmp_path: Path,
+) -> None:
+    unavailable, _ = _service({0: []}, available=False)
+
+    assert (
+        unavailable.select_many(video_path="c", output_stem=str(tmp_path / "x")) == []
+    )
+
+    def broken(_path: str, _count: int):  # type: ignore[no-untyped-def]
+        raise OSError("cannot open")
+
+    from src.services.reference_frame_selection_service import (
+        ReferenceFrameSelectionService,
+    )
+
+    service = ReferenceFrameSelectionService(
+        detector=_Detector({}),
+        availability_check=lambda: True,
+        frame_reader=broken,
+    )
+
+    assert service.select_many(video_path="c", output_stem=str(tmp_path / "y")) == []
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs ffmpeg")
+def test_a_clip_with_a_late_text_overlay_still_offers_clean_frames(
+    tmp_path: Path,
+) -> None:
+    """The live case (Lake Nyos village, 2026-10-08): the automatic place pick was the
+    frame with a big '1,700' overlay near the end. The picker must offer frames from
+    before the overlay appears too."""
+
+    from src.services.reference_frame_selection_service import (
+        ReferenceFrameSelectionService,
+        YuNetFaceDetector,
+    )
+
+    if not YuNetFaceDetector().is_available():
+        pytest.skip("face model not available")
+
+    from src.services.video_filter_translation_service import (
+        VideoFilterTranslationService,
+    )
+
+    font = VideoFilterTranslationService._resolve_subtitle_font_file()  # noqa: SLF001
+    font_option = f"fontfile='{font}':" if font else ""
+    clip = tmp_path / "village.mp4"
+    subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=12:duration=4",
+            "-vf",
+            f"drawtext={font_option}text=1700:fontsize=170:fontcolor=white:"
+            "x=(w-text_w)/2:y=(h-text_h)/2:enable='gte(t,2.6)'",
+            "-pix_fmt", "yuv420p", str(clip),
+        ],
+        check=True,
+    )  # fmt: skip
+
+    many = ReferenceFrameSelectionService().select_many(
+        video_path=str(clip),
+        output_stem=str(tmp_path / "v"),
+        kind=ReferenceKind.ENVIRONMENT,
+        count=3,
+    )
+
+    assert len(many) >= 2
+    assert any(m.time_seconds < 2.5 for m in many), "no frame from before the overlay"

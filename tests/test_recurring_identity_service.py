@@ -947,3 +947,72 @@ def test_the_dialog_says_when_the_frames_are_only_the_sharpest(  # type: ignore[
 
     assert any("No frame shows a clear" in t for t in dialog_for(False))
     assert not any("No frame shows a clear" in t for t in dialog_for(True))
+
+
+class _ManySelector(_Selector):
+    """A selector that can offer several frames per clip, like the real one."""
+
+    def select_many(  # type: ignore[no-untyped-def]
+        self, *, video_path, output_stem, kind, count=3, lenient=False
+    ):
+        value = float(Path(video_path).stem.split("_")[-1])
+        results = []
+
+        for position in range(count):
+            output = f"{output_stem}_{position}.jpg"
+            Path(output).write_bytes(f"{video_path}-{position}".encode())
+            results.append(
+                ReferenceFrameSelection(
+                    status=ReferenceSelectionStatus.SELECTED,
+                    output_path=output,
+                    score=0.9,
+                    raw_value=value + position / 10,
+                    time_seconds=position * 1.5,
+                )
+            )
+
+        return results
+
+
+def test_the_picker_offers_several_frames_of_each_clip_when_it_can(
+    tmp_path: Path,
+) -> None:
+    """Live, 2026-10-08: one frame per clip meant the automatic pick (a frame with a text
+    overlay) was the only choice. Now each clip offers several."""
+
+    job = _job()
+    _mark_on_screen(job, "Lake Nyos", (1, 2))
+    _add_clip(job, tmp_path, 1)
+    _add_clip(job, tmp_path, 2)
+    service = RecurringIdentityService(
+        selection_service=_ManySelector(tmp_path), storage_root=tmp_path / "frames"
+    )
+
+    candidates = service.candidates(
+        job, "Lake Nyos", cache_directory=tmp_path / "cache"
+    )
+
+    assert len(candidates) == 6  # 3 frames of each of 2 clips
+    assert {c.scene_number for c in candidates} == {1, 2}
+    assert len({c.image_path for c in candidates}) == 6  # distinct pictures
+    assert sorted({c.time_seconds for c in candidates}) == [0.0, 1.5, 3.0]
+    assert all(Path(c.image_path).is_file() for c in candidates)
+
+
+def test_the_picker_never_offers_more_than_its_limit(tmp_path: Path) -> None:
+    job = _job()
+    _mark_on_screen(job, "Lake Nyos", (1, 2, 3, 4, 5))
+
+    for number in (1, 2, 3, 4, 5):
+        _add_clip(job, tmp_path, number)
+
+    service = RecurringIdentityService(
+        selection_service=_ManySelector(tmp_path), storage_root=tmp_path / "frames"
+    )
+
+    candidates = service.candidates(
+        job, "Lake Nyos", cache_directory=tmp_path / "cache"
+    )
+
+    assert len(candidates) == 9  # 15 frames exist; the limit is 9
+    assert candidates == sorted(candidates, key=lambda c: c.value, reverse=True)

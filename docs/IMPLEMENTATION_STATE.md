@@ -840,6 +840,21 @@ section records what changed and why so a later session does not undo it.
     2026-10-08): wardrobe in the prompts, places that are really objects, telling two people in one frame apart, the
     infographic text check, the Render tab's audio/video buttons and chunk length, a single
     mood inside continuous music, the voice lead-in, Flow's live 9:16 click.
+  - **Frame picker offers several frames per clip (2026-10-08, live: Lake Nyos village).** The
+    picker showed ONE frame per clip - the automatic pick - and for a place that pick was the
+    frame carrying a big "1,700 Victims of the Lake Nyos disaster, 1986" overlay (the place
+    score rewards sharp edges, text included), so a clean frame could not be chosen and a
+    reference would have carried the text into later scenes. `ReferenceFrameSelectionService.
+    select_many` samples 16 frames of a clip and returns up to 3 best, no two closer than 0.9 s
+    (people: clear-face frames, with the lenient fallback; places: best-scoring frames); the
+    picker lists up to 9 in all (`RecurringIdentityService.candidates`, `limit` 6 -> 9),
+    best first, each labelled with its scene and time. On the real village clip it now offers
+    the overlay frame (3.6 s) and two clean ones (0.1 s, 1.1 s). Not done: the automatic pick
+    itself can still choose a text-overlay frame - nothing detects text (that would need OCR or a
+    text heuristic), so for a clip with an overlay the operator should pick by eye. To give
+    scenes that name no character or place a reference (scenery and light that stay the same
+    across shots), add a place under "Your characters and places" with those scene numbers;
+    its reference is taken from the generated clips of those scenes.
   - **Build-now batch (2026-10-08).** Four small operator-facing fixes, each with tests:
     1. *Subtitles in a vertical frame sit clear of the platforms' overlays.* The caption styles
        sit 60-90 px above the bottom edge at 48-60 px, which in a 1080x1920 vertical video is
@@ -889,7 +904,7 @@ section records what changed and why so a later session does not undo it.
     generated identity, "Choose another frame" on the operator's; finding frames runs off
     the GUI thread (`_run_stage` gained an optional `on_done`, run on the GUI thread after
     a successful stage) and opens `ReferenceCandidatesDialog` (thumbnails with scene and
-    time, "Use this frame"). One frame per clip, not several per clip. Tests in
+    time, "Use this frame"). (Originally one frame per clip - see the 2026-10-08 fix below.) Tests in
     `tests/test_recurring_identity_service.py`. Live fix (2026-10-07, "Adults"): a group
     or people seen from behind had no frame with a clear front-facing face, so the picker
     failed with "No frame ... is clear enough to offer". `select(..., lenient=True)` now
