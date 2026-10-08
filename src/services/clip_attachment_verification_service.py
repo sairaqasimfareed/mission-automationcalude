@@ -29,6 +29,7 @@ from src.services.frame_extraction_service import FrameExtractionService
 from src.services.media_technical_validation_service import (
     MediaTechnicalValidationService,
 )
+from src.services.scene_reference_override import OVERRIDE_LABEL
 from src.services.scene_visual_treatment import effective_on_screen_names
 from src.services.video_provider_rules import MUSE_MIN_CLIP_SECONDS
 
@@ -54,6 +55,13 @@ def clip_signature(job: VideoJob) -> str:
     )
 
     return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
+
+
+def references_sent(job: VideoJob, scene: Scene) -> list[tuple[str | None, str]] | None:
+    """(identity name, checksum) of every reference the scene's accepted request(s)
+    carried, or None when the scene has no generation attempt at all."""
+
+    return ClipAttachmentVerificationService._references_sent(job, scene)
 
 
 def _file_sha256(path: Path) -> str:
@@ -350,6 +358,13 @@ class ClipAttachmentVerificationService:
         and a character with no usable reference at all.
         """
 
+        if scene.reference_override_asset_id:
+            # The operator picked this scene's one picture; it replaced the automatic
+            # ones, so the characters' references are not expected here.
+            self._check_override_reference(job, scene, result)
+
+            return
+
         bible = job.visual_continuity_bible
 
         if bible is None:
@@ -394,6 +409,49 @@ class ClipAttachmentVerificationService:
                     "but this scene was generated without it - they may not look "
                     "the same as in the other scenes.",
                 )
+
+    def _check_override_reference(
+        self, job: VideoJob, scene: Scene, result: SceneClipVerification
+    ) -> None:
+        sent = self._references_sent(job, scene)
+
+        if sent is None:
+            return
+
+        try:
+            asset = job.extracted_frame_asset_index.get(
+                str(scene.reference_override_asset_id)
+            )
+        except ValueError:
+            asset = None
+
+        if asset is None:
+            return
+
+        source_scene = asset.metadata.get("scene_number")
+        attached = any(
+            name == OVERRIDE_LABEL
+            or (asset.content_hash is not None and checksum == asset.content_hash)
+            for name, checksum in sent
+        )
+        result.references.append(
+            SceneReferenceStatus(
+                name=OVERRIDE_LABEL,
+                is_person=False,
+                state=ReferenceUse.ATTACHED if attached else ReferenceUse.NOT_ATTACHED,
+                reference_file=asset.file_path,
+                reference_scene=source_scene if isinstance(source_scene, int) else None,
+            )
+        )
+
+        if not attached:
+            self._add(
+                result,
+                ClipVerificationIssueCode.REFERENCE_NOT_ATTACHED,
+                ClipVerificationSeverity.WARNING,
+                "You picked a reference picture for this scene, but its clip was made "
+                "without it - regenerate the scene to use it.",
+            )
 
     def _reference_status(
         self,

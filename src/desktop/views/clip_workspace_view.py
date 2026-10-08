@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 from src.desktop.job_store import JobStore
 from src.desktop.recovery_dialog import show_recoverable_error
 from src.desktop.scroll_preservation import keep_scroll_on_refresh
+from src.desktop.views.reference_candidates_dialog import ReferenceCandidatesDialog
 from src.desktop.widgets import (
     ExpandableList,
     badge,
@@ -72,6 +73,7 @@ from src.services.google_flow_generation_orchestrator_service import (
 from src.services.muse_generation_orchestrator_service import (
     MuseAttemptCreditSensitiveError,
 )
+from src.services.recurring_identity_service import ReferenceCandidate
 from src.services.reference_frame_selection_service import (
     ReferenceFrameSelectionService,
 )
@@ -87,6 +89,7 @@ from src.services.scene_generation_dispatch_service import (
 )
 from src.services.scene_hold import clip_sizing_seconds
 from src.services.scene_prompt_export_service import ScenePromptExportService
+from src.services.scene_reference_service import SceneReferenceService
 from src.services.scene_visual_treatment import is_graphic_scene
 from src.services.video_provider_rules import (
     muse_target_seconds,
@@ -321,6 +324,49 @@ class _ColorMatchWorker(QObject):
         self.finished.emit((self._job, report))
 
 
+class _SceneReferenceWorker(QObject):
+    """Finds the frames offered for one scene's reference picture off the Qt main thread
+    (it decodes several frames of each earlier clip)."""
+
+    finished = Signal(object)
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        *,
+        service: SceneReferenceService,
+        job: VideoJob,
+        scene_number: int,
+        cache_directory: Path,
+        include_all: bool,
+    ) -> None:
+        super().__init__()
+
+        self._service = service
+        self._job = job
+        self._scene_number = scene_number
+        self._cache_directory = cache_directory
+        self._include_all = include_all
+        self.job_id = job.id
+        self.scene_number = scene_number
+        self.include_all = include_all
+
+    def run(self) -> None:
+        try:
+            candidates = self._service.candidates(
+                self._job,
+                self._scene_number,
+                cache_directory=self._cache_directory,
+                include_all=self._include_all,
+            )
+        except Exception as error:  # noqa: BLE001 - reported to the UI thread
+            self.failed.emit(str(error))
+
+            return
+
+        self.finished.emit(candidates)
+
+
 class ClipWorkspaceView(QWidget):
     """
     Clip Workspace: per-scene duration and resolved-clip review, plus
@@ -354,6 +400,7 @@ class ClipWorkspaceView(QWidget):
         clip_verification_service: ClipAttachmentVerificationService | None = None,
         reference_refresh_service: ReferenceRefreshService | None = None,
         recompile_prompts: Callable[[VideoJob], object] | None = None,
+        scene_reference_service: SceneReferenceService | None = None,
     ) -> None:
         super().__init__()
 
@@ -376,6 +423,20 @@ class ClipWorkspaceView(QWidget):
             )
         )
         self._color_matching_service = ClipColorMatchingService()
+        # A reference picture the operator picks for one scene (see SceneReferenceService).
+        self._scene_reference_service = (
+            scene_reference_service
+            or SceneReferenceService(
+                selection_service=ReferenceFrameSelectionService(),
+                storage_root=Path("data/extracted_frames"),
+            )
+        )
+        self._reference_finding: set[UUID] = set()
+        self._reference_threads: dict[UUID, tuple[QThread, _SceneReferenceWorker]] = {}
+        self._reference_dialog: ReferenceCandidatesDialog | None = None
+        # Selection state, not a fact about the video: the "only scenes without a
+        # reference" filter.
+        self._only_scenes_without_reference = False
         self._matching_job_ids: set[UUID] = set()
         self._match_threads: dict[UUID, tuple[QThread, _ColorMatchWorker]] = {}
         self._match_notices: dict[UUID, tuple[str, str]] = {}
@@ -1138,7 +1199,26 @@ class ClipWorkspaceView(QWidget):
 
         layout.addLayout(row(all_button, account_combo))
 
+        missing_reference = self._scene_reference_service.scenes_needing_reference(job)
+        layout.addWidget(
+            small_muted(
+                f"{len(missing_reference)} of {len(job.scenes)} scene(s) have no "
+                "reference picture. A reference keeps scenery and light the same from "
+                "shot to shot."
+            )
+        )
+        only_missing = QCheckBox("Show only scenes without a reference")
+        only_missing.setChecked(self._only_scenes_without_reference)
+        only_missing.toggled.connect(self._handle_reference_filter_toggled)
+        layout.addWidget(only_missing)
+
         for scene in sorted(job.scenes, key=lambda scene: scene.scene_number):
+            if (
+                self._only_scenes_without_reference
+                and scene.scene_number not in missing_reference
+            ):
+                continue
+
             entry = entries_by_scene.get(scene.scene_number)
 
             row_layout = QVBoxLayout()
@@ -1182,6 +1262,8 @@ class ClipWorkspaceView(QWidget):
                 )
 
             self._add_graphic_treatment_row(row_layout, job, scene)
+            reference = self._scene_reference_service.status(job, scene)
+            self._add_scene_reference_line(row_layout, reference)
 
             if not sub_clip_statuses:
                 plan_text = self._planned_split_text(job, scene)
@@ -1283,13 +1365,220 @@ class ClipWorkspaceView(QWidget):
             # Dashboard's own "Continue Production"/"Delete Project"
             # row, which already uses this same row() helper's default
             # and renders compact.
+            reference_buttons: list[QWidget] = []
+
+            if reference.role != "muted":
+                reference_button = button(
+                    "Change reference" if reference.has_override else "Add reference"
+                )
+                reference_button.setEnabled(
+                    not is_generating and job.id not in self._reference_finding
+                )
+                reference_button.clicked.connect(
+                    lambda checked=False, number=scene.scene_number: (
+                        self._handle_scene_reference(number, include_all=False)
+                    )
+                )
+                reference_buttons.append(reference_button)
+
+            if reference.has_override:
+                clear_reference_button = button("Remove my reference", variant="ghost")
+                clear_reference_button.setEnabled(not is_generating)
+                clear_reference_button.clicked.connect(
+                    lambda checked=False, number=scene.scene_number: (
+                        self._handle_clear_scene_reference(number)
+                    )
+                )
+                reference_buttons.append(clear_reference_button)
+
             row_layout.addLayout(
-                row(primary_button, upload_button, remove_button, account_combo)
+                row(
+                    primary_button,
+                    upload_button,
+                    remove_button,
+                    account_combo,
+                    *reference_buttons,
+                )
             )
 
             layout.addLayout(row_layout)
 
         self._layout.addWidget(frame)
+
+    def _add_scene_reference_line(
+        self, row_layout: QVBoxLayout, reference: object
+    ) -> None:
+        """One line under a scene: its reference picture (if it has one) and where it
+        came from, or why it has none."""
+
+        from src.services.scene_reference_service import SceneReferenceStatus
+
+        if not isinstance(reference, SceneReferenceStatus):
+            return
+
+        line = QHBoxLayout()
+
+        if reference.image_path is not None:
+            pixmap = QPixmap(reference.image_path)
+
+            if not pixmap.isNull():
+                picture = QLabel()
+                picture.setPixmap(
+                    pixmap.scaledToWidth(72, Qt.TransformationMode.SmoothTransformation)
+                )
+                line.addWidget(picture)
+
+        line.addWidget(
+            (
+                status_label(reference.text, role=reference.role)
+                if reference.role in ("success", "warning")
+                else small_muted(reference.text)
+            ),
+            stretch=1,
+        )
+        row_layout.addLayout(line)
+
+    def _handle_reference_filter_toggled(self, checked: bool) -> None:
+        if self._only_scenes_without_reference == checked:
+            return
+
+        self._only_scenes_without_reference = checked
+        job = self._current_job()
+
+        if job is not None:
+            self._rebuild_card(job)
+
+    def _handle_scene_reference(self, scene_number: int, *, include_all: bool) -> None:
+        job = self._current_job()
+
+        if job is None or job.id in self._reference_finding:
+            return
+
+        thread = QThread()
+        worker = _SceneReferenceWorker(
+            service=self._scene_reference_service,
+            job=job.model_copy(deep=True),
+            scene_number=scene_number,
+            cache_directory=Path("data/reference_candidates") / str(job.id),
+            include_all=include_all,
+        )
+        worker.moveToThread(thread)
+        thread.job_id = job.id  # type: ignore[attr-defined]
+
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._handle_scene_reference_candidates)
+        worker.failed.connect(self._handle_scene_reference_failed)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        thread.finished.connect(self._handle_scene_reference_thread_finished)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+
+        self._reference_threads[job.id] = (thread, worker)
+        self._reference_finding.add(job.id)
+        self._rebuild_card(job)
+
+        thread.start()
+
+    def _handle_scene_reference_candidates(self, result: object) -> None:
+        worker = self.sender()
+
+        if not isinstance(worker, _SceneReferenceWorker):
+            return
+
+        self._reference_finding.discard(worker.job_id)
+        job = self._job_store.get(worker.job_id)
+
+        if job is not None and worker.job_id == self._job_id:
+            self._rebuild_card(job)
+
+        if not isinstance(result, list) or not result or worker.job_id != self._job_id:
+            return
+
+        candidates: list[ReferenceCandidate] = result
+        scene_number = worker.scene_number
+        dialog = ReferenceCandidatesDialog(
+            self,
+            identity_name=f"scene {scene_number}",
+            candidates=candidates,
+            intro=(
+                f"Frames of clips made before scene {scene_number}, nearest scenes "
+                "first (scenes planned in the same place come first). The one you pick "
+                f"is the reference picture scene {scene_number} is generated with - it "
+                "keeps the scenery and light the same. Pick a frame without text on it."
+            ),
+            more_text=(
+                None if worker.include_all else "Show frames from all earlier scenes"
+            ),
+        )
+        dialog.chosen.connect(
+            lambda index: self._handle_use_scene_reference(
+                scene_number, candidates[index]
+            )
+        )
+        dialog.show_more.connect(
+            lambda: self._handle_scene_reference(scene_number, include_all=True)
+        )
+        self._reference_dialog = dialog
+        dialog.open()
+
+    def _handle_scene_reference_failed(self, message: str) -> None:
+        worker = self.sender()
+
+        if not isinstance(worker, _SceneReferenceWorker):
+            return
+
+        self._reference_finding.discard(worker.job_id)
+        job = self._job_store.get(worker.job_id)
+
+        if job is None:
+            return
+
+        job.errors.append(f"Could not offer reference frames: {message}")
+        self._job_store.add(job)
+        show_recoverable_error(self, "Step failed", message)
+
+        if worker.job_id == self._job_id:
+            self._rebuild_card(job)
+            self._on_change()
+
+    def _handle_scene_reference_thread_finished(self) -> None:
+        thread = self.sender()
+        job_id = getattr(thread, "job_id", None)
+
+        if job_id is not None:
+            self._reference_threads.pop(job_id, None)
+
+    def _handle_use_scene_reference(
+        self, scene_number: int, candidate: ReferenceCandidate
+    ) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        try:
+            self._scene_reference_service.set_override(job, scene_number, candidate)
+        except ValueError as error:
+            job.errors.append(f"Could not use that frame: {error}")
+            show_recoverable_error(self, "Step failed", str(error))
+            self._job_store.add(job)
+            self._on_change()
+
+            return
+
+        self._job_store.add(job)
+        self._on_change()
+
+    def _handle_clear_scene_reference(self, scene_number: int) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        self._scene_reference_service.clear_override(job, scene_number)
+        self._job_store.add(job)
+        self._on_change()
 
     @staticmethod
     def _auth_required_attempt(

@@ -71,6 +71,11 @@ from src.services.scene_clip_split_planning_service import (
 from src.services.scene_completeness_service import SceneCompletenessService
 from src.services.scene_hold import clip_sizing_seconds
 from src.services.scene_prompt_export_service import ScenePromptExportService
+from src.services.scene_reference_override import (
+    OVERRIDE_LABEL,
+    override_reference_for_scene,
+    with_override_sentence,
+)
 from src.services.scene_visual_treatment import effective_on_screen_names
 from src.shared.logger import logger
 
@@ -1179,6 +1184,9 @@ class SceneVideoGenerationService:
         prompt = _extend_last_beat_to_real_duration(prompt, duration_seconds)
         prompt = _bound_flat_action_to_real_duration(prompt, duration_seconds)
 
+        if any(ref.identity_name == OVERRIDE_LABEL for ref in reference_assets):
+            prompt = with_override_sentence(prompt)
+
         attempt = self._timed(
             "submit",
             scene.scene_number,
@@ -1450,6 +1458,22 @@ class SceneVideoGenerationService:
 
         if self._asset_storage_service is None:
             return []
+
+        # A picture the operator picked for this scene replaces everything automatic:
+        # exactly one image goes with the scene.
+        override = override_reference_for_scene(
+            self._asset_storage_service.asset_index, scene
+        )
+
+        if override is not None:
+            return [
+                GoogleFlowReferenceAsset(
+                    source_path=override.source_path,
+                    checksum=override.checksum,
+                    role=GoogleFlowReferenceRole.LOCATION,
+                    identity_name=OVERRIDE_LABEL,
+                )
+            ]
 
         bible = job.visual_continuity_bible
 

@@ -840,6 +840,33 @@ section records what changed and why so a later session does not undo it.
     2026-10-08): wardrobe in the prompts, places that are really objects, telling two people in one frame apart, the
     infographic text check, the Render tab's audio/video buttons and chunk length, a single
     mood inside continuous music, the voice lead-in, Flow's live 9:16 click.
+  - **A reference picture the operator picks for ONE scene (2026-10-08, live: Lake Nyos
+    village).** A character/place has one reference for every scene it is marked in; a scene that
+    names none (stretches of village footage) had nothing to carry its scenery and light from the
+    shots before it. `Scene.reference_override_asset_id` (an id in
+    `VideoJob.extracted_frame_asset_index`): at submission both providers
+    (`SceneVideoGenerationService` / `MuseSceneVideoGenerationService._resolve_reference_assets`)
+    attach exactly that one picture (role LOCATION, `identity_name` = "Reference you picked for
+    this scene") INSTEAD of the characters'/places' references, and the prompt gets "Use the
+    attached reference image for this location: the same place, lighting and weather."
+    (`scene_reference_override.py`); a pick whose picture is gone falls back to the automatic
+    references. `SceneReferenceService`: `candidates` (frames of clips made EARLIER only - a
+    reference only helps scenes generated after it - up to 3 per clip; the nearest 4 scenes plus
+    every earlier scene planned in the same location (bible `incoming_state.location`), all
+    earlier scenes on request), `set_override`, `clear_override`, `status`,
+    `scenes_needing_reference`. Clips tab: every scene row has a reference line (what is marked
+    there and whether it has a reference, or the pick, or "no character or place is marked",
+    or "graphic scene - no reference needed"), an "Add reference" / "Change reference" button
+    (opens the existing picker dialog on a worker thread; "Show frames from all earlier scenes"
+    widens it), "Remove my reference", a count "N of M scene(s) have no reference picture" and a
+    "Show only scenes without a reference" filter. The Clip check reports a pick the scene's clip
+    was made without ("regenerate the scene to use it") and does not wrongly flag the characters'
+    references as dropped for a scene that has a pick. The Content Studio picker stays for
+    recurring characters/places (one choice for many scenes). Limits: a pick does not change a
+    clip already made (regenerate); one picture per scene (it replaces the automatic ones, so
+    Muse's handling of two pictures in one prompt is never needed here); the offered frames are
+    ranked by scene order and location, not by content, and nothing detects text overlays (pick by
+    eye). Tests: `tests/test_scene_reference.py`.
   - **Frame picker offers several frames per clip (2026-10-08, live: Lake Nyos village).** The
     picker showed ONE frame per clip - the automatic pick - and for a place that pick was the
     frame carrying a big "1,700 Victims of the Lake Nyos disaster, 1986" overlay (the place

@@ -56,6 +56,11 @@ from src.services.scene_clip_split_planning_service import (
 from src.services.scene_completeness_service import SceneCompletenessService
 from src.services.scene_hold import clip_sizing_seconds
 from src.services.scene_prompt_export_service import ScenePromptExportService
+from src.services.scene_reference_override import (
+    OVERRIDE_LABEL,
+    override_reference_for_scene,
+    with_override_sentence,
+)
 from src.services.scene_visual_treatment import effective_on_screen_names
 from src.services.video_provider_rules import (
     MUSE_CLIP_DURATION_SECONDS,
@@ -1015,6 +1020,9 @@ class MuseSceneVideoGenerationService:
             extra_reference_assets or []
         )
 
+        if any(ref.identity_name == OVERRIDE_LABEL for ref in reference_assets):
+            prompt = with_override_sentence(prompt)
+
         attempt = self._timed(
             "submit",
             scene.scene_number,
@@ -1241,6 +1249,22 @@ class MuseSceneVideoGenerationService:
 
         if self._asset_storage_service is None:
             return []
+
+        # A picture the operator picked for this scene replaces everything automatic:
+        # exactly one image goes with the scene.
+        override = override_reference_for_scene(
+            self._asset_storage_service.asset_index, scene
+        )
+
+        if override is not None:
+            return [
+                MuseReferenceAsset(
+                    source_path=override.source_path,
+                    checksum=override.checksum,
+                    role=MuseReferenceRole.LOCATION,
+                    identity_name=OVERRIDE_LABEL,
+                )
+            ]
 
         bible = job.visual_continuity_bible
 

@@ -119,6 +119,12 @@ class Scene(MissionBaseModel):
     # existing default), preserving every existing scene's behavior.
     preferred_profile_id: str | None = None
 
+    # A frame of an earlier clip the operator picked as THIS scene's one reference
+    # picture (an id in VideoJob.extracted_frame_asset_index). It replaces the
+    # characters'/places' references for the scene and carries scenery and light from
+    # shot to shot where no character or place is marked. None = automatic.
+    reference_override_asset_id: str | None = None
+
     fallback_sources: list[SceneSourceType] = Field(default_factory=list)
 
     estimated_cost: float = 0.0

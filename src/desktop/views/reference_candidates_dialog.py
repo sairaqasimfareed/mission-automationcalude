@@ -26,6 +26,9 @@ class ReferenceCandidatesDialog(QDialog):
     """Emits `chosen(index)` with the position of the frame the operator picked."""
 
     chosen = Signal(int)
+    # Asked for by the operator when `more_text` is given (the Clips tab's picker offers
+    # the nearest scenes first and can widen to every earlier scene).
+    show_more = Signal()
 
     def __init__(
         self,
@@ -33,6 +36,8 @@ class ReferenceCandidatesDialog(QDialog):
         *,
         identity_name: str,
         candidates: list[ReferenceCandidate],
+        intro: str | None = None,
+        more_text: str | None = None,
     ) -> None:
         super().__init__(parent)
 
@@ -42,12 +47,15 @@ class ReferenceCandidatesDialog(QDialog):
 
         self._candidates = list(candidates)
         outer = QVBoxLayout(self)
-        outer.addWidget(
-            QLabel(
+        heading = QLabel(
+            intro
+            or (
                 f"Frames from {identity_name}'s generated clips, clearest first. "
                 "The one you pick becomes the picture used for every later clip."
             )
         )
+        heading.setWordWrap(True)
+        outer.addWidget(heading)
 
         if any(not candidate.clear_face for candidate in self._candidates):
             note = QLabel(
@@ -60,6 +68,7 @@ class ReferenceCandidatesDialog(QDialog):
         grid_host = QWidget()
         grid = QGridLayout(grid_host)
         self.use_buttons: list[QPushButton] = []
+        self.more_button: QPushButton | None = None
 
         for index, candidate in enumerate(self._candidates):
             cell = QVBoxLayout()
@@ -94,11 +103,22 @@ class ReferenceCandidatesDialog(QDialog):
         outer.addWidget(scroll)
 
         buttons = QHBoxLayout()
+
+        if more_text:
+            more = QPushButton(more_text)
+            more.clicked.connect(self._more)
+            self.more_button = more
+            buttons.addWidget(more)
+
         buttons.addStretch()
         cancel = QPushButton("Cancel")
         cancel.clicked.connect(self.reject)
         buttons.addWidget(cancel)
         outer.addLayout(buttons)
+
+    def _more(self) -> None:
+        self.show_more.emit()
+        self.reject()
 
     def _choose(self, index: int) -> None:
         self.chosen.emit(index)
