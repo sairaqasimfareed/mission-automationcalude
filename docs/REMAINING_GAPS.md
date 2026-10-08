@@ -873,6 +873,57 @@ re-render, leftover stage files, stored duration) and the broad
 - An uploaded title/CTA clip is letterboxed into the frame, never
   cropped, and re-encoded to 30 fps stereo audio so it joins cleanly.
 
+## Character-Oriented Video mode - scope LOCKED 2026-10-08, NOT BUILT
+
+A project-level mode for videos where on-camera characters speak real, lip-synced dialogue.
+Evidence (live Muse tests by the operator, clips analysed 2026-10-08): lip sync correct; one
+character's face, outfit and voice stayed the same across scenes with a reference picture
+plus a repeated voice description; two characters in one scene kept two clearly different
+voices with correct turn-taking. Muse reuses one chat thread across clips, so earlier clips
+are context. Provider for this mode: **Muse** (Flow was tested earlier and works too, but is
+not the target). The script is the operator's own, imported with `NAME: line` labels.
+
+**In scope - Slice 1 (no credits needed to build):**
+- Project-creation toggle "Character-Oriented Video" (project-level, genre-independent). It
+  sets the preset: the clip's own audio is the speech, the ElevenLabs voiceover is muted at
+  the final mix (still generated, because its length gives the clip length), the per-genre
+  "pause after each line" hold is off, subtitles come from the spoken lines.
+- Script import reads `NAME: line`. `Scene` gets a speaker and the spoken line;
+  `Scene.narration` is set to the spoken line itself so voice timing, clip sizing and
+  subtitles keep working unchanged. Speakers become PERSON identities automatically.
+- Prompt wording copied exactly from the tested prompts: `<Name> says clearly in <his/her>
+  own voice: "..."`, "lips move naturally in sync with the speech", "Real spoken audio with
+  only quiet <room/outdoor> sound, no music", the character's appearance and outfit, the
+  reference picture, and on every later scene "same face, same voice, continuing directly from
+  the previous scene". A two-person scene: attributed lines in order, "only one person speaks
+  at a time; the listener's mouth stays closed", "both faces three-quarter to the camera".
+- Speech budget: words per clip against the clip length (about 2.5 words/s at most, plus
+  time for action); warn or split the lines when over, and use Muse's 10 s length for
+  two-line scenes. Pace numbers are NOT written into the prompt (Muse fits speech to the time
+  available - the numbers only contradicted the clip length in the test).
+
+**In scope - Slice 2:**
+- Per-character Appearance, Outfit and Voice fields: one LLM call drafts them from the
+  script, genre and era; the operator accepts, edits or discards (the same card pattern as the
+  suggestions). The Voice line is a precise description in words (age band, pitch word,
+  tone, enunciation, volume, accent) repeated verbatim; the measured pitch band of the
+  character's first clip can pre-fill the pitch part. Outfit and appearance are repeated in
+  every prompt for that character.
+- Upload a cast picture for a character (besides choosing a frame from a generated clip).
+
+**Later / only if needed:** Slice 3 - several characters with a reference picture each in one
+prompt (the Muse adapter attaches references one after another, but two pictures in one
+prompt has never been tested); LLM-written dialogue; Flow as the target provider; a coarse
+voice-drift warning; face matching; ElevenLabs speech-to-speech as a fallback if a voice ever
+drifts (untried here).
+
+**Checks the pilot must make:** that the app's own Muse automation attaches the reference
+picture and fills the prompt correctly (so far the operator attached pictures by hand in the
+Muse page); subtitle timing for dialogue (it will come from the voiceover's speech length,
+which only approximates Muse's own speech); how the mode interacts with Manual/auto content
+mode. Pilot: a 3-scene, one-character video on the operator's Muse account (costs Muse and
+ElevenLabs credits; ElevenLabs was at zero on 2026-10-07).
+
 ## Open findings from 2026-10-08
 
 - The New Project form's "Primary LLM" and "Fallback LLM" dropdowns are saved on the project
