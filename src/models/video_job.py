@@ -536,6 +536,17 @@ class VideoJob(MissionBaseModel):
         return normalized
 
     @property
+    def master_orientation(self) -> AspectRatio:
+        """The orientation of this project's finished render: 9:16 for a vertical
+        project, landscape for everything else."""
+
+        return (
+            AspectRatio.PORTRAIT
+            if self.aspect_ratio == AspectRatio.PORTRAIT
+            else AspectRatio.LANDSCAPE
+        )
+
+    @property
     def nominal_clip_resolution(self) -> str:
         """The size recorded for a generated clip, in the project's own orientation."""
 

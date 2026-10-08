@@ -840,6 +840,16 @@ section records what changed and why so a later session does not undo it.
     2026-10-08): wardrobe in the prompts, places that are really objects, telling two people in one frame apart, the
     infographic text check, the Render tab's audio/video buttons and chunk length, a single
     mood inside continuous music, the voice lead-in, Flow's live 9:16 click.
+  - **Packaging: no Orientation choice, variants keep the project's shape (2026-10-08).** The
+    Export variants card no longer has the Orientation dropdown (nor the "None" platform,
+    which only reformatted): a required shape choice was confusing and could apply an
+    orientation again to a video that was already rendered in the right one. A variant is the
+    finished render plus a platform's watermark and end-card CTA, always in the project's own
+    shape (`VideoJob.master_orientation`; the card says "Shape: ... - the same as this
+    project"). Platform choices: YouTube, Facebook, TikTok. `ExportVariantRenderService` still
+    supports a reformat (variants made earlier, including portrait copies of landscape
+    projects, still load and show); nothing in the GUI asks for one any more. Tests in
+    `tests/test_packaging_view_gui.py`.
   - **"Choose another frame" picker for references (2026-10-07).**
     `RecurringIdentityService.candidates()` returns the best frame of EACH generated clip
     an identity appears in (same selection code as the automatic pick - people by face,

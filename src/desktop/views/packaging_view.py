@@ -70,31 +70,16 @@ from src.services.subtitle_burn_targets import (
 from src.services.thumbnail.thumbnail_package_service import ThumbnailPackageService
 from src.services.title_card_text_resolution_service import resolve_title_card_text
 
-_ORIENTATION_LABELS: list[tuple[str, str]] = [
-    ("Landscape (16:9)", AspectRatio.LANDSCAPE.value),
-    ("Portrait (9:16)", AspectRatio.PORTRAIT.value),
-]
-
-# "" (not a real Platform value) represents "None" - a plain,
-# optionally-reformatted export with no watermark/end-card CTA.
+# A variant is the finished render with a platform's watermark and end-card CTA. It is
+# always the project's own shape - there is no second reformat (the old Orientation
+# choice, and the "None" platform that only reformatted, were removed 2026-10-08: a
+# required shape choice was confusing and could re-apply an orientation to a video that
+# was already rendered in the right one).
 _PLATFORM_LABELS: list[tuple[str, str]] = [
-    ("None", ""),
     ("YouTube", Platform.YOUTUBE.value),
     ("Facebook", Platform.FACEBOOK.value),
     ("TikTok", Platform.TIKTOK.value),
 ]
-
-# YouTube and TikTok each have one dominant native shape, so picking
-# either suggests (never forces) the matching orientation. Facebook is
-# deliberately absent here - real Facebook video is genuinely bimodal
-# (landscape feed posts vs. portrait Reels), and guessing wrong is
-# worse than not guessing; its own row is left out entirely rather
-# than mapped to some default, so the orientation dropdown is simply
-# left untouched when Facebook is chosen.
-_PLATFORM_ORIENTATION_SUGGESTION: dict[Platform, AspectRatio] = {
-    Platform.YOUTUBE: AspectRatio.LANDSCAPE,
-    Platform.TIKTOK: AspectRatio.PORTRAIT,
-}
 
 _LEFT = Qt.AlignmentFlag.AlignLeft
 
@@ -1710,21 +1695,10 @@ class PackagingView(QWidget):
         if job.id in self._generating_export_variant_job_ids:
             self._build_export_variant_progress_state(layout)
         else:
-            orientation_combo = QComboBox()
-
-            for label, value in _ORIENTATION_LABELS:
-                orientation_combo.addItem(label, userData=value)
-
             platform_combo = QComboBox()
 
             for label, value in _PLATFORM_LABELS:
                 platform_combo.addItem(label, userData=value)
-
-            platform_combo.currentIndexChanged.connect(
-                lambda _index, o=orientation_combo, p=platform_combo: (
-                    self._handle_export_platform_changed(o, p)
-                )
-            )
 
             generate_button = button(
                 "Generate variant",
@@ -1732,13 +1706,20 @@ class PackagingView(QWidget):
                 icon_name="clapper",
             )
             generate_button.clicked.connect(
-                lambda: self._handle_generate_export_variant(
-                    orientation_combo, platform_combo
-                )
+                lambda: self._handle_generate_export_variant(platform_combo)
             )
 
-            layout.addWidget(small_muted("Orientation"))
-            layout.addWidget(orientation_combo)
+            shape = (
+                "Portrait (9:16)"
+                if job.master_orientation == AspectRatio.PORTRAIT
+                else "Landscape (16:9)"
+            )
+            layout.addWidget(
+                small_muted(
+                    f"Shape: {shape} - the same as this project. A variant adds the "
+                    "platform's watermark and end card; it is not reformatted."
+                )
+            )
             layout.addWidget(small_muted("Platform"))
             layout.addWidget(platform_combo)
             self._build_cta_upload_controls(layout, job)
@@ -2076,37 +2057,7 @@ class PackagingView(QWidget):
             QUrl.fromLocalFile(final_export.export_directory),
         )
 
-    def _handle_export_platform_changed(
-        self, orientation_combo: QComboBox, platform_combo: QComboBox
-    ) -> None:
-        """
-        A one-click convenience, never a hard constraint - picking
-        YouTube or TikTok suggests (overwrites) the orientation
-        dropdown to that platform's one dominant native shape; picking
-        Facebook or None leaves the orientation dropdown exactly as it
-        was, since Facebook video is genuinely bimodal (landscape feed
-        posts vs. portrait Reels) and guessing wrong is worse than not
-        guessing. Every combination stays manually reachable regardless.
-        """
-
-        platform = self._read_platform(platform_combo)
-
-        if platform is None:
-            return
-
-        suggested_orientation = _PLATFORM_ORIENTATION_SUGGESTION.get(platform)
-
-        if suggested_orientation is None:
-            return
-
-        index = orientation_combo.findData(suggested_orientation.value)
-
-        if index >= 0:
-            orientation_combo.setCurrentIndex(index)
-
-    def _handle_generate_export_variant(
-        self, orientation_combo: QComboBox, platform_combo: QComboBox
-    ) -> None:
+    def _handle_generate_export_variant(self, platform_combo: QComboBox) -> None:
         job = self._current_job()
 
         if job is None or self._job_id is None:
@@ -2119,33 +2070,12 @@ class PackagingView(QWidget):
         if render_result is None:
             return
 
-        # Real-world finding, 2026-09-14: a QComboBox's userData round-
-        # trips a plain string reliably through PySide6's QVariant
-        # marshalling, but NOT an AspectRatio enum member directly
-        # (confirmed live - a real test's isinstance(data, AspectRatio)
-        # check silently failed after a real .currentData() call,
-        # never even reaching this handler's own service call). The
-        # combo stores AspectRatio.value strings (see
-        # _ORIENTATION_LABELS); converted back here. Read as PLAIN
-        # values, not kept as widget references - once generation
-        # starts, this card rebuilds into the progress state and these
-        # combo widgets get destroyed (see _rebuild_all).
-        orientation_value = orientation_combo.currentData()
-
-        if not isinstance(orientation_value, str):
-            return
-
-        try:
-            orientation = AspectRatio(orientation_value)
-        except ValueError:
-            return
-
         platform = self._read_platform(platform_combo)
 
         self._execute_export_variant_generation(
             job,
             render_result=render_result,
-            orientation=orientation,
+            orientation=job.master_orientation,
             platform=platform,
         )
 

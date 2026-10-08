@@ -211,14 +211,7 @@ class ExportVariantRenderService:
 
     @staticmethod
     def _master_orientation(job: VideoJob) -> AspectRatio:
-        """The orientation of the finished render: 9:16 for a vertical project,
-        landscape for everything else (every render used to be landscape)."""
-
-        return (
-            AspectRatio.PORTRAIT
-            if job.aspect_ratio == AspectRatio.PORTRAIT
-            else AspectRatio.LANDSCAPE
-        )
+        return job.master_orientation
 
     def _build_processed_variant(
         self,

@@ -1068,27 +1068,18 @@ def _wait_for_variant_generation(
     assert view.wait_for_pending_generations(timeout_ms=10_000)
 
 
-def _orientation_and_platform_combos(
-    view: PackagingView,
-) -> tuple[QComboBox, QComboBox]:
+def _platform_combo(view: PackagingView) -> QComboBox:
     """
-    Find the export-variants card's own orientation/platform combos by
-    their real content rather than raw findChildren() order - the
-    packaging view now also renders REQ-4's own title-card position
-    combo, which shifts positional indices depending on where it lands
-    in the layout, so combos[0]/combos[1] is no longer a safe way to
-    address these two specifically.
+    Find the export-variants card's platform combo by its real content
+    rather than raw findChildren() order - the packaging view also renders
+    the title-card position combo, which shifts positional indices.
     """
 
-    combos = view.findChildren(QComboBox)
-
-    orientation_combo = next(
-        combo for combo in combos if combo.itemText(0) == "Landscape (16:9)"
+    return next(
+        combo
+        for combo in view.findChildren(QComboBox)
+        if combo.itemText(0) == "YouTube"
     )
-
-    platform_combo = next(combo for combo in combos if combo.itemText(0) == "None")
-
-    return orientation_combo, platform_combo
 
 
 def test_export_variants_card_requires_a_successful_render(
@@ -1145,9 +1136,8 @@ def test_generate_export_variant_stores_the_result(
     view._job_store.set_render_result(job.id, _render_orchestration_result(job))
     view.refresh(job)
 
-    orientation_combo, platform_combo = _orientation_and_platform_combos(view)
-    orientation_combo.setCurrentIndex(0)  # Landscape
-    platform_combo.setCurrentIndex(0)  # None
+    platform_combo = _platform_combo(view)
+    platform_combo.setCurrentIndex(platform_combo.findData(Platform.YOUTUBE.value))
 
     generate_button = next(
         button
@@ -1157,13 +1147,13 @@ def test_generate_export_variant_stores_the_result(
     generate_button.click()
     _wait_for_variant_generation(view, qapp)
 
-    assert fake_service.build_calls == [(AspectRatio.LANDSCAPE, None)]
+    assert fake_service.build_calls == [(AspectRatio.LANDSCAPE, Platform.YOUTUBE)]
 
     stored = view._job_store.get_export_variants(job.id)
     assert stored is not None
     assert len(stored.variants) == 1
     assert stored.variants[0].orientation == AspectRatio.LANDSCAPE
-    assert stored.variants[0].output_file == "F:/renders/job1/output.mp4"
+    assert stored.variants[0].output_file == "F:/renders/job1/output_youtube.mp4"
 
 
 def test_generate_export_variant_appends_to_existing_variants(
@@ -1196,9 +1186,8 @@ def test_generate_export_variant_appends_to_existing_variants(
     )
     view.refresh(job)
 
-    orientation_combo, platform_combo = _orientation_and_platform_combos(view)
-    orientation_combo.setCurrentIndex(1)  # Portrait
-    platform_combo.setCurrentIndex(0)  # None
+    platform_combo = _platform_combo(view)
+    platform_combo.setCurrentIndex(platform_combo.findData(Platform.TIKTOK.value))
 
     generate_button = next(
         button
@@ -1211,10 +1200,7 @@ def test_generate_export_variant_appends_to_existing_variants(
     stored = view._job_store.get_export_variants(job.id)
     assert stored is not None
     assert len(stored.variants) == 2
-    assert {v.orientation for v in stored.variants} == {
-        AspectRatio.LANDSCAPE,
-        AspectRatio.PORTRAIT,
-    }
+    assert [v.platform for v in stored.variants] == [None, Platform.TIKTOK]
 
 
 def _view_with_render_result(
@@ -1238,52 +1224,73 @@ def _view_with_render_result(
     return view, job
 
 
-def test_choosing_youtube_suggests_landscape_orientation(
+def test_there_is_no_orientation_choice_and_no_none_platform(
     qapp: QApplication, tmp_path: Path
 ) -> None:
-    view, _job = _view_with_render_result(tmp_path, _FakeExportVariantRenderService())
-
-    orientation_combo, platform_combo = _orientation_and_platform_combos(view)
-    orientation_combo.setCurrentIndex(1)  # start on Portrait
-
-    platform_index = platform_combo.findData(Platform.YOUTUBE.value)
-    platform_combo.setCurrentIndex(platform_index)
-
-    assert orientation_combo.currentData() == AspectRatio.LANDSCAPE.value
-
-
-def test_choosing_tiktok_suggests_portrait_orientation(
-    qapp: QApplication, tmp_path: Path
-) -> None:
-    view, _job = _view_with_render_result(tmp_path, _FakeExportVariantRenderService())
-
-    orientation_combo, platform_combo = _orientation_and_platform_combos(view)
-    orientation_combo.setCurrentIndex(0)  # start on Landscape
-
-    platform_index = platform_combo.findData(Platform.TIKTOK.value)
-    platform_combo.setCurrentIndex(platform_index)
-
-    assert orientation_combo.currentData() == AspectRatio.PORTRAIT.value
-
-
-def test_choosing_facebook_leaves_orientation_untouched(
-    qapp: QApplication, tmp_path: Path
-) -> None:
-    """
-    Real Facebook video is genuinely bimodal (landscape feed posts vs.
-    portrait Reels) - guessing wrong is worse than not guessing, so
-    Facebook deliberately has no entry in the suggestion table.
-    """
+    """The Orientation dropdown was removed (2026-10-08): a variant is always the
+    project's own shape, so there is nothing to choose and nothing to re-apply to a video
+    that was rendered in the right shape already."""
 
     view, _job = _view_with_render_result(tmp_path, _FakeExportVariantRenderService())
 
-    orientation_combo, platform_combo = _orientation_and_platform_combos(view)
-    orientation_combo.setCurrentIndex(1)  # Portrait
+    first_items = [combo.itemText(0) for combo in view.findChildren(QComboBox)]
+    labels = [label.text() for label in view.findChildren(QLabel)]
 
-    platform_index = platform_combo.findData(Platform.FACEBOOK.value)
-    platform_combo.setCurrentIndex(platform_index)
+    assert "Landscape (16:9)" not in first_items
+    assert not any(label == "Orientation" for label in labels)
+    assert [
+        _platform_combo(view).itemText(i) for i in range(_platform_combo(view).count())
+    ] == ["YouTube", "Facebook", "TikTok"]
+    assert any("Shape: Landscape (16:9)" in label for label in labels)
 
-    assert orientation_combo.currentData() == AspectRatio.PORTRAIT.value
+
+def test_a_vertical_project_says_so_and_makes_vertical_variants(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    fake_service = _FakeExportVariantRenderService()
+    view, job = _view_with_render_result(tmp_path, fake_service)
+    job.aspect_ratio = AspectRatio.PORTRAIT
+    view.refresh(job)
+
+    assert any(
+        "Shape: Portrait (9:16)" in label.text() for label in view.findChildren(QLabel)
+    )
+
+    platform_combo = _platform_combo(view)
+    platform_combo.setCurrentIndex(platform_combo.findData(Platform.TIKTOK.value))
+    next(
+        b for b in view.findChildren(QPushButton) if b.text() == "Generate variant"
+    ).click()
+    _wait_for_variant_generation(view, qapp)
+
+    assert fake_service.build_calls == [(AspectRatio.PORTRAIT, Platform.TIKTOK)]
+
+
+def test_a_landscape_project_makes_landscape_variants_for_every_platform(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    fake_service = _FakeExportVariantRenderService()
+    view, _job = _view_with_render_result(tmp_path, fake_service)
+
+    for platform in (Platform.YOUTUBE, Platform.FACEBOOK, Platform.TIKTOK):
+        combo = _platform_combo(view)
+        combo.setCurrentIndex(combo.findData(platform.value))
+        next(
+            b for b in view.findChildren(QPushButton) if b.text() == "Generate variant"
+        ).click()
+        _wait_for_variant_generation(view, qapp)
+
+    assert [o for o, _p in fake_service.build_calls] == [AspectRatio.LANDSCAPE] * 3
+
+
+def test_the_projects_master_orientation_follows_its_shape() -> None:
+    job = _bare_job()
+
+    assert job.master_orientation == AspectRatio.LANDSCAPE
+
+    job.aspect_ratio = AspectRatio.PORTRAIT
+
+    assert job.master_orientation == AspectRatio.PORTRAIT
 
 
 def test_generate_export_variant_passes_the_chosen_platform_through(
@@ -1314,8 +1321,7 @@ def test_generate_export_variant_passes_the_chosen_platform_through(
     view._job_store.set_render_result(job.id, _render_orchestration_result(job))
     view.refresh(job)
 
-    orientation_combo, platform_combo = _orientation_and_platform_combos(view)
-    orientation_combo.setCurrentIndex(0)  # Landscape
+    platform_combo = _platform_combo(view)
     platform_combo.setCurrentIndex(platform_combo.findData(Platform.FACEBOOK.value))
 
     generate_button = next(
