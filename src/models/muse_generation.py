@@ -153,6 +153,8 @@ class MuseFailureCode(str, Enum):
     TRANSIENT_NAVIGATION_FAILURE = "transient_navigation_failure"
     DOWNLOAD_FAILED = "download_failed"
     QC_FAILED = "qc_failed"
+    # Muse replied with a refusal (its video tool declined the request) instead of a video.
+    REFUSED = "refused"
     BUDGET_BLOCKED = "budget_blocked"
     PROFILE_COOLDOWN = "profile_cooldown"
     TIMEOUT = "timeout"

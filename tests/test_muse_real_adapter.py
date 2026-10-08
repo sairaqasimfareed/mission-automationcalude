@@ -288,6 +288,9 @@ class _FakePage:
         self.closed = False
         self._raise_on_goto = raise_on_goto
         self._raise_on_locator = raise_on_locator
+        # What Muse said after the submitted prompt, as the adapter reads it from the chat
+        # (None = nothing yet / the prompt message was not found).
+        self.reply_after_prompt: str | None = None
 
     def goto(self, url: str, timeout: float | None = None) -> None:
         if self._raise_on_goto:
@@ -297,6 +300,9 @@ class _FakePage:
 
     def is_closed(self) -> bool:
         return self.closed
+
+    def evaluate(self, script: str, arg: object = None) -> str | None:
+        return self.reply_after_prompt
 
     def get_by_placeholder(self, text: str) -> _FakeLocator:
         return self._by_placeholder.get(text, _MISSING)
@@ -1103,3 +1109,57 @@ def test_if_the_prompt_message_cannot_be_found_the_old_src_logic_still_applies(
     videos._follows_prompt = [None]  # noqa: SLF001
 
     assert adapter.observe(submitted).state == MuseGenerationState.READY_TO_DOWNLOAD
+
+
+# ---- Muse answers with a refusal instead of a video (live, 2026-10-08)
+
+
+def test_observe_fails_at_once_with_musess_own_words_when_it_refuses(
+    tmp_path: Path,
+) -> None:
+    from src.models.muse_generation import MuseFailureCode
+
+    page = _authenticated_page()
+    adapter = _adapter(page, tmp_path=tmp_path)
+    request = _request()
+    submitted = adapter.submit(request, _attempt(request))
+    page.reply_after_prompt = (
+        "The tool refused that specific combination - the prompt plus that image "
+        "together. The text-only version of the same shot is still available."
+    )
+
+    result = adapter.observe(submitted)
+
+    assert result.state == MuseGenerationState.FAILED
+    assert result.failure is not None
+    assert result.failure.code == MuseFailureCode.REFUSED
+    assert "The tool refused that specific combination" in result.failure.message
+
+
+def test_observe_keeps_polling_when_muses_reply_is_only_a_status_line(
+    tmp_path: Path,
+) -> None:
+    page = _authenticated_page()
+    adapter = _adapter(page, tmp_path=tmp_path)
+    request = _request()
+    submitted = adapter.submit(request, _attempt(request))
+    page.reply_after_prompt = "Generating your video now - this can take a minute."
+
+    result = adapter.observe(submitted)
+
+    assert result.state == MuseGenerationState.GENERATING
+
+
+def test_observe_prefers_a_real_video_over_any_text_in_the_reply(
+    tmp_path: Path,
+) -> None:
+    page = _authenticated_page()
+    adapter = _adapter(page, tmp_path=tmp_path)
+    request = _request()
+    submitted = adapter.submit(request, _attempt(request))
+    page.reply_after_prompt = "I can't generate that - just kidding, here it is."
+    page.register_css("video:not([aria-hidden='true'])", _FakeLocator())
+
+    result = adapter.observe(submitted)
+
+    assert result.state == MuseGenerationState.READY_TO_DOWNLOAD

@@ -840,6 +840,25 @@ section records what changed and why so a later session does not undo it.
     2026-10-08): wardrobe in the prompts, places that are really objects, telling two people in one frame apart, the
     infographic text check, the Render tab's audio/video buttons and chunk length, a single
     mood inside continuous music, the voice lead-in, Flow's live 9:16 click.
+  - **Reference-image gap, Phase 1 step 1: Muse refusals no longer stop a run (2026-10-09).**
+    Muse's video tool can refuse a request and Muse then says so in chat instead of sending a
+    video ("The tool refused that specific combination - the prompt plus that image together...",
+    live 2026-10-08). The adapter used to keep waiting for a video until the poll limit and then fail
+    vaguely. `providers/muse/refusal.py`: `looks_like_refusal` (specific wording - refus*, "can't /
+    cannot / unable to generate|create|make...", "didn't go through", declined, content policy; a
+    status line such as "Generating your video" does not match) and a script that reads the chat
+    text after the attempt's own prompt (`[data-message-item]`, matched on the prompt's tail).
+    `MuseRealUIAdapter.observe` fails the attempt at once with `MuseFailureCode.REFUSED` and Muse's
+    own words when no video exists and the reply reads as a refusal (a real video always wins).
+    `MuseSceneVideoGenerationService`: a refused request that carried reference pictures is sent
+    ONCE more with none (`_submit(send_references=False)`) and a warning is recorded on the job;
+    a second refusal, or a refusal of a request with no picture, stays a failure with Muse's words.
+    Also: Muse is no longer given the "Use the attached reference image for this location..."
+    sentence (Muse ignores an attached picture unless told to use it, and that sentence sent the
+    picture to the video tool, which refused it); the picked picture is still attached, and Flow keeps
+    the sentence. Not verified live: the selector `[data-message-item]` for the reply text is the one
+    the adapter already uses for prompts; whether a refused request is charged is unknown. Tests:
+    `tests/test_muse_refusal.py`, `tests/test_muse_real_adapter.py`.
   - **A reference picture the operator picks for ONE scene (2026-10-08, live: Lake Nyos
     village).** A character/place has one reference for every scene it is marked in; a scene that
     names none (stretches of village footage) had nothing to carry its scenery and light from the

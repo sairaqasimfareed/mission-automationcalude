@@ -14,6 +14,7 @@ from src.models.asset_state import AssetCandidate, AssetUserDecision, SceneAsset
 from src.models.cinematic_prompt import ResolvedCinematicPrompt
 from src.models.media_strategy import SceneSourceType
 from src.models.muse_generation import (
+    MuseFailureCode,
     MuseGenerationAttempt,
     MuseGenerationState,
     MuseQCOutcome,
@@ -59,7 +60,6 @@ from src.services.scene_prompt_export_service import ScenePromptExportService
 from src.services.scene_reference_override import (
     OVERRIDE_LABEL,
     override_reference_for_scene,
-    with_override_sentence,
 )
 from src.services.scene_visual_treatment import effective_on_screen_names
 from src.services.video_provider_rules import (
@@ -728,6 +728,15 @@ class MuseSceneVideoGenerationService:
         elif attempt.state in _POLLABLE_STATES:
             attempt = self._poll_until_settled(job, attempt)
 
+        attempt = self._retry_once_without_references_if_refused(
+            job,
+            scene,
+            attempt,
+            clip_sequence_index=clip_sequence_index,
+            duration_override=duration_override,
+            prompt_override=prompt_override,
+        )
+
         if attempt.state == MuseGenerationState.READY_TO_DOWNLOAD:
             attempt_to_download = attempt
             attempt = self._timed(
@@ -980,8 +989,12 @@ class MuseSceneVideoGenerationService:
         duration_override: float | None = None,
         extra_reference_assets: list[MuseReferenceAsset] | None = None,
         prompt_override: str | None = None,
+        send_references: bool = True,
     ) -> MuseGenerationAttempt:
         """
+        send_references=False sends the scene with no reference picture at all (the retry
+        after Muse refused a prompt together with its picture).
+
         clip_sequence_index/duration_override/extra_reference_assets/
         prompt_override exist for Phase 5 (multi-clip scene splitting)
         alone - every pre-Phase-5 caller uses the defaults, reproducing
@@ -1016,12 +1029,12 @@ class MuseSceneVideoGenerationService:
             prompt, target_seconds, job.aspect_ratio
         )
 
-        reference_assets = self._resolve_reference_assets(job, scene) + list(
-            extra_reference_assets or []
+        reference_assets = (
+            self._resolve_reference_assets(job, scene)
+            + list(extra_reference_assets or [])
+            if send_references
+            else []
         )
-
-        if any(ref.identity_name == OVERRIDE_LABEL for ref in reference_assets):
-            prompt = with_override_sentence(prompt)
 
         attempt = self._timed(
             "submit",
@@ -1236,6 +1249,48 @@ class MuseSceneVideoGenerationService:
             frame_extraction_service=self._frame_extraction_service,
             asset_storage_service=self._asset_storage_service,
         )
+
+    def _retry_once_without_references_if_refused(
+        self,
+        job: VideoJob,
+        scene: Scene,
+        attempt: MuseGenerationAttempt,
+        *,
+        clip_sequence_index: int,
+        duration_override: float | None,
+        prompt_override: str | None,
+    ) -> MuseGenerationAttempt:
+        """Muse's video tool can refuse a request, and a picture is a common cause (live,
+        2026-10-08: "the prompt plus that image together"). When that happens to a request that
+        carried pictures, send the same scene once more with none, so one refusal does not stop a
+        whole run. A second refusal, or a refusal of a request that had no picture, is left as the
+        failure it is - with Muse's own words on it."""
+
+        if (
+            attempt.state != MuseGenerationState.FAILED
+            or attempt.failure is None
+            or attempt.failure.code != MuseFailureCode.REFUSED
+            or not attempt.request.reference_assets
+        ):
+            return attempt
+
+        job.warnings.append(
+            f"Scene {scene.scene_number}: Muse refused the prompt together with its "
+            "reference picture, so it was sent again without the picture."
+        )
+        retry = self._submit(
+            job,
+            scene,
+            clip_sequence_index=clip_sequence_index,
+            duration_override=duration_override,
+            prompt_override=prompt_override,
+            send_references=False,
+        )
+
+        if retry.state in _POLLABLE_STATES:
+            retry = self._poll_until_settled(job, retry)
+
+        return retry
 
     def _resolve_reference_assets(
         self, job: VideoJob, scene: Scene

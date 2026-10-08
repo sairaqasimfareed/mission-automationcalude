@@ -473,7 +473,7 @@ def test_flow_falls_back_to_the_characters_reference_when_the_pick_is_lost(
     assert OVERRIDE_PROMPT_SENTENCE not in request.prompt
 
 
-def test_muse_attaches_exactly_the_picked_picture_and_says_what_it_is_for(
+def test_muse_attaches_exactly_the_picked_picture_without_the_use_it_sentence(
     tmp_path: Path,
 ) -> None:
     from src.models.muse_generation import MuseGenerationState
@@ -516,7 +516,8 @@ def test_muse_attaches_exactly_the_picked_picture_and_says_what_it_is_for(
     assert len(request.reference_assets) == 1
     assert request.reference_assets[0].identity_name == OVERRIDE_LABEL
     assert request.reference_assets[0].role == MuseReferenceRole.LOCATION
-    assert OVERRIDE_PROMPT_SENTENCE in request.prompt
+    # Muse is not told to use the picture (that sentence got a request refused, live)
+    assert OVERRIDE_PROMPT_SENTENCE not in request.prompt
 
 
 # --------------------------------------------------------------------- Clip check

@@ -9,12 +9,19 @@ from playwright.sync_api import Locator, Page
 from src.browser.flow_browser_worker import FlowBrowserWorker
 from src.browser.flow_profile_paths import profile_directory
 from src.models.muse_generation import (
+    MuseFailure,
+    MuseFailureCode,
     MuseGenerationAttempt,
     MuseGenerationRequest,
     MuseGenerationState,
     MuseReferenceAsset,
 )
 from src.providers.muse.locators import MuseRealAccessibleNames
+from src.providers.muse.refusal import (
+    REPLY_TEXT_AFTER_PROMPT_SCRIPT,
+    looks_like_refusal,
+    refusal_message,
+)
 from src.providers.muse_ui_provider import MuseUIOperation, MuseUIProvider
 from src.shared.logger import logger
 
@@ -392,6 +399,27 @@ class MuseRealUIAdapter(MuseUIProvider):
                 )
 
             if video is None:
+                refusal = self._refusal_reply(page, attempt)
+
+                if refusal is not None:
+                    # Muse answered with a refusal, not a video: waiting longer
+                    # can never produce one. Fail now with Muse's own words so the
+                    # run can retry without the picture or report the reason.
+                    refused = attempt.model_copy(
+                        update={
+                            "failure": MuseFailure(
+                                code=MuseFailureCode.REFUSED,
+                                message=refusal_message(refusal),
+                                recoverable=True,
+                                requires_human_action=False,
+                            )
+                        }
+                    )
+
+                    return refused.with_transition(
+                        MuseGenerationState.FAILED, detail=refusal_message(refusal)
+                    )
+
                 # Not rendered yet - keep polling rather than falsely
                 # reporting ready. Mirrors Google Flow's own
                 # position-first correction (2026-09-28): the NEWEST
@@ -594,6 +622,23 @@ class MuseRealUIAdapter(MuseUIProvider):
         return (
             page.get_by_placeholder(self._names.message_input_placeholder).count() > 0
         )
+
+    def _refusal_reply(self, page: Page, attempt: MuseGenerationAttempt) -> str | None:
+        """Muse's reply text after this attempt's own prompt when it reads as a refusal,
+        else None. Best effort: a page that cannot be read just means "no refusal seen".
+        """
+
+        anchor = " ".join(attempt.request.prompt.split())[-_PROMPT_ANCHOR_CHARS:]
+
+        try:
+            reply = page.evaluate(REPLY_TEXT_AFTER_PROMPT_SCRIPT, anchor)
+        except PlaywrightError:
+            return None
+
+        if isinstance(reply, str) and looks_like_refusal(reply):
+            return reply
+
+        return None
 
     def _latest_assistant_video(
         self, page: Page, attempt: MuseGenerationAttempt
