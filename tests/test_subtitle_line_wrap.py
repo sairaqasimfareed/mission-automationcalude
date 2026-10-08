@@ -119,11 +119,11 @@ def test_a_burned_line_in_a_vertical_video_stays_inside_its_margins(
 
     assert result.success is True, result.error_message
 
-    width, height = 1080, 240
+    width, height = 1080, 500
     raw = subprocess.run(
         [
             "ffmpeg", "-v", "error", "-ss", "1", "-i", str(output), "-frames:v", "1",
-            "-vf", f"crop={width}:{height}:0:1680,format=gray", "-f", "rawvideo", "-",
+            "-vf", f"crop={width}:{height}:0:1100,format=gray", "-f", "rawvideo", "-",
         ],
         capture_output=True,
         check=True,

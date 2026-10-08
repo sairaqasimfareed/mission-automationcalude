@@ -735,7 +735,7 @@ re-render, leftover stage files, stored duration) and the broad
      full re-encode if any check fails. Risks discussed: a join that passes the length check
      but glitches at the seam or in some hardware players, a small audio click where two copied
      AAC streams meet; the main render is never touched and the fallback keeps today's quality.
-     Needs real-FFmpeg tests. The export-variant end-clip join could reuse it later. Not built.
+     Needs real-FFmpeg tests. The export-variant end-clip join could reuse it later. (Written as planned; the build is recorded in IMPLEMENTATION_STATE.)
   6. BUILT 2026-10-07 (see IMPLEMENTATION_STATE; only the optional voice lead-in is left) -
      Room between scenes - a per-genre hold after each narrated line. Clips are sized to the
      narration (rounded up to the provider's lengths), so there is no designed pause between
@@ -747,7 +747,7 @@ re-render, leftover stage files, stored duration) and the broad
      optional 0.2-0.3 s voice lead-in after the cut. No extra credits (Muse always generates
      10 s and trims; Flow clips are already 4/6/8 s); a Remedy-sized video grows by roughly
      5-10 s. Open: fixed numbers or settable per project. Touches clip sizing for both Flow
-     and Muse and the audio timeline offsets; needs tests across both providers. Not built.
+     and Muse and the audio timeline offsets; needs tests across both providers. (Written as planned; the build is recorded in IMPLEMENTATION_STATE.)
   7. BUILT 2026-10-07 (see IMPLEMENTATION_STATE) - uploaded watermark image looks like a
      picture overlay and starts at the wrong moment
      (reported 2026-10-07 on Remedy's export variant). Cause in `ExportVariantRenderService.
@@ -758,9 +758,10 @@ re-render, leftover stage files, stored duration) and the broad
      title card, the watermark therefore shows over the title card. Wanted: it should look
      like a watermark (semi-transparent, small, in a corner - an opacity setting) and start
      when the title card ends (title-card length known from the title-card clip/service), not
-     at t=0. Not built.
-  8. BUILT 2026-10-07 (see IMPLEMENTATION_STATE; limits listed there: default caption style
-     only, old variants, old renders) - Subtitle burning option on all three renders (requested 2026-10-07; the earlier "run
+     at t=0. (Written as the request; the build is recorded in IMPLEMENTATION_STATE.)
+  8. BUILT 2026-10-07 (see IMPLEMENTATION_STATE; the caption-style and old-variant limits
+     were fixed 2026-10-08; a render made before the lines were kept still has to be rendered
+     once more) - Subtitle burning option on all three renders (requested 2026-10-07; the earlier "run
      combinations / one button for everything" wish was dropped - the renders stay separate
      buttons as they are). Today subtitles are burned only inside the main render
      (`render_stage` -> `PostRenderSubtitleBurnService`, the Render tab's subtitle toggle), so
@@ -769,7 +770,7 @@ re-render, leftover stage files, stored duration) and the broad
      Wanted: a subtitle burn option on each of the three - main render, title-card render and
      CTA render - that burns the project's subtitles (current caption style) at that point,
      without touching the original file. Interacts with item 5 (each pass re-encodes today) and
-     item 7 (the watermark must start after the title card). Not built.
+     item 7 (the watermark must start after the title card). (Written as the request; the build is recorded in IMPLEMENTATION_STATE.)
   9. **Auto-generated project look and characters/places, picked or discarded by the
      operator - BUILT 2026-10-07 (see IMPLEMENTATION_STATE); still to do: the face-based
      detector below, and trying it on a real project.** Original request: (raised 2026-10-07; the operator cannot fill the two forms in Content
@@ -871,6 +872,26 @@ re-render, leftover stage files, stored duration) and the broad
   (platform "None") export stays unbranded.
 - An uploaded title/CTA clip is letterboxed into the frame, never
   cropped, and re-encoded to 30 fps stereo audio so it joins cleanly.
+
+## Open findings from 2026-10-08
+
+- The New Project form's "Primary LLM" and "Fallback LLM" dropdowns are saved on the project
+  (`provider_preferences.llm`) but nothing reads them: the content pipeline is built once with
+  no profile list, so every call follows the global profile order (priority, then name). Only
+  the Reviewer choice is used. Wiring them needs the choice passed through per call or the
+  pipeline rebuilt per project. Held by the operator ("do not build it yet").
+- The Providers screen's "Default model" suggestions are hardcoded and start with
+  `gemini-2.5-flash`, which Google now refuses for new accounts (404 "no longer available";
+  the API's own message names `gemini-3.8-flash`). The box is editable, so a model can be
+  typed. The list should be refreshed; the other Gemini entries are unverified.
+- A transient provider error (a 503 "high demand" or a rate limit) is not retried: the
+  request goes straight to the next profile, and with one profile enabled the step fails.
+  A short retry with a pause, before failing over, is not built.
+- Two real-FFmpeg tests (`tests/test_audio_realignment_real_ffmpeg.py`) time out at their
+  hard-coded 120 s FFmpeg limit on the development machine: its CPU stays at 500 MHz of 2,601
+  (a Dell Latitude E7250 with no battery installed; temperatures are normal). They fail
+  identically on the previous commit and passed in an earlier full run. Environmental, not a
+  regression; the same limit probably explains the 28-minute 1080p renders.
 
 ## Explicitly out of scope
 

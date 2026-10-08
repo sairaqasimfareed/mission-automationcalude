@@ -786,11 +786,11 @@ section records what changed and why so a later session does not undo it.
     section (for the render with the card) and the "Export variants" section (for a
     variant), not only in the bottom Subtitles card (`_build_subtitle_burn_controls`, one
     picker per place; `SubtitleBurnTarget.kind` = main / title_card / variant). Tests:
-    `tests/test_subtitle_burn_action.py`, `tests/test_render_stage.py`. Known limits: the
-    burn uses `subtitle.default` (the same style the in-render burn uses - the per-project
-    caption style does not reach the post-render burn); an export variant made BEFORE a
-    title card was added is shifted as if it had the card (regenerate it); a render made
-    before this existed has no stored lines and must be rendered once more.
+    `tests/test_subtitle_burn_action.py`, `tests/test_render_stage.py`. Known limits: a render
+    made before this existed has no stored lines and must be rendered once more. (The two
+    other limits first listed here - default caption style only, and a variant made before a
+    title card being shifted as if it had one - were fixed on 2026-10-08, see "Small known
+    gaps pass".)
   - **Room between scenes - a per-genre hold after each line (2026-10-07).** Clips were
     sized to the narration (rounded up to the provider's lengths), so a video was the
     narration back to back. `src/services/scene_hold.py`: `GENRE_HOLD_SECONDS` (0.3-0.5 s
@@ -840,6 +840,34 @@ section records what changed and why so a later session does not undo it.
     2026-10-08): wardrobe in the prompts, places that are really objects, telling two people in one frame apart, the
     infographic text check, the Render tab's audio/video buttons and chunk length, a single
     mood inside continuous music, the voice lead-in, Flow's live 9:16 click.
+  - **Build-now batch (2026-10-08).** Four small operator-facing fixes, each with tests:
+    1. *Subtitles in a vertical frame sit clear of the platforms' overlays.* The caption styles
+       sit 60-90 px above the bottom edge at 48-60 px, which in a 1080x1920 vertical video is
+       under TikTok/Reels/Shorts' own caption, account name and buttons (roughly the bottom
+       15-25%; 26% is kept clear). `subtitle_frame_style.adapt_style_for_frame`: for a vertical
+       frame the font and outline are scaled by (frame width / 1080) x 1.3 and the text's bottom
+       edge sits 26% of the frame height above the bottom (`y=h-text_h-h*0.26`); landscape
+       styles are untouched. `PostRenderSubtitleBurnService` probes width and height itself
+       (callers can pass `frame_width` / `frame_height`). The 26% figure is an estimate of the
+       platforms' safe zone, not measured against the live apps. Real pixels: the text's lowest
+       pixel is above 78% of the frame, in the lower half.
+    2. *Reference status on every character and place row* (`reference_status.py`): its
+       scenes, whether it has a reference, which scene's clip it came from, whether the
+       operator picked it ("picked by you" only for the frame picker - naming an identity does
+       not count) or the app did, with the picture itself. A missing image file or an id that
+       is not a real asset is reported, never crashes the screen.
+    3. *No frame picker for an identity in fewer than two scenes* (a reference keeps a look the
+       same ACROSS scenes): the row says "Appears in one scene only..." / "Not in any scene
+       yet." (Scenes come from the bible's on-screen marks - `RecurringIdentityService.scenes_of`.)
+    4. *Dated error list and "Clear errors"* (`VideoJob.error_first_seen`,
+       `errors_dating_started`, `stamp_errors`, `clear_errors`; both job stores stamp on save;
+       `desktop/error_log_text.py`). Errors that already existed when dating began show
+       "date unknown" (they are not given today's date); later ones show the local date and time
+       they first appeared; repeats fold into one line with a count. The Content workflow card
+       has a "Clear errors" button.
+    Not built, by decision: the per-project "Primary LLM" choice on the New Project form is
+    stored but nothing reads it (only the Reviewer choice does) - calls follow the global
+    profile priority; the operator asked to hold that.
   - **Packaging: no Orientation choice, variants keep the project's shape (2026-10-08).** The
     Export variants card no longer has the Orientation dropdown (nor the "None" platform,
     which only reformatted): a required shape choice was confusing and could apply an

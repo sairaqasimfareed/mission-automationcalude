@@ -21,6 +21,7 @@ from src.services.media_technical_validation_service import (
     MediaTechnicalValidationService,
 )
 from src.services.production_render_service import ProductionRenderService
+from src.services.subtitle_frame_style import adapt_style_for_frame
 from src.services.subtitle_line_wrap import wrap_for_frame
 from src.services.video_filter_translation_service import (
     VideoFilterTranslationService,
@@ -88,6 +89,7 @@ class PostRenderSubtitleBurnService:
         video_duration_seconds: float,
         has_audio: bool = True,
         frame_width: int | None = None,
+        frame_height: int | None = None,
         preset_id: str = _DEFAULT_SUBTITLE_PRESET_ID,
         progress_callback: ProgressCallback | None = None,
         cancellation_check: CancellationCheck | None = None,
@@ -128,9 +130,16 @@ class PostRenderSubtitleBurnService:
         if font_file is not None:
             style = {**style, "fontfile": f"'{font_file}'"}
 
-        # A line too wide for the picture (a vertical video) is broken into rows; the
-        # width is probed from the video itself unless the caller knows it.
-        width = frame_width or self._probe_width(input_video_file)
+        # The picture's size is probed from the video itself unless the caller knows it.
+        # A vertical picture gets larger text lifted clear of the platforms' bottom
+        # overlays, and a line too wide for it is broken into rows.
+        width, height = frame_width, frame_height
+
+        if not width or not height:
+            probed_width, probed_height = self._probe_size(input_video_file)
+            width, height = width or probed_width, height or probed_height
+
+        style = adapt_style_for_frame(style, width=width, height=height)
 
         try:
             fontsize = int(style.get("fontsize", "48"))
@@ -299,10 +308,10 @@ class PostRenderSubtitleBurnService:
             selected_video_codec=resolved_config.selected_video_codec,
         )
 
-    def _probe_width(self, video_file: str) -> int | None:
+    def _probe_size(self, video_file: str) -> tuple[int | None, int | None]:
         try:
             probed = self._media_validation_service.validate(Path(video_file))
-        except Exception:  # noqa: BLE001 - no width just means no wrapping
-            return None
+        except Exception:  # noqa: BLE001 - no size just means the style is left alone
+            return None, None
 
-        return probed.width
+        return probed.width, probed.height

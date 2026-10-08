@@ -83,6 +83,7 @@ class InMemoryJobStore:
         self._export_variants: dict[UUID, ExportVariantCollection] = {}
 
     def add(self, job: VideoJob) -> None:
+        job.stamp_errors()
         self._jobs[job.id] = job
 
     def get(self, job_id: UUID) -> VideoJob | None:
@@ -199,6 +200,7 @@ class JsonJobStore:
         self._export_variants: dict[UUID, ExportVariantCollection] = {}
 
     def add(self, job: VideoJob) -> None:
+        job.stamp_errors()
         self._jobs[job.id] = job
         self._write(self._job_path(job.id), job)
 

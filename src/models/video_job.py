@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from pydantic import Field, field_validator, model_validator
 
 from src.models.approval import ApprovalPolicyConfig
@@ -504,6 +506,13 @@ class VideoJob(MissionBaseModel):
     errors: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 
+    # When each error message first appeared (UTC ISO text; "" = unknown, for the errors
+    # that were already there when dating began). Stamped when the project is saved - see
+    # stamp_errors - because errors are added in many places and carry no time of their own.
+    error_first_seen: dict[str, str] = Field(default_factory=dict)
+    # When dating began for this project (None = it has not been saved since it existed).
+    errors_dating_started: str | None = None
+
     @field_validator("genre_id")
     @classmethod
     def validate_genre_id(cls, value: str) -> str:
@@ -534,6 +543,32 @@ class VideoJob(MissionBaseModel):
             raise ValueError("Caption style override requires a name.")
 
         return normalized
+
+    def stamp_errors(self, now: datetime | None = None) -> None:
+        """Record when each error first appeared and forget the ones that are gone.
+        The first time this runs for a project, errors that already exist are marked
+        "unknown" rather than given today's date (they happened earlier); an error that
+        appears after that is dated."""
+
+        stamp = (now or datetime.now(UTC)).isoformat()
+
+        if self.errors_dating_started is None:
+            self.errors_dating_started = stamp
+
+            for message in self.errors:
+                self.error_first_seen.setdefault(message, "")
+        else:
+            for message in self.errors:
+                self.error_first_seen.setdefault(message, stamp)
+
+        for message in [m for m in self.error_first_seen if m not in self.errors]:
+            del self.error_first_seen[message]
+
+    def clear_errors(self) -> None:
+        """Empty the error list and its dates."""
+
+        self.errors.clear()
+        self.error_first_seen.clear()
 
     @property
     def master_orientation(self) -> AspectRatio:

@@ -116,6 +116,19 @@ def _service(tmp_path: Path, *, available: bool = True) -> RecurringIdentityServ
     )
 
 
+def _mark_on_screen(job: VideoJob, name: str, scene_numbers: tuple[int, ...]) -> None:
+    """Show `name` on screen in those scenes (the fixture's bible marks no one)."""
+
+    assert job.visual_continuity_bible is not None
+
+    for entry in job.visual_continuity_bible.clip_entries:
+        if (
+            entry.scene_number in scene_numbers
+            and name not in entry.on_screen_entity_names
+        ):
+            entry.on_screen_entity_names.append(name)
+
+
 def _add_clip(job: VideoJob, tmp_path: Path, scene_number: int) -> None:
     path = tmp_path / f"clip_{scene_number}.mp4"
     path.write_bytes(b"video")
@@ -845,6 +858,7 @@ def test_the_picker_buttons_are_on_every_identity_row(qapp) -> None:  # type: ig
     from PySide6.QtWidgets import QPushButton, QVBoxLayout, QWidget
 
     view, job, _errors = _studio_view_with_bible()
+    _mark_on_screen(job, "Lake Nyos", (1, 2, 3))
     view._recurring_identity_service.add(  # noqa: SLF001
         job,
         name="Grandmother",

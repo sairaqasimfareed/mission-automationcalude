@@ -5,6 +5,7 @@ from pathlib import Path
 from uuid import UUID
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -29,6 +30,7 @@ from src.desktop.approval_mode_labels import (
 from src.desktop.approval_mode_labels import (
     approval_mode_label as _approval_mode_label,
 )
+from src.desktop.error_log_text import format_error_log
 from src.desktop.job_store import JobStore
 from src.desktop.recovery_dialog import show_recoverable_error
 from src.desktop.views.reference_candidates_dialog import ReferenceCandidatesDialog
@@ -71,7 +73,7 @@ from src.models.suggestions import IdentitySuggestion, SuggestionStatus
 from src.models.topic_candidate import TopicCandidate
 from src.models.video_job import VideoJob
 from src.models.video_provider import VideoProvider
-from src.models.visual_continuity import CanonicalEntityType
+from src.models.visual_continuity import CanonicalEntityIdentity, CanonicalEntityType
 from src.services.approval_gate_service import ApprovalGateService
 from src.services.content_intelligence_pipeline import ContentIntelligencePipeline
 from src.services.content_pipeline import ContentPipeline
@@ -96,6 +98,7 @@ from src.services.recurring_identity_service import (
 from src.services.reference_frame_selection_service import (
     ReferenceFrameSelectionService,
 )
+from src.services.reference_status import reference_status
 from src.services.reviewer_service import ReviewerService
 from src.services.scene_hold import HOLD_CHOICES
 from src.services.topic_candidate_generation_service import (
@@ -2362,6 +2365,16 @@ class ContentStudioView(QWidget):
                     f"{identity.canonical_description}"
                 )
             )
+            scene_numbers = self._recurring_identity_service.scenes_of(
+                job, identity.name
+            )
+            layout.addLayout(self._reference_status_row(job, identity, scene_numbers))
+
+            if len(scene_numbers) < 2:
+                # A reference keeps a look the same ACROSS scenes; with one scene
+                # there is nothing for it to help.
+                continue
+
             frame_row = QHBoxLayout()
             frame_button = button("Choose a reference frame", variant="ghost")
             self._gate_frame_button(frame_button, job, identity.name)
@@ -2410,18 +2423,14 @@ class ContentStudioView(QWidget):
             if not identity.is_manual:
                 continue
 
-            scenes = format_scene_numbers(service.scenes_of(job, identity.name))
+            scene_numbers = service.scenes_of(job, identity.name)
             layout.addWidget(
                 small_muted(
                     f"{identity.entity_type.value.title()}: {identity.name} - "
-                    f"{identity.canonical_description}  |  Scenes: {scenes or 'none'}  |  "
-                    + (
-                        "Reference picture attached."
-                        if identity.reference_asset_ids
-                        else "No reference picture yet."
-                    )
+                    f"{identity.canonical_description}"
                 )
             )
+            layout.addLayout(self._reference_status_row(job, identity, scene_numbers))
 
             row = QHBoxLayout()
             edit_button = button("Edit", variant="ghost")
@@ -2437,6 +2446,8 @@ class ContentStudioView(QWidget):
             choose_button.clicked.connect(
                 lambda _checked=False, n=identity.name: self._handle_choose_frame(n)
             )
+            # One scene only: a reference has nothing to keep consistent.
+            choose_button.setVisible(len(scene_numbers) >= 2)
             remove_button = button("Remove", variant="ghost")
             remove_button.clicked.connect(
                 lambda _checked=False, n=identity.name: self._handle_remove_identity(n)
@@ -2914,6 +2925,42 @@ class ContentStudioView(QWidget):
             label="reference picture",
             failure=f"Could not pick a reference for {name}",
         )
+
+    def _reference_status_row(
+        self,
+        job: VideoJob,
+        identity: CanonicalEntityIdentity,
+        scene_numbers: list[int],
+    ) -> QHBoxLayout:
+        """One line under a character or place: its scenes, whether it has a reference
+        picture, where that came from and who chose it - with the picture itself."""
+
+        status = reference_status(job, identity)
+        scenes = format_scene_numbers(scene_numbers) or "none"
+        lines = [f"Scenes: {scenes}", status.text]
+
+        if len(scene_numbers) < 2:
+            lines.append(
+                "Appears in one scene only, so a reference picture cannot help."
+                if scene_numbers
+                else "Not in any scene yet."
+            )
+
+        row_layout = QHBoxLayout()
+
+        if status.image_path is not None:
+            picture = QLabel()
+            pixmap = QPixmap(status.image_path)
+
+            if not pixmap.isNull():
+                picture.setPixmap(
+                    pixmap.scaledToWidth(96, Qt.TransformationMode.SmoothTransformation)
+                )
+                row_layout.addWidget(picture)
+
+        row_layout.addWidget(small_muted("  |  ".join(lines)), stretch=1)
+
+        return row_layout
 
     def _gate_frame_button(
         self, frame_button: QPushButton, job: VideoJob, name: str
@@ -5862,18 +5909,30 @@ class ContentStudioView(QWidget):
             or job.script is not None
         )
 
+    def _handle_clear_errors(self) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        job.clear_errors()
+        self._job_store.add(job)
+        self._on_change()
+
     def _build_workflow_card(self, job: VideoJob) -> None:
         frame, layout = card("Content workflow", icon_name="dashboard")
 
         layout.addWidget(badge(f"{job.current_stage.value} · {job.status.value}"))
 
         if job.errors:
-            layout.addWidget(
-                status_label(
-                    "Errors:\n" + "\n".join(f"- {error}" for error in job.errors),
-                    role="error",
-                )
+            layout.addWidget(status_label(format_error_log(job), role="error"))
+            clear_errors_button = button("Clear errors", variant="ghost")
+            clear_errors_button.setToolTip(
+                "Empties this list. New errors still appear; it does not change the "
+                "project."
             )
+            clear_errors_button.clicked.connect(self._handle_clear_errors)
+            layout.addWidget(clear_errors_button, alignment=_LEFT)
 
         if job.research is None:
             action = button("Run research", variant="primary", icon_name="research")
