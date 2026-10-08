@@ -222,7 +222,7 @@ def test_adding_needs_a_bible(tmp_path: Path) -> None:
         ("Grandmother", "  ", "Describe what it looks like"),
         ("lake nyos", "A lake.", "already a character or place"),
         ("G" * 61, "An elderly woman.", "longer than 60"),
-        ("Grandmother", "d" * 401, "longer than 400"),
+        ("Grandmother", "d" * 1201, "longer than 1200"),
     ],
 )
 def test_adding_rejects_bad_input_without_changing_the_job(

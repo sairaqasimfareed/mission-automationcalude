@@ -9,18 +9,53 @@ accepts or discards. It only proposes - nothing changes until one is accepted.
 
 from __future__ import annotations
 
+import logging
+import re
+
 from src.models.scene import Scene
 from src.models.suggestions import IdentitySuggestion, SuggestionStatus
 from src.models.visual_continuity import CanonicalEntityType, VisualContinuityBible
 from src.services.llm.labeled_block_parser import extract_labeled_field, split_blocks
 from src.services.llm.llm_service import LLMService
-from src.services.recurring_identity_service import parse_scene_numbers
 from src.shared.llm.models import LLMProvider
 from src.shared.llm.request import LLMRequest
+
+logger = logging.getLogger(__name__)
 
 _DRY_RUN_RESPONSE = "NONE"
 
 _MAX_SUGGESTIONS = 8
+
+
+def _scene_numbers(raw: str, valid_scenes: set[int]) -> list[int]:
+    """Scene numbers from the model's SCENES line, forgiving about how it is written:
+    en/em dashes, a leading word such as "Scenes", and numbers the project does not
+    have (those are dropped, not the whole candidate)."""
+
+    cleaned = re.sub(r"[‐-―−]", "-", raw)
+    cleaned = re.sub(r"[A-Za-z]+", " ", cleaned)
+    cleaned = re.sub(r"\s*-\s*", "-", cleaned)
+    cleaned = re.sub(r"[;&/]", ",", cleaned)
+    numbers: set[int] = set()
+
+    for part in re.split(r"[,\s]+", cleaned.strip(" ,.")):
+        if not part:
+            continue
+
+        match = re.fullmatch(r"(\d+)(?:-(\d+))?", part)
+
+        if match is None:
+            raise ValueError(f"'{part}' is not a scene number or range")
+
+        first = int(match.group(1))
+        last = int(match.group(2)) if match.group(2) else first
+
+        if last < first:
+            first, last = last, first
+
+        numbers.update(n for n in range(first, last + 1) if n in valid_scenes)
+
+    return sorted(numbers)
 
 
 class IdentitySuggestionService:
@@ -62,7 +97,7 @@ class IdentitySuggestionService:
                 "given one fixed appearance. You never invent anyone the scenes do "
                 "not clearly contain."
             ),
-            prompt_version="identity_suggestion_prompt_v1.0.0",
+            prompt_version="identity_suggestion_prompt_v1.1.0",
             dry_run_response=_DRY_RUN_RESPONSE,
             metadata={
                 "agent": "IdentitySuggestionService",
@@ -86,11 +121,22 @@ class IdentitySuggestionService:
         content = (result.result.content or "").strip()
         known = {i.name.lower() for i in visual_continuity_bible.identities}
 
-        return self._parse(
+        found = self._parse(
             content,
             valid_scenes={s.scene_number for s in scenes},
             skip=known | already_seen,
         )
+
+        if not found and content and content.upper() != "NONE":
+            # A real answer that yielded nothing: keep the start of it so the cause
+            # (a wording the parser did not expect, or names already known) is visible.
+            logger.warning(
+                "Identity suggestion reply gave no candidates (%d characters): %s",
+                len(content),
+                " ".join(content.split())[:1500],
+            )
+
+        return found
 
     @staticmethod
     def _build_prompt(
@@ -101,7 +147,17 @@ class IdentitySuggestionService:
         for scene in sorted(scenes, key=lambda s: s.scene_number):
             entry = bible.entry_for_scene(scene.scene_number)
             action = f" | shot: {entry.shot_action}" if entry is not None else ""
-            scene_lines.append(f"SCENE {scene.scene_number}: {scene.narration}{action}")
+            place = ""
+
+            if entry is not None:
+                location = entry.incoming_state.location.strip()
+
+                if location and location.lower() != "unspecified":
+                    place = f" | set in: {location}"
+
+            scene_lines.append(
+                f"SCENE {scene.scene_number}: {scene.narration}{action}{place}"
+            )
 
         known = (
             "; ".join(f"{i.name} ({i.entity_type.value})" for i in bible.identities)
@@ -115,15 +171,21 @@ class IdentitySuggestionService:
             "List the recurring people and places that appear in TWO OR MORE scenes "
             "and whose look must stay the same between them, and that are not "
             "already listed above. Only people or places the scenes clearly contain "
-            f"(at most {_MAX_SUGGESTIONS}). If there are none, reply with exactly: "
-            "NONE\n\n"
+            f"(at most {_MAX_SUGGESTIONS}). A place can be an UNNAMED recurring "
+            "setting the shots are set in (for example 'The village' or 'The control "
+            "room'), not only a named one - look at the 'set in' text of each scene. "
+            "Give every place a short plain name; never 'the same village'. If there "
+            "are none, reply with exactly: NONE\n\n"
             "Otherwise return one block per candidate, separated by a line of three "
             "dashes, with exactly these labeled lines:\n"
             "NAME: <a short name, e.g. 'Grandmother' or 'The kitchen'>\n"
             "KIND: <person or place>\n"
-            "DESCRIPTION: <one or two plain sentences of what it LOOKS like - age, "
-            "hair, clothes, build for a person; materials, colours, layout for a "
-            "place. Concrete visual details only, no story>\n"
+            "DESCRIPTION: <what it LOOKS like, concretely. A person: age, build, "
+            "face, hair, clothes. A place, in 3 or 4 sentences (about 60-90 words): "
+            "the buildings or structures with their materials and colours, the "
+            "ground, the plants or objects, the layout, the light and weather. "
+            "Visual details only, no story, and never the words 'same', 'as before' "
+            "or 'similar'>\n"
             "SCENES: <the scene numbers it appears in, e.g. '1-3, 5'>"
         )
 
@@ -144,6 +206,18 @@ class IdentitySuggestionService:
             scenes_raw = extract_labeled_field(block, "SCENES")
 
             if not name or not description or not scenes_raw:
+                logger.warning(
+                    "Dropped a suggested block: missing %s",
+                    ", ".join(
+                        label
+                        for label, value in (
+                            ("NAME", name),
+                            ("DESCRIPTION", description),
+                            ("SCENES", scenes_raw),
+                        )
+                        if not value
+                    ),
+                )
                 continue
 
             if kind_raw == "person":
@@ -151,17 +225,34 @@ class IdentitySuggestionService:
             elif kind_raw in ("place", "location"):
                 kind = CanonicalEntityType.LOCATION
             else:
+                logger.warning(
+                    "Dropped the suggested '%s': KIND '%s' is not person or place",
+                    name,
+                    kind_raw,
+                )
                 continue
 
             if name.strip().lower() in seen:
+                logger.info("Skipped the suggested '%s': already known", name)
                 continue
 
             try:
-                numbers = parse_scene_numbers(scenes_raw, valid_scenes)
-            except ValueError:
+                numbers = _scene_numbers(scenes_raw, valid_scenes)
+            except ValueError as error:
+                logger.warning(
+                    "Dropped the suggested '%s': scenes '%s' - %s",
+                    name,
+                    scenes_raw,
+                    error,
+                )
                 continue
 
             if len(numbers) < 2:
+                logger.warning(
+                    "Dropped the suggested '%s': it covers fewer than 2 scenes (%s)",
+                    name,
+                    scenes_raw,
+                )
                 continue
 
             try:
@@ -172,7 +263,10 @@ class IdentitySuggestionService:
                     scene_numbers=numbers,
                     status=SuggestionStatus.PENDING,
                 )
-            except ValueError:
+            except ValueError as error:
+                logger.warning(
+                    "Dropped the suggested '%s': %s", name, " ".join(str(error).split())
+                )
                 continue
 
             seen.add(suggestion.key)

@@ -22,8 +22,12 @@ from src.models.script_production_readiness import ScriptProductionReadinessRepo
 from src.models.script_quality_report import ScriptQualityStatus
 from src.models.script_selection_edit import SelectionEditRequest
 from src.models.story_blueprint import StoryBeatType, StoryBlueprint
+from src.models.suggestions import IdentitySuggestion, SuggestionStatus
 from src.models.video_job import VideoJob
-from src.models.visual_continuity import VisualContinuityValidationResult
+from src.models.visual_continuity import (
+    CanonicalEntityType,
+    VisualContinuityValidationResult,
+)
 from src.providers.google_flow.locators import clamp_to_verified_duration
 from src.services.approval_gate_service import ApprovalGateService
 from src.services.audience_promise_service import AudiencePromiseService
@@ -61,7 +65,11 @@ from src.services.production_semantic_brief_service import (
     ProductionSemanticBriefService,
 )
 from src.services.re_hook_planning_service import ReHookPlanningService
-from src.services.recurring_identity_service import carry_over_manual_identities
+from src.services.recurring_identity_service import (
+    RecurringIdentityService,
+    carry_over_manual_identities,
+    format_scene_numbers,
+)
 from src.services.research_planning_service import ResearchPlanningService
 from src.services.retention_audit_service import RetentionAuditService
 from src.services.scene_sound_design_service import SceneSoundDesignService
@@ -109,6 +117,9 @@ class ContentIntelligencePipeline:
     generated_script, ...) alongside it.
     """
 
+    # Class-level default so a pipeline built without __init__ (tests do) adds nothing.
+    recurring_identity_service: RecurringIdentityService | None = None
+
     def __init__(
         self,
         *,
@@ -117,7 +128,12 @@ class ContentIntelligencePipeline:
         research_agent: ResearchAgent | None = None,
         profile_ids: list[str] | None = None,
         estimated_cost_usd: float = 0.0,
+        recurring_identity_service: RecurringIdentityService | None = None,
     ) -> None:
+        # When given, the recurring PLACES the suggestion step finds are added to the
+        # project by themselves (and their reference picked from any clips that exist),
+        # so a run needs no per-place decision. None keeps every suggestion pending.
+        self.recurring_identity_service = recurring_identity_service
         self.genre_registry = (
             genre_registry or GenreProfileRegistryService.with_default_profiles()
         )
@@ -1392,16 +1408,62 @@ class ContentIntelligencePipeline:
             raise RuntimeError("Suggesting characters needs planned scenes.")
 
         seen = {suggestion.key for suggestion in job.identity_suggestions}
-        job.identity_suggestions.extend(
-            self.identity_suggestion_service.suggest(
-                scenes=job.scenes,
-                visual_continuity_bible=job.visual_continuity_bible,
-                topic=job.topic,
-                already_seen=seen,
-            )
+        fresh = self.identity_suggestion_service.suggest(
+            scenes=job.scenes,
+            visual_continuity_bible=job.visual_continuity_bible,
+            topic=job.topic,
+            already_seen=seen,
         )
+        job.identity_suggestions.extend(fresh)
+        self._add_found_places(job, fresh)
 
         return job
+
+    def _add_found_places(
+        self, job: VideoJob, suggestions: list[IdentitySuggestion]
+    ) -> None:
+        """Add the places among `suggestions` to the project (they stay editable and can
+        be removed afterwards). Characters are left as suggestions. One that cannot be added
+        (a name clash, say) stays pending for the operator."""
+
+        service = self.recurring_identity_service
+
+        if service is None:
+            return
+
+        for suggestion in suggestions:
+            if (
+                suggestion.kind != CanonicalEntityType.LOCATION
+                or suggestion.status != SuggestionStatus.PENDING
+            ):
+                continue
+
+            try:
+                service.add(
+                    job,
+                    name=suggestion.name,
+                    kind=CanonicalEntityType.LOCATION,
+                    description=suggestion.description,
+                    scene_text=format_scene_numbers(suggestion.scene_numbers),
+                )
+            except ValueError as error:
+                logger.warning(
+                    "Could not add the found place '%s' by itself: %s",
+                    suggestion.name,
+                    error,
+                )
+                continue
+
+            suggestion.status = SuggestionStatus.ACCEPTED
+
+            try:
+                service.fill_reference(job, suggestion.name)
+            except Exception as error:  # noqa: BLE001 - the reference is best effort
+                logger.warning(
+                    "Taking a reference for the found place '%s' failed: %s",
+                    suggestion.name,
+                    type(error).__name__,
+                )
 
     def compute_visual_continuity_validation(
         self, job: VideoJob

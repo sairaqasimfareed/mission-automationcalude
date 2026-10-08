@@ -2494,7 +2494,7 @@ class ContentStudioView(QWidget):
         description_field.setPlaceholderText(
             "What it looks like - repeated word for word in each scene"
         )
-        description_field.setMaxLength(400)
+        description_field.setMaxLength(1200)
         description_field.textChanged.connect(
             lambda text: self._recurring_form.__setitem__("description", text)
         )
@@ -2756,9 +2756,16 @@ class ContentStudioView(QWidget):
         if job is None:
             return
 
+        def runner(target: VideoJob) -> VideoJob:
+            self._content_intelligence_pipeline.run_identity_suggestions(target)
+            # Places the step adds by itself change the compiled prompts.
+            self._recompile_prompts_if_present(target)
+
+            return target
+
         self._run_stage(
             job,
-            self._content_intelligence_pipeline.run_identity_suggestions,
+            runner,
             label="suggesting characters and places",
             failure="Could not suggest characters and places",
             retry=self._handle_suggest_identities,

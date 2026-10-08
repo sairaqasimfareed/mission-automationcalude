@@ -569,3 +569,237 @@ def test_discarding_a_character_suggestion_keeps_it_out(qapp) -> None:  # type: 
 from tests.test_content_studio_content_intelligence_gui import (  # noqa: E402
     qapp as qapp,  # noqa: PLC0414 - fixture
 )
+
+# ----------------------------------------- recurring places are added by themselves
+
+
+def _pipeline_that_adds_places(tmp_path: Path, answer: str):  # type: ignore[no-untyped-def]
+    from src.services.recurring_identity_service import RecurringIdentityService
+    from tests.test_recurring_identity_service import _Selector
+
+    pipeline = _pipeline(answer)
+    pipeline.recurring_identity_service = RecurringIdentityService(
+        selection_service=_Selector(tmp_path),  # type: ignore[arg-type]
+        storage_root=tmp_path / "frames",
+    )
+
+    return pipeline
+
+
+def test_a_found_place_is_added_to_the_project_without_asking(tmp_path: Path) -> None:
+    from src.services.recurring_identity_service import RecurringIdentityService
+
+    job = _job()
+    pipeline = _pipeline_that_adds_places(tmp_path, _ANSWER)
+
+    pipeline.run_identity_suggestions(job)
+
+    village = next(
+        i
+        for i in job.visual_continuity_bible.identities  # type: ignore[union-attr]
+        if i.name == "The village"
+    )
+    assert village.is_manual is True
+    assert village.entity_type == CanonicalEntityType.LOCATION
+    assert village.canonical_description == "A hillside village of thatched huts."
+    service = pipeline.recurring_identity_service
+    assert isinstance(service, RecurringIdentityService)
+    assert service.scenes_of(job, "The village") == [2, 4]  # marked on its scenes
+    by_name = {s.name: s.status for s in job.identity_suggestions}
+    assert by_name["The village"] == SuggestionStatus.ACCEPTED
+
+
+def test_a_found_character_is_still_only_suggested(tmp_path: Path) -> None:
+    job = _job()
+    pipeline = _pipeline_that_adds_places(tmp_path, _ANSWER)
+
+    pipeline.run_identity_suggestions(job)
+
+    names = [
+        i.name
+        for i in job.visual_continuity_bible.identities  # type: ignore[union-attr]
+    ]
+    by_name = {s.name: s.status for s in job.identity_suggestions}
+    assert "Grandmother" not in names
+    assert by_name["Grandmother"] == SuggestionStatus.PENDING
+
+
+def test_a_found_place_takes_its_reference_from_a_clip_that_already_exists(
+    tmp_path: Path,
+) -> None:
+    job = _job()
+    clip = tmp_path / "clip_2.mp4"
+    clip.write_bytes(b"x")
+    job.video_clips.append(
+        VideoClip(
+            scene_number=2,
+            source_type=SceneSourceType.AI_GENERATE,
+            duration_seconds=8,
+            local_file=str(clip),
+        )
+    )
+    pipeline = _pipeline_that_adds_places(tmp_path, _ANSWER)
+
+    pipeline.run_identity_suggestions(job)
+
+    village = next(
+        i
+        for i in job.visual_continuity_bible.identities  # type: ignore[union-attr]
+        if i.name == "The village"
+    )
+    assert len(village.reference_asset_ids) == 1
+
+
+def test_a_place_that_cannot_be_added_stays_a_pending_suggestion(
+    tmp_path: Path,
+) -> None:
+    class _Refusing:
+        def add(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+            raise ValueError("That name is taken.")
+
+    job = _job()
+    pipeline = _pipeline(_ANSWER)
+    pipeline.recurring_identity_service = _Refusing()  # type: ignore[assignment]
+
+    pipeline.run_identity_suggestions(job)  # must not raise
+
+    by_name = {s.name: s.status for s in job.identity_suggestions}
+    assert by_name["The village"] == SuggestionStatus.PENDING
+
+
+def test_a_failing_reference_pick_does_not_undo_the_added_place(tmp_path: Path) -> None:
+    from src.services.recurring_identity_service import RecurringIdentityService
+    from tests.test_recurring_identity_service import _Selector
+
+    class _Service(RecurringIdentityService):
+        def fill_reference(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+            raise RuntimeError("cannot read the clip")
+
+    job = _job()
+    pipeline = _pipeline(_ANSWER)
+    pipeline.recurring_identity_service = _Service(
+        selection_service=_Selector(tmp_path),  # type: ignore[arg-type]
+        storage_root=tmp_path / "frames",
+    )
+
+    pipeline.run_identity_suggestions(job)
+
+    names = [
+        i.name
+        for i in job.visual_continuity_bible.identities  # type: ignore[union-attr]
+    ]
+    assert "The village" in names
+
+
+def test_the_prompt_asks_for_unnamed_settings_with_concrete_descriptions() -> None:
+    job = _job()
+    assert job.visual_continuity_bible is not None
+    job.visual_continuity_bible.clip_entries[0].incoming_state = VisualState(
+        location="A rural village near Lake Nyos"
+    )
+    llm = _StubLLM("NONE")
+    IdentitySuggestionService(llm_service=llm).suggest(  # type: ignore[arg-type]
+        scenes=job.scenes,
+        visual_continuity_bible=job.visual_continuity_bible,
+        topic="Lake Nyos",
+        already_seen=set(),
+    )
+
+    prompt = llm.requests[0].prompt
+
+    assert "| set in: A rural village near Lake Nyos" in prompt
+    assert "UNNAMED recurring setting" in prompt
+    assert "3 or 4 sentences" in prompt
+    assert "never the words 'same'" in prompt
+
+
+_BOLD_ANSWER = """**NAME:** The village
+**KIND:** place
+**DESCRIPTION:** A hillside village of thatched huts.
+**SCENES:** 2, 4
+"""
+
+
+def test_a_reply_with_markdown_bold_labels_is_still_read() -> None:
+    found = _suggest(_BOLD_ANSWER)
+
+    assert [s.name for s in found] == ["The village"]
+    assert found[0].scene_numbers == [2, 4]
+
+
+def test_a_real_reply_that_gives_nothing_is_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level("WARNING"):
+        found = _suggest("I could not find any people or places that repeat.")
+
+    assert found == []
+    assert "gave no candidates" in caplog.text
+    assert "could not find any people" in caplog.text
+
+
+def test_none_reply_is_not_logged_as_a_problem(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level("WARNING"):
+        _suggest("NONE")
+
+    assert "gave no candidates" not in caplog.text
+
+
+def test_a_full_length_place_description_is_not_dropped() -> None:
+    """Live 2026-10-09: the prompt asks for a 60-90 word description (~550 characters)
+    but the suggestion model capped it at 400, so Claude's well-formed reply was dropped
+    without a trace."""
+
+    description = (
+        "A cluster of modest rural homes with mud-brick walls and thatched or tin roofs, "
+        "standing intact under open sky. Dirt paths and small garden plots run between "
+        "the houses, with scattered trees and low vegetation typical of a highland "
+        "African setting. The ground nearby is uneven, dotted with motionless forms. "
+        "Light is flat and pale, as on an overcast early morning with a faint mist. "
+        "A narrow stream of grey water crosses the foreground and the hills behind "
+        "the huts are green and rounded."
+    )
+    assert 400 < len(description) < 1200
+
+    found = _suggest(
+        f"NAME: The Village\nKIND: place\nDESCRIPTION: {description}\nSCENES: 2, 4\n"
+    )
+
+    assert [s.name for s in found] == ["The Village"]
+    assert found[0].description == description
+
+
+def _reply_with_scenes(scenes: str) -> str:
+    return (
+        "NAME: The Village\nKIND: place\n"
+        "DESCRIPTION: A hillside village of thatched huts.\n"
+        f"SCENES: {scenes}\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "scenes",
+    ["2, 4", "2-4", "Scenes 2-4", "scenes 2 – 4", "2—4", "2 and 4", "2; 4", "4, 2"],
+)
+def test_the_scenes_line_is_read_however_the_model_writes_it(scenes: str) -> None:
+    found = _suggest(_reply_with_scenes(scenes))
+
+    assert len(found) == 1
+    assert len(found[0].scene_numbers) >= 2
+
+
+def test_scene_numbers_the_project_does_not_have_are_dropped_not_the_candidate() -> (
+    None
+):
+    found = _suggest(_reply_with_scenes("2, 4, 99"))
+
+    assert [s.scene_numbers for s in found] == [[2, 4]]
+
+
+def test_a_dropped_candidate_says_why(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level("WARNING"):
+        _suggest(_reply_with_scenes("2"))
+
+    assert "fewer than 2 scenes" in caplog.text

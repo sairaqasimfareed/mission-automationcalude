@@ -37,8 +37,11 @@ def extract_labeled_field(text: str, label: str) -> str | None:
     # newline - \s* there would let an empty value on one line
     # silently capture the following line's content instead of
     # correctly finding no value.
+    # Models often decorate a label with Markdown ("**NAME:** x", "- NAME: x",
+    # "### NAME: x"); decoration before the label and around the colon is skipped
+    # so the value is still found.
     pattern = re.compile(
-        rf"^\s*{re.escape(label)}\s*:[ \t]*(.+)$",
+        rf"^[ \t]*(?:[#>*_`\-][ \t]*)*{re.escape(label)}[*_`]*[ \t]*:[*_`]*[ \t]*(.+)$",
         re.IGNORECASE | re.MULTILINE,
     )
 
@@ -47,6 +50,6 @@ def extract_labeled_field(text: str, label: str) -> str | None:
     if match is None:
         return None
 
-    value = match.group(1).strip()
+    value = match.group(1).strip().strip("*_`").strip()
 
     return value or None

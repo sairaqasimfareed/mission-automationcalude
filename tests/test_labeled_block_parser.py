@@ -70,3 +70,22 @@ def test_split_blocks_strips_surrounding_whitespace() -> None:
     blocks = split_blocks("\n\n  TITLE: Only one block  \n\n")
 
     assert blocks == ["TITLE: Only one block"]
+
+
+def test_finds_a_label_the_model_wrapped_in_markdown_bold() -> None:
+    assert extract_labeled_field("**NAME:** The village", "NAME") == "The village"
+    assert extract_labeled_field("**NAME**: The village", "NAME") == "The village"
+
+
+def test_finds_a_label_after_a_bullet_or_heading_marker() -> None:
+    assert extract_labeled_field("- NAME: The village", "NAME") == "The village"
+    assert extract_labeled_field("### NAME: The village", "NAME") == "The village"
+    assert extract_labeled_field("- **KIND:** place", "KIND") == "place"
+
+
+def test_a_value_wrapped_in_bold_loses_the_markers() -> None:
+    assert extract_labeled_field("NAME: **The village**", "NAME") == "The village"
+
+
+def test_a_label_inside_a_sentence_is_still_not_matched() -> None:
+    assert extract_labeled_field("The NAME: is hidden here", "NAME") is None

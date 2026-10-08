@@ -55,6 +55,10 @@ from src.services.project_render_runtime_factory import (
 from src.services.project_specification_job_mapper import (
     ProjectSpecificationJobMapper,
 )
+from src.services.recurring_identity_service import RecurringIdentityService
+from src.services.reference_frame_selection_service import (
+    ReferenceFrameSelectionService,
+)
 from src.services.render_service import RenderService
 from src.services.render_workflow_stage_factory import (
     RenderWorkflowStageFactory,
@@ -431,6 +435,10 @@ class ProductionApplicationFactory:
         content_intelligence_pipeline = ContentIntelligencePipeline(
             llm_service=(infrastructure.llm_service),
             genre_registry=(self._genre_registry),
+            # The recurring places the suggestion step finds are added by themselves.
+            recurring_identity_service=RecurringIdentityService(
+                selection_service=ReferenceFrameSelectionService()
+            ),
         )
 
         # Voice gaps #1/#9 (2026-09-09 audit): target_provider is

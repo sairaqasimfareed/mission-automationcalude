@@ -54,7 +54,7 @@ class IdentitySuggestion(MissionBaseModel):
 
     name: str = Field(min_length=1, max_length=60)
     kind: CanonicalEntityType
-    description: str = Field(min_length=1, max_length=400)
+    description: str = Field(min_length=1, max_length=1200)
     scene_numbers: list[int] = Field(default_factory=list)
     status: SuggestionStatus = SuggestionStatus.PENDING
 

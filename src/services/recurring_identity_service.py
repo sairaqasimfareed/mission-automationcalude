@@ -35,7 +35,7 @@ from src.services.reference_frame_selection_service import (
 from src.shared.logger import logger
 
 _MAX_NAME_LENGTH = 60
-_MAX_DESCRIPTION_LENGTH = 400
+_MAX_DESCRIPTION_LENGTH = 1200
 
 
 class _Selector(Protocol):

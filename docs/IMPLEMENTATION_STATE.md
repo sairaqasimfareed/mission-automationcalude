@@ -859,6 +859,30 @@ section records what changed and why so a later session does not undo it.
     the sentence. Not verified live: the selector `[data-message-item]` for the reply text is the one
     the adapter already uses for prompts; whether a refused request is charged is unknown. Tests:
     `tests/test_muse_refusal.py`, `tests/test_muse_real_adapter.py`.
+  - **Reference-image gap, Phase 1 step 2: recurring places are found and added by themselves
+    (2026-10-09; live-checked on Lake Nyos).** `IdentitySuggestionService` (prompt
+    `identity_suggestion_prompt_v1.1.0`) now sees each scene's bible setting ("| set in: ...") and is asked
+    for UNNAMED recurring settings too ("The village"), with a plain name and a 3-4 sentence concrete
+    visual description. `ContentIntelligencePipeline.run_identity_suggestions` (which
+    `run_visual_continuity` already calls, so it runs inside "Generate" and "Regenerate bible" with no
+    click) adds every LOCATION it finds through `RecurringIdentityService.add` (marked on its scenes,
+    suggestion set to ACCEPTED) and then takes a reference from the clips that exist
+    (`fill_reference`, best effort). Characters stay suggestions to accept or discard. An add that
+    fails (a name clash) leaves the suggestion pending; the Content Studio handler re-compiles the
+    prompts afterwards. The "Suggest characters and places" button is only needed for a project whose
+    bible predates this. Live on Lake Nyos it found four places: The village (scenes 1-9, 24, 27-31,
+    reference from scene 2 picked by itself), Lake Nyos shoreline, and two that are GRAPHICS, not places
+    (a regional terrain map, a cross-section diagram) - see REMAINING_GAPS.
+    Three real bugs found live on the way: (1) the suggestion model capped a description at 400
+    characters while the new prompt asks for ~550, so Claude's correct reply was dropped without a
+    trace (cap now 1200 in `IdentitySuggestion`, `RecurringIdentityService` and the Content Studio
+    box); (2) the SCENES line was parsed strictly (a dash style, a leading word or a scene number the
+    project lacks rejected the whole candidate) - `_scene_numbers` is forgiving; (3) the shared
+    `extract_labeled_field` now also reads Markdown-decorated labels ("**NAME:** x"). Every dropped
+    candidate and every real reply that gave nothing is now logged with the reason in
+    `logs/mission.log`. Not done: the fallback reference for scenes outside any place (step 3), and
+    keeping graphics out of the place list. Tests: `tests/test_suggestions.py`,
+    `tests/test_labeled_block_parser.py`, `tests/test_recurring_identity_service.py`.
   - **A reference picture the operator picks for ONE scene (2026-10-08, live: Lake Nyos
     village).** A character/place has one reference for every scene it is marked in; a scene that
     names none (stretches of village footage) had nothing to carry its scenery and light from the

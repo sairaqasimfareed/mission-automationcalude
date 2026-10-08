@@ -933,6 +933,16 @@ picture without bodies).
   must be checked first. In auto mode the sheets are approved automatically and reviewable later.
 - *Phase 3 - the Character-mode gap below,* which reuses the same character and place sheets.
 
+**Phase 1 status (2026-10-09):** step 1 (settings-aware bible) BUILT and live-checked on Lake Nyos - places
+are found and added by themselves inside the visual-continuity step; step 3 (Muse rules: no "use the attached
+image" sentence for places) and step 4 (refusal recognition + one retry without the picture) BUILT; step 2
+(fallback reference for scenes outside any place, from the nearest earlier clip in the same setting) NOT
+built. **Open finding from the live check:** two of the four places found on Lake Nyos were graphics ("Regional
+terrain map", "Cross-section diagram of the lake"), not physical places - a reference picture of an animated
+diagram is not what a place reference is for. Recommended: tell the detector to leave out maps, diagrams,
+charts and other graphics. Also: places whose scenes have no clip yet show "No reference picture yet" until
+one exists - nothing yet takes the reference automatically when that first clip is generated.
+
 **Already built toward this (2026-10-08):** the frame picker offers several frames per clip; a picked
 reference picture per scene on the Clips tab (with a status line on every scene, a count and a filter); the
 Clip check reports a pick a clip was made without.
