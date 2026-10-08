@@ -873,7 +873,75 @@ re-render, leftover stage files, stored duration) and the broad
 - An uploaded title/CTA clip is letterboxed into the frame, never
   cropped, and re-encoded to 30 fps stereo audio so it joins cleanly.
 
-## Character-Oriented Video mode - scope LOCKED 2026-10-08, NOT BUILT
+## Reference-image gap (references attach by themselves; prompts are detailed) - scope LOCKED 2026-10-08, NOT BUILT
+
+Found live on Lake Nyos (2026-10-08). The operator's requirement: **"Generate all" must run without
+choosing anything per clip.** References attach automatically by default; the operator only changes,
+removes or adds more where they want to. Prompts must be detailed enough for a cinematic result.
+
+**Root cause (confirmed in code and project data).** The visual continuity pass
+(`VisualContinuityService._build_prompt`) may only mark entities from a fixed "Known recurring
+people/locations" list taken from the script-facts extraction. Lake Nyos' list held one place, the
+lake. The village (7 scenes whose location text reads "village", "village and surrounding area",
+"a rural village near Lake Nyos") was never an identity: no description repeated in its prompts, no
+reference extracted after scene 1, nothing attached to scene 2. 16 of 32 scenes named any identity, always
+the lake. `IdentitySuggestionService` is meant to catch recurring places but it never ran on that project
+(`identity_suggestions` empty; the bible predates it). The compiled prompts are also terse (380-500
+characters; "Environment: Same rural village. Lighting: Natural daylight.") and relative ("Same ...")
+wording means nothing to a fresh generation. The prompt-quality scorer exists but its scores were never
+computed here, so nothing blocked thin prompts.
+
+**What Muse does with a picture (four live attempts, same shot).**
+(1) short prompt + picture + the app's "Use the attached reference image for this location..."
+sentence: REFUSED ("the prompt plus that image together"); (2) same prompt + picture, no sentence:
+generated, a European tile-roof village that ignored the picture; (3) detailed prompt, no picture:
+generated, thatched mud huts / red earth / banana trees / misty hills - matches scene 1; (4) detailed
+prompt + picture, no sentence: generated, same look as (3). Conclusions: Muse ignores an attached
+picture unless the prompt tells it to use it; the sentence sent the picture (people lying on the ground -
+scene 1 is about bodies) to the video tool, which refused; a detailed written description alone holds the
+look. Characters are different: the Walter clips used "Same character as the attached reference image"
+with a clean face and worked. The refusal cause is likely, not proven (a confirming test: the sentence plus a
+picture without bodies).
+
+**Locked scope.**
+- *Phase 1 - references attach by themselves, and Muse refusals do not stop a run:*
+  1. Settings-aware bible: after the per-scene pass, group scenes that share a setting (even unnamed - "the
+     village", "the map room") and create a PLACE identity for each automatically (marked on its scenes, a
+     visual description - materials, colours, layout, plants, light, not script prose). Added WITHOUT asking;
+     the operator can edit or discard afterwards. The existing machinery then applies: reference from the
+     first clip made in that setting, attached to later scenes, description repeated.
+  2. Fallback for scenes outside any recurring setting: at generation time the best frame of the nearest earlier
+     clip in the same setting is used automatically. A one-off scene (a graphic) gets none. The per-scene
+     "Add / Change / Remove reference" button (built 2026-10-08) stays as a manual override, never required;
+     adding more than one picture to a scene is experimental (two pictures in one prompt is untested on Muse).
+  3. Muse rules: for PLACES no "use the attached image" sentence and the written description carries the look;
+     CHARACTERS keep the picture and the "same character as the attached reference image" wording. (Flow keeps its
+     ingredient attachment; the sentence stays for Flow, untested there.)
+  4. Muse refusal handling: recognise the refusal reply ("the tool refused that specific combination..."),
+     retry ONCE without the picture, and if refused again mark the scene needs-attention with Muse's own reason.
+     First check how the adapter currently sees a refusal (not confirmed) and whether a refused request is charged.
+  5. Before coding: run the new place detection on Lake Nyos and Remedy and show the operator what it finds.
+- *Phase 2 - detailed, cinematic prompts:* a project style sheet (setting - region, era, culture; architecture
+  and materials; climate and vegetation; palette and grade; lighting rules; lens and camera language; background
+  sound), drafted from the topic and research in one call and approved once; detailed place and character
+  sheets (visual, concrete) repeated in every prompt that needs them; a detailed prompt per scene built from those
+  layers plus the scene's own action and camera (a short LLM pass for the scene-specific parts, batched, with a
+  checklist: subject, setting specifics, lighting direction and quality, camera/lens/angle/movement, mood, ambient
+  sound); a completeness gate before credits are spent (relative or generic fields such as "Same village" /
+  "Village." are expanded automatically, what is still thin is flagged on the Prompts tab) reusing
+  `CinematicPromptQualityService`. Target about 1,200-2,000 characters per prompt; Flow's limit is unknown and
+  must be checked first. In auto mode the sheets are approved automatically and reviewable later.
+- *Phase 3 - the Character-mode gap below,* which reuses the same character and place sheets.
+
+**Already built toward this (2026-10-08):** the frame picker offers several frames per clip; a picked
+reference picture per scene on the Clips tab (with a status line on every scene, a count and a filter); the
+Clip check reports a pick a clip was made without.
+
+**Open, to verify while building:** whether the sentence plus a bodies-free picture is accepted; Flow's prompt
+length; what an LLM-written "Cameroon, 1986" place sheet gets wrong (facts come from the research text and the
+operator approves each sheet); cost - a few calls per project plus about 4 batched scene calls for 32 scenes.
+
+## Character-mode gap: Character-Oriented Video mode - scope LOCKED 2026-10-08, NOT BUILT
 
 A project-level mode for videos where on-camera characters speak real, lip-synced dialogue.
 Evidence (live Muse tests by the operator, clips analysed 2026-10-08): lip sync correct; one
