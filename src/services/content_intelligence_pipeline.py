@@ -87,6 +87,7 @@ from src.services.script_revision_service import ScriptRevisionService
 from src.services.script_selection_edit_service import ScriptSelectionEditService
 from src.services.script_version_service import ScriptVersionService
 from src.services.shot_planning_service import ShotPlanningService
+from src.services.speaker_identity_service import SpeakerIdentityService
 from src.services.story_angle_evaluation_service import (
     StoryAngleEvaluationService,
     select_winning_evaluation,
@@ -1390,6 +1391,19 @@ class ContentIntelligencePipeline:
 
         # The characters and places the operator named by hand survive a regenerate.
         carry_over_manual_identities(previous_bible, job.visual_continuity_bible)
+
+        # Character-Oriented Video: everyone who speaks in the script becomes a recurring
+        # person, marked on the scenes they speak in. Safe after every regeneration (it adds or
+        # marks, never duplicates). Best effort: a failure must not fail the bible itself.
+        if job.character_oriented and self.recurring_identity_service is not None:
+            try:
+                SpeakerIdentityService(
+                    recurring_identity_service=self.recurring_identity_service
+                ).link(job)
+            except Exception as error:  # noqa: BLE001 - linking is an enhancement
+                logger.warning(
+                    "Linking the speakers to the bible failed: %s", type(error).__name__
+                )
 
         # Propose anyone the bible missed. Best effort: a failed suggestion call must
         # never fail the bible itself.

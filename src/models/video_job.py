@@ -114,6 +114,12 @@ class VideoJob(MissionBaseModel):
     # src/services/scene_hold.py). None = the genre's own default; 0 = off.
     scene_hold_seconds: float | None = Field(default=None, ge=0.0, le=3.0)
 
+    # Character-Oriented Video mode: the project's script is `NAME: line` dialogue spoken on
+    # camera by characters (lip-synced by the video provider) instead of narrator voiceover.
+    # Project-level and genre-independent. Set when the project is created; it decides how the
+    # imported script is read and how the scenes are planned and prompted.
+    character_oriented: bool = False
+
     # Bring the clips toward one shared look when rendering (each clip's own
     # correction is measured by ClipColorMatchingService and kept on the clip).
     color_matching_enabled: bool = False

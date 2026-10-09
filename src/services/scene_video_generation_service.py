@@ -43,6 +43,7 @@ from src.services.asset_storage_service import AssetStorageService
 from src.services.cinematic_prompt_compilation_service import (
     CinematicPromptCompilationService,
 )
+from src.services.dialogue_prompt import speakers_before
 from src.services.frame_extraction_service import FrameExtractionService
 from src.services.google_flow_generation_ledger_service import (
     GoogleFlowGenerationLedgerService,
@@ -790,6 +791,7 @@ class SceneVideoGenerationService:
             sub_clip_durations=durations,
             project_look=job.project_look,
             scene_detail_plan=job.scene_detail_plan,
+            earlier_speakers=speakers_before(job.scenes, scene.scene_number),
         )
 
     def _build_seam_reference_asset(

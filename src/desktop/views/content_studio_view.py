@@ -4726,7 +4726,11 @@ class ContentStudioView(QWidget):
 
         intake_editor = QTextEdit()
         intake_editor.setPlaceholderText(
-            "Paste your script here (separate segments/paragraphs with "
+            "Write each line as NAME: what they say. Put a blank line between "
+            "scenes; lines in the same block are spoken in order, each by the "
+            "character named."
+            if job.character_oriented
+            else "Paste your script here (separate segments/paragraphs with "
             "a blank line)..."
         )
         intake_editor.setFixedHeight(120)

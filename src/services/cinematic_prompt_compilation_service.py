@@ -18,6 +18,7 @@ from src.models.visual_continuity import (
     CanonicalEntityType,
     VisualContinuityBible,
 )
+from src.services.dialogue_prompt import dialogue_prompt_text, speakers_before
 from src.services.prompt_wording import (
     is_unspecified,
     without_leading_relative_wording,
@@ -55,6 +56,8 @@ class _ResolvedSceneFields(NamedTuple):
     look: str = ""
     # The scene-specific paragraph (SceneDetailPlan) when a current one exists.
     detail: str = ""
+    # Character-Oriented Video: the speaking sentences (empty for a narrated scene).
+    dialogue: str = ""
     # False for a graphic scene shown as live footage: its shot plan's beats
     # describe the graphic, so they are not used.
     use_beats: bool = True
@@ -252,6 +255,7 @@ class CinematicPromptCompilationService:
                 use_shot_by_shot_beats=use_shot_by_shot_beats,
                 project_look=project_look,
                 scene_detail_plan=scene_detail_plan,
+                earlier_speakers=speakers_before(scenes, scene.scene_number),
             )
             for scene in sorted(scenes, key=lambda s: s.scene_number)
         ]
@@ -269,6 +273,7 @@ class CinematicPromptCompilationService:
         production_semantic_brief: ProductionSemanticBrief | None,
         project_look: ProjectLook | None = None,
         scene_detail_plan: SceneDetailPlan | None = None,
+        earlier_speakers: set[str] | None = None,
     ) -> _ResolvedSceneFields:
         shot = shot_plan.shot_for_scene(scene.scene_number)
         continuity = visual_continuity_bible.entry_for_scene(scene.scene_number)
@@ -379,6 +384,11 @@ class CinematicPromptCompilationService:
             ),
             use_beats=use_beats,
             graphic_text=graphic_text,
+            dialogue=dialogue_prompt_text(
+                scene.dialogue,
+                earlier_speakers=earlier_speakers,
+                environment=environment,
+            ),
             detail=(
                 scene_detail_plan.current_text_for(
                     scene.scene_number,
@@ -403,6 +413,7 @@ class CinematicPromptCompilationService:
         use_shot_by_shot_beats: bool = _USE_SHOT_BY_SHOT_BEATS,
         project_look: ProjectLook | None = None,
         scene_detail_plan: SceneDetailPlan | None = None,
+        earlier_speakers: set[str] | None = None,
     ) -> ResolvedCinematicPrompt:
         common = CinematicPromptCompilationService._resolve_common_fields(
             scene=scene,
@@ -411,6 +422,7 @@ class CinematicPromptCompilationService:
             production_semantic_brief=production_semantic_brief,
             project_look=project_look,
             scene_detail_plan=scene_detail_plan,
+            earlier_speakers=earlier_speakers,
         )
 
         raw_duration = (
@@ -442,6 +454,7 @@ class CinematicPromptCompilationService:
         prompt_text = (
             f"Identity: {', '.join(common.identities) or 'no recurring identity present'}. "
             f"Environment: {common.environment}. Lighting: {common.lighting}. "
+            f"{common.dialogue + ' ' if common.dialogue else ''}"
             f"{action_line} Composition: {common.composition}. "
             f"{_detail_sentence(common.detail)}"
             f"Lens/camera: {common.lens}, {common.camera}. "
@@ -471,6 +484,7 @@ class CinematicPromptCompilationService:
         sub_clip_durations: list[float],
         project_look: ProjectLook | None = None,
         scene_detail_plan: SceneDetailPlan | None = None,
+        earlier_speakers: set[str] | None = None,
     ) -> list[ResolvedCinematicPrompt]:
         """
         Phase 5 (multi-clip scene splitting): one ResolvedCinematicPrompt
@@ -508,6 +522,7 @@ class CinematicPromptCompilationService:
             production_semantic_brief=production_semantic_brief,
             project_look=project_look,
             scene_detail_plan=scene_detail_plan,
+            earlier_speakers=earlier_speakers,
         )
 
         prompts: list[ResolvedCinematicPrompt] = []
@@ -544,6 +559,7 @@ class CinematicPromptCompilationService:
             prompt_text = (
                 f"Identity: {', '.join(common.identities) or 'no recurring identity present'}. "
                 f"Environment: {common.environment}. Lighting: {common.lighting}. "
+                f"{common.dialogue + ' ' if common.dialogue else ''}"
                 f"{action_line} Composition: {common.composition}. "
                 f"{_detail_sentence(common.detail)}"
                 f"Lens/camera: {common.lens}, {common.camera}. "

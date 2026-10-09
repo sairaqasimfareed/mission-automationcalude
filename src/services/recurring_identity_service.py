@@ -299,6 +299,24 @@ class RecurringIdentityService:
 
         return identity
 
+    def mark_scenes(self, job: VideoJob, name: str, scene_numbers: list[int]) -> None:
+        """Show the character or place `name` (already in the bible, however it got
+        there) on these scenes, in addition to the ones it is already on."""
+
+        bible = job.visual_continuity_bible
+
+        if bible is None:
+            raise ValueError("Generate the visual continuity bible first.")
+
+        identity = next(
+            (i for i in bible.identities if i.name.lower() == name.lower()), None
+        )
+
+        if identity is None:
+            raise ValueError(f"There is no character or place named {name}.")
+
+        self._set_scenes(job, identity.name, scene_numbers)
+
     def update(
         self,
         job: VideoJob,

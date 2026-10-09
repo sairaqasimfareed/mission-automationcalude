@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from src.models.dialogue import spoken_text
 from src.models.generated_script import GeneratedScript, ScriptSegment
 from src.models.script_intake import (
     ScriptIntakeMismatch,
@@ -8,6 +9,7 @@ from src.models.script_intake import (
 )
 from src.models.story_blueprint import StoryBeatType
 from src.models.video_job import VideoJob
+from src.services.dialogue_script_parser import parse_dialogue_script
 from src.services.llm.labeled_block_parser import extract_labeled_field
 from src.services.llm.llm_service import LLMService
 from src.shared.llm.models import LLMProvider
@@ -122,9 +124,16 @@ class ScriptIntakeService:
         topic: str,
         genre_id: str,
         target_duration_seconds: int,
+        character_oriented: bool = False,
     ) -> GeneratedScript:
         """
-        Deterministic, no LLM call: splits on blank-line-separated
+        With `character_oriented`, the text is a `NAME: line` dialogue script (see
+        parse_dialogue_script): each blank-line-separated block becomes one segment that
+        carries its attributed lines, and the segment's narration is the spoken words with the
+        names left out, so timing, sizing and subtitles work on what is actually said.
+        A line with no speaker raises DialogueScriptError (a ValueError) naming its line.
+
+        Otherwise: deterministic, no LLM call: splits on blank-line-separated
         paragraphs, one ScriptSegment per paragraph, timed by an
         estimated speaking pace. narrative_function/tension_level are
         inferred from each segment's own position (see
@@ -134,6 +143,14 @@ class ScriptIntakeService:
         artifacts" design rule (this class's own docstring) is meant
         to guard against.
         """
+
+        if character_oriented:
+            return self._normalize_dialogue_script(
+                raw_text=raw_text,
+                topic=topic,
+                genre_id=genre_id,
+                target_duration_seconds=target_duration_seconds,
+            )
 
         paragraphs = [
             paragraph.strip()
@@ -176,6 +193,48 @@ class ScriptIntakeService:
             target_duration_seconds=target_duration_seconds,
             segments=segments,
             prompt_version="script_intake_prompt_v1.0.0",
+        )
+
+    @staticmethod
+    def _normalize_dialogue_script(
+        *,
+        raw_text: str,
+        topic: str,
+        genre_id: str,
+        target_duration_seconds: int,
+    ) -> GeneratedScript:
+        scenes = parse_dialogue_script(raw_text)
+        segments: list[ScriptSegment] = []
+        cursor_seconds = 0.0
+
+        for position, lines in enumerate(scenes):
+            narration = spoken_text(lines)
+            duration = max(
+                len(narration.split()) / _WORDS_PER_MINUTE * 60.0,
+                _MIN_SEGMENT_DURATION_SECONDS,
+            )
+            narrative_function = _infer_narrative_function(
+                index=position, total=len(scenes)
+            )
+            segments.append(
+                ScriptSegment(
+                    segment_number=position + 1,
+                    start_seconds=cursor_seconds,
+                    end_seconds=cursor_seconds + duration,
+                    narrative_function=narrative_function,
+                    narration=narration,
+                    tension_level=_TENSION_LEVEL_BY_BEAT[narrative_function],
+                    dialogue=lines,
+                )
+            )
+            cursor_seconds += duration
+
+        return GeneratedScript(
+            topic=topic,
+            genre_id=genre_id,
+            target_duration_seconds=target_duration_seconds,
+            segments=segments,
+            prompt_version="script_intake_dialogue_prompt_v1.0.0",
         )
 
     def analyze_mismatches(
@@ -246,6 +305,7 @@ class ScriptIntakeService:
             topic=job.topic,
             genre_id=job.genre_id,
             target_duration_seconds=job.target_duration_seconds,
+            character_oriented=job.character_oriented,
         )
 
         mismatches: list[ScriptIntakeMismatch] = []

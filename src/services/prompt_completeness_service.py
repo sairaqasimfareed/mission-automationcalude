@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from src.models.video_job import VideoJob
+from src.services.dialogue_prompt import CONTINUITY_MARKER
 from src.services.enriched_scene_prompt_service import EnrichedScenePromptService
 from src.services.prompt_wording import is_unspecified, relative_words_in
 from src.services.scene_visual_treatment import renders_as_graphic
@@ -27,6 +28,14 @@ MIN_LIVE_PROMPT_CHARACTERS = 600
 _CONTINUATION_SENTENCE = re.compile(
     r"This clip continues directly from the previous one[^.]*\.", re.IGNORECASE
 )
+# A sentence that asks a returning speaker to keep face and voice is a deliberate instruction
+# (resolved by the reference picture and the earlier clips), not careless relative wording.
+_CHARACTER_CONTINUITY_SENTENCE = re.compile(
+    rf"[^.]*{re.escape(CONTINUITY_MARKER)}[^.]*\.", re.IGNORECASE
+)
+# Words inside double quotes are literal - what a character says, or the exact text a graphic may
+# show - not the prompt's own wording.
+_QUOTED = re.compile(r'"[^"]*"')
 _ENVIRONMENT_AND_LIGHTING = re.compile(
     r"Environment:\s*(?P<environment>.+?)\.\s+Lighting:\s*(?P<lighting>.+?)\.\s",
     re.DOTALL,
@@ -90,7 +99,8 @@ def check_prompt_text(text: str, *, graphic: bool = False) -> list[PromptFinding
 
     findings: list[PromptFinding] = []
     wording = _CONTINUATION_SENTENCE.sub("", text)
-    relative = relative_words_in(wording)
+    own_words = _QUOTED.sub('""', _CHARACTER_CONTINUITY_SENTENCE.sub("", wording))
+    relative = relative_words_in(own_words)
 
     if relative:
         shown = ", ".join(f"'{word}'" for word in relative)

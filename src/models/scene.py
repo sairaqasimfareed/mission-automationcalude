@@ -5,6 +5,7 @@ from enum import Enum
 from pydantic import Field, model_validator
 
 from src.models.base import MissionBaseModel
+from src.models.dialogue import DialogueLine
 from src.models.media_strategy import (
     SceneSourceStatus,
     SceneSourceType,
@@ -138,6 +139,12 @@ class Scene(MissionBaseModel):
     # Who set the picture above. None with a picture = the operator's (saved before this
     # field existed); None without one = nobody has decided, so the app may pick one.
     reference_pick_source: ReferencePickSource | None = None
+
+    # Character-Oriented Video mode: the attributed lines spoken on camera in this scene, in
+    # order (two speakers = a two-person scene). Empty for an ordinary narrated scene.
+    # `narration` is the spoken words themselves, so voice timing, clip sizing and subtitles
+    # work unchanged.
+    dialogue: list[DialogueLine] = Field(default_factory=list)
 
     fallback_sources: list[SceneSourceType] = Field(default_factory=list)
 

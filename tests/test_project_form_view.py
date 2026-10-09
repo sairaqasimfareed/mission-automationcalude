@@ -373,6 +373,7 @@ def test_tab_order_follows_the_forms_visual_top_to_bottom_layout(
         view._target_audience,
         view._platform,
         view._approval_mode,
+        view._character_oriented,
         *(
             view._decision_point_selects[field_name]
             for field_name, _label in _DECISION_POINT_FIELDS

@@ -978,6 +978,62 @@ section records what changed and why so a later session does not undo it.
     whatever is still short stays flagged on the Prompts tab. Not verified live: what Claude writes for a real
     script, how long Lake Nyos prompts become, and how Flow / Muse treat them; Flow's prompt limit is unknown
     (Muse took a 3,000-character prompt whole). Tests: `tests/test_scene_detail.py`.
+  - **Character-Oriented Video mode, Slice 1 steps 1-3 (2026-10-09): dialogue model, `NAME: line` import,
+    project toggle and preset.** Scope locked 2026-10-08 (Muse-first; operator's own script). (1) `DialogueLine`
+    (speaker + words, `src/models/dialogue.py`; `spoken_text`, `speakers_in`) on the new `ScriptSegment.dialogue`
+    and `Scene.dialogue`. `parse_dialogue_script` (`services/dialogue_script_parser.py`): blank lines separate
+    scenes, each line is `NAME: what they say`; quotation marks around the words are dropped; ALL-CAPS names
+    become ordinary names and one person stays one person (first spelling kept); a colon inside the words stays
+    in them; STRICT - a line with no speaker raises `DialogueScriptError` naming its line number and a wrapped
+    line is never glued to the line above (a missing colon would put one character's words in another's mouth
+    and the clip is lip-synced to whoever the prompt says speaks). `GeneratedScript.content_hash` includes
+    speaker:line pairs only when a segment has dialogue, so a change of speaker alone changes the hash and every
+    existing script hashes exactly as before. (2) `ScriptIntakeService.normalize_text_to_script(...,
+    character_oriented=)` (and `intake`, from `job.character_oriented`): one segment per block carrying its
+    lines; the segment's narration is the spoken words WITHOUT the names, so voice timing, clip sizing and
+    subtitles work unchanged; timed by words, no overlap. `ScenePlannerAgent.plan_from_generated_script`: a
+    segment with dialogue is exactly ONE scene (never split by sentence - that would cut a line in half or
+    separate a question from its answer) carrying `scene.dialogue`, sized by the longer of the segment span and
+    its spoken length (at least the 4 s clip minimum, NOT capped at 8 s), always `AI_GENERATE` whatever the
+    genre's default source (stock footage cannot lip-sync). (3) New `VideoJob.character_oriented` (default
+    False); New Project form card "Character-Oriented Video" + checkbox; `apply_character_mode_preset`
+    (`services/character_mode_preset.py`): native clip audio ON, ElevenLabs voiceover OFF at the mux (still
+    generated - its measured length sizes the clips), music / sound-effects choices left as the operator had
+    them, `scene_hold_seconds = 0`, `video_provider = MUSE`; genre-independent. The script box in Content Studio
+    tells the operator to write `NAME: what they say`. Not done yet in Slice 1: speakers becoming recurring
+    PERSON identities, the dialogue prompt wording, the speech budget (about 2.5 words/s), Muse 10 s for
+    two-line scenes. Slice 2 (per-character appearance / outfit / voice fields, cast picture upload) not started.
+    Tests: `tests/test_dialogue_script.py`, `tests/test_dialogue_intake.py`,
+    `tests/test_character_mode_preset.py`, `tests/test_project_form_view.py`.
+  - **Character-Oriented Video mode, Slice 1 steps 4-5 (2026-10-09): speakers become recurring people; the
+    dialogue prompt wording.** (4) `SpeakerIdentityService` (`services/speaker_identity_service.py`): every
+    speaker of the script becomes a recurring PERSON, marked (`entity_names` + `on_screen_entity_names`) on the
+    scenes they speak in, so their description repeats in those prompts and their reference picture (from their
+    first clip) is attached to the later ones. A speaker the bible already has is marked, not added twice (same
+    name, or the same first name where one name continues the other - "Walter" / "Walter Hale"; two possible
+    matches = no match, never a guess; a PLACE with the same name is not the person); a new one is added as an
+    editable person with a placeholder description ("<Name>, a person who speaks on camera") until Slice 2 writes
+    appearance, outfit and voice; idempotent, so safe after every bible regeneration; a speaker that cannot be
+    added is logged and skipped. New public `RecurringIdentityService.mark_scenes`. Called from
+    `run_visual_continuity` for `job.character_oriented` after the manual identities are carried over (best
+    effort). (5) `services/dialogue_prompt.py` - the tested Muse wording as fixed text: each line attributed in
+    order (`<Name> says clearly in their own voice: "..."`; "Then <Name> says..."), "Their lips move naturally
+    in sync with the speech", "Real spoken audio with only quiet room|outdoor sound, no music" (outdoor chosen
+    from the setting's words); two or more speakers add "<Two|Three|Several> people speak in this scene, in this
+    order", "Only one person speaks at a time; the listener's mouth stays closed", "Each person keeps exactly
+    their own voice throughout", "Both|All faces are three-quarter to the camera"; a speaker who already appeared
+    gets "Same face, same voice, continuing directly from the previous scene" (named when only some return).
+    "Their" on purpose: nobody's gender is guessed from a name (the tested "his own voice" is not copied). The
+    compiler (`CinematicPromptCompilationService.compile` / `compile_sub_clip_prompts`, with `earlier_speakers`
+    from `speakers_before`) puts it right after the Lighting line; the Flow and Muse sub-clip callers pass who
+    spoke earlier. At Muse SUBMISSION (the picture only exists after an earlier clip) a speaking scene with a
+    CHARACTER reference attached adds "Same character as the attached reference image: same face, same voice."
+    (several pictures: "Each speaker is the same character as in their attached reference image...") because
+    Muse ignores an attached picture unless told to use it; a narrated scene is unchanged. The completeness check
+    now ignores the continuity sentence and anything inside double quotes (a line a character says, e.g. "the
+    same train", is not the prompt's own relative wording). Not verified live (no Muse credits spent). Not done:
+    the speech budget (step 6), Slice 2, the pilot. Tests: `tests/test_speaker_identity.py`,
+    `tests/test_dialogue_prompt.py`, `tests/test_prompt_completeness.py`.
   - **A reference picture the operator picks for ONE scene (2026-10-08, live: Lake Nyos
     village).** A character/place has one reference for every scene it is marked in; a scene that
     names none (stretches of village footage) had nothing to carry its scenery and light from the

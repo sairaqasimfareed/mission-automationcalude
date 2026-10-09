@@ -961,7 +961,12 @@ Clip check reports a pick a clip was made without.
 length; what an LLM-written "Cameroon, 1986" place sheet gets wrong (facts come from the research text and the
 operator approves each sheet); cost - a few calls per project plus about 4 batched scene calls for 32 scenes.
 
-## Character-mode gap: Character-Oriented Video mode - scope LOCKED 2026-10-08, NOT BUILT
+## Character-mode gap: Character-Oriented Video mode - scope LOCKED 2026-10-08, Slice 1 IN PROGRESS
+
+**Status 2026-10-09:** built - dialogue model + strict `NAME: line` parser, script import into one scene per
+exchange, the project toggle and the preset, speakers as recurring people, and the dialogue prompt wording
+(steps 1-5 of Slice 1; see IMPLEMENTATION_STATE). Still to build: the speech budget (about 2.5 words/s, Muse
+10 s for two-line scenes), then Slice 2. The 3-scene Muse pilot (credits) has not been run.
 
 A project-level mode for videos where on-camera characters speak real, lip-synced dialogue.
 Evidence (live Muse tests by the operator, clips analysed 2026-10-08): lip sync correct; one

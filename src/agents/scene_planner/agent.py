@@ -255,6 +255,33 @@ class ScenePlannerAgent:
         scene_number = 1
 
         for segment in ordered_segments:
+            if segment.dialogue:
+                # A spoken exchange is ONE scene: splitting it by sentence would cut a line
+                # in half, or separate a question from its answer, and the clip is lip-synced
+                # to exactly the lines the scene carries. Its length is the longer of the
+                # segment's own span and the time its words take to say.
+                words = len(segment.narration.split())
+                duration_seconds = max(
+                    segment.end_seconds - segment.start_seconds,
+                    float(self._narration_timing_service.estimate_seconds(words)),
+                    float(_MINIMUM_FLOW_SCENE_DURATION_SECONDS),
+                )
+                scene = self._build_scene(
+                    scene_number=scene_number,
+                    narration=segment.narration,
+                    duration_seconds=duration_seconds,
+                    segment=segment,
+                    topic=script.topic,
+                    # Characters speak in a generated clip, whatever the genre's default
+                    # source is (stock footage cannot lip-sync a script).
+                    source_type=SceneSourceType.AI_GENERATE,
+                )
+                scene.dialogue = list(segment.dialogue)
+                scenes.append(scene)
+                scene_number += 1
+
+                continue
+
             for sentences, sub_duration_seconds in self._subdivide_segment(
                 segment,
                 scene_density_per_minute=content_intelligence.scene_density_per_minute,

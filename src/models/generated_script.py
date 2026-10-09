@@ -5,6 +5,7 @@ import hashlib
 from pydantic import Field, field_validator, model_validator
 
 from src.models.base import MissionBaseModel
+from src.models.dialogue import DialogueLine
 from src.models.story_blueprint import StoryBeatType
 
 # "Narrative function" (spec section 33) and StoryBeatType (spec
@@ -33,6 +34,10 @@ class ScriptSegment(MissionBaseModel):
 
     related_curiosity_loop: str | None = None
     source_claim_references: list[str] = Field(default_factory=list)
+
+    # Character-Oriented Video mode: who says what in this segment, in order. Empty for an
+    # ordinary narrated segment. `narration` is then the spoken words (see spoken_text).
+    dialogue: list[DialogueLine] = Field(default_factory=list)
 
     @field_validator("narration")
     @classmethod
@@ -144,6 +149,9 @@ class GeneratedScript(MissionBaseModel):
             f"{segment.segment_number}|{segment.start_seconds}|"
             f"{segment.end_seconds}|{segment.narrative_function.value}|"
             f"{segment.narration}"
+            # Who says a line is part of what the script is: a change of speaker alone must
+            # change the hash. An ordinary segment adds nothing, so existing hashes stand.
+            + "".join(f"|{line.speaker}:{line.text}" for line in segment.dialogue)
             for segment in ordered
         )
 

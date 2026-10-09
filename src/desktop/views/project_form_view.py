@@ -49,6 +49,7 @@ from src.models.upload_settings import UploadPlatform, UploadSettings
 from src.models.video_settings import VideoSettings
 from src.models.visual_settings import VisualSettings
 from src.models.voice_settings import VoiceSettings
+from src.services.character_mode_preset import apply_character_mode_preset
 from src.services.genre_profile_registry_service import (
     GenreProfileRegistryService,
 )
@@ -270,6 +271,27 @@ class ProjectFormView(QWidget):
         layout.addWidget(self._top10_frame)
         self._top10_frame.setVisible(self._genre.currentText() == "genre.top10")
 
+        # Character-Oriented Video (2026-10-09): project-level and genre-independent, so it
+        # is its own card, not part of any genre's. See character_mode_preset.py.
+        character_frame, character_layout = card(
+            "Character-Oriented Video", icon_name="clapper"
+        )
+        character_layout.addWidget(
+            small_muted(
+                "For a video where characters speak on camera, lip-synced, instead of a "
+                "narrator. You write the script as NAME: what they say, with a blank line "
+                "between scenes. Turning this on makes the clip's own audio the speech "
+                "(the narrator voice is muted in the final video), removes the pause after "
+                "each line and generates the clips with Muse."
+            )
+        )
+        self._character_oriented = QCheckBox(
+            "Characters speak on camera (Character-Oriented Video)"
+        )
+        self._character_oriented.setChecked(False)
+        character_layout.addWidget(self._character_oriented)
+        layout.addWidget(character_frame)
+
         self._custom_approval_frame, custom_approval_layout = card(
             "Custom approval - per stage", icon_name="settings"
         )
@@ -482,6 +504,9 @@ class ProjectFormView(QWidget):
 
             if job.aspect_ratio == AspectRatio.PORTRAIT:
                 job.output_resolution = PORTRAIT_FULL_HD
+
+            if self._character_oriented.isChecked():
+                apply_character_mode_preset(job)
 
             if job.genre_id == "genre.top10":
                 image_path = self._top10_image_path_display.text().strip()
