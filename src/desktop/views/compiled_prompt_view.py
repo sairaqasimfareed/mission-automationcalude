@@ -15,9 +15,16 @@ from PySide6.QtWidgets import (
 
 from src.desktop.job_store import JobStore
 from src.desktop.scroll_preservation import keep_scroll_on_refresh
-from src.desktop.widgets import button, card, small_muted, subheading
+from src.desktop.widgets import (
+    button,
+    card,
+    small_muted,
+    status_label,
+    subheading,
+)
 from src.models.video_job import VideoJob
 from src.services.enriched_scene_prompt_service import EnrichedScenePromptService
+from src.services.prompt_completeness_service import PromptCompletenessService
 
 _LEFT = Qt.AlignmentFlag.AlignLeft
 
@@ -54,6 +61,10 @@ class CompiledPromptView(QWidget):
 
         self._enriched_scene_prompt_service = (
             enriched_scene_prompt_service or EnrichedScenePromptService()
+        )
+
+        self._completeness_service = PromptCompletenessService(
+            self._enriched_scene_prompt_service
         )
 
         outer_layout = QVBoxLayout(self)
@@ -109,6 +120,29 @@ class CompiledPromptView(QWidget):
 
             return
 
+        # Wording a clip generated on its own cannot use ("Same village", "unspecified", a
+        # prompt too short to describe the place): reported here, before credits are spent.
+        report = self._completeness_service.report(job)
+
+        if not report.checked:
+            pass
+        elif report.is_complete:
+            layout.addWidget(
+                status_label(
+                    "Every prompt names its place, light and action in full.",
+                    role="success",
+                )
+            )
+        else:
+            numbers = ", ".join(str(n) for n in report.flagged_scene_numbers)
+            layout.addWidget(
+                status_label(
+                    f"{len(report.flagged_scene_numbers)} scene(s) have a thin prompt "
+                    f"- scenes {numbers}. Details are under each one below.",
+                    role="warning",
+                )
+            )
+
         for scene in sorted(job.scenes, key=lambda item: item.scene_number):
             entries = self._enriched_scene_prompt_service.build_entries(
                 job=job, scene=scene
@@ -131,6 +165,11 @@ class CompiledPromptView(QWidget):
                     )
 
                 row_layout.addWidget(subheading(heading_text))
+
+                for finding in report.findings_for(
+                    scene.scene_number, entry.clip_sequence_index
+                ):
+                    row_layout.addWidget(status_label(finding.message, role="warning"))
 
                 text_area = QTextEdit()
                 text_area.setReadOnly(True)

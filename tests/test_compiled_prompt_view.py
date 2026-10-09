@@ -246,3 +246,53 @@ def test_refresh_clears_previous_rows_before_rebuilding(qapp: QApplication) -> N
     view.refresh(job_two)
 
     assert view._layout.count() == 1  # still exactly one card, replaced not stacked
+
+
+def _job_with_prompt(text: str) -> VideoJob:
+    package = CinematicPromptPackage(
+        script_lock_hash=_SCRIPT_LOCK_HASH,
+        prompts=[
+            ResolvedCinematicPrompt(
+                scene_number=1, script_lock_hash=_SCRIPT_LOCK_HASH, prompt_text=text
+            )
+        ],
+    )
+
+    return _job(scenes=[_scene(scene_number=1)], cinematic_prompt_package=package)
+
+
+def _shown_text(view: CompiledPromptView) -> str:
+    from PySide6.QtWidgets import QLabel
+
+    return "\n".join(label.text() for label in view.findChildren(QLabel))
+
+
+def test_a_thin_prompt_is_flagged_on_the_tab_with_its_scene_number(
+    qapp: QApplication,
+) -> None:
+    job = _job_with_prompt("Environment: Same rural village. Lighting: unspecified. ")
+    view = _view()
+    view._job_store.add(job)
+    view.set_job(job.id)
+
+    view.refresh(job)
+
+    text = _shown_text(view)
+    assert "1 scene(s) have a thin prompt - scenes 1" in text
+    assert "'same'" in text
+    assert "too short" in text
+
+
+def test_nothing_about_thin_prompts_is_claimed_before_prompts_are_compiled(
+    qapp: QApplication,
+) -> None:
+    job = _job(scenes=[_scene(scene_number=1)])
+    view = _view()
+    view._job_store.add(job)
+    view.set_job(job.id)
+
+    view.refresh(job)
+
+    text = _shown_text(view)
+    assert "thin prompt" not in text
+    assert "names its place" not in text

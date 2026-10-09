@@ -933,15 +933,20 @@ picture without bodies).
   must be checked first. In auto mode the sheets are approved automatically and reviewable later.
 - *Phase 3 - the Character-mode gap below,* which reuses the same character and place sheets.
 
-**Phase 1 status (2026-10-09):** step 1 (settings-aware bible) BUILT and live-checked on Lake Nyos - places
-are found and added by themselves inside the visual-continuity step; step 3 (Muse rules: no "use the attached
-image" sentence for places) and step 4 (refusal recognition + one retry without the picture) BUILT; step 2
-(fallback reference for scenes outside any place, from the nearest earlier clip in the same setting) NOT
-built. **Open finding from the live check:** two of the four places found on Lake Nyos were graphics ("Regional
-terrain map", "Cross-section diagram of the lake"), not physical places - a reference picture of an animated
-diagram is not what a place reference is for. Recommended: tell the detector to leave out maps, diagrams,
-charts and other graphics. Also: places whose scenes have no clip yet show "No reference picture yet" until
-one exists - nothing yet takes the reference automatically when that first clip is generated.
+**Phase 1 status (2026-10-09):** BUILT - settings-aware bible (places found and added by themselves inside
+the visual-continuity step; graphics excluded; a place on the same scenes as one already in the bible is not
+added), Muse rules (no "use the attached image" sentence for places), Muse refusal recognition + one retry
+without the picture, and the fallback reference (a scene naming no place takes a frame of the nearest earlier clip
+in the same setting, by itself; the operator's pick or removal is never replaced). Still open: the Phase 2 items
+below; live checks on a real Lake Nyos / Remedy run (this was checked live only up to place detection); a place
+whose scenes have no clip yet shows "No reference picture yet" until its first clip exists, then the existing
+after-each-scene extraction takes it (first appearance is text-only by design).
+
+**Phase 2 status (2026-10-09):** step 1 BUILT - the deterministic completeness check on the Prompts tab and the
+compile-time removal of "Same ..." / "unspecified" wording. Still open: the project style sheet; detailed place
+and character sheets in the prompts; the per-scene LLM detail pass (target 1,200-1,800 characters, about
+$0.20-0.30 per 50-scene video on Sonnet); an enforced gate before credits are spent (today it only reports);
+Flow's prompt length limit (paste test files in `prompt_length_test/`, delete after). Muse takes 3,000 characters.
 
 **Already built toward this (2026-10-08):** the frame picker offers several frames per clip; a picked
 reference picture per scene on the Clips tab (with a status line on every scene, a count and a filter); the

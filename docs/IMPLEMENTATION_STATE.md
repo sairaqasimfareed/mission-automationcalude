@@ -883,6 +883,50 @@ section records what changed and why so a later session does not undo it.
     `logs/mission.log`. Not done: the fallback reference for scenes outside any place (step 3), and
     keeping graphics out of the place list. Tests: `tests/test_suggestions.py`,
     `tests/test_labeled_block_parser.py`, `tests/test_recurring_identity_service.py`.
+  - **Reference-image gap, Phase 1 step 3: graphics are not places, overlapping places are merged, and a
+    scene that names no place takes a reference by itself (2026-10-09).** (a) The place detector
+    (`identity_suggestion_prompt_v1.2.0`) is told a place is somewhere a camera can film - not a map,
+    diagram, chart, infographic or other drawn graphic, and not a part or view of a place already listed -
+    and `looks_like_a_graphic` (name and first sentence) drops a graphic it proposes anyway. (b)
+    `ContentIntelligencePipeline._place_covering`: a found place marked on 80% or more of the scenes a place
+    already in the bible covers is not added (the suggestion is set DISCARDED, logged), so one clip never
+    carries two competing references of one setting. (c) `SceneReferenceService.ensure_automatic`: for a
+    scene with no character or place on screen, not a graphic, with a specified setting, takes the best frame of
+    the nearest earlier clip made in the SAME setting (`same_setting`: shared content words of the bible's
+    free-text location, filler such as "same / surrounding / area" ignored; clips of graphic scenes are never
+    a source) and stores it as the scene's reference picture through the existing override path
+    (`Scene.reference_override_asset_id`, same attach / prompt / verification code as the operator's pick).
+    New `Scene.reference_pick_source` (OPERATOR / AUTOMATIC / DECLINED / None): the status line says "picked
+    automatically"; Remove on the Clips tab sets DECLINED, after which the app never picks again for that scene;
+    an operator pick or a removal is never replaced. A scene with no matching earlier clip gets none (a picture
+    from another setting would pull that setting in). Called from `_submit` of BOTH generation services
+    (`_ensure_automatic_reference`, best effort - a failure never stops the scene), wired by
+    `desktop.services.get_scene_reference_service`. Not done: Lake Nyos' project data still holds the two graphic
+    places and the duplicate shoreline found before this fix (the operator removes them; nothing was changed in
+    saved projects); a place's own first reference is taken by the existing after-each-scene extraction, which
+    this did not change. Tests: `tests/test_scene_reference_automatic.py`, `tests/test_suggestions.py`.
+  - **Reference-image gap, Phase 2 step 1: a prompt completeness check (2026-10-09).** Lake Nyos
+    prompts read "Environment: Same rural village. Lighting: Natural daylight." and ran 380-500 characters; a
+    clip is generated on its own, so "same" means nothing and "unspecified" says nothing.
+    `services/prompt_wording.py` (relative wording: same / the same / similar to / as before / previous
+    scene|shot|clip / unchanged; `is_unspecified`; `without_leading_relative_wording`).
+    `CinematicPromptCompilationService` now removes what it can at compile time: a leading "Same" is dropped
+    ("Same rural village" -> "Rural village"), an unspecified environment takes the name of the place on
+    screen (whose full description is already in the prompt's Identity field), unspecified lighting takes the
+    project look's lighting or "natural light, consistent with the surrounding scenes". New
+    `PromptCompletenessService` (deterministic, no LLM, reads the exact text each scene is generated from via
+    `EnrichedScenePromptService.build_entries`, so split-scene clips are checked one by one): flags relative
+    wording (naming the words), an unspecified environment or lighting, and a live-action prompt under 600
+    characters (`MIN_LIVE_PROMPT_CHARACTERS`); a graphic scene is judged on relative wording only; the
+    sentence the compiler adds to later sub-clips is not counted. The Prompts tab (`CompiledPromptView`) shows
+    "N scene(s) have a thin prompt - scenes ..." with each finding under its scene, or a success line, and says
+    nothing before prompts are compiled (`report.checked`). It only reports: nothing is blocked and no prompt
+    is rewritten beyond the compile-time fixes. Not done in Phase 2: the project style sheet, detailed place
+    and character sheets, the per-scene LLM detail pass that lifts prompts to 1,200-1,800 characters, and an
+    enforced gate before generation. Until the detail pass exists every Lake Nyos-style prompt will be
+    flagged "too short" - that is the point. Muse accepted a 3,000-character prompt whole (operator test); Flow's
+    limit is still unknown (longest ever sent 644). Tests: `tests/test_prompt_completeness.py`,
+    `tests/test_compiled_prompt_view.py`.
   - **A reference picture the operator picks for ONE scene (2026-10-08, live: Lake Nyos
     village).** A character/place has one reference for every scene it is marked in; a scene that
     names none (stretches of village footage) had nothing to carry its scenery and light from the

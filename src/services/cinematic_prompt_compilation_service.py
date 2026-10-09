@@ -12,7 +12,15 @@ from src.models.shot_planning import (
     ShotSpecification,
     TemporalActionBeat,
 )
-from src.models.visual_continuity import VisualContinuityBible
+from src.models.visual_continuity import (
+    CanonicalEntityIdentity,
+    CanonicalEntityType,
+    VisualContinuityBible,
+)
+from src.services.prompt_wording import (
+    is_unspecified,
+    without_leading_relative_wording,
+)
 from src.services.scene_visual_treatment import (
     exact_text_for,
     main_place,
@@ -129,6 +137,34 @@ def _avoid_rule(graphic_text: str | None) -> str:
         " Do not show any text, captions, logos or watermarks, and nothing unrelated "
         "to this scene."
     )
+
+
+def _concrete_environment(
+    environment: str, places: list[CanonicalEntityIdentity]
+) -> str:
+    """The environment wording a clip generated on its own can use: a leading "Same" is
+    dropped ("Same rural village" -> "Rural village"), and an environment left unspecified
+    takes the name of the place on screen (whose full description is in the same prompt).
+    """
+
+    cleaned = without_leading_relative_wording(environment)
+
+    if is_unspecified(cleaned):
+        return places[0].name if places else environment
+
+    return cleaned
+
+
+def _concrete_lighting(lighting: str, project_look: ProjectLook | None) -> str:
+    """Lighting left unspecified takes the project's look, else says to stay consistent."""
+
+    if not is_unspecified(lighting):
+        return lighting
+
+    if project_look is not None and project_look.lighting:
+        return project_look.lighting
+
+    return "natural light, consistent with the surrounding scenes"
 
 
 def _negative_constraints(graphic_text: str | None) -> list[str]:
@@ -254,6 +290,15 @@ class CinematicPromptCompilationService:
             if continuity is not None
             else "unspecified"
         )
+        on_screen_places = [
+            identity
+            for identity in visual_continuity_bible.identities
+            if identity.entity_type == CanonicalEntityType.LOCATION
+            and continuity is not None
+            and identity.name in continuity.on_screen_entity_names
+        ]
+        environment = _concrete_environment(environment, on_screen_places)
+        lighting = _concrete_lighting(lighting, project_look)
         composition = shot.composition if shot is not None else "standard framing"
         lens = shot.lens if shot is not None else "35mm"
         camera = (
