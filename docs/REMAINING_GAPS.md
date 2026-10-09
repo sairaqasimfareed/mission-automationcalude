@@ -942,9 +942,10 @@ below; live checks on a real Lake Nyos / Remedy run (this was checked live only 
 whose scenes have no clip yet shows "No reference picture yet" until its first clip exists, then the existing
 after-each-scene extraction takes it (first appearance is text-only by design).
 
-**Phase 2 status (2026-10-09):** step 1 BUILT - the deterministic completeness check on the Prompts tab and the
-compile-time removal of "Same ..." / "unspecified" wording. Still open: the project style sheet; detailed place
-and character sheets in the prompts; the per-scene LLM detail pass (target 1,200-1,800 characters, about
+**Phase 2 status (2026-10-09):** steps 1-2 BUILT - the deterministic completeness check on the Prompts tab and the
+compile-time removal of "Same ..." / "unspecified" wording; the project style sheet (optional setting / buildings /
+climate / sound fields on `ProjectLook`, drafted from the script, blank where the script is silent). Still open:
+detailed place and character sheets in the prompts; the per-scene LLM detail pass (target 1,200-1,800 characters, about
 $0.20-0.30 per 50-scene video on Sonnet); an enforced gate before credits are spent (today it only reports);
 Flow's prompt length limit (paste test files in `prompt_length_test/`, delete after). Muse takes 3,000 characters.
 

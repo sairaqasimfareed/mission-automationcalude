@@ -2125,8 +2125,9 @@ class ContentStudioView(QWidget):
 
     def _render_project_look_section(self, layout: QVBoxLayout, job: VideoJob) -> None:
         """
-        The video-wide visual style - lighting, colour palette, camera feel - written
-        once and repeated word for word in every scene's prompt. Without it each scene
+        The video-wide style and world - setting, buildings, climate, lighting, colour
+        palette, camera feel, background sound - written once and repeated word for word
+        in every scene's prompt. Without it each scene
         is lit by its own vague phrase ("Soft, natural daylight" / "Natural daylight")
         and the clips drift apart (live, 2026-10-06: overcast, muted scene 1 next to a
         sunny, saturated scene 2).
@@ -2152,6 +2153,24 @@ class ContentStudioView(QWidget):
 
         for key, label, placeholder, value in (
             (
+                "setting",
+                "Setting",
+                "where and when it is set - only if your script says (optional)",
+                look.setting,
+            ),
+            (
+                "architecture",
+                "Buildings and materials",
+                "e.g. thatched mud-brick huts, red earth walls (optional)",
+                look.architecture,
+            ),
+            (
+                "climate",
+                "Climate and plants",
+                "e.g. humid highland, banana trees, mist (optional)",
+                look.climate,
+            ),
+            (
                 "lighting",
                 "Lighting",
                 "e.g. overcast soft daylight, no harsh shadows",
@@ -2169,11 +2188,19 @@ class ContentStudioView(QWidget):
                 "e.g. handheld documentary realism, shallow depth of field",
                 look.camera_feel,
             ),
+            (
+                "sound",
+                "Background sound",
+                "e.g. wind and distant birds, no music (optional)",
+                look.sound,
+            ),
         ):
             field = QLineEdit()
             field.setText(value)
             field.setPlaceholderText(placeholder)
-            field.setMaxLength(200)
+            field.setMaxLength(
+                300 if key in ("setting", "architecture", "climate", "sound") else 200
+            )
             inputs[key] = field
             form.addRow(label, field)
 
@@ -2184,6 +2211,33 @@ class ContentStudioView(QWidget):
         save_button = button("Save project look", variant="primary")
         save_button.clicked.connect(self._handle_save_project_look)
         layout.addWidget(save_button, alignment=_LEFT)
+
+        # New projects get this drafted by themselves while the continuity bible is made;
+        # the button is for a project whose bible predates that, or to fill what is empty.
+        draft_button = button("Draft the empty fields from my script", variant="ghost")
+        draft_button.clicked.connect(self._handle_draft_style_sheet)
+        layout.addWidget(draft_button, alignment=_LEFT)
+
+    def _handle_draft_style_sheet(self) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        def runner(target: VideoJob) -> VideoJob:
+            self._content_intelligence_pipeline.run_style_sheet(target)
+            # The look is repeated in every compiled prompt.
+            self._recompile_prompts_if_present(target)
+
+            return target
+
+        self._run_stage(
+            job,
+            runner,
+            label="project style sheet",
+            failure="Could not draft the project style sheet",
+            retry=self._handle_draft_style_sheet,
+        )
 
     def _handle_save_project_look(self) -> None:
         job = self._current_job()
@@ -2201,11 +2255,24 @@ class ContentStudioView(QWidget):
         scene carries it. Recompiling is deterministic (no Claude call), so it is
         quick and free."""
 
+        # A key the caller does not give keeps what the project already has (a suggested
+        # look carries only lighting, colour and camera; it must not blank the setting).
+        current = job.project_look or ProjectLook()
+
         try:
             look = ProjectLook(
-                lighting=values.get("lighting", ""),
-                color_palette=values.get("color_palette", ""),
-                camera_feel=values.get("camera_feel", ""),
+                **{
+                    key: values.get(key, getattr(current, key))
+                    for key in (
+                        "lighting",
+                        "color_palette",
+                        "camera_feel",
+                        "setting",
+                        "architecture",
+                        "climate",
+                        "sound",
+                    )
+                }
             )
         except ValueError as error:
             self._record_error(job, f"The project look could not be saved: {error}")

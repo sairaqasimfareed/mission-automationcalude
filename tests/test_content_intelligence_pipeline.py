@@ -22,6 +22,7 @@ from src.models.video_job import VideoJob
 from src.services.approval_gate_service import ApprovalGateService
 from src.services.content_intelligence_pipeline import ContentIntelligencePipeline
 from src.services.llm.llm_service import LLMServiceResult
+from src.services.project_style_sheet_service import ProjectStyleSheetService
 from src.shared.llm.models import LLMCallResult, LLMCallStatus, LLMProvider
 from src.shared.llm.request import LLMRequest
 
@@ -2253,3 +2254,65 @@ def test_run_all_without_a_callback_behaves_exactly_as_before() -> None:
 
     assert result.continuity_bible is not None
     assert result.scenes
+
+
+class _CountingStyleSheet:
+    """Stands in for ProjectStyleSheetService: counts drafts, or fails every one."""
+
+    def __init__(self, *, fail: bool = False) -> None:
+        self.drafts = 0
+        self._fail = fail
+
+    def draft(self, job):  # type: ignore[no-untyped-def]
+        from src.models.project_look import ProjectLook
+
+        self.drafts += 1
+
+        if self._fail:
+            raise RuntimeError("provider unavailable")
+
+        return ProjectLook(setting="A highland village", sound="Wind")
+
+    fill_blanks = staticmethod(ProjectStyleSheetService.fill_blanks)
+
+
+def test_a_failing_style_sheet_never_fails_the_visual_continuity_bible() -> None:
+    pipeline, _ = _pipeline()
+    job = pipeline.run_all(_job())
+    pipeline.project_style_sheet_service = _CountingStyleSheet(fail=True)  # type: ignore[assignment]
+
+    job = pipeline.run_visual_continuity(job)
+
+    assert job.visual_continuity_bible is not None
+    assert pipeline.project_style_sheet_service.drafts == 1  # type: ignore[attr-defined]
+
+
+def test_the_style_sheet_is_drafted_for_a_project_with_no_look() -> None:
+    pipeline, _ = _pipeline()
+    job = pipeline.run_all(_job())
+    job.project_look = None
+    counting = _CountingStyleSheet()
+    pipeline.project_style_sheet_service = counting  # type: ignore[assignment]
+
+    job = pipeline.run_visual_continuity(job)
+
+    assert counting.drafts == 1
+    assert job.project_look is not None
+    assert job.project_look.setting == "A highland village"
+
+
+def test_regenerating_the_bible_does_not_redraft_a_look_the_operator_has() -> None:
+    from src.models.project_look import ProjectLook
+
+    pipeline, _ = _pipeline()
+    job = pipeline.run_all(_job())
+    job.project_look = ProjectLook(lighting="My own light")
+    counting = _CountingStyleSheet()
+    pipeline.project_style_sheet_service = counting  # type: ignore[assignment]
+
+    job = pipeline.run_visual_continuity(job)
+
+    assert counting.drafts == 0
+    assert job.project_look is not None
+    assert job.project_look.lighting == "My own light"
+    assert job.project_look.setting == ""

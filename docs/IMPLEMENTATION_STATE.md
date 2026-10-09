@@ -927,6 +927,28 @@ section records what changed and why so a later session does not undo it.
     flagged "too short" - that is the point. Muse accepted a 3,000-character prompt whole (operator test); Flow's
     limit is still unknown (longest ever sent 644). Tests: `tests/test_prompt_completeness.py`,
     `tests/test_compiled_prompt_view.py`.
+  - **Reference-image gap, Phase 2 step 2: the project style sheet (2026-10-09).** Every clip is generated on
+    its own, so nothing told clip 20 that clip 1 was a thatched highland village under flat overcast light.
+    `ProjectLook` (the existing video-wide look repeated in every prompt - not a new subsystem) gained four
+    optional fields beside lighting / colour palette / camera feel: `setting` (where and when), `architecture`
+    (buildings and materials), `climate` (weather and plants), `sound` (ambient sound); 300 characters each, the
+    old three still 200; `as_prompt_sentence` names every filled one and adds nothing for an empty one.
+    New `ProjectStyleSheetService.draft` (one LLM call, prompt `project_style_sheet_prompt_v1.0.0`) drafts the
+    seven fields FROM THE SCRIPT - its narration plus the settings the continuity bible lists - so a script
+    uploaded with no research or topic work behind it still works. Only what the script supports is filled:
+    the model is told to write NONE for anything the script does not say or need (an abstract explainer, no
+    place named, no era) and never to guess a country, year or culture; an empty field adds nothing and is
+    never flagged, asked for or forced. Values over a field's limit are cut at a word boundary, not rejected.
+    `fill_blanks` keeps every field the operator wrote. `ContentIntelligencePipeline.run_style_sheet`; it also
+    runs (best effort) inside `run_visual_continuity` but ONLY for a project with no look yet, so a look the
+    operator wrote or cleared is never redrafted by a regenerate. Content Studio's Project look section shows the
+    four new fields and a "Draft the empty fields from my script" button (old projects; fills blanks; the prompts
+    are recompiled). Real bug fixed on the way: `_apply_project_look` rebuilt the whole look from the values it
+    was given, so using a suggested look (lighting / colour / camera only) would have blanked the new fields -
+    a key the caller does not give now keeps what the project has. Not done: the detailed place and character
+    sheets in the prompts and the per-scene LLM detail pass (Phase 2 steps 3-4), an enforced gate before
+    generation. Not verified live: what Claude drafts for a real script (Lake Nyos / Remedy). Tests:
+    `tests/test_project_style_sheet.py`, `tests/test_content_intelligence_pipeline.py`.
   - **A reference picture the operator picks for ONE scene (2026-10-08, live: Lake Nyos
     village).** A character/place has one reference for every scene it is marked in; a scene that
     names none (stretches of village footage) had nothing to carry its scenery and light from the

@@ -64,6 +64,7 @@ from src.services.production_ambiguity_service import ProductionAmbiguityService
 from src.services.production_semantic_brief_service import (
     ProductionSemanticBriefService,
 )
+from src.services.project_style_sheet_service import ProjectStyleSheetService
 from src.services.re_hook_planning_service import ReHookPlanningService
 from src.services.recurring_identity_service import (
     RecurringIdentityService,
@@ -243,6 +244,11 @@ class ContentIntelligencePipeline:
         )
         self.visual_continuity_validation_service = VisualContinuityValidationService()
         self.identity_suggestion_service = IdentitySuggestionService(
+            llm_service=llm_service,
+            profile_ids=profile_ids,
+            estimated_cost_usd=estimated_cost_usd,
+        )
+        self.project_style_sheet_service = ProjectStyleSheetService(
             llm_service=llm_service,
             profile_ids=profile_ids,
             estimated_cost_usd=estimated_cost_usd,
@@ -1382,6 +1388,17 @@ class ContentIntelligencePipeline:
                 "Suggesting characters and places failed: %s", type(error).__name__
             )
 
+        # The project style sheet, drafted from the script - only for a project with no
+        # look yet, so a look the operator wrote or cleared is never redrafted by a
+        # regenerate. Best effort, like the suggestions above.
+        if job.project_look is None or job.project_look.is_empty:
+            try:
+                self.run_style_sheet(job)
+            except Exception as error:  # noqa: BLE001 - the style sheet is optional
+                logger.warning(
+                    "Drafting the project style sheet failed: %s", type(error).__name__
+                )
+
         self.approval_gate_service.record_event(
             job=job,
             stage="visual_continuity",
@@ -1392,6 +1409,18 @@ class ContentIntelligencePipeline:
             ),
             category=DecisionCategory.GENERATION,
         )
+
+        return job
+
+    def run_style_sheet(self, job: VideoJob) -> VideoJob:
+        """Draft the project style sheet (the world and look of the whole video) from the
+        script and fill every field of `job.project_look` that is still empty; a field the
+        operator wrote is kept. One call. A script that gives no place or era leaves those
+        fields empty - that is the right result, not a failure."""
+
+        drafted = self.project_style_sheet_service.draft(job)
+        merged = self.project_style_sheet_service.fill_blanks(job.project_look, drafted)
+        job.project_look = None if merged.is_empty else merged
 
         return job
 

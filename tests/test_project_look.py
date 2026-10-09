@@ -249,7 +249,7 @@ def _flush() -> None:
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
-def test_the_form_shows_three_separate_fields_filled_from_the_project(
+def test_the_form_shows_the_look_fields_filled_from_the_project(
     qapp: QApplication,  # noqa: F811
 ) -> None:
     from src.desktop.job_store import InMemoryJobStore
@@ -266,10 +266,16 @@ def test_the_form_shows_three_separate_fields_filled_from_the_project(
     view._render_project_look_section(layout, job)  # noqa: SLF001
 
     fields = holder.findChildren(QLineEdit)
+    # setting, buildings, climate (the style sheet's optional fields, empty here), then the
+    # three style fields filled from the project, then background sound
     assert [f.text() for f in fields] == [
+        "",
+        "",
+        "",
         "overcast soft daylight",
         "muted, desaturated documentary colours",
         "handheld documentary realism",
+        "",
     ]
     buttons = [b.text() for b in holder.findChildren(QPushButton)]
     assert "Save project look" in buttons
