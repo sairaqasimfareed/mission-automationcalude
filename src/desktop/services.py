@@ -82,6 +82,7 @@ from src.services.scene_asset_workflow_service import (
 from src.services.scene_generation_dispatch_service import (
     SceneGenerationDispatchService,
 )
+from src.services.scene_reference_service import SceneReferenceService
 from src.services.scene_video_generation_service import SceneVideoGenerationService
 from src.services.secrets.keyring_secret_store import KeyringSecretStore
 from src.services.secrets.provider_secret_manager import ProviderSecretManager
@@ -837,6 +838,18 @@ def get_frame_extraction_service() -> FrameExtractionService:
 
 
 @lru_cache
+def get_scene_reference_service() -> SceneReferenceService:
+    """One SceneReferenceService for the generation services: it takes the reference of a
+    scene that names no character or place, from an earlier clip in the same setting.
+    The same storage root the Clips tab's own picker uses."""
+
+    return SceneReferenceService(
+        selection_service=get_reference_frame_selection_service(),
+        storage_root=Path("data/extracted_frames"),
+    )
+
+
+@lru_cache
 def get_reference_frame_selection_service() -> ReferenceFrameSelectionService:
     """
     Picks each character's reference frame by looking for a clear, front-facing
@@ -911,6 +924,7 @@ def get_scene_video_generation_service() -> SceneVideoGenerationService:
         frame_extraction_service=get_frame_extraction_service(),
         reference_frame_selection_service=get_reference_frame_selection_service(),
         asset_storage_service=get_extracted_frame_asset_storage_service(),
+        scene_reference_service=get_scene_reference_service(),
     )
 
 
@@ -989,6 +1003,7 @@ def get_muse_scene_video_generation_service() -> MuseSceneVideoGenerationService
         frame_extraction_service=get_frame_extraction_service(),
         reference_frame_selection_service=get_reference_frame_selection_service(),
         asset_storage_service=get_extracted_frame_asset_storage_service(),
+        scene_reference_service=get_scene_reference_service(),
     )
 
 

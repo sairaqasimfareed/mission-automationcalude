@@ -27,6 +27,22 @@ _DRY_RUN_RESPONSE = "NONE"
 _MAX_SUGGESTIONS = 8
 
 
+# A map, diagram or other drawn graphic is not a place a camera can return to, so it gets no
+# reference picture (live, 2026-10-09: Lake Nyos "Regional terrain map" and "Cross-section
+# diagram of the lake" were proposed as places). Judged on the name and the first sentence.
+_GRAPHIC_WORDS = re.compile(
+    r"\b(?:maps?|diagrams?|charts?|graphs?|infographics?|graphics?|overlays?|"
+    r"illustrations?|animations?|animated|cross-sections?|timelines?|title cards?)\b",
+    re.IGNORECASE,
+)
+
+
+def looks_like_a_graphic(name: str, description: str) -> bool:
+    first_sentence = re.split(r"(?<=[.!?])\s", description.strip(), maxsplit=1)[0]
+
+    return bool(_GRAPHIC_WORDS.search(name) or _GRAPHIC_WORDS.search(first_sentence))
+
+
 def _scene_numbers(raw: str, valid_scenes: set[int]) -> list[int]:
     """Scene numbers from the model's SCENES line, forgiving about how it is written:
     en/em dashes, a leading word such as "Scenes", and numbers the project does not
@@ -97,7 +113,7 @@ class IdentitySuggestionService:
                 "given one fixed appearance. You never invent anyone the scenes do "
                 "not clearly contain."
             ),
-            prompt_version="identity_suggestion_prompt_v1.1.0",
+            prompt_version="identity_suggestion_prompt_v1.2.0",
             dry_run_response=_DRY_RUN_RESPONSE,
             metadata={
                 "agent": "IdentitySuggestionService",
@@ -174,8 +190,11 @@ class IdentitySuggestionService:
             f"(at most {_MAX_SUGGESTIONS}). A place can be an UNNAMED recurring "
             "setting the shots are set in (for example 'The village' or 'The control "
             "room'), not only a named one - look at the 'set in' text of each scene. "
-            "Give every place a short plain name; never 'the same village'. If there "
-            "are none, reply with exactly: NONE\n\n"
+            "Give every place a short plain name; never 'the same village'. A place "
+            "is somewhere a camera can film: NOT a map, diagram, chart, infographic, "
+            "title card or any other drawn graphic. A part or view of a place already "
+            "listed above (its shoreline, its main street) is NOT a new place. If "
+            "there are none, reply with exactly: NONE\n\n"
             "Otherwise return one block per candidate, separated by a line of three "
             "dashes, with exactly these labeled lines:\n"
             "NAME: <a short name, e.g. 'Grandmother' or 'The kitchen'>\n"
@@ -234,6 +253,12 @@ class IdentitySuggestionService:
 
             if name.strip().lower() in seen:
                 logger.info("Skipped the suggested '%s': already known", name)
+                continue
+
+            if kind == CanonicalEntityType.LOCATION and looks_like_a_graphic(
+                name, description
+            ):
+                logger.info("Skipped the suggested '%s': it is a graphic", name)
                 continue
 
             try:

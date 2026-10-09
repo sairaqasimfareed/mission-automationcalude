@@ -14,11 +14,12 @@ was made with it.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from src.models.scene import Scene
+from src.models.scene import ReferencePickSource, Scene
 from src.models.video_job import VideoJob
 from src.services.asset_storage_service import AssetStorageService
 from src.services.clip_attachment_verification_service import references_sent
@@ -88,6 +89,34 @@ def _normalised_location(job: VideoJob, scene_number: int) -> str | None:
     location = " ".join(entry.incoming_state.location.lower().split())
 
     return None if not location or location == "unspecified" else location
+
+
+# Words that carry no place in a setting's wording ("Same rural village" / "Village and
+# surrounding area" are one setting).
+_SETTING_FILLER = frozenset(
+    "the a an of and in at near same surrounding area around with to from original".split()
+)
+# How much of the shorter wording's content words the other must share to be the same setting.
+_SAME_SETTING_SHARE = 0.6
+
+
+def _setting_words(location: str) -> set[str]:
+    return {
+        word
+        for word in re.findall(r"[a-z0-9]+", location.lower())
+        if word not in _SETTING_FILLER
+    }
+
+
+def same_setting(first: str, second: str) -> bool:
+    """Whether two free-text settings from the continuity bible name the same place."""
+
+    a, b = _setting_words(first), _setting_words(second)
+
+    if not a or not b:
+        return False
+
+    return len(a & b) / min(len(a), len(b)) >= _SAME_SETTING_SHARE
 
 
 class SceneReferenceService:
@@ -201,8 +230,123 @@ class SceneReferenceService:
 
     # --------------------------------------------------------------- set and clear
 
+    def ensure_automatic(self, job: VideoJob, scene_number: int) -> bool:
+        """For a scene that names no character or place, take its reference picture by
+        itself: the best frame of the nearest earlier clip made in the SAME setting. A scene
+        with nothing to match (a graphic, an unspecified or new setting, no earlier clip)
+        gets none - a picture from another setting would pull that setting into this
+        scene. Never replaces a picture the operator picked or removed. Returns whether a
+        picture was set."""
+
+        scene = self._scene(job, scene_number)
+        bible = job.visual_continuity_bible
+
+        if (
+            bible is None
+            or scene.reference_override_asset_id
+            or scene.reference_pick_source == ReferencePickSource.DECLINED
+            or effective_on_screen_names(bible, scene)
+            or not self._selection.is_available()
+        ):
+            return False
+
+        plan = job.cinematic_shot_plan
+
+        def graphic(number: int) -> bool:
+            numbered = next(
+                (sc for sc in job.scenes if sc.scene_number == number), None
+            )
+
+            if numbered is None:
+                return False
+
+            return renders_as_graphic(
+                scene=numbered,
+                entry=bible.entry_for_scene(number),
+                shot=plan.shot_for_scene(number) if plan is not None else None,
+            )
+
+        if graphic(scene_number):
+            return False
+
+        here = _normalised_location(job, scene_number)
+
+        if here is None:
+            return False
+
+        clips_by_scene: dict[int, list] = {}
+
+        for clip in sorted(
+            job.video_clips, key=lambda c: (c.scene_number, c.clip_sequence_index)
+        ):
+            if (
+                clip.scene_number < scene_number
+                and clip.local_file
+                and Path(clip.local_file).is_file()
+            ):
+                clips_by_scene.setdefault(clip.scene_number, []).append(clip)
+
+        cache_directory = (
+            self._storage_root.parent / "reference_candidates" / str(job.id)
+        )
+        cache_directory.mkdir(parents=True, exist_ok=True)
+
+        for earlier in sorted(clips_by_scene, reverse=True):
+            there = _normalised_location(job, earlier)
+
+            if there is None or not same_setting(here, there) or graphic(earlier):
+                continue
+
+            for clip in clips_by_scene[earlier]:
+                stem = cache_directory / (
+                    f"auto{scene_number}_from{earlier}_{clip.clip_sequence_index}"
+                )
+
+                try:
+                    frames = self._selection.select_many(
+                        video_path=clip.local_file or "",
+                        output_stem=str(stem),
+                        kind=ReferenceKind.ENVIRONMENT,
+                        count=1,
+                    )
+                except Exception as error:  # noqa: BLE001 - one bad clip is not fatal
+                    logger.warning(
+                        "Taking an automatic reference for scene %s from scene %s failed: %s",
+                        scene_number,
+                        earlier,
+                        type(error).__name__,
+                    )
+                    continue
+
+                for frame in frames:
+                    if frame.status != ReferenceSelectionStatus.SELECTED:
+                        continue
+
+                    result = self.set_override(
+                        job,
+                        scene_number,
+                        ReferenceCandidate(
+                            scene_number=earlier,
+                            clip_sequence_index=clip.clip_sequence_index,
+                            image_path=str(frame.output_path),
+                            value=frame.raw_value,
+                            time_seconds=frame.time_seconds,
+                        ),
+                        automatic=True,
+                    )
+
+                    if result.attached:
+                        return True
+
+        return False
+
     def set_override(
-        self, job: VideoJob, scene_number: int, candidate: ReferenceCandidate
+        self,
+        job: VideoJob,
+        scene_number: int,
+        candidate: ReferenceCandidate,
+        *,
+        automatic: bool = False,
     ) -> ReferenceFillResult:
         """Make the chosen frame this scene's one reference picture."""
 
@@ -227,7 +371,7 @@ class SceneReferenceService:
                 "reference_kind": ReferenceKind.ENVIRONMENT.value,
                 "scene_number": candidate.scene_number,
                 "override_for_scene": scene_number,
-                "chosen_by_operator": True,
+                "chosen_by_operator": not automatic,
             },
         )
 
@@ -237,6 +381,9 @@ class SceneReferenceService:
             )
 
         scene.reference_override_asset_id = str(stored.asset.id)
+        scene.reference_pick_source = (
+            ReferencePickSource.AUTOMATIC if automatic else ReferencePickSource.OPERATOR
+        )
 
         return ReferenceFillResult(
             True,
@@ -244,7 +391,10 @@ class SceneReferenceService:
         )
 
     def clear_override(self, job: VideoJob, scene_number: int) -> None:
-        self._scene(job, scene_number).reference_override_asset_id = None
+        scene = self._scene(job, scene_number)
+        scene.reference_override_asset_id = None
+        # Removing a picture means "none here": the app must not pick another by itself.
+        scene.reference_pick_source = ReferencePickSource.DECLINED
 
     @staticmethod
     def _scene(job: VideoJob, scene_number: int) -> Scene:
@@ -277,6 +427,17 @@ class SceneReferenceService:
             return self._override_status(job, scene)
 
         names = effective_on_screen_names(bible, scene) if bible is not None else []
+
+        if (
+            not names or bible is None
+        ) and scene.reference_pick_source == ReferencePickSource.DECLINED:
+            return SceneReferenceStatus(
+                text="No reference picture (you removed it).",
+                role="muted",
+                has_reference=False,
+                needs_reference=False,
+                has_override=False,
+            )
 
         if not names or bible is None:
             return SceneReferenceStatus(
@@ -346,7 +507,12 @@ class SceneReferenceService:
             if override.from_scene is not None
             else "a frame you picked"
         )
-        text = f"Reference: {origin} (your pick)."
+        who = (
+            "picked automatically"
+            if scene.reference_pick_source == ReferencePickSource.AUTOMATIC
+            else "your pick"
+        )
+        text = f"Reference: {origin} ({who})."
         role = "success"
         sent = references_sent(job, scene)
 

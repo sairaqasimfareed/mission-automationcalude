@@ -18,6 +18,17 @@ class SceneStatus(str, Enum):
     FAILED = "failed"
 
 
+class ReferencePickSource(str, Enum):
+    """Who decided a scene's one reference picture (see Scene.reference_override_asset_id)."""
+
+    OPERATOR = "operator"
+    # Taken by the app from an earlier clip in the same setting, for a scene that names no
+    # character or place.
+    AUTOMATIC = "automatic"
+    # The operator removed the picture: the app must not pick another by itself.
+    DECLINED = "declined"
+
+
 class Scene(MissionBaseModel):
     """Represents one planned scene and its selected visual source."""
 
@@ -124,6 +135,9 @@ class Scene(MissionBaseModel):
     # characters'/places' references for the scene and carries scenery and light from
     # shot to shot where no character or place is marked. None = automatic.
     reference_override_asset_id: str | None = None
+    # Who set the picture above. None with a picture = the operator's (saved before this
+    # field existed); None without one = nobody has decided, so the app may pick one.
+    reference_pick_source: ReferencePickSource | None = None
 
     fallback_sources: list[SceneSourceType] = Field(default_factory=list)
 

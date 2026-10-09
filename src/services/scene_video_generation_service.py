@@ -8,7 +8,7 @@ import uuid
 from collections.abc import Callable
 from functools import partial
 from pathlib import Path
-from typing import TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 from src.browser.flow_browser_worker import FlowOperationTimedOut
 from src.models.asset_state import AssetCandidate, AssetUserDecision, SceneAssetState
@@ -78,6 +78,10 @@ from src.services.scene_reference_override import (
 )
 from src.services.scene_visual_treatment import effective_on_screen_names
 from src.shared.logger import logger
+
+if TYPE_CHECKING:
+    # Type only: scene_reference_service imports this module's package chain.
+    from src.services.scene_reference_service import SceneReferenceService
 
 _T = TypeVar("_T")
 
@@ -258,6 +262,7 @@ class SceneVideoGenerationService:
         cinematic_prompt_compilation_service: (
             CinematicPromptCompilationService | None
         ) = None,
+        scene_reference_service: SceneReferenceService | None = None,
     ) -> None:
         if poll_interval_seconds <= 0:
             raise ValueError("Poll interval must be positive.")
@@ -285,6 +290,9 @@ class SceneVideoGenerationService:
         # Optional: without it a reference is the last frame, as before.
         self._reference_frame_selection_service = reference_frame_selection_service
         self._asset_storage_service = asset_storage_service
+        # Optional: a scene that names no character or place takes a reference of its own
+        # from an earlier clip in the same setting. Without it, such a scene has none.
+        self._scene_reference_service = scene_reference_service
         self._cinematic_prompt_compilation_service = (
             cinematic_prompt_compilation_service or CinematicPromptCompilationService()
         )
@@ -1125,6 +1133,7 @@ class SceneVideoGenerationService:
         # must request the max verified duration - see
         # _MINIMUM_DURATION_SECONDS_FOR_REFERENCE_ASSETS' own comment
         # for why (Flow silently refuses image ingredients below it).
+        self._ensure_automatic_reference(job, scene)
         reference_assets = self._resolve_reference_assets(job, scene) + list(
             extra_reference_assets or []
         )
@@ -1425,6 +1434,24 @@ class SceneVideoGenerationService:
             frame_extraction_service=self._frame_extraction_service,
             asset_storage_service=self._asset_storage_service,
         )
+
+    def _ensure_automatic_reference(self, job: VideoJob, scene: Scene) -> None:
+        """A scene that names no character or place takes a frame of the nearest earlier
+        clip in the same setting as its reference (see SceneReferenceService.
+        ensure_automatic). Best effort: a failure here never stops the scene."""
+
+        if self._scene_reference_service is None:
+            return
+
+        try:
+            self._sync_extracted_frame_asset_index(job)
+            self._scene_reference_service.ensure_automatic(job, scene.scene_number)
+        except Exception as error:  # noqa: BLE001 - a continuity enhancement only
+            logger.warning(
+                "Scene %s: the automatic reference could not be taken: %s",
+                scene.scene_number,
+                type(error).__name__,
+            )
 
     def _resolve_reference_assets(
         self, job: VideoJob, scene: Scene

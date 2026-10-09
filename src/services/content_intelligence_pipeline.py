@@ -1419,6 +1419,34 @@ class ContentIntelligencePipeline:
 
         return job
 
+    _OVERLAP_SHARE = 0.8
+
+    def _place_covering(
+        self,
+        job: VideoJob,
+        suggestion: IdentitySuggestion,
+        service: RecurringIdentityService,
+    ) -> str | None:
+        """The name of a place already in the bible that is marked on at least 80% of
+        this suggestion's scenes, else None."""
+
+        bible = job.visual_continuity_bible
+        wanted = set(suggestion.scene_numbers)
+
+        if bible is None or not wanted:
+            return None
+
+        for identity in bible.identities:
+            if identity.entity_type != CanonicalEntityType.LOCATION:
+                continue
+
+            covered = wanted & set(service.scenes_of(job, identity.name))
+
+            if len(covered) / len(wanted) >= self._OVERLAP_SHARE:
+                return identity.name
+
+        return None
+
     def _add_found_places(
         self, job: VideoJob, suggestions: list[IdentitySuggestion]
     ) -> None:
@@ -1436,6 +1464,19 @@ class ContentIntelligencePipeline:
                 suggestion.kind != CanonicalEntityType.LOCATION
                 or suggestion.status != SuggestionStatus.PENDING
             ):
+                continue
+
+            covering = self._place_covering(job, suggestion, service)
+
+            if covering is not None:
+                # Two places on the same scenes would send two competing references with
+                # each clip; the one already in the bible stands for this setting.
+                logger.info(
+                    "Not adding the found place '%s': '%s' already covers its scenes",
+                    suggestion.name,
+                    covering,
+                )
+                suggestion.status = SuggestionStatus.DISCARDED
                 continue
 
             try:

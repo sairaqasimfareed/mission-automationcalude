@@ -654,6 +654,9 @@ def test_a_place_that_cannot_be_added_stays_a_pending_suggestion(
     tmp_path: Path,
 ) -> None:
     class _Refusing:
+        def scenes_of(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+            return []
+
         def add(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
             raise ValueError("That name is taken.")
 
@@ -803,3 +806,94 @@ def test_a_dropped_candidate_says_why(caplog: pytest.LogCaptureFixture) -> None:
         _suggest(_reply_with_scenes("2"))
 
     assert "fewer than 2 scenes" in caplog.text
+
+
+# ------------------------------------------ graphics are not places; overlaps are merged
+
+
+def _place_block(
+    name: str, scenes: str, description: str = "A hillside village."
+) -> str:
+    return f"NAME: {name}\nKIND: place\nDESCRIPTION: {description}\nSCENES: {scenes}\n"
+
+
+@pytest.mark.parametrize(
+    ("name", "description"),
+    [
+        ("Regional terrain map", "A muted map of the countryside."),
+        ("Cross-section diagram of the lake", "A scientific diagram of the water."),
+        ("The data wall", "An animated infographic showing the rise."),
+        ("Chart room", "A room with charts."),
+    ],
+)
+def test_a_graphic_is_not_taken_for_a_place(name: str, description: str) -> None:
+    assert _suggest(_place_block(name, "2, 4", description)) == []
+
+
+def test_a_real_place_that_mentions_a_map_later_in_its_description_is_kept() -> None:
+    found = _suggest(
+        _place_block(
+            "The hut", "2, 4", "A thatched hut. A faded map is pinned to the wall."
+        )
+    )
+
+    assert [s.name for s in found] == ["The hut"]
+
+
+def test_the_prompt_rules_out_graphics_and_views_of_a_listed_place() -> None:
+    job = _job()
+    llm = _StubLLM("NONE")
+    IdentitySuggestionService(llm_service=llm).suggest(  # type: ignore[arg-type]
+        scenes=job.scenes,
+        visual_continuity_bible=job.visual_continuity_bible,  # type: ignore[arg-type]
+        topic="x",
+        already_seen=set(),
+    )
+
+    prompt = llm.requests[0].prompt
+
+    assert "NOT a map, diagram, chart" in prompt
+    assert "is NOT a new place" in prompt
+
+
+def test_a_place_on_the_same_scenes_as_one_already_in_the_bible_is_not_added(
+    tmp_path: Path,
+) -> None:
+    job = _job()
+    bible = job.visual_continuity_bible
+    assert bible is not None
+
+    for entry in bible.clip_entries:
+        if entry.scene_number in (2, 3, 4, 5):
+            entry.entity_names = ["Kitchen"]
+            entry.on_screen_entity_names = ["Kitchen"]
+
+    pipeline = _pipeline_that_adds_places(
+        tmp_path, _place_block("The kitchen table", "2-4")
+    )
+
+    pipeline.run_identity_suggestions(job)
+
+    names = [i.name for i in bible.identities]
+    by_name = {s.name: s.status for s in job.identity_suggestions}
+    assert "The kitchen table" not in names
+    assert by_name["The kitchen table"] == SuggestionStatus.DISCARDED
+
+
+def test_a_place_on_other_scenes_is_still_added(tmp_path: Path) -> None:
+    job = _job()
+    bible = job.visual_continuity_bible
+    assert bible is not None
+
+    for entry in bible.clip_entries:
+        if entry.scene_number in (2, 3):
+            entry.entity_names = ["Kitchen"]
+            entry.on_screen_entity_names = ["Kitchen"]
+
+    pipeline = _pipeline_that_adds_places(
+        tmp_path, _place_block("The village", "2, 4, 5, 6")
+    )
+
+    pipeline.run_identity_suggestions(job)
+
+    assert "The village" in [i.name for i in bible.identities]
