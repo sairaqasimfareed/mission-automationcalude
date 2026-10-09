@@ -52,6 +52,7 @@ from src.services.hook_evaluation_service import (
     select_winning_hook,
 )
 from src.services.hook_generation_service import HookGenerationService
+from src.services.identity_detail_service import IdentityDetailService
 from src.services.identity_suggestion_service import IdentitySuggestionService
 from src.services.information_reveal_planning_service import (
     InformationRevealPlanningService,
@@ -73,6 +74,7 @@ from src.services.recurring_identity_service import (
 )
 from src.services.research_planning_service import ResearchPlanningService
 from src.services.retention_audit_service import RetentionAuditService
+from src.services.scene_detail_service import SceneDetailService
 from src.services.scene_sound_design_service import SceneSoundDesignService
 from src.services.script_generation_service import ScriptGenerationService
 from src.services.script_intake_service import ScriptIntakeService
@@ -249,6 +251,16 @@ class ContentIntelligencePipeline:
             estimated_cost_usd=estimated_cost_usd,
         )
         self.project_style_sheet_service = ProjectStyleSheetService(
+            llm_service=llm_service,
+            profile_ids=profile_ids,
+            estimated_cost_usd=estimated_cost_usd,
+        )
+        self.identity_detail_service = IdentityDetailService(
+            llm_service=llm_service,
+            profile_ids=profile_ids,
+            estimated_cost_usd=estimated_cost_usd,
+        )
+        self.scene_detail_service = SceneDetailService(
             llm_service=llm_service,
             profile_ids=profile_ids,
             estimated_cost_usd=estimated_cost_usd,
@@ -1399,6 +1411,15 @@ class ContentIntelligencePipeline:
                     "Drafting the project style sheet failed: %s", type(error).__name__
                 )
 
+        # Thin place and character descriptions the bible just generated are made
+        # concrete, using the style sheet above. Best effort.
+        try:
+            self.run_identity_detail(job)
+        except Exception as error:  # noqa: BLE001 - the expansion is optional
+            logger.warning(
+                "Expanding the identity descriptions failed: %s", type(error).__name__
+            )
+
         self.approval_gate_service.record_event(
             job=job,
             stage="visual_continuity",
@@ -1411,6 +1432,39 @@ class ContentIntelligencePipeline:
         )
 
         return job
+
+    def run_identity_detail(self, job: VideoJob) -> VideoJob:
+        """Expand the continuity bible's thin, generated place and character descriptions
+        into concrete visual detail (one batched call). One the operator wrote, or one
+        that is already detailed, is never touched."""
+
+        self.identity_detail_service.enrich(job)
+
+        return job
+
+    def run_scene_detail(self, job: VideoJob) -> VideoJob:
+        """Write the scene-specific paragraph for every live-action scene that has none
+        or whose narration, shot or setting changed since it was written (a few batched
+        calls), then recompile the prompts if they exist so the text reaches them."""
+
+        job.scene_detail_plan = self.scene_detail_service.draft(job)
+
+        if job.cinematic_prompt_package is not None:
+            self.run_cinematic_prompt_compilation(job)
+
+        return job
+
+    def _scene_detail_best_effort(self, job: VideoJob) -> VideoJob:
+        """The detail pass inside an unattended run: a provider failure leaves the prompts
+        as they are (thin, and flagged on the Prompts tab) instead of stopping the run.
+        """
+
+        try:
+            return self.run_scene_detail(job)
+        except Exception as error:  # noqa: BLE001 - the pass is an enhancement
+            logger.warning("Writing the scene details failed: %s", type(error).__name__)
+
+            return job
 
     def run_style_sheet(self, job: VideoJob) -> VideoJob:
         """Draft the project style sheet (the world and look of the whole video) from the
@@ -1636,6 +1690,7 @@ class ContentIntelligencePipeline:
             # requests, instead of the two drifting independently.
             duration_seconds_resolver=clamp_to_verified_duration,
             project_look=job.project_look,
+            scene_detail_plan=job.scene_detail_plan,
         )
 
         self.approval_gate_service.record_event(
@@ -2115,6 +2170,11 @@ class ContentIntelligencePipeline:
                 job = step("visual_continuity", self.run_visual_continuity)
             if job.cinematic_shot_plan is None:
                 job = step("shot_planning", self.run_shot_planning)
+            # Detailed per-scene prompts before the prompts are compiled (and, for a
+            # project whose prompts already exist, before they are rebuilt with it), so a
+            # run needs no click to get prompts a clip can be generated from.
+            if job.scene_detail_plan is None:
+                job = step("scene_detail", self._scene_detail_best_effort)
             if job.cinematic_prompt_package is None:
                 job = step(
                     "cinematic_prompt_compilation",

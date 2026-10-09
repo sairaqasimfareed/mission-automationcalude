@@ -3251,12 +3251,35 @@ class ContentStudioView(QWidget):
         recompile_button.clicked.connect(self._handle_compile_cinematic_prompts)
         button_row.addWidget(recompile_button)
 
+        detail_button = button("Write detailed scene text", variant="ghost")
+        detail_button.clicked.connect(self._handle_write_scene_details)
+        button_row.addWidget(detail_button)
+
         score_button = button("Score prompt quality", variant="primary")
         score_button.clicked.connect(self._handle_score_cinematic_prompts)
         button_row.addWidget(score_button)
 
         button_row.addStretch()
         layout.addLayout(button_row)
+
+    def _handle_write_scene_details(self) -> None:
+        """Write the scene-specific paragraph of every live-action scene that has none or
+        whose narration, shot or setting changed. New projects get this by themselves
+        between shot planning and prompt compilation; this is for older ones. The prompts
+        are recompiled so the text reaches them."""
+
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        self._run_stage(
+            job,
+            self._content_intelligence_pipeline.run_scene_detail,
+            label="detailed scene text",
+            failure="Could not write the detailed scene text",
+            retry=self._handle_write_scene_details,
+        )
 
     def _render_scene_prompt_entries(self, layout: QVBoxLayout, job: VideoJob) -> None:
         """

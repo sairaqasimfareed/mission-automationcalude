@@ -55,6 +55,7 @@ from src.models.research import ResearchResult, ResearchStatus
 from src.models.research_plan import ResearchPlan
 from src.models.retention_audit import RetentionAuditReport
 from src.models.scene import Scene
+from src.models.scene_detail import SceneDetailPlan
 from src.models.script import Script, ScriptStatus
 from src.models.script_intake import ScriptIntakeResult
 from src.models.script_lock import ScriptLock
@@ -493,6 +494,12 @@ class VideoJob(MissionBaseModel):
     # repeated word for word in every scene's compiled prompt so the look
     # does not drift between separately generated clips. None = not set.
     project_look: ProjectLook | None = None
+
+    # The scene-specific paragraph of each clip's prompt (where things stand in the frame,
+    # the light, textures, camera movement, sound), written once per scene and kept so it
+    # survives a restart. A detail written from a narration/shot/setting that has since
+    # changed is stale and the compiler ignores it. None = not written yet.
+    scene_detail_plan: SceneDetailPlan | None = None
 
     # Candidates the app proposes on its own for the operator to accept or discard
     # (see src/models/suggestions.py). Their status is kept here so a discarded one is

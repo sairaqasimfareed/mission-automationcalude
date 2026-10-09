@@ -949,6 +949,35 @@ section records what changed and why so a later session does not undo it.
     sheets in the prompts and the per-scene LLM detail pass (Phase 2 steps 3-4), an enforced gate before
     generation. Not verified live: what Claude drafts for a real script (Lake Nyos / Remedy). Tests:
     `tests/test_project_style_sheet.py`, `tests/test_content_intelligence_pipeline.py`.
+  - **Reference-image gap, Phase 2 steps 3-4: detailed scene text and concrete place / character
+    descriptions (2026-10-09).** Lake Nyos prompts were 380-500 characters of labels. The compiler already
+    repeats what belongs to the project (style sheet) and the shot plan; two batched writing passes supply the
+    rest. (a) `SceneDetailService` (prompt `scene_detail_prompt_v1.0.0`, 8 scenes per call): one paragraph per
+    live-action scene (60-90 words: foreground / middle / background placement, light direction and colour,
+    textures and objects, camera movement, mood, sound), built from the narration, shot, setting, the on-screen
+    identities' descriptions, the style sheet and the reveal-protection note; told to add no event, person or
+    object the scene does not imply. A graphic scene is skipped; a scene whose detail was written from the same
+    inputs is kept (no call), so a rerun is free and a failed batch loses only that batch; a reply too short to
+    use, or for a scene not in the batch, is dropped. Stored on the new `VideoJob.scene_detail_plan`
+    (`SceneDetailPlan` / `SceneDetail`, `src/models/scene_detail.py`). Freshness is per scene, by
+    `scene_detail_source_hash` (narration + shot fields + the setting and on-screen names; deliberately NOT the
+    project look): a detail written from something that has since changed is ignored by the compiler instead of
+    sent. (b) `CinematicPromptCompilationService.compile` / `compile_sub_clip_prompts` take `scene_detail_plan`
+    and add "Scene detail: ..." between Composition and Lens/camera (every sub-clip of a split scene carries it;
+    never on a graphic scene); the Flow and Muse sub-clip callers pass `job.scene_detail_plan`. (c)
+    `IdentityDetailService` (prompt `identity_detail_prompt_v1.0.0`, one call): expands a bible-GENERATED
+    description under 220 characters ("A crater lake", 92) for an identity that appears on screen into 50-90
+    words, keeping everything it said; an operator-written or edited (`is_manual`) description, an already
+    detailed one, and an unseen identity are never touched. (d) Pipeline: `run_identity_detail` runs (best
+    effort) inside `run_visual_continuity` after the style sheet; `run_scene_detail` writes the details and
+    recompiles the prompts if they exist; `run_all` runs it between shot planning and prompt compilation through
+    `_scene_detail_best_effort` (a provider failure leaves the prompts thin and flagged, never stops the run, and
+    leaves the plan None so a later run retries). Content Studio's prompt section has a "Write detailed scene
+    text" button for older projects. This is also the completeness "gate": rather than a stop that would
+    contradict "Generate all runs without choices", thin prompts are fixed automatically before generation and
+    whatever is still short stays flagged on the Prompts tab. Not verified live: what Claude writes for a real
+    script, how long Lake Nyos prompts become, and how Flow / Muse treat them; Flow's prompt limit is unknown
+    (Muse took a 3,000-character prompt whole). Tests: `tests/test_scene_detail.py`.
   - **A reference picture the operator picks for ONE scene (2026-10-08, live: Lake Nyos
     village).** A character/place has one reference for every scene it is marked in; a scene that
     names none (stretches of village footage) had nothing to carry its scenery and light from the

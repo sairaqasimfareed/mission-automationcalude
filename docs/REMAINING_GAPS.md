@@ -942,12 +942,16 @@ below; live checks on a real Lake Nyos / Remedy run (this was checked live only 
 whose scenes have no clip yet shows "No reference picture yet" until its first clip exists, then the existing
 after-each-scene extraction takes it (first appearance is text-only by design).
 
-**Phase 2 status (2026-10-09):** steps 1-2 BUILT - the deterministic completeness check on the Prompts tab and the
-compile-time removal of "Same ..." / "unspecified" wording; the project style sheet (optional setting / buildings /
-climate / sound fields on `ProjectLook`, drafted from the script, blank where the script is silent). Still open:
-detailed place and character sheets in the prompts; the per-scene LLM detail pass (target 1,200-1,800 characters, about
-$0.20-0.30 per 50-scene video on Sonnet); an enforced gate before credits are spent (today it only reports);
-Flow's prompt length limit (paste test files in `prompt_length_test/`, delete after). Muse takes 3,000 characters.
+**Phase 2 status (2026-10-09):** BUILT - the completeness check on the Prompts tab and the compile-time removal of
+"Same ..." / "unspecified" wording; the project style sheet (optional, drafted from the script, blank where the
+script is silent); the per-scene detail pass (`SceneDetailService`, stored on `VideoJob.scene_detail_plan`, stale
+detail ignored by the compiler); expansion of thin generated place / character descriptions
+(`IdentityDetailService`); all run automatically in `run_all` (no click) with a button for older projects.
+Still open: a LIVE check of what Claude writes for Lake Nyos / Remedy and the real prompt length and quality;
+Flow's prompt length limit (paste test files in `prompt_length_test/`, delete after; Muse takes 3,000
+characters); whether very long prompts raise Muse refusals; an enforced stop before generation was deliberately
+NOT built (it contradicts "Generate all runs without choices" - thin prompts are fixed automatically and the
+remainder is flagged). Estimated LLM cost of the new passes about $0.20-0.30 per 50-scene video on Sonnet.
 
 **Already built toward this (2026-10-08):** the frame picker offers several frames per clip; a picked
 reference picture per scene on the Clips tab (with a status line on every scene, a count and a filter); the

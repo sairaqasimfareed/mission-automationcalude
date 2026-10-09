@@ -7,6 +7,7 @@ from src.models.cinematic_prompt import CinematicPromptPackage, ResolvedCinemati
 from src.models.production_semantic_brief import ProductionSemanticBrief
 from src.models.project_look import ProjectLook
 from src.models.scene import Scene
+from src.models.scene_detail import SceneDetailPlan
 from src.models.shot_planning import (
     CinematicShotPlan,
     ShotSpecification,
@@ -21,6 +22,7 @@ from src.services.prompt_wording import (
     is_unspecified,
     without_leading_relative_wording,
 )
+from src.services.scene_detail_source import scene_detail_source_hash
 from src.services.scene_visual_treatment import (
     exact_text_for,
     main_place,
@@ -51,6 +53,8 @@ class _ResolvedSceneFields(NamedTuple):
     reveal_note: str
     action: str
     look: str = ""
+    # The scene-specific paragraph (SceneDetailPlan) when a current one exists.
+    detail: str = ""
     # False for a graphic scene shown as live footage: its shot plan's beats
     # describe the graphic, so they are not used.
     use_beats: bool = True
@@ -139,6 +143,12 @@ def _avoid_rule(graphic_text: str | None) -> str:
     )
 
 
+def _detail_sentence(detail: str) -> str:
+    """The scene's own written paragraph as a prompt sentence, or "" when there is none."""
+
+    return f"Scene detail: {detail}. " if detail else ""
+
+
 def _concrete_environment(
     environment: str, places: list[CanonicalEntityIdentity]
 ) -> str:
@@ -211,6 +221,7 @@ class CinematicPromptCompilationService:
         duration_seconds_resolver: Callable[[float], float] | None = None,
         use_shot_by_shot_beats: bool = _USE_SHOT_BY_SHOT_BEATS,
         project_look: ProjectLook | None = None,
+        scene_detail_plan: SceneDetailPlan | None = None,
     ) -> CinematicPromptPackage:
         """
         duration_seconds_resolver, when given, overrides the shot
@@ -240,6 +251,7 @@ class CinematicPromptCompilationService:
                 duration_seconds_resolver=duration_seconds_resolver,
                 use_shot_by_shot_beats=use_shot_by_shot_beats,
                 project_look=project_look,
+                scene_detail_plan=scene_detail_plan,
             )
             for scene in sorted(scenes, key=lambda s: s.scene_number)
         ]
@@ -256,6 +268,7 @@ class CinematicPromptCompilationService:
         visual_continuity_bible: VisualContinuityBible,
         production_semantic_brief: ProductionSemanticBrief | None,
         project_look: ProjectLook | None = None,
+        scene_detail_plan: SceneDetailPlan | None = None,
     ) -> _ResolvedSceneFields:
         shot = shot_plan.shot_for_scene(scene.scene_number)
         continuity = visual_continuity_bible.entry_for_scene(scene.scene_number)
@@ -366,6 +379,16 @@ class CinematicPromptCompilationService:
             ),
             use_beats=use_beats,
             graphic_text=graphic_text,
+            detail=(
+                scene_detail_plan.current_text_for(
+                    scene.scene_number,
+                    scene_detail_source_hash(
+                        scene=scene, shot=shot, continuity=continuity
+                    ),
+                )
+                if scene_detail_plan is not None and graphic_text is None
+                else ""
+            ),
         )
 
     @staticmethod
@@ -379,6 +402,7 @@ class CinematicPromptCompilationService:
         duration_seconds_resolver: Callable[[float], float] | None = None,
         use_shot_by_shot_beats: bool = _USE_SHOT_BY_SHOT_BEATS,
         project_look: ProjectLook | None = None,
+        scene_detail_plan: SceneDetailPlan | None = None,
     ) -> ResolvedCinematicPrompt:
         common = CinematicPromptCompilationService._resolve_common_fields(
             scene=scene,
@@ -386,6 +410,7 @@ class CinematicPromptCompilationService:
             visual_continuity_bible=visual_continuity_bible,
             production_semantic_brief=production_semantic_brief,
             project_look=project_look,
+            scene_detail_plan=scene_detail_plan,
         )
 
         raw_duration = (
@@ -418,6 +443,7 @@ class CinematicPromptCompilationService:
             f"Identity: {', '.join(common.identities) or 'no recurring identity present'}. "
             f"Environment: {common.environment}. Lighting: {common.lighting}. "
             f"{action_line} Composition: {common.composition}. "
+            f"{_detail_sentence(common.detail)}"
             f"Lens/camera: {common.lens}, {common.camera}. "
             f"{common.look + ' ' if common.look else ''}"
             f"Duration: {duration:.0f} seconds."
@@ -444,6 +470,7 @@ class CinematicPromptCompilationService:
         script_lock_hash: str,
         sub_clip_durations: list[float],
         project_look: ProjectLook | None = None,
+        scene_detail_plan: SceneDetailPlan | None = None,
     ) -> list[ResolvedCinematicPrompt]:
         """
         Phase 5 (multi-clip scene splitting): one ResolvedCinematicPrompt
@@ -480,6 +507,7 @@ class CinematicPromptCompilationService:
             visual_continuity_bible=visual_continuity_bible,
             production_semantic_brief=production_semantic_brief,
             project_look=project_look,
+            scene_detail_plan=scene_detail_plan,
         )
 
         prompts: list[ResolvedCinematicPrompt] = []
@@ -517,6 +545,7 @@ class CinematicPromptCompilationService:
                 f"Identity: {', '.join(common.identities) or 'no recurring identity present'}. "
                 f"Environment: {common.environment}. Lighting: {common.lighting}. "
                 f"{action_line} Composition: {common.composition}. "
+                f"{_detail_sentence(common.detail)}"
                 f"Lens/camera: {common.lens}, {common.camera}. "
                 f"{common.look + ' ' if common.look else ''}"
                 f"Duration: {sub_duration:.0f} seconds "

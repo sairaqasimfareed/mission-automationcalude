@@ -484,6 +484,7 @@ class MuseSceneVideoGenerationService:
             script_lock_hash=job.script_lock.script_content_hash,
             sub_clip_durations=durations,
             project_look=job.project_look,
+            scene_detail_plan=job.scene_detail_plan,
         )
 
     def _build_seam_reference_asset(
