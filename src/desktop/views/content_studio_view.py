@@ -2459,6 +2459,7 @@ class ContentStudioView(QWidget):
             layout.addLayout(row)
 
         self._render_identity_suggestions(layout, job)
+        self._render_story_treatment(layout, job)
 
         editing = self._editing_identity_name
 
@@ -2721,6 +2722,87 @@ class ContentStudioView(QWidget):
             )
             sheets_button.clicked.connect(self._handle_draft_character_sheets)
             layout.addWidget(sheets_button, alignment=_LEFT)
+
+    # ------------------------------------------------ story treatment (opening image)
+
+    def _render_story_treatment(self, layout: QVBoxLayout, job: VideoJob) -> None:
+        """How the video opens, proposed for the operator to accept. The recurring presence
+        it proposes appears above as an ordinary suggested character."""
+
+        treatment = job.story_treatment
+
+        if treatment is not None and treatment.hook_status == SuggestionStatus.ACCEPTED:
+            layout.addWidget(
+                small_muted(f"Opening image (accepted): {treatment.hook_visual}")
+            )
+
+            return
+
+        if treatment is not None and treatment.hook_status == SuggestionStatus.PENDING:
+            layout.addWidget(
+                small_muted(f"Proposed opening image: {treatment.hook_visual}")
+            )
+            row = QHBoxLayout()
+            accept_button = button("Accept opening image", variant="primary")
+            accept_button.clicked.connect(self._handle_accept_story_hook)
+            discard_button = button("Discard", variant="ghost")
+            discard_button.clicked.connect(self._handle_discard_story_hook)
+            row.addWidget(accept_button)
+            row.addWidget(discard_button)
+            row.addStretch()
+            layout.addLayout(row)
+
+            return
+
+        layout.addWidget(
+            small_muted(
+                "Optional: let Claude propose what the video opens on and one person or "
+                "place that recurs as a brief glimpse. Nothing is applied until you accept."
+            )
+        )
+        propose_button = button(
+            "Suggest an opening and a recurring presence", variant="ghost"
+        )
+        propose_button.clicked.connect(self._handle_suggest_story_treatment)
+        layout.addWidget(propose_button, alignment=_LEFT)
+
+    def _handle_suggest_story_treatment(self) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        self._run_stage(
+            job,
+            self._content_intelligence_pipeline.run_story_treatment,
+            label="proposing an opening and a recurring presence",
+            failure="Could not propose a treatment",
+            retry=self._handle_suggest_story_treatment,
+        )
+
+    def _handle_accept_story_hook(self) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        self._run_stage(
+            job,
+            self._content_intelligence_pipeline.accept_story_hook,
+            label="writing the opening scene around the accepted image",
+            failure="Could not apply the opening image",
+            retry=self._handle_accept_story_hook,
+        )
+
+    def _handle_discard_story_hook(self) -> None:
+        job = self._current_job()
+
+        if job is None or job.story_treatment is None:
+            return
+
+        job.story_treatment.hook_status = SuggestionStatus.DISCARDED
+        self._job_store.add(job)
+        self._on_change()
 
     def _identity_suggestion(self, suggestion_id: UUID) -> IdentitySuggestion | None:
         job = self._current_job()
@@ -3241,9 +3323,20 @@ class ContentStudioView(QWidget):
 
         if package is None:
             layout.addWidget(small_muted("No cinematic prompt package compiled yet."))
+            empty_row = QHBoxLayout()
+            empty_row.setSpacing(6)
+
             compile_button = button("Compile cinematic prompts", variant="primary")
             compile_button.clicked.connect(self._handle_compile_cinematic_prompts)
-            layout.addWidget(compile_button, alignment=_LEFT)
+            empty_row.addWidget(compile_button)
+
+            # Written first, the detail reaches the very first compile.
+            first_detail_button = button("Write detailed scene text", variant="ghost")
+            first_detail_button.clicked.connect(self._handle_write_scene_details)
+            empty_row.addWidget(first_detail_button)
+
+            empty_row.addStretch()
+            layout.addLayout(empty_row)
 
             return
 

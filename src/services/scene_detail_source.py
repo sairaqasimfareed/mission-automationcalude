@@ -15,6 +15,11 @@ from src.models.scene import Scene
 from src.models.shot_planning import ShotSpecification
 from src.models.visual_continuity import ClipContinuityEntry
 
+# Bumped when the way the text is written changes, so old text is rewritten.
+# 2: each paragraph states the one place and era its scene is in (a story with a present-day
+# frame had a museum cue in an Egyptian scene).
+DETAIL_WRITING_REVISION = 2
+
 
 def scene_detail_source_hash(
     *,
@@ -22,7 +27,10 @@ def scene_detail_source_hash(
     shot: ShotSpecification | None,
     continuity: ClipContinuityEntry | None,
 ) -> str:
-    parts: dict[str, object] = {"narration": " ".join(scene.narration.split())}
+    parts: dict[str, object] = {
+        "narration": " ".join(scene.narration.split()),
+        "writing": DETAIL_WRITING_REVISION,
+    }
 
     if shot is not None:
         parts["shot"] = [

@@ -1036,6 +1036,15 @@ ElevenLabs credits; ElevenLabs was at zero on 2026-10-07).
   identically on the previous commit and passed in an earlier full run. Environmental, not a
   regression; the same limit probably explains the 28-minute 1080p renders.
 
+- Genre visual mood and story treatment (2026-10-10): only horror, mystery, documentary, history, survival and
+  storytelling have a mood; the other genres are unchanged. Existing projects keep their saved style sheet and shot
+  plan until those steps are re-run. The style sheet is still one block for the whole video, so a two-era video
+  carries both eras in a field that names them (the scene paragraph disambiguates; a palette or camera field that
+  names one setting still reaches every scene). The story treatment's opening image cannot be edited before
+  accepting, does not regenerate scene 1's shot plan, and its recurring presence can only be a person or a place.
+  Not measured: whether the genre direction actually makes a real horror clip look different from a documentary one -
+  that needs a real Muse/Flow generation (credits), not yet run.
+
 ## Explicitly out of scope
 
 - Google Flow, or any browser automation targeting Google Flow's web UI.

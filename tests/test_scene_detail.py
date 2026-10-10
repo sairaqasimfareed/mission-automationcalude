@@ -677,3 +677,56 @@ def test_the_prompts_section_offers_the_detail_button_and_it_works(qapp) -> None
 
     assert errors == []
     assert studio_job.scene_detail_plan is not None
+
+
+def test_the_detail_button_is_offered_before_the_first_compile_too(qapp) -> None:  # type: ignore[no-untyped-def]
+    """Live, 2026-10-10: the button showed only after prompts existed, so the first compile
+    could not carry the detail. It is offered next to "Compile cinematic prompts"."""
+
+    from PySide6.QtWidgets import QVBoxLayout, QWidget
+
+    from tests.test_suggestions import _studio, _texts
+
+    view, studio_job, _errors = _studio(_job(2))
+    studio_job.cinematic_shot_plan = _shot_plan()
+    studio_job.cinematic_prompt_package = None
+    holder = QWidget()
+    layout = QVBoxLayout(holder)
+
+    view._render_cinematic_prompt_section(layout, studio_job)  # noqa: SLF001
+
+    texts = _texts(holder)
+    assert "Compile cinematic prompts" in texts
+    assert "Write detailed scene text" in texts
+
+
+def test_the_prompt_asks_for_one_stated_place_and_era_per_scene() -> None:
+    """Live, 2026-10-10 (Haunted wife): the style sheet named an Egyptian past AND a
+    present-day museum frame, and a papyrus close-up was generated inside a modern museum.
+    The writer must pick the one setting the scene is in and say it."""
+
+    job = _job(2)
+    job.cinematic_shot_plan = _shot_plan()
+
+    prompt = SceneDetailService._build_prompt(job, job.scenes[:1])  # noqa: SLF001
+
+    assert "which ONE of them this scene is in" in prompt
+    assert "the place and the era" in prompt
+    assert "belong to the other one" in prompt
+
+
+def test_detail_written_before_the_setting_rule_counts_as_stale() -> None:
+    from src.services import scene_detail_source as source
+
+    job = _job(2)
+    job.cinematic_shot_plan = _shot_plan()
+    scene = job.scenes[0]
+    kwargs = {"scene": scene, "shot": None, "continuity": None}
+
+    current = source.scene_detail_source_hash(**kwargs)  # type: ignore[arg-type]
+    original = source.DETAIL_WRITING_REVISION
+    try:
+        source.DETAIL_WRITING_REVISION = original + 1
+        assert source.scene_detail_source_hash(**kwargs) != current  # type: ignore[arg-type]
+    finally:
+        source.DETAIL_WRITING_REVISION = original

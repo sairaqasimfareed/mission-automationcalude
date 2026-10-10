@@ -1103,6 +1103,84 @@ section records what changed and why so a later session does not undo it.
     only proves the key EXISTS - the button's own limit - so an expired key still fails at the first real call with the
     provider's own error. Not done: persisting the health status itself; a real validity check of a key (a billed or
     rate-limited call). Tests: `tests/test_saved_key_wins.py`.
+  - **A prompt describes only who and what is ON SCREEN; relative lighting and environment are replaced
+    (2026-10-10, live: Haunted wife).** (1) Scene 1 is a close-up of a letter on papyrus, yet its prompt began
+    "Identity: A man who wrote a letter to his dead wife...": `CinematicPromptCompilationService` listed every identity
+    in the continuity entry's `entity_names` although the bible knew the man does not appear (`on_screen_entity_names`
+    gates the reference pictures but not the text), which invites a generator to put a man in a papyrus shot. The
+    Identity line and the compiled `reference_asset_ids` now use `_identity_names_shown`: the scene's on-screen
+    names; a bible in which NO entry has an on-screen list (made before the field existed - an empty list then means
+    "never written", not "nobody") keeps the old `entity_names` rule. A scene with nobody on screen says "no
+    recurring identity present". Recompile existing prompts to see it. (2) The Prompts tab flagged scenes 4 and 17
+    ("says 'same', 'previous scene'"): the bible's lighting read "Same warm, focused lighting as previous scene".
+    `_concrete_lighting` now replaces lighting that refers to another scene (same / as before / previous
+    scene|shot|clip / unchanged / similar to) with the project look's lighting, else "natural light, consistent with
+    the surrounding scenes"; `_concrete_environment` takes the on-screen place's name when the environment still refers
+    to another scene after its leading "Same" is dropped, and is otherwise left for the completeness check to flag.
+    Concrete wording is untouched. Tests: `tests/test_identity_on_screen.py`, `tests/test_relative_lighting.py`.
+  - **Each scene's detail text states the ONE place and era it is in; the detail button shows before the first compile
+    (2026-10-10, live: Haunted wife first Muse clip).** Scene 1 (a papyrus close-up) was generated inside a modern
+    museum: the project style sheet named BOTH ancient Egypt and a present-day museum frame and is appended to every
+    prompt, and the scene's own Environment only said "unspecified setting, likely ancient Egypt", so nothing told Muse
+    which applied. `SceneDetailService` prompt v1.1.0 now tells the writer to pick the one setting the scene is in from
+    the narration and the scene's setting, open with the place and era in concrete words, and not mix in light, rooms,
+    objects or sounds of the other. `DETAIL_WRITING_REVISION` (in `scene_detail_source_hash`) makes detail written
+    before this count as stale, so "Write detailed scene text" rewrites it once (about 0.1 USD per 50 scenes).
+    Not done: the style sheet text itself is still global, so a two-era video still carries both in every prompt (the
+    scene paragraph is what disambiguates); the Environment line can still hedge ("likely"). Separately,
+    "Write detailed scene text" was only drawn after prompts existed; it is now also next to "Compile cinematic
+    prompts". Tests: `tests/test_scene_detail.py`.
+  - **Scene setting isolation + genre visual mood (2026-10-10, live: Haunted wife).** (1) A scene with its own
+    written paragraph now gets only the universal part of the project style sheet (colour palette, camera feel):
+    `ProjectLook.as_prompt_sentence(universal_only=True)`. The place-bound fields (setting, buildings, climate,
+    lighting, sound) describe EVERY setting of the video, so a story set in the past with a present-day museum frame
+    put a modern museum into an Egyptian scene; the paragraph already carries the scene's own place, light and sound.
+    A scene without a paragraph still gets the whole sheet. The compiler also drops a bracketed production note from
+    the Environment line ("Egypt (depicted through stock imagery or artifact close-up)" -> "Egypt"; only when it holds
+    stock/imagery/footage/depicted/b-roll/artifact). Known leftover: a palette or camera-feel field that itself names
+    one setting ("cold grey-blue museum tones") still reaches every scene - edit it in the style sheet. (2) The genre
+    now reaches the steps that decide the look. The project's genre was horror but the video came out as a calm
+    documentary: the style sheet drafter never saw the genre (its prompt even gave "documentary, slow push-ins" as its
+    camera example) and shot planning never saw it. `genre_visual_mood.py` holds, per genre (horror, mystery,
+    documentary, history, survival, storytelling), a short treatment direction and a sound line; genres not listed
+    (default, medical, travel, top10, reaction, comedy) have none and every step behaves as before. The direction is
+    given to the style sheet drafter (prompt v1.1.0), shot planning (v1.1.0, new `genre_direction` argument) and the
+    scene detail writer (v1.2.0), each told to add no event, person or object. Style fields the script gave nothing for
+    (lighting, palette, camera feel, sound) take the genre's first ready-made look from `_GENRE_LOOKS` (one table, not a
+    copy) and its sound; setting, buildings and climate are never filled from a genre. Existing projects keep their
+    saved style sheet and shot plan: re-run the style sheet fields, "Generate shot plan" and "Write detailed scene
+    text" to pick it up. Tests: `tests/test_scene_setting_isolation.py`, `tests/test_genre_visual_mood.py`.
+    **Audit of every step (same day):** the steps before the script (audience promise, research plan, story angles,
+    blueprint, hooks, writing directives, script, critique, packaging), sound design, voice, music, SFX, captions and
+    the title card already read the genre profile; the production semantic brief and scene planner read it
+    deterministically. The one real gap was `VisualContinuityService`, which writes every scene's lighting, time of
+    day, weather, condition and shot action and never saw the genre - the origin of the generic "Soft, focused
+    light" lighting and the "Same ... as previous scene" wording in a horror project. It now gets the direction
+    (prompt v1.1.0, new `genre_direction` argument) and is told never to write "same / as before / similar". Left
+    without a genre on purpose: continuity-bible extraction, identity suggestions, identity detail, ambiguity
+    detection and prompt-quality scoring (factual, structural or scoring steps); character sheets get only the genre
+    id. `tests/test_genre_reaches_every_step.py` drives the whole pipeline with a recording stub and asserts which steps
+    carry the direction (visual continuity, style sheet, shot planning, scene detail), that a genre with no mood adds
+    nothing, and that the pre-script steps still name the genre.
+  - **Story treatment: a proposed opening image and one recurring presence (2026-10-10, built after the genre mood).**
+    Opt-in and manual only (not in `run_all`; nothing is applied on its own). "Suggest an opening and a recurring
+    presence" in Content Studio's characters section runs `ContentIntelligencePipeline.run_story_treatment` (one call,
+    `StoryTreatmentService`, prompt v1.0.0): it sees the script, the project's people and places and the genre
+    direction, is told to use only what the script names or clearly implies, and may answer NONE. Two proposals: (1)
+    the OPENING IMAGE, kept as `VideoJob.story_treatment` (`StoryTreatment`: `hook_visual`, `hook_status`
+    pending/accepted/discarded, `motif_name`) and shown with Accept/Discard; (2) a RECURRING PRESENCE (a person or place
+    from the script, glimpsed in a few scenes) appended to `job.identity_suggestions`, so it goes through the existing
+    Accept / Edit first / Discard flow and, once accepted, the ordinary on-screen marking, description and reference
+    pictures (no second mechanism). A presence must recur in at least 2 scenes and in at most a third of them (spread
+    evenly, scene 1 kept when the opening shows it); one whose name is already known or was discarded is not proposed
+    again. Accepting the opening calls `accept_story_hook`: scene 1's written paragraph is dropped and rewritten
+    around the image (the scene detail prompt, v1.3.0, adds "Opening image the operator approved ... keeping the
+    narration's own subject" for the first scene only, and only once accepted), then the prompts are recompiled if
+    they exist. An accepted opening cannot be replaced by asking again; a discarded one can be asked for again.
+    Limits: the shot plan for scene 1 is not regenerated, so its own "Action progression" can still describe the old
+    opening (re-run "Generate shot plan" and everything after it to change that); the presence is a person or place
+    only (the identity model has no object kind); there is no way to edit the opening text before accepting it.
+    Tests: `tests/test_story_treatment.py`.
   - **A reference picture the operator picks for ONE scene (2026-10-08, live: Lake Nyos
     village).** A character/place has one reference for every scene it is marked in; a scene that
     names none (stretches of village footage) had nothing to carry its scenery and light from the

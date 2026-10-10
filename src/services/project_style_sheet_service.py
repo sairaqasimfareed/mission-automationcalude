@@ -17,6 +17,7 @@ import logging
 
 from src.models.project_look import ProjectLook
 from src.models.video_job import VideoJob
+from src.services.genre_visual_mood import genre_direction, genre_style_defaults
 from src.services.llm.labeled_block_parser import extract_labeled_field
 from src.services.llm.llm_service import LLMService
 from src.shared.llm.models import LLMProvider
@@ -97,7 +98,7 @@ class ProjectStyleSheetService:
                 "You only state what the script supports and never invent a country, "
                 "year or place it does not give."
             ),
-            prompt_version="project_style_sheet_prompt_v1.0.0",
+            prompt_version="project_style_sheet_prompt_v1.1.0",
             dry_run_response=_DRY_RUN_RESPONSE,
             metadata={
                 "agent": "ProjectStyleSheetService",
@@ -128,7 +129,25 @@ class ProjectStyleSheetService:
                 " ".join(content.split())[:300],
             )
 
-        return look
+        return self._with_genre_style(look, job.genre_id)
+
+    @staticmethod
+    def _with_genre_style(look: ProjectLook, genre_id: str) -> ProjectLook:
+        """`look` with the style fields the script gave nothing for (lighting, palette, camera
+        feel, sound) taken from the genre's mood. Never the setting, buildings or climate: those
+        are facts about the script's world, and a script that names none gets none."""
+
+        defaults = genre_style_defaults(genre_id)
+
+        if not defaults:
+            return look
+
+        return look.model_copy(
+            update={
+                field: getattr(look, field) or value
+                for field, value in defaults.items()
+            }
+        )
 
     @staticmethod
     def fill_blanks(existing: ProjectLook | None, drafted: ProjectLook) -> ProjectLook:
@@ -165,6 +184,13 @@ class ProjectStyleSheetService:
                     settings.append(location)
 
         known = "; ".join(settings[:12]) or "none listed"
+        direction = genre_direction(job.genre_id)
+        genre_note = (
+            f"Genre treatment (how the video should FEEL - let the lighting, palette, "
+            f"camera and sound follow it): {direction}\n\n"
+            if direction
+            else ""
+        )
         labels = "\n".join(
             f"{label}: <{hint}>"
             for label, hint in (
@@ -176,7 +202,7 @@ class ProjectStyleSheetService:
                 ("CLIMATE", "weather, season and the plants or land"),
                 ("LIGHTING", "the light the whole video is graded in"),
                 ("PALETTE", "the colour palette and grade"),
-                ("CAMERA", "lens and camera language, e.g. documentary, slow push-ins"),
+                ("CAMERA", "lens and camera language that serves the genre treatment"),
                 ("SOUND", "the ambient sound under the scenes, no music"),
             )
         )
@@ -184,6 +210,7 @@ class ProjectStyleSheetService:
         return (
             f"Topic: {job.topic}\n\nScript, scene by scene:\n{narration}\n\n"
             f"Settings the shots are planned in: {known}\n\n"
+            f"{genre_note}"
             "Write the style sheet for this video. One line per label, in exactly "
             "this form:\n"
             f"{labels}\n\n"

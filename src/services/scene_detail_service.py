@@ -23,6 +23,7 @@ from src.models.scene_detail import (
     SceneDetailPlan,
 )
 from src.models.video_job import VideoJob
+from src.services.genre_visual_mood import genre_direction
 from src.services.llm.labeled_block_parser import extract_labeled_field, split_blocks
 from src.services.llm.llm_service import LLMService
 from src.services.scene_detail_source import scene_detail_source_hash
@@ -175,7 +176,7 @@ class SceneDetailService:
                 "front of the camera in concrete detail. You never add events the "
                 "script and the shot do not contain."
             ),
-            prompt_version="scene_detail_prompt_v1.0.0",
+            prompt_version="scene_detail_prompt_v1.3.0",
             dry_run_response=_DRY_RUN_RESPONSE,
             metadata={
                 "agent": "SceneDetailService",
@@ -249,6 +250,9 @@ class SceneDetailService:
         bible = job.visual_continuity_bible
         brief = job.production_semantic_brief
         look = job.project_look.as_prompt_sentence() if job.project_look else ""
+        direction = genre_direction(job.genre_id)
+        hook = job.story_treatment.accepted_hook if job.story_treatment else ""
+        first_number = min((s.scene_number for s in job.scenes), default=0)
         descriptions = (
             {i.name: i.canonical_description for i in bible.identities}
             if bible is not None
@@ -262,6 +266,12 @@ class SceneDetailService:
                 bible.entry_for_scene(scene.scene_number) if bible is not None else None
             )
             lines = [f"SCENE {scene.scene_number}", f"Narration: {scene.narration}"]
+
+            if hook and scene.scene_number == first_number:
+                lines.append(
+                    "Opening image the operator approved - build this scene's paragraph "
+                    f"around it, keeping the narration's own subject: {hook}"
+                )
 
             if shot is not None:
                 lines.append(
@@ -299,6 +309,12 @@ class SceneDetailService:
         return (
             f"Topic: {job.topic}\n"
             + (f"{look}\n" if look else "")
+            + (
+                "Genre treatment - let the light, framing, camera and sound follow it, "
+                f"without adding anything the scene does not contain: {direction}\n"
+                if direction
+                else ""
+            )
             + "\nScenes to describe:\n\n"
             + "\n\n".join(blocks)
             + "\n\nFor EACH scene above write one block, blocks separated by a line "
@@ -309,6 +325,12 @@ class SceneDetailService:
             "direction, quality and colour of the light; textures, materials and "
             "small objects; how the camera moves through the shot; the mood; and "
             "the sound of the place>\n\n"
+            "The style sheet may name more than one place or era (for example a story "
+            "set in the past with a present-day frame). Decide from the narration and "
+            "the scene's setting which ONE of them this scene is in, and open the "
+            "paragraph by stating it concretely - the place and the era, e.g. 'In a "
+            "mudbrick house in ancient Egypt, about 1000 BCE, ...'. Never mix in "
+            "light, rooms, objects or sounds that belong to the other one.\n\n"
             "Rules: describe only what the narration, the shot and the setting "
             "contain; add no event, person or object they do not imply; no on-screen "
             "text; never the words 'same', 'as before' or 'similar'; do not repeat "

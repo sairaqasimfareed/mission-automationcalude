@@ -95,6 +95,7 @@ class ShotPlanningService:
         script_lock_hash: str,
         topic: str,
         aspect_ratio: AspectRatio = AspectRatio.LANDSCAPE,
+        genre_direction: str = "",
     ) -> CinematicShotPlan:
         if not scenes:
             raise ValueError("Shot planning requires at least one scene.")
@@ -103,7 +104,7 @@ class ShotPlanningService:
             provider=LLMProvider.OPENAI,
             model="provider-default-model",
             prompt=self._build_prompt(
-                scenes, visual_continuity_bible, topic, aspect_ratio
+                scenes, visual_continuity_bible, topic, aspect_ratio, genre_direction
             ),
             system_prompt=(
                 "You are a director of photography turning a sequence "
@@ -112,7 +113,7 @@ class ShotPlanningService:
                 "lighting - respecting the continuity state given for "
                 "each scene exactly, never inventing a contradiction."
             ),
-            prompt_version="shot_planning_prompt_v1.0.0",
+            prompt_version="shot_planning_prompt_v1.1.0",
             dry_run_response=_DRY_RUN_RESPONSE,
             metadata={
                 "agent": "ShotPlanningService",
@@ -171,6 +172,7 @@ class ShotPlanningService:
         visual_continuity_bible: VisualContinuityBible,
         topic: str,
         aspect_ratio: AspectRatio = AspectRatio.LANDSCAPE,
+        genre_direction: str = "",
     ) -> str:
         scene_lines = []
 
@@ -199,9 +201,18 @@ class ShotPlanningService:
             else ""
         )
 
+        genre_note = (
+            "Genre treatment - frame, light and move the camera to serve it, without "
+            "adding any event, person or object the narration does not contain: "
+            f"{genre_direction}\n\n"
+            if genre_direction
+            else ""
+        )
+
         return (
             f"Topic: {topic}\n\n"
             f"{frame_note}"
+            f"{genre_note}"
             f"Scenes with continuity state:\n{scenes_block}\n\n"
             "For each scene, return one block separated by a line of "
             "three or more dashes, with exactly these labeled lines:\n"

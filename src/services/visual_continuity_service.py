@@ -90,6 +90,7 @@ class VisualContinuityService:
         scenes: list[Scene],
         continuity_bible: ContinuityBible,
         script_lock_hash: str,
+        genre_direction: str = "",
     ) -> VisualContinuityBible:
         if not scenes:
             raise ValueError("Visual continuity requires at least one scene.")
@@ -99,7 +100,7 @@ class VisualContinuityService:
         request = LLMRequest(
             provider=LLMProvider.OPENAI,
             model="provider-default-model",
-            prompt=self._build_prompt(scenes, continuity_bible),
+            prompt=self._build_prompt(scenes, continuity_bible, genre_direction),
             system_prompt=(
                 "You are a script supervisor tracking on-screen visual "
                 "continuity across a sequence of shots, the same role "
@@ -109,7 +110,7 @@ class VisualContinuityService:
                 "only on what the narration and known entities support - "
                 "do not invent detail the material does not support."
             ),
-            prompt_version="visual_continuity_prompt_v1.0.0",
+            prompt_version="visual_continuity_prompt_v1.1.0",
             dry_run_response=_DRY_RUN_RESPONSE,
             metadata={
                 "agent": "VisualContinuityService",
@@ -173,7 +174,11 @@ class VisualContinuityService:
         return identities
 
     @staticmethod
-    def _build_prompt(scenes: list[Scene], continuity_bible: ContinuityBible) -> str:
+    def _build_prompt(
+        scenes: list[Scene],
+        continuity_bible: ContinuityBible,
+        genre_direction: str = "",
+    ) -> str:
         known_entities = (
             ", ".join(
                 entry.name
@@ -187,10 +192,22 @@ class VisualContinuityService:
             for scene in sorted(scenes, key=lambda s: s.scene_number)
         )
 
+        genre_note = (
+            "Genre treatment - let the LIGHTING, TIME_OF_DAY, WEATHER and CONDITION "
+            "you describe follow it, without adding any person, event or object the "
+            f"narration does not contain: {genre_direction}\n\n"
+            if genre_direction
+            else ""
+        )
+
         return (
             f"Topic: {continuity_bible.topic}\n"
             f"Known recurring people/locations: {known_entities}\n\n"
             f"Scenes in order:\n{scene_lines}\n\n"
+            f"{genre_note}"
+            "Write every value out in full: never the words 'same', 'as before', "
+            "'as previous scene' or 'similar' - each scene is generated on its own "
+            "and cannot see another.\n\n"
             "For each scene, return one block separated by a line of "
             "three or more dashes, with exactly these labeled lines:\n"
             "SCENE: <the scene number>\n"

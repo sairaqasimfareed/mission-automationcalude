@@ -66,6 +66,7 @@ from src.models.sound_design_plan import SoundDesignPlan
 from src.models.specification_enums import AspectRatio
 from src.models.story_angle import StoryAngle, StoryAngleEvaluation
 from src.models.story_blueprint import StoryBlueprint
+from src.models.story_treatment import StoryTreatment
 from src.models.suggestions import IdentitySuggestion, LookSuggestion
 from src.models.thumbnail import ThumbnailTextPosition
 from src.models.topic_candidate import TopicCandidate
@@ -512,6 +513,10 @@ class VideoJob(MissionBaseModel):
     # not proposed again and the list survives a restart.
     look_suggestions: list[LookSuggestion] = Field(default_factory=list)
     identity_suggestions: list[IdentitySuggestion] = Field(default_factory=list)
+
+    # How the video opens and what recurs through it, proposed on request and applied only
+    # when the operator accepts (see src/models/story_treatment.py). None = never asked.
+    story_treatment: StoryTreatment | None = None
 
     policy_report: PolicyComplianceReport | None = None
 

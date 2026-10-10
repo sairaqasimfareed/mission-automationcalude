@@ -2279,6 +2279,7 @@ class _CountingStyleSheet:
 def test_a_failing_style_sheet_never_fails_the_visual_continuity_bible() -> None:
     pipeline, _ = _pipeline()
     job = pipeline.run_all(_job())
+    job.project_look = None  # a genre's own look can fill it during run_all
     pipeline.project_style_sheet_service = _CountingStyleSheet(fail=True)  # type: ignore[assignment]
 
     job = pipeline.run_visual_continuity(job)

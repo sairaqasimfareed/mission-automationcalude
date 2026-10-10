@@ -63,19 +63,30 @@ class ProjectLook(MissionBaseModel):
             getattr(self, name) for name in (*_STYLE_FIELDS, *_SETTING_FIELDS)
         )
 
-    def as_prompt_sentence(self) -> str:
-        """The one sentence added to every prompt, or "" when nothing is set."""
+    def as_prompt_sentence(self, *, universal_only: bool = False) -> str:
+        """The one sentence added to every prompt, or "" when nothing is set.
+
+        `universal_only` leaves out what belongs to a place and time (setting, buildings,
+        climate, lighting, sound) and keeps the colour palette and camera feel. It is used
+        for a scene that has its own written paragraph: that paragraph already says which
+        place, light and sound the scene has, while these fields describe EVERY setting of
+        the video - and a video set in the past with a present-day museum frame has both,
+        so a clip in ancient Egypt was generated inside a museum (live, 2026-10-10).
+        """
 
         parts = [
             f"{label}: {value}"
             for label, value in (
-                ("setting", self.setting),
-                ("buildings and materials", self.architecture),
-                ("climate and plants", self.climate),
-                ("lighting", self.lighting),
+                ("setting", "" if universal_only else self.setting),
+                (
+                    "buildings and materials",
+                    "" if universal_only else self.architecture,
+                ),
+                ("climate and plants", "" if universal_only else self.climate),
+                ("lighting", "" if universal_only else self.lighting),
                 ("colour palette", self.color_palette),
                 ("camera feel", self.camera_feel),
-                ("background sound", self.sound),
+                ("background sound", "" if universal_only else self.sound),
             )
             if value
         ]

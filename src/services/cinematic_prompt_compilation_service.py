@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from typing import NamedTuple
 
@@ -17,12 +18,14 @@ from src.models.shot_planning import (
 from src.models.visual_continuity import (
     CanonicalEntityIdentity,
     CanonicalEntityType,
+    ClipContinuityEntry,
     VisualContinuityBible,
 )
 from src.services.dialogue_prompt import dialogue_prompt_text, speakers_before
 from src.services.person_matching import find_person
 from src.services.prompt_wording import (
     is_unspecified,
+    relative_words_in,
     without_leading_relative_wording,
 )
 from src.services.scene_detail_source import scene_detail_source_hash
@@ -178,26 +181,63 @@ def _detail_sentence(detail: str) -> str:
     return f"Scene detail: {detail}. " if detail else ""
 
 
+def _identity_names_shown(
+    bible: VisualContinuityBible, continuity: ClipContinuityEntry | None
+) -> list[str]:
+    """The identities a scene's prompt describes: the ones ON SCREEN in it. Live, 2026-10-10
+    (Haunted wife): scene 1 is a close-up of a letter and its prompt began "Identity: A man
+    who wrote a letter to his dead wife", because every identity attached to the scene was
+    listed although the bible knew the man does not appear - which invites a generator to put
+    a man in a papyrus shot. A bible made before the on-screen list existed has it nowhere
+    (an empty list then means "never written", not "nobody"), so it keeps the old rule.
+    """
+
+    if continuity is None:
+        return []
+
+    if any(entry.on_screen_entity_names for entry in bible.clip_entries):
+        return list(continuity.on_screen_entity_names)
+
+    return list(continuity.entity_names)
+
+
+# A bracketed note about HOW a place would be shown is production talk, not part of the
+# place - "Egypt (depicted through stock imagery or artifact close-up)" - and a generator
+# reads "artifact close-up" as a museum.
+_PRODUCTION_NOTE = re.compile(
+    r"\s*\([^()]*(?<![a-z])(?:stock|imagery|footage|depicted|b-roll|artifact)(?![a-z])[^()]*\)",
+    re.IGNORECASE,
+)
+
+
+def _without_production_notes(environment: str) -> str:
+    return _PRODUCTION_NOTE.sub("", environment).strip()
+
+
 def _concrete_environment(
     environment: str, places: list[CanonicalEntityIdentity]
 ) -> str:
     """The environment wording a clip generated on its own can use: a leading "Same" is
-    dropped ("Same rural village" -> "Rural village"), and an environment left unspecified
-    takes the name of the place on screen (whose full description is in the same prompt).
+    dropped ("Same rural village" -> "Rural village"), and an environment left unspecified,
+    or one that still refers to another scene ("..., as in the previous scene"), takes the
+    name of the place on screen (whose full description is in the same prompt). With no
+    place on screen it is left as written for the completeness check to flag.
     """
 
-    cleaned = without_leading_relative_wording(environment)
+    cleaned = _without_production_notes(without_leading_relative_wording(environment))
 
-    if is_unspecified(cleaned):
-        return places[0].name if places else environment
+    if is_unspecified(cleaned) or relative_words_in(cleaned):
+        return places[0].name if places else (cleaned or environment)
 
     return cleaned
 
 
 def _concrete_lighting(lighting: str, project_look: ProjectLook | None) -> str:
-    """Lighting left unspecified takes the project's look, else says to stay consistent."""
+    """Lighting left unspecified, or referring to another scene ("Same warm, focused
+    lighting as previous scene" - meaningless to a clip generated on its own), takes the
+    project's look, else says to stay consistent."""
 
-    if not is_unspecified(lighting):
+    if not is_unspecified(lighting) and not relative_words_in(lighting):
         return lighting
 
     if project_look is not None and project_look.lighting:
@@ -311,7 +351,7 @@ class CinematicPromptCompilationService:
                     segment = candidate
                     break
 
-        identity_names = continuity.entity_names if continuity is not None else []
+        identity_names = _identity_names_shown(visual_continuity_bible, continuity)
         identities = [
             _identity_text(identity)
             for identity in visual_continuity_bible.identities
@@ -394,6 +434,15 @@ class CinematicPromptCompilationService:
         elif renders_as_graphic(scene=scene, entry=continuity, shot=shot):
             graphic_text = exact_text_for(scene)
 
+        detail = (
+            scene_detail_plan.current_text_for(
+                scene.scene_number,
+                scene_detail_source_hash(scene=scene, shot=shot, continuity=continuity),
+            )
+            if scene_detail_plan is not None and graphic_text is None
+            else ""
+        )
+
         return _ResolvedSceneFields(
             shot=shot,
             identities=identities,
@@ -406,7 +455,9 @@ class CinematicPromptCompilationService:
             reveal_note=reveal_note,
             action=action,
             look=(
-                project_look.as_prompt_sentence() if project_look is not None else ""
+                project_look.as_prompt_sentence(universal_only=bool(detail))
+                if project_look is not None
+                else ""
             ),
             use_beats=use_beats,
             graphic_text=graphic_text,
@@ -416,16 +467,7 @@ class CinematicPromptCompilationService:
                 environment=environment,
                 voices=_voices_for(scene, visual_continuity_bible),
             ),
-            detail=(
-                scene_detail_plan.current_text_for(
-                    scene.scene_number,
-                    scene_detail_source_hash(
-                        scene=scene, shot=shot, continuity=continuity
-                    ),
-                )
-                if scene_detail_plan is not None and graphic_text is None
-                else ""
-            ),
+            detail=detail,
         )
 
     @staticmethod

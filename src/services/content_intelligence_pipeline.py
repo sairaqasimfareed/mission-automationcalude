@@ -48,6 +48,7 @@ from src.services.editorial_profile_composition_service import (
 from src.services.genre_profile_registry_service import (
     GenreProfileRegistryService,
 )
+from src.services.genre_visual_mood import genre_direction
 from src.services.hook_evaluation_service import (
     HookEvaluationService,
     select_winning_hook,
@@ -97,6 +98,7 @@ from src.services.story_angle_generation_service import StoryAngleGenerationServ
 from src.services.story_blueprint_generation_service import (
     StoryBlueprintGenerationService,
 )
+from src.services.story_treatment_service import StoryTreatmentService
 from src.services.top10_rank_assignment_service import TopTenRankAssignmentService
 from src.services.visual_continuity_service import VisualContinuityService
 from src.services.visual_continuity_validation_service import (
@@ -258,6 +260,11 @@ class ContentIntelligencePipeline:
             estimated_cost_usd=estimated_cost_usd,
         )
         self.character_sheet_service = CharacterSheetService(
+            llm_service=llm_service,
+            profile_ids=profile_ids,
+            estimated_cost_usd=estimated_cost_usd,
+        )
+        self.story_treatment_service = StoryTreatmentService(
             llm_service=llm_service,
             profile_ids=profile_ids,
             estimated_cost_usd=estimated_cost_usd,
@@ -1393,6 +1400,7 @@ class ContentIntelligencePipeline:
             scenes=job.scenes,
             continuity_bible=job.continuity_bible,
             script_lock_hash=job.script_lock.script_content_hash,
+            genre_direction=genre_direction(job.genre_id),
         )
 
         # The characters and places the operator named by hand survive a regenerate.
@@ -1542,6 +1550,54 @@ class ContentIntelligencePipeline:
 
         return job
 
+    def run_story_treatment(self, job: VideoJob) -> VideoJob:
+        """Propose how the video opens and one recurring presence (one call), for the
+        operator to accept or discard. Nothing is applied here: the opening image waits as a
+        pending `StoryTreatment` and the presence as a pending identity suggestion. An opening
+        the operator already accepted is kept (this raises instead of replacing it); a
+        discarded one may be asked for again."""
+
+        if job.visual_continuity_bible is None:
+            raise RuntimeError("A treatment needs a visual continuity bible.")
+
+        if not job.scenes:
+            raise RuntimeError("A treatment needs planned scenes.")
+
+        if (
+            job.story_treatment is not None
+            and job.story_treatment.hook_status == SuggestionStatus.ACCEPTED
+        ):
+            raise RuntimeError("The opening image is already accepted.")
+
+        proposal = self.story_treatment_service.propose(job)
+
+        if proposal.treatment is not None:
+            job.story_treatment = proposal.treatment
+
+        if proposal.motif is not None:
+            job.identity_suggestions.append(proposal.motif)
+
+        return job
+
+    def accept_story_hook(self, job: VideoJob) -> VideoJob:
+        """Accept the proposed opening image: scene 1's written paragraph is dropped so it is
+        written again around the image (one batched call), then the prompts are recompiled
+        if they exist."""
+
+        treatment = job.story_treatment
+
+        if treatment is None or treatment.hook_status != SuggestionStatus.PENDING:
+            raise RuntimeError("There is no proposed opening image to accept.")
+
+        treatment.hook_status = SuggestionStatus.ACCEPTED
+        first = min(scene.scene_number for scene in job.scenes)
+        plan = job.scene_detail_plan
+
+        if plan is not None:
+            plan.details = [d for d in plan.details if d.scene_number != first]
+
+        return self.run_scene_detail(job)
+
     _OVERLAP_SHARE = 0.8
 
     def _place_covering(
@@ -1674,6 +1730,7 @@ class ContentIntelligencePipeline:
             script_lock_hash=job.script_lock.script_content_hash,
             topic=job.topic,
             aspect_ratio=job.aspect_ratio,
+            genre_direction=genre_direction(job.genre_id),
         )
 
         self.approval_gate_service.record_event(
