@@ -91,6 +91,7 @@ class VisualContinuityService:
         continuity_bible: ContinuityBible,
         script_lock_hash: str,
         genre_direction: str = "",
+        scene_visuals: dict[int, str] | None = None,
     ) -> VisualContinuityBible:
         if not scenes:
             raise ValueError("Visual continuity requires at least one scene.")
@@ -100,7 +101,9 @@ class VisualContinuityService:
         request = LLMRequest(
             provider=LLMProvider.OPENAI,
             model="provider-default-model",
-            prompt=self._build_prompt(scenes, continuity_bible, genre_direction),
+            prompt=self._build_prompt(
+                scenes, continuity_bible, genre_direction, scene_visuals
+            ),
             system_prompt=(
                 "You are a script supervisor tracking on-screen visual "
                 "continuity across a sequence of shots, the same role "
@@ -110,7 +113,7 @@ class VisualContinuityService:
                 "only on what the narration and known entities support - "
                 "do not invent detail the material does not support."
             ),
-            prompt_version="visual_continuity_prompt_v1.1.0",
+            prompt_version="visual_continuity_prompt_v1.2.0",
             dry_run_response=_DRY_RUN_RESPONSE,
             metadata={
                 "agent": "VisualContinuityService",
@@ -178,6 +181,7 @@ class VisualContinuityService:
         scenes: list[Scene],
         continuity_bible: ContinuityBible,
         genre_direction: str = "",
+        scene_visuals: dict[int, str] | None = None,
     ) -> str:
         known_entities = (
             ", ".join(
@@ -189,6 +193,12 @@ class VisualContinuityService:
 
         scene_lines = "\n".join(
             f"SCENE {scene.scene_number}: {scene.narration}"
+            + (
+                f"\n  REQUIRED ON-SCREEN VISUAL (the operator's own instruction): "
+                f"{(scene_visuals or {})[scene.scene_number]}"
+                if scene.scene_number in (scene_visuals or {})
+                else ""
+            )
             for scene in sorted(scenes, key=lambda s: s.scene_number)
         )
 
@@ -200,11 +210,20 @@ class VisualContinuityService:
             else ""
         )
 
+        visual_note = (
+            "A scene marked REQUIRED ON-SCREEN VISUAL shows exactly that: its SHOT_ACTION "
+            "is that visual, and every person, creature or place it names counts as "
+            "present and on screen (use the names above when they match).\n\n"
+            if scene_visuals
+            else ""
+        )
+
         return (
             f"Topic: {continuity_bible.topic}\n"
             f"Known recurring people/locations: {known_entities}\n\n"
             f"Scenes in order:\n{scene_lines}\n\n"
             f"{genre_note}"
+            f"{visual_note}"
             "Write every value out in full: never the words 'same', 'as before', "
             "'as previous scene' or 'similar' - each scene is generated on its own "
             "and cannot see another.\n\n"

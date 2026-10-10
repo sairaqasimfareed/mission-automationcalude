@@ -1162,6 +1162,66 @@ section records what changed and why so a later session does not undo it.
     id. `tests/test_genre_reaches_every_step.py` drives the whole pipeline with a recording stub and asserts which steps
     carry the direction (visual continuity, style sheet, shot planning, scene detail), that a genre with no mood adds
     nothing, and that the pre-script steps still name the genre.
+  - **Scene visuals: the operator says what each scene SHOWS (2026-10-10, live: Haunted wife).** A script imported as
+    plain narration plays as a documentary because every step that decides what a clip shows is told to describe only
+    what the narration says, so a ghost or creature appears only if the narration names it. New Content Studio stage
+    "Scene visuals" (right after "Scene planning", `_CI_STAGES`; panel-only, no generic Run/Review row): paste a table of
+    narration and on-screen description (tab- or `|`-separated, header and number column optional; copied from a chat
+    it pastes as tabs) or type a visual under any scene. `SceneVisualMatchingService` (pure, no model call) matches rows
+    to scenes by NARRATION TEXT, in order - row numbers are ignored because the planner groups sentences into clips of
+    at most 8 seconds (21 rows became 19 scenes in the real project): a row inside a scene, two rows in one scene
+    (visuals joined with "Then"), a row whose sentences fall in two scenes (copied to both, flagged), a partly found
+    row (flagged), a row found only earlier than the previous one (out of order) and a row not found at all (the nearest
+    scene and its word overlap are shown; the operator picks a scene with "Use this scene"). Look-ahead is 6 scenes so a
+    short repeated row ("It was her.") cannot drag the pointer across the script. "Match to scenes" FILLS every matched
+    scene's own box (live feedback, same day: the operator expected the scene fields themselves to fill, not a separate
+    preview to apply); nothing is saved until "Save visuals" / "Save and rebuild", so each box can be read and edited
+    first, and a scene the table did not reach keeps its box and its saved visual. The paste box accepts plain text only
+    (a table copied from a page pasted as a rendered rich-text table whose cells read back one per line, and the match
+    failed), and the parser also reads a table whose cells each sit on their own line (a header of `#`, `Narration`,
+    `On screen`, then number / narration / visual per row, a wrapped visual running to the next number; a number that does
+    not line up refuses the paste). Stored on `VideoJob.scene_visual_plan`
+    (`SceneVisualPlan`: per scene number + `narration_key`, so a visual written for narration that has since changed is
+    STALE and ignored, shown as such); the paste box, preview and half-typed boxes are screen state only. The visuals
+    are an instruction, not a suggestion: the continuity bible (v1.2.0) treats what a visual names as on screen and its
+    shot action, shot planning (v1.2.0) must show it, the scene text (v1.4.0) is built around it, and the compiled
+    prompt carries it - `Action` is replaced by it; if the shot plan was NOT planned with visuals its timed beats (written
+    for the old action) are dropped so they cannot contradict it, if it was they are kept after an "On screen:" sentence.
+    The prompts actually sent to Muse and Flow are compiled again at generation time, so both generation services pass
+    the visuals too. `apply_scene_visuals` stores them and recompiles the prompts (no model call);
+    `rebuild_for_scene_visuals` re-runs the continuity bible, shot plan and scene text (about three Claude steps);
+    `CinematicShotPlan.visual_revision` records which set a shot plan was made with, and the tab warns when it differs.
+    Not done: the "Suggest visuals" button (Claude proposing a visual per scene for review); uploading the table from a
+    .txt file; a scene that receives three or more rows is only flagged (one clip cannot show many beats); a graphic
+    scene and a "treat as live footage" scene keep their own action; editing directions in a pasted visual (title
+    cards, "cut to black", "montage") are passed on as written - a single clip cannot cut, and the app tells the
+    generator to show no text. Tests: `tests/test_scene_visual_matching.py` (real table and real scenes),
+    `tests/test_scene_visual_wiring.py`, `tests/test_scene_visuals_tab.py`.
+    **Three bugs found on the first live rebuild with visuals (Haunted wife, same day), all fixed:** (1) the scene-text
+    pass lost the last two scenes of a batch because the reply wrote `SCENE 18 DETAIL: ...` on one line; the parser now
+    also reads that inline form (and `SCENE: 18 - DETAIL:`, bold labels). (2) Shot planning asked for all 19 scenes in
+    ONE call; with the visuals in the prompt the reply reached the 16,384-token output cap, was cut off, and scene 19
+    silently got a generic shot ("It was her."). `ShotPlanningService` now plans 8 scenes per call (`BATCH_SIZE`,
+    `batch_size`) and logs a warning for any scene the reply skipped. (3) A scene whose visual mentioned a title card was
+    classified as a graphic (`is_graphic_scene` reads the plan's own wording): skipped by the scene-text pass, no
+    automatic reference picture, and told it could print its narration on screen. `renders_as_graphic(...,
+    filmed_by_operator=True)` returns False, and the compiler, scene-text pass, completeness check, scene-reference
+    service and colour matching pass it for a scene that has a current visual - a scene the operator described is
+    filmed, never a graphic; a title card in a visual is still not drawn by a clip. Measured cost of one rebuild with
+    visuals (19 scenes, Sonnet): about $0.42 (bible 11.8k output tokens, shot plan 16.4k), against about $0.27 for the
+    same steps before visuals - output tokens dominate (5x the price of input) and each scene now restates its visual.
+    Tests: `tests/test_scene_visual_fixes.py`.
+  - **Transition overlap flag covers every registered transition (2026-10-10).** An audit of how the 13 transition
+    presets (`cut`, `fade_black`, `cross_dissolve`, `wipe_left/right/up/down`, `slide_left/right/up/down`, `pixelize`,
+    `circle_crop`) flow through the pipeline: the registry, the Timeline tab dropdown (built from the registry) and the
+    FFmpeg translation (`_xfade_transition_name`) know all of them, but `TransitionExecutionService.OVERLAP_TRANSITION_TYPES`
+    listed only the six original names, so the eleven later presets were recorded with `requires_overlap=False` (wrong
+    `overlap_transition_count`, no overlap start/end) although the filter graph overlaps every non-cut between-scene
+    transition. The list now holds all of them; `tests/test_transition_overlap_types.py` fails if a registered
+    transition is missing from it or from the FFmpeg mapping. Nothing downstream read those overlap fields, and the
+    render is unchanged. Findings left as they are (see REMAINING_GAPS): a genre applies ONE transition preset to every
+    boundary (horror: `fade_black`, 0.8 s), nothing chooses a transition from a scene's content, the shot plan's own
+    `transition_in`/`transition_out` words are never read, and the Timeline tab cannot force a hard cut.
   - **Story treatment: a proposed opening image and one recurring presence (2026-10-10, built after the genre mood).**
     Opt-in and manual only (not in `run_all`; nothing is applied on its own). "Suggest an opening and a recurring
     presence" in Content Studio's characters section runs `ContentIntelligencePipeline.run_story_treatment` (one call,

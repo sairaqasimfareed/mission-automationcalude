@@ -1045,6 +1045,27 @@ ElevenLabs credits; ElevenLabs was at zero on 2026-10-07).
   Not measured: whether the genre direction actually makes a real horror clip look different from a documentary one -
   that needs a real Muse/Flow generation (credits), not yet run.
 
+- Scene visuals (2026-10-10): the "Suggest visuals" button (Claude proposing a visual per scene for the operator to
+  accept) is not built, nor is loading the table from a .txt file. After applying visuals the shot plan and the written
+  scene text still describe the earlier visuals until "Save and rebuild" (or their own buttons) runs; the compiled
+  prompts carry them at once. A scene collecting three or more pasted rows is flagged only. Editing directions inside a
+  visual (a title card, "hard cut to black", "montage", "match cut") are passed to the generator as written; a single
+  AI clip cannot cut, and on-screen text is forbidden by the prompt's avoid rule. Whether Muse or Flow draw the ghosts
+  and creatures that a visual asks for (or refuse them) is not yet tested on real clips (credits).
+
+- Transitions (2026-10-10): (1) **A hard cut cannot be forced at one boundary.** The Timeline override list leaves
+  out `transition.cut`, and `GenreDirectiveGenerationService._apply_transition_overrides` ignores an override that is
+  a cut with no duration (it is indistinguishable from "no override"); and at a boundary a non-cut is preferred over a
+  cut (`_select_boundary_instruction`), so both scenes' in/out would need to be cuts. **Not built on purpose:** audio
+  timing assumes ONE project-wide transition length - `VoicePipelineStage` places each scene at
+  `previous + clip - transition_duration_seconds`, `SoundEffectPipelineStage` uses `(scene - 1) * transition_duration`,
+  and `ProductionRenderService._slice_for_scenes` counts crossfades the same way (its own comment: a per-scene override
+  that changes a boundary's duration or type "is not accounted for") - so a cut where the genre fades would put every
+  later voice, effect and music cue 0.7-0.8 s early per cut. Making it safe needs per-boundary lengths in all of those
+  (large, risky) or a "compensated cut" that keeps the genre's overlap length. (2) Per-scene overrides with a different
+  transition length have the same audio drift. (3) The shot plan's `transition_in`/`transition_out` text is unused.
+  (4) A genre has one preset for all boundaries; nothing picks per scene from content or tension.
+
 ## Explicitly out of scope
 
 - Google Flow, or any browser automation targeting Google Flow's web UI.

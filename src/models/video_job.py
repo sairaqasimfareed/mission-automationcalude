@@ -56,6 +56,7 @@ from src.models.research_plan import ResearchPlan
 from src.models.retention_audit import RetentionAuditReport
 from src.models.scene import Scene
 from src.models.scene_detail import SceneDetailPlan
+from src.models.scene_visual import SceneVisualPlan
 from src.models.script import Script, ScriptStatus
 from src.models.script_intake import ScriptIntakeResult
 from src.models.script_lock import ScriptLock
@@ -508,6 +509,11 @@ class VideoJob(MissionBaseModel):
     # changed is stale and the compiler ignores it. None = not written yet.
     scene_detail_plan: SceneDetailPlan | None = None
 
+    # What the operator wants each scene to SHOW (pasted or typed), treated as an instruction by
+    # the continuity bible, shot plan, scene text and compiled prompt. A visual written for
+    # narration that has since changed is stale and ignored (see src/models/scene_visual.py).
+    scene_visual_plan: SceneVisualPlan | None = None
+
     # Candidates the app proposes on its own for the operator to accept or discard
     # (see src/models/suggestions.py). Their status is kept here so a discarded one is
     # not proposed again and the list survives a restart.
@@ -607,6 +613,15 @@ class VideoJob(MissionBaseModel):
             return "1080x1920"
 
         return "1920x1080"
+
+    @property
+    def current_scene_visuals(self) -> dict[int, str]:
+        """{scene number: the operator's visual} for every scene whose visual is still current."""
+
+        if self.scene_visual_plan is None:
+            return {}
+
+        return self.scene_visual_plan.current_texts(self.scenes)
 
     @model_validator(mode="after")
     def validate_workflow_state(self) -> VideoJob:

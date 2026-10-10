@@ -173,6 +173,7 @@ class PromptCompletenessService:
 
             graphic = renders_as_graphic(
                 scene=scene,
+                filmed_by_operator=scene.scene_number in job.current_scene_visuals,
                 entry=(
                     bible.entry_for_scene(scene.scene_number)
                     if bible is not None

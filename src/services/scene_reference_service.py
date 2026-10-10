@@ -262,6 +262,7 @@ class SceneReferenceService:
 
             return renders_as_graphic(
                 scene=numbered,
+                filmed_by_operator=number in job.current_scene_visuals,
                 entry=bible.entry_for_scene(number),
                 shot=plan.shot_for_scene(number) if plan is not None else None,
             )
@@ -414,7 +415,12 @@ class SceneReferenceService:
         plan = job.cinematic_shot_plan
         shot = plan.shot_for_scene(scene.scene_number) if plan is not None else None
 
-        if renders_as_graphic(scene=scene, entry=entry, shot=shot):
+        if renders_as_graphic(
+            scene=scene,
+            entry=entry,
+            shot=shot,
+            filmed_by_operator=scene.scene_number in job.current_scene_visuals,
+        ):
             return SceneReferenceStatus(
                 text="Graphic scene - no reference picture needed.",
                 role="muted",

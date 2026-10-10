@@ -63,6 +63,12 @@ from src.models.research_evidence import (
 )
 from src.models.research_plan import ResearchQuestion
 from src.models.reviewer_result import ReviewerResult
+from src.models.scene_visual import (
+    MAX_VISUAL_CHARACTERS,
+    SceneVisual,
+    SceneVisualPlan,
+    narration_key,
+)
 from src.models.script_intake import ScriptIntakeMode
 from src.models.script_selection_edit import (
     SelectionEditOperation,
@@ -102,6 +108,11 @@ from src.services.reference_frame_selection_service import (
 from src.services.reference_status import reference_status
 from src.services.reviewer_service import ReviewerService
 from src.services.scene_hold import HOLD_CHOICES
+from src.services.scene_visual_matching_service import (
+    MatchResult,
+    RowStatus,
+    SceneVisualMatchingService,
+)
 from src.services.topic_candidate_generation_service import (
     TopicCandidateGenerationService,
 )
@@ -134,6 +145,7 @@ _CI_STAGES: list[tuple[str, str]] = [
     ("revision", "Revision"),
     ("packaging_hypothesis", "Packaging hypothesis"),
     ("scene_planning", "Scene planning"),
+    ("scene_visuals", "Scene visuals"),
     ("production_readiness", "Production readiness"),
 ]
 
@@ -155,6 +167,10 @@ _UPSTREAM_CI_STAGE_KEYS = frozenset(
         "writing_directives",
     }
 )
+
+
+# Stages whose panel has its own buttons: no generic Run / Review row under them.
+_PANEL_ONLY_STAGES = frozenset({"scene_visuals"})
 
 
 def _is_manual_content_mode(job: VideoJob) -> bool:
@@ -191,6 +207,7 @@ _CI_STAGE_REVIEW_TARGET: dict[str, tuple[ArtifactType, str]] = {
     "revision": (ArtifactType.SCRIPT, "generated_script"),
     "packaging_hypothesis": (ArtifactType.SCRIPT, "packaging_hypothesis"),
     "scene_planning": (ArtifactType.SCRIPT, "scenes"),
+    "scene_visuals": (ArtifactType.SCRIPT, "scenes"),
     "production_readiness": (ArtifactType.SCRIPT, "generated_script"),
 }
 
@@ -220,6 +237,7 @@ _STAGE_WORDS = {
     "packaging_hypothesis": "packaging",
     "script_lock": "script lock",
     "scene_planning": "scene planning",
+    "scene_visuals": "scene visuals",
     "sound_design": "sound design plan",
     "top10_rank_assignment": "list ranking",
     "visual_continuity": "visual continuity bible",
@@ -425,6 +443,18 @@ class ContentStudioView(QWidget):
         self._last_script_comparison: ScriptVersionComparison | None = None
         self._quality_finding_checkboxes: dict[UUID, QCheckBox] = {}
         self._script_intake_editor: QTextEdit | None = None
+        # Scene visuals tab: what was pasted, the match preview, what was typed per scene and
+        # the row-assignment dropdowns. Screen state only - the visuals themselves live on the
+        # job (VideoJob.scene_visual_plan) once applied.
+        self._visual_paste_text = ""
+        self._visual_paste_editor: QTextEdit | None = None
+        self._visual_match: MatchResult | None = None
+        self._visual_match_plan: SceneVisualPlan | None = None
+        self._visual_message = ""
+        self._visual_drafts: dict[int, str] = {}
+        self._visual_editors: dict[int, QTextEdit] = {}
+        self._visual_assign_selects: dict[int, QComboBox] = {}
+        self._scene_visual_matcher = SceneVisualMatchingService()
         self._script_intake_mode_select: QComboBox | None = None
         # Real bug found and fixed 2026-09-24, live-testing manual
         # content mode: refresh() tears down and rebuilds every card
@@ -3600,10 +3630,15 @@ class ContentStudioView(QWidget):
             "revision": self._render_revision_panel,
             "packaging_hypothesis": self._render_packaging_hypothesis_panel,
             "scene_planning": self._render_scene_planning_panel,
+            "scene_visuals": self._render_scene_visuals_panel,
             "production_readiness": self._render_production_readiness_panel,
         }
 
         can_run = builders[stage_key](layout, job)
+
+        if stage_key in _PANEL_ONLY_STAGES:
+            # Its own buttons do the work; there is nothing to "run" or to review.
+            return
 
         # Manual/auto content mode, locked plan part D, 2026-09-24:
         # these 8 upstream stages have no natural precondition that
@@ -5406,6 +5441,393 @@ class ContentStudioView(QWidget):
 
         return True
 
+    # ------------------------------------------------------------- scene visuals
+
+    def _render_scene_visuals_panel(self, layout: QVBoxLayout, job: VideoJob) -> bool:
+        """What each scene should SHOW, in the operator's own words: pasted as a table (narration
+        and on-screen columns, matched to the scenes by their narration text) or typed per scene.
+        A scene with no visual is described from its narration, as before."""
+
+        if not job.scenes:
+            layout.addWidget(small_muted("Requires scene planning first."))
+
+            return False
+
+        layout.addWidget(
+            small_muted(
+                "Say what each scene should SHOW (a figure in a doorway, a creature half seen). "
+                "Paste a table of narration and on-screen description, or type it under a scene "
+                "below. Scenes you leave empty are described from their narration."
+            )
+        )
+
+        paste = QTextEdit()
+        paste.setPlaceholderText(
+            "Paste the table here - columns: narration, then what is on screen. A header row "
+            "and a number column are fine; rows are matched to scenes by their narration."
+        )
+        paste.setFixedHeight(130)
+        # Plain text only: a table copied from a page pastes as a rendered rich-text table whose
+        # cells then read back as separate lines, with nothing between the columns.
+        paste.setAcceptRichText(False)
+        paste.setPlainText(self._visual_paste_text)
+        paste.textChanged.connect(
+            lambda: setattr(self, "_visual_paste_text", paste.toPlainText())
+        )
+        self._visual_paste_editor = paste
+        layout.addWidget(paste)
+
+        match_row = QHBoxLayout()
+        match_button = button("Match to scenes", variant="primary")
+        match_button.clicked.connect(self._handle_match_visuals)
+        match_row.addWidget(match_button)
+        match_row.addStretch()
+        layout.addLayout(match_row)
+
+        if self._visual_message:
+            layout.addWidget(status_label(self._visual_message, role="warning"))
+
+        if self._visual_match is not None:
+            self._render_visual_match_preview(layout)
+
+        layout.addWidget(separator())
+        self._render_scene_visual_editors(layout, job)
+
+        return True
+
+    def _render_visual_match_preview(self, layout: QVBoxLayout) -> None:
+        """What needs the operator's attention after "Match to scenes". The matched visuals
+        themselves are already in the scene boxes below (unsaved until "Save visuals").
+        """
+
+        match = self._visual_match
+
+        if match is None:
+            return
+
+        placed = [r for r in match.results if r.is_placed]
+        unplaced = match.unplaced
+
+        layout.addWidget(
+            badge(
+                f"{len(placed)} of {len(match.results)} row(s) placed · "
+                f"{len(unplaced)} not found · "
+                f"{len(match.scenes_without_visual)} scene(s) without a visual"
+            )
+        )
+        layout.addWidget(
+            small_muted(
+                "The scene boxes below are filled with the matches and are not saved yet - "
+                "read or edit them, then press Save visuals."
+            )
+        )
+
+        for result in match.results:
+            if (
+                result.status in (RowStatus.PARTIAL, RowStatus.SPANS)
+                and result.is_placed
+            ):
+                layout.addWidget(
+                    small_muted(
+                        f"Row {result.row.index} is "
+                        f"{'only partly in' if result.status == RowStatus.PARTIAL else 'spread over'} "
+                        f"scene(s) {format_scene_numbers(result.scene_numbers)} - check it."
+                    )
+                )
+
+        if match.crowded_scenes:
+            layout.addWidget(
+                status_label(
+                    f"Scene(s) {format_scene_numbers(match.crowded_scenes)} received several "
+                    "rows - one clip cannot show that many beats; the first and last will "
+                    "carry most weight.",
+                    role="warning",
+                )
+            )
+
+        self._visual_assign_selects = {}
+
+        for result in unplaced:
+            nearest = (
+                f"nearest scene {result.nearest_scene} ({result.similarity:.0%} of its words)"
+                if result.nearest_scene is not None
+                else "no similar scene"
+            )
+            what = (
+                "found earlier in the script than the row before it"
+                if result.status == RowStatus.OUT_OF_ORDER
+                else "not found in the script"
+            )
+            layout.addWidget(
+                status_label(
+                    f"Row {result.row.index} {what} ({nearest}): "
+                    f"{result.row.narration[:90]}",
+                    role="warning",
+                )
+            )
+            assign_row = QHBoxLayout()
+            select = QComboBox()
+
+            for scene in match.scenes:
+                select.addItem(f"Scene {scene.scene_number}", scene.scene_number)
+
+            if result.nearest_scene is not None:
+                index = select.findData(result.nearest_scene)
+                select.setCurrentIndex(max(index, 0))
+
+            self._visual_assign_selects[result.row.index] = select
+            assign_button = button("Use this scene", variant="ghost")
+            assign_button.clicked.connect(
+                lambda _checked=False, i=result.row.index: (
+                    self._handle_assign_visual_row(i)
+                )
+            )
+            assign_row.addWidget(select)
+            assign_row.addWidget(assign_button)
+            assign_row.addStretch()
+            layout.addLayout(assign_row)
+
+        discard_button = button("Clear the matches", variant="ghost")
+        discard_button.clicked.connect(self._handle_discard_visual_match)
+        layout.addWidget(discard_button, alignment=_LEFT)
+
+    def _render_scene_visual_editors(self, layout: QVBoxLayout, job: VideoJob) -> None:
+        plan = job.scene_visual_plan
+        current = job.current_scene_visuals
+        stale = plan.stale_scene_numbers(job.scenes) if plan is not None else []
+
+        layout.addWidget(
+            badge(f"{len(current)} of {len(job.scenes)} scene(s) have a visual")
+        )
+
+        if stale:
+            layout.addWidget(
+                status_label(
+                    f"The narration of scene(s) {format_scene_numbers(stale)} changed after "
+                    "their visual was written - those visuals are ignored until you paste "
+                    "or type them again.",
+                    role="warning",
+                )
+            )
+
+        shot_plan = job.cinematic_shot_plan
+        revision = plan.revision if plan is not None else ""
+
+        if shot_plan is not None and shot_plan.visual_revision != revision:
+            layout.addWidget(
+                status_label(
+                    "The shot plan and the written scene text were made before these "
+                    'visuals. The compiled prompts already carry them; use "Save and '
+                    'rebuild" (or regenerate the shot plan and the scene text) so the '
+                    "rest follows.",
+                    role="warning",
+                )
+            )
+
+        self._visual_editors = {}
+
+        for scene in sorted(job.scenes, key=lambda s: s.scene_number):
+            number = scene.scene_number
+            excerpt = scene.narration
+            excerpt = excerpt if len(excerpt) <= 90 else excerpt[:87] + "..."
+            layout.addWidget(
+                small_muted(
+                    f"Scene {number} - {scene.estimated_duration_seconds}s - {excerpt}"
+                )
+            )
+            old = plan.entry_for(number) if plan is not None else None
+
+            if number in stale and old is not None:
+                layout.addWidget(
+                    small_muted(f"Earlier visual (narration has changed): {old.text}")
+                )
+
+            editor = QTextEdit()
+            editor.setPlaceholderText(
+                "What should this scene show? Leave empty to describe it from the narration."
+            )
+            editor.setFixedHeight(64)
+            editor.setPlainText(
+                self._visual_drafts.get(number, current.get(number, ""))
+            )
+            editor.textChanged.connect(
+                lambda n=number, e=editor: self._visual_drafts.__setitem__(
+                    n, e.toPlainText()
+                )
+            )
+            self._visual_editors[number] = editor
+            layout.addWidget(editor)
+
+        row = QHBoxLayout()
+        save_button = button("Save visuals", variant="primary")
+        save_button.clicked.connect(lambda: self._handle_save_visuals(False))
+        rebuild_button = button(
+            "Save and rebuild shots, scene text and prompts", variant="ghost"
+        )
+        rebuild_button.clicked.connect(lambda: self._handle_save_visuals(True))
+        clear_button = button("Remove all visuals", variant="ghost")
+        clear_button.setEnabled(plan is not None)
+        clear_button.clicked.connect(self._handle_clear_visuals)
+        row.addWidget(save_button)
+        row.addWidget(rebuild_button)
+        row.addWidget(clear_button)
+        row.addStretch()
+        layout.addLayout(row)
+
+    def _handle_match_visuals(self) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        try:
+            rows = self._scene_visual_matcher.parse(self._visual_paste_text)
+        except ValueError as error:
+            self._visual_message = str(error)
+            self._visual_match = None
+            self._visual_match_plan = None
+            self.refresh(job)
+
+            return
+
+        self._visual_message = ""
+        self._visual_match = self._scene_visual_matcher.match(rows, job.scenes)
+        self._fill_boxes_from_match()
+        self.refresh(job)
+
+    def _fill_boxes_from_match(self) -> None:
+        """Put every matched visual into its scene's box (unsaved). A scene the table did not
+        reach keeps whatever its box holds."""
+
+        match = self._visual_match
+
+        if match is None:
+            return
+
+        self._visual_match_plan = match.to_plan()
+
+        for entry in self._visual_match_plan.visuals:
+            self._visual_drafts[entry.scene_number] = entry.text
+
+    def _handle_assign_visual_row(self, row_index: int) -> None:
+        job = self._current_job()
+        select = self._visual_assign_selects.get(row_index)
+
+        if job is None or self._visual_match is None or select is None:
+            return
+
+        self._visual_match.assign(row_index, int(select.currentData()))
+        # Only the scenes the match covers are refilled; text typed into other boxes stays.
+        self._fill_boxes_from_match()
+        self.refresh(job)
+
+    def _handle_discard_visual_match(self) -> None:
+        job = self._current_job()
+        self._visual_match = None
+        self._visual_match_plan = None
+        self._visual_message = ""
+        self._visual_drafts = {}
+
+        if job is not None:
+            self.refresh(job)
+
+    def _plan_from_editors(self, job: VideoJob) -> SceneVisualPlan:
+        """The plan the per-scene boxes now describe; the very same plan object when nothing
+        changed, so the shot plan is not wrongly reported as behind."""
+
+        existing = {
+            v.scene_number: v
+            for v in (job.scene_visual_plan.visuals if job.scene_visual_plan else [])
+        }
+        matched = {
+            v.scene_number: v
+            for v in (
+                self._visual_match_plan.visuals if self._visual_match_plan else []
+            )
+        }
+        current = job.current_scene_visuals
+        by_number = {s.scene_number: s for s in job.scenes}
+        visuals: list[SceneVisual] = []
+
+        for number in sorted(self._visual_editors):
+            text = " ".join(self._visual_editors[number].toPlainText().split())
+
+            if not text:
+                continue
+
+            text = text[:MAX_VISUAL_CHARACTERS]
+            old = existing.get(number)
+
+            if old is not None and current.get(number) == text:
+                visuals.append(old)
+            elif number in matched and matched[number].text == text:
+                visuals.append(matched[number])  # as pasted: not "hand edited"
+            else:
+                visuals.append(
+                    SceneVisual(
+                        scene_number=number,
+                        text=text,
+                        narration_key=narration_key(by_number[number].narration),
+                        hand_edited=True,
+                    )
+                )
+
+        if (
+            job.scene_visual_plan is not None
+            and visuals == job.scene_visual_plan.visuals
+        ):
+            return job.scene_visual_plan
+
+        return SceneVisualPlan(visuals=visuals)
+
+    def _handle_save_visuals(self, rebuild: bool) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        self._store_scene_visuals(job, self._plan_from_editors(job), rebuild=rebuild)
+
+    def _handle_clear_visuals(self) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        self._store_scene_visuals(job, None, rebuild=False)
+
+    def _store_scene_visuals(
+        self, job: VideoJob, plan: SceneVisualPlan | None, *, rebuild: bool
+    ) -> None:
+        pipeline = self._content_intelligence_pipeline
+
+        def runner(target: VideoJob) -> VideoJob:
+            pipeline.apply_scene_visuals(target, plan)
+
+            if rebuild:
+                pipeline.rebuild_for_scene_visuals(target)
+
+            return target
+
+        def done() -> None:
+            self._visual_match = None
+            self._visual_match_plan = None
+            self._visual_message = ""
+            self._visual_drafts = {}
+
+        self._run_stage(
+            job,
+            runner,
+            label=(
+                "saving the scene visuals and rebuilding"
+                if rebuild
+                else "saving the scene visuals"
+            ),
+            failure="Could not save the scene visuals",
+            retry=lambda: self._store_scene_visuals(job, plan, rebuild=rebuild),
+            on_done=done,
+        )
+
     def _render_production_readiness_panel(
         self, layout: QVBoxLayout, job: VideoJob
     ) -> bool:
@@ -5545,7 +5967,8 @@ class ContentStudioView(QWidget):
     def _handle_run_ci_stage(self, stage_key: str) -> None:
         job = self._current_job()
 
-        if job is None:
+        if job is None or stage_key in _PANEL_ONLY_STAGES:
+            # A panel-only stage has its own buttons; there is nothing to run here.
             return
 
         runners: dict[str, Callable[[VideoJob], VideoJob]] = {

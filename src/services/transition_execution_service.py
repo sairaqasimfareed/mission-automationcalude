@@ -34,6 +34,11 @@ class TransitionExecutionService:
 
     TIME_TOLERANCE_SECONDS = 0.001
 
+    # Every between-scene transition that is drawn by FFmpeg's two-stream `xfade` overlaps the two
+    # clips, so it must be listed here. Found 2026-10-10: only the first six (the original names) were
+    # listed, so the eleven presets added later - fade_black, wipe_*, slide_*, pixelize, circle_crop -
+    # were recorded as NOT overlapping (wrong overlap count and overlap times on their executions)
+    # although the filter graph overlaps them. The registry test guards this list.
     OVERLAP_TRANSITION_TYPES = {
         "cross_dissolve",
         "dissolve",
@@ -41,6 +46,17 @@ class TransitionExecutionService:
         "wipe",
         "slide",
         "push",
+        "fade_black",
+        "wipe_left",
+        "wipe_right",
+        "wipe_up",
+        "wipe_down",
+        "slide_left",
+        "slide_right",
+        "slide_up",
+        "slide_down",
+        "pixelize",
+        "circle_crop",
     }
 
     def __init__(

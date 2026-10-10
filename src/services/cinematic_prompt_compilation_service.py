@@ -66,6 +66,8 @@ class _ResolvedSceneFields(NamedTuple):
     # False for a graphic scene shown as live footage: its shot plan's beats
     # describe the graphic, so they are not used.
     use_beats: bool = True
+    # What the operator wants the scene to show ("" = nothing was asked for).
+    visual: str = ""
     # The only words a graphic scene may show on screen (None = not a graphic).
     graphic_text: str | None = None
 
@@ -173,6 +175,12 @@ def _voices_for(scene: Scene, bible: VisualContinuityBible) -> dict[str, str]:
             voices[speaker] = person.voice
 
     return voices
+
+
+def _visual_sentence(visual: str) -> str:
+    """The operator's own on-screen visual as a prompt sentence, or "" when there is none."""
+
+    return f"On screen: {visual.rstrip('. ')}. " if visual else ""
 
 
 def _detail_sentence(detail: str) -> str:
@@ -291,6 +299,7 @@ class CinematicPromptCompilationService:
         use_shot_by_shot_beats: bool = _USE_SHOT_BY_SHOT_BEATS,
         project_look: ProjectLook | None = None,
         scene_detail_plan: SceneDetailPlan | None = None,
+        scene_visuals: dict[int, str] | None = None,
     ) -> CinematicPromptPackage:
         """
         duration_seconds_resolver, when given, overrides the shot
@@ -321,6 +330,7 @@ class CinematicPromptCompilationService:
                 use_shot_by_shot_beats=use_shot_by_shot_beats,
                 project_look=project_look,
                 scene_detail_plan=scene_detail_plan,
+                scene_visuals=scene_visuals,
                 earlier_speakers=speakers_before(scenes, scene.scene_number),
             )
             for scene in sorted(scenes, key=lambda s: s.scene_number)
@@ -339,6 +349,7 @@ class CinematicPromptCompilationService:
         production_semantic_brief: ProductionSemanticBrief | None,
         project_look: ProjectLook | None = None,
         scene_detail_plan: SceneDetailPlan | None = None,
+        scene_visuals: dict[int, str] | None = None,
         earlier_speakers: set[str] | None = None,
     ) -> _ResolvedSceneFields:
         shot = shot_plan.shot_for_scene(scene.scene_number)
@@ -401,6 +412,8 @@ class CinematicPromptCompilationService:
         use_beats = True
         graphic_text: str | None = None
 
+        wanted = (scene_visuals or {}).get(scene.scene_number, "")
+
         if scene.treat_as_live_footage:
             # A graphic scene the operator switched to live footage: shown as the
             # project's main setting, filmed, so it matches the scenes around it.
@@ -431,8 +444,19 @@ class CinematicPromptCompilationService:
             composition = "live-action documentary framing"
             action = f"Live-action footage that illustrates: {scene.narration}"
             use_beats = False
-        elif renders_as_graphic(scene=scene, entry=continuity, shot=shot):
+        elif renders_as_graphic(
+            scene=scene, entry=continuity, shot=shot, filmed_by_operator=bool(wanted)
+        ):
             graphic_text = exact_text_for(scene)
+
+        # What the operator wants this scene to show replaces the planned action: it is their
+        # own instruction, and a scene they described is filmed, never a graphic.
+        if wanted:
+            action = wanted
+            # The shot plan's timed beats were written for the action it was planned with. Unless
+            # it was planned WITH the operator's visuals, they describe something else and would
+            # contradict the visual, so the visual alone drives the scene.
+            use_beats = use_beats and bool(shot_plan.visual_revision)
 
         detail = (
             scene_detail_plan.current_text_for(
@@ -460,6 +484,7 @@ class CinematicPromptCompilationService:
                 else ""
             ),
             use_beats=use_beats,
+            visual=wanted,
             graphic_text=graphic_text,
             dialogue=dialogue_prompt_text(
                 scene.dialogue,
@@ -482,6 +507,7 @@ class CinematicPromptCompilationService:
         use_shot_by_shot_beats: bool = _USE_SHOT_BY_SHOT_BEATS,
         project_look: ProjectLook | None = None,
         scene_detail_plan: SceneDetailPlan | None = None,
+        scene_visuals: dict[int, str] | None = None,
         earlier_speakers: set[str] | None = None,
     ) -> ResolvedCinematicPrompt:
         common = CinematicPromptCompilationService._resolve_common_fields(
@@ -491,6 +517,7 @@ class CinematicPromptCompilationService:
             production_semantic_brief=production_semantic_brief,
             project_look=project_look,
             scene_detail_plan=scene_detail_plan,
+            scene_visuals=scene_visuals,
             earlier_speakers=earlier_speakers,
         )
 
@@ -524,6 +551,7 @@ class CinematicPromptCompilationService:
             f"Identity: {', '.join(common.identities) or 'no recurring identity present'}. "
             f"Environment: {common.environment}. Lighting: {common.lighting}. "
             f"{common.dialogue + ' ' if common.dialogue else ''}"
+            f"{_visual_sentence(common.visual) if action_progression_line is not None else ''}"
             f"{action_line} Composition: {common.composition}. "
             f"{_detail_sentence(common.detail)}"
             f"Lens/camera: {common.lens}, {common.camera}. "
@@ -553,6 +581,7 @@ class CinematicPromptCompilationService:
         sub_clip_durations: list[float],
         project_look: ProjectLook | None = None,
         scene_detail_plan: SceneDetailPlan | None = None,
+        scene_visuals: dict[int, str] | None = None,
         earlier_speakers: set[str] | None = None,
     ) -> list[ResolvedCinematicPrompt]:
         """
@@ -591,6 +620,7 @@ class CinematicPromptCompilationService:
             production_semantic_brief=production_semantic_brief,
             project_look=project_look,
             scene_detail_plan=scene_detail_plan,
+            scene_visuals=scene_visuals,
             earlier_speakers=earlier_speakers,
         )
 
@@ -629,6 +659,7 @@ class CinematicPromptCompilationService:
                 f"Identity: {', '.join(common.identities) or 'no recurring identity present'}. "
                 f"Environment: {common.environment}. Lighting: {common.lighting}. "
                 f"{common.dialogue + ' ' if common.dialogue else ''}"
+                f"{_visual_sentence(common.visual) if action_progression_line is not None else ''}"
                 f"{action_line} Composition: {common.composition}. "
                 f"{_detail_sentence(common.detail)}"
                 f"Lens/camera: {common.lens}, {common.camera}. "

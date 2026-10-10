@@ -15,6 +15,7 @@ costs nothing and a failed batch loses only that batch.
 from __future__ import annotations
 
 import logging
+import re
 
 from src.models.scene import Scene
 from src.models.scene_detail import (
@@ -32,6 +33,12 @@ from src.shared.llm.models import LLMProvider
 from src.shared.llm.request import LLMRequest
 
 logger = logging.getLogger(__name__)
+
+# "SCENE 18 DETAIL: text" / "SCENE: 18 - DETAIL: text" on one line (and the text may run on).
+_INLINE_BLOCK = re.compile(
+    r"^[#*_`>\-\s]*SCENE[\s*_`]*:?[\s*_`]*(\d+)[\s*_`:.\-\u2013\u2014]*DETAIL[\s*_`]*:[\s*_`]*(.+)$",
+    re.IGNORECASE | re.DOTALL,
+)
 
 BATCH_SIZE = 8
 
@@ -95,6 +102,7 @@ class SceneDetailService:
                 bible.entry_for_scene(scene.scene_number) if bible is not None else None
             ),
             shot=plan.shot_for_scene(scene.scene_number) if plan is not None else None,
+            filmed_by_operator=scene.scene_number in job.current_scene_visuals,
         )
 
     def scenes_needing_detail(self, job: VideoJob) -> list[Scene]:
@@ -176,7 +184,7 @@ class SceneDetailService:
                 "front of the camera in concrete detail. You never add events the "
                 "script and the shot do not contain."
             ),
-            prompt_version="scene_detail_prompt_v1.3.0",
+            prompt_version="scene_detail_prompt_v1.4.0",
             dry_run_response=_DRY_RUN_RESPONSE,
             metadata={
                 "agent": "SceneDetailService",
@@ -204,6 +212,14 @@ class SceneDetailService:
         for block in split_blocks(content):
             number_raw = extract_labeled_field(block, "SCENE")
             text = extract_labeled_field(block, "DETAIL")
+
+            if not number_raw or not text:
+                # Live, 2026-10-10: a reply wrote "SCENE 18 DETAIL: ..." on one line, so the last
+                # two scenes of a batch were silently lost.
+                inline = _INLINE_BLOCK.match(block.strip())
+
+                if inline is not None:
+                    number_raw, text = inline.group(1), inline.group(2).strip()
 
             if not number_raw or not text:
                 continue
@@ -253,6 +269,7 @@ class SceneDetailService:
         direction = genre_direction(job.genre_id)
         hook = job.story_treatment.accepted_hook if job.story_treatment else ""
         first_number = min((s.scene_number for s in job.scenes), default=0)
+        wanted = job.current_scene_visuals
         descriptions = (
             {i.name: i.canonical_description for i in bible.identities}
             if bible is not None
@@ -266,6 +283,13 @@ class SceneDetailService:
                 bible.entry_for_scene(scene.scene_number) if bible is not None else None
             )
             lines = [f"SCENE {scene.scene_number}", f"Narration: {scene.narration}"]
+
+            if scene.scene_number in wanted:
+                lines.append(
+                    "REQUIRED ON-SCREEN VISUAL (the operator's own instruction - build "
+                    "this scene's paragraph around it, in concrete detail, and show "
+                    f"nothing that contradicts it): {wanted[scene.scene_number]}"
+                )
 
             if hook and scene.scene_number == first_number:
                 lines.append(

@@ -15,6 +15,7 @@ from src.services.llm.labeled_block_parser import extract_labeled_field, split_b
 from src.services.llm.llm_service import LLMService
 from src.shared.llm.models import LLMProvider
 from src.shared.llm.request import LLMRequest
+from src.shared.logger import logger
 
 _REQUIRED_LABELS = (
     "SCENE",
@@ -54,6 +55,10 @@ _DRY_RUN_RESPONSE = "\n---\n".join(
 )
 
 
+# Scenes planned per call (see `plan`).
+BATCH_SIZE = 8
+
+
 class ShotPlanningService:
     """
     Post-Script-Approval Production Plan, Phase 3: "Convert
@@ -79,13 +84,18 @@ class ShotPlanningService:
         llm_service: LLMService,
         profile_ids: list[str] | None = None,
         estimated_cost_usd: float = 0.0,
+        batch_size: int = BATCH_SIZE,
     ) -> None:
         if estimated_cost_usd < 0:
             raise ValueError("Estimated shot planning cost cannot be negative.")
 
+        if batch_size < 1:
+            raise ValueError("The batch size must be at least 1.")
+
         self.llm_service = llm_service
         self.profile_ids = profile_ids
         self.estimated_cost_usd = estimated_cost_usd
+        self.batch_size = batch_size
 
     def plan(
         self,
@@ -96,15 +106,76 @@ class ShotPlanningService:
         topic: str,
         aspect_ratio: AspectRatio = AspectRatio.LANDSCAPE,
         genre_direction: str = "",
+        scene_visuals: dict[int, str] | None = None,
     ) -> CinematicShotPlan:
         if not scenes:
             raise ValueError("Shot planning requires at least one scene.")
 
+        ordered = sorted(scenes, key=lambda s: s.scene_number)
+        shots_by_scene: dict[int, ShotSpecification] = {}
+
+        # A few scenes per call. Live, 2026-10-10: all 19 scenes in ONE call (with the operator's
+        # own scene visuals in the prompt) wrote 16,384 tokens - the reply's cap - and was cut
+        # off, so the last scene silently got a generic shot. A batch cannot reach the cap.
+        for start in range(0, len(ordered), self.batch_size):
+            batch = ordered[start : start + self.batch_size]
+            shots_by_scene.update(
+                self._plan_batch(
+                    batch,
+                    visual_continuity_bible,
+                    topic,
+                    aspect_ratio,
+                    genre_direction,
+                    scene_visuals,
+                )
+            )
+
+        shots: list[ShotSpecification] = []
+
+        for scene in ordered:
+            parsed_shot = shots_by_scene.get(scene.scene_number)
+
+            if parsed_shot is None:
+                # A scene the LLM's response skipped still needs a
+                # shot - "every planned clip has exactly one shot
+                # specification" is this phase's own exit criterion,
+                # so a missing block is filled with a plain, honestly-
+                # generic specification rather than silently leaving
+                # that clip without one.
+                logger.warning(
+                    "Shot planning returned no shot for scene %s - using a generic one.",
+                    scene.scene_number,
+                )
+                shots.append(self._fallback_shot(scene))
+                continue
+
+            # Duration always comes from the scene itself, not the
+            # LLM - shot duration is production timing, not a
+            # creative decision to ask an LLM to guess.
+            parsed_shot.duration_seconds = float(scene.estimated_duration_seconds)
+            shots.append(parsed_shot)
+
+        return CinematicShotPlan(script_lock_hash=script_lock_hash, shots=shots)
+
+    def _plan_batch(
+        self,
+        scenes: list[Scene],
+        visual_continuity_bible: VisualContinuityBible,
+        topic: str,
+        aspect_ratio: AspectRatio,
+        genre_direction: str,
+        scene_visuals: dict[int, str] | None,
+    ) -> dict[int, ShotSpecification]:
         request = LLMRequest(
             provider=LLMProvider.OPENAI,
             model="provider-default-model",
             prompt=self._build_prompt(
-                scenes, visual_continuity_bible, topic, aspect_ratio, genre_direction
+                scenes,
+                visual_continuity_bible,
+                topic,
+                aspect_ratio,
+                genre_direction,
+                scene_visuals,
             ),
             system_prompt=(
                 "You are a director of photography turning a sequence "
@@ -113,12 +184,13 @@ class ShotPlanningService:
                 "lighting - respecting the continuity state given for "
                 "each scene exactly, never inventing a contradiction."
             ),
-            prompt_version="shot_planning_prompt_v1.1.0",
+            prompt_version="shot_planning_prompt_v1.2.0",
             dry_run_response=_DRY_RUN_RESPONSE,
             metadata={
                 "agent": "ShotPlanningService",
                 "workflow": "shot_planning",
                 "topic": topic,
+                "scenes": ",".join(str(s.scene_number) for s in scenes),
             },
         )
 
@@ -141,30 +213,7 @@ class ShotPlanningService:
         if not content:
             raise RuntimeError("Shot planning provider returned empty content.")
 
-        shots_by_scene = self._parse_shots(content)
-
-        shots: list[ShotSpecification] = []
-
-        for scene in sorted(scenes, key=lambda s: s.scene_number):
-            parsed_shot = shots_by_scene.get(scene.scene_number)
-
-            if parsed_shot is None:
-                # A scene the LLM's response skipped still needs a
-                # shot - "every planned clip has exactly one shot
-                # specification" is this phase's own exit criterion,
-                # so a missing block is filled with a plain, honestly-
-                # generic specification rather than silently leaving
-                # that clip without one.
-                shots.append(self._fallback_shot(scene))
-                continue
-
-            # Duration always comes from the scene itself, not the
-            # LLM - shot duration is production timing, not a
-            # creative decision to ask an LLM to guess.
-            parsed_shot.duration_seconds = float(scene.estimated_duration_seconds)
-            shots.append(parsed_shot)
-
-        return CinematicShotPlan(script_lock_hash=script_lock_hash, shots=shots)
+        return self._parse_shots(content)
 
     @staticmethod
     def _build_prompt(
@@ -173,6 +222,7 @@ class ShotPlanningService:
         topic: str,
         aspect_ratio: AspectRatio = AspectRatio.LANDSCAPE,
         genre_direction: str = "",
+        scene_visuals: dict[int, str] | None = None,
     ) -> str:
         scene_lines = []
 
@@ -188,6 +238,13 @@ class ShotPlanningService:
                 f"SCENE {scene.scene_number} "
                 f"(duration {scene.estimated_duration_seconds}s): "
                 f"{scene.narration}\nContinuity: {continuity_note}"
+                + (
+                    "\nREQUIRED ON-SCREEN VISUAL (the operator's own instruction - "
+                    "the shot must show it; choose size, angle, lens and movement to "
+                    f"serve it and make ACTION this visual): {scene_visuals[scene.scene_number]}"
+                    if scene_visuals and scene.scene_number in scene_visuals
+                    else ""
+                )
             )
 
         scenes_block = "\n\n".join(scene_lines)

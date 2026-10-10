@@ -16,6 +16,7 @@ from src.models.production_handoff import (
     ProductionHandoffState,
     ProductionHandoffStatus,
 )
+from src.models.scene_visual import SceneVisualPlan
 from src.models.script_intake import ScriptIntakeMode
 from src.models.script_lock import ScriptProvenance
 from src.models.script_production_readiness import ScriptProductionReadinessReport
@@ -1401,6 +1402,7 @@ class ContentIntelligencePipeline:
             continuity_bible=job.continuity_bible,
             script_lock_hash=job.script_lock.script_content_hash,
             genre_direction=genre_direction(job.genre_id),
+            scene_visuals=job.current_scene_visuals,
         )
 
         # The characters and places the operator named by hand survive a regenerate.
@@ -1598,6 +1600,35 @@ class ContentIntelligencePipeline:
 
         return self.run_scene_detail(job)
 
+    def apply_scene_visuals(
+        self, job: VideoJob, plan: SceneVisualPlan | None
+    ) -> VideoJob:
+        """Store the operator's on-screen visual for each scene (None, or a plan with no
+        visuals, removes them all) and recompile the prompts so the visuals reach them
+        (deterministic, no model call). The shot plan and the written scene text are NOT
+        redone here: they still describe the earlier visuals until
+        `rebuild_for_scene_visuals` (or their own buttons) runs - the shot plan records the
+        revision it was made with so the screen can say so."""
+
+        job.scene_visual_plan = plan if plan is not None and plan.visuals else None
+
+        if job.cinematic_prompt_package is not None:
+            self.run_cinematic_prompt_compilation(job)
+
+        return job
+
+    def rebuild_for_scene_visuals(self, job: VideoJob) -> VideoJob:
+        """Regenerate what decides what a scene shows - the continuity bible (who and what is on
+        screen), the shot plan and the written scene text - so they follow the scene visuals,
+        then recompile the prompts. Three batches of Claude calls. The characters and places
+        the operator added by hand survive."""
+
+        self.run_visual_continuity(job)
+        self.run_shot_planning(job)
+        self.run_scene_detail(job)
+
+        return job
+
     _OVERLAP_SHARE = 0.8
 
     def _place_covering(
@@ -1731,6 +1762,10 @@ class ContentIntelligencePipeline:
             topic=job.topic,
             aspect_ratio=job.aspect_ratio,
             genre_direction=genre_direction(job.genre_id),
+            scene_visuals=job.current_scene_visuals,
+        )
+        job.cinematic_shot_plan.visual_revision = (
+            job.scene_visual_plan.revision if job.scene_visual_plan else ""
         )
 
         self.approval_gate_service.record_event(
@@ -1788,6 +1823,7 @@ class ContentIntelligencePipeline:
             duration_seconds_resolver=clamp_to_verified_duration,
             project_look=job.project_look,
             scene_detail_plan=job.scene_detail_plan,
+            scene_visuals=job.current_scene_visuals,
         )
 
         self.approval_gate_service.record_event(

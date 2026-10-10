@@ -114,6 +114,9 @@ class CinematicShotPlan(MissionBaseModel):
 
     script_lock_hash: str = Field(min_length=1)
     shots: list[ShotSpecification] = Field(default_factory=list)
+    # The revision of the operator's scene visuals this plan was made with ("" = none), so a
+    # change to the visuals can show that the plan no longer reflects them.
+    visual_revision: str = ""
 
     def shot_for_scene(self, scene_number: int) -> ShotSpecification | None:
         for shot in self.shots:

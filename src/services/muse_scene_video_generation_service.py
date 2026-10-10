@@ -489,6 +489,7 @@ class MuseSceneVideoGenerationService:
             sub_clip_durations=durations,
             project_look=job.project_look,
             scene_detail_plan=job.scene_detail_plan,
+            scene_visuals=job.current_scene_visuals,
             earlier_speakers=speakers_before(job.scenes, scene.scene_number),
         )
 

@@ -48,8 +48,17 @@ def renders_as_graphic(
     scene: Scene,
     entry: ClipContinuityEntry | None,
     shot: ShotSpecification | None,
+    filmed_by_operator: bool = False,
 ) -> bool:
-    """A graphic scene the operator has not switched to live footage."""
+    """A graphic scene the operator has not switched to live footage.
+
+    `filmed_by_operator`: the operator wrote what this scene shows (see `SceneVisualPlan`), so it
+    is a filmed shot whatever the plan's wording says. Live, 2026-10-10: a scene whose visual
+    mentioned a title card was classified as a graphic, skipped by the scene-text pass, and told
+    it could print its narration on screen."""
+
+    if filmed_by_operator:
+        return False
 
     return not scene.treat_as_live_footage and is_graphic_scene(entry=entry, shot=shot)
 

@@ -285,6 +285,7 @@ class ClipColorMatchingService:
 
             if scene is not None and renders_as_graphic(
                 scene=scene,
+                filmed_by_operator=scene.scene_number in job.current_scene_visuals,
                 entry=bible.entry_for_scene(scene.scene_number) if bible else None,
                 shot=plan.shot_for_scene(scene.scene_number) if plan else None,
             ):
