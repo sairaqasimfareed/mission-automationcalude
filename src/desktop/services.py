@@ -9,7 +9,11 @@ from src.desktop.job_store import JsonJobStore
 from src.desktop.theme_preference_store import ThemePreferenceStore
 from src.entrypoint import build_production_runtime
 from src.models.asset_index import AssetIndex
-from src.models.provider_profile import ProviderCategory, ProviderProfile
+from src.models.provider_profile import (
+    ProviderCategory,
+    ProviderHealthStatus,
+    ProviderProfile,
+)
 from src.models.voice_profile import VoiceProfile
 from src.providers.dry_run_thumbnail_image_provider import (
     DryRunThumbnailImageProvider,
@@ -35,6 +39,7 @@ from src.services.google_flow_account_router_service import (
 from src.services.google_flow_generation_orchestrator_service import (
     GoogleFlowGenerationOrchestratorService,
 )
+from src.services.health.provider_health_service import ProviderHealthService
 from src.services.media_generation_pipeline import MediaGenerationPipeline
 from src.services.muse_account_router_service import MuseAccountRouterService
 from src.services.muse_generation_orchestrator_service import (
@@ -55,6 +60,7 @@ from src.services.project_render_runtime_factory import (
 )
 from src.services.provider_profile_management_service import (
     ProviderProfileManagementService,
+    ProviderSecretResolutionChecker,
 )
 from src.services.reference_frame_selection_service import (
     ReferenceFrameSelectionService,
@@ -62,6 +68,7 @@ from src.services.reference_frame_selection_service import (
 from src.services.registry.provider_profile_repository import (
     JsonProviderProfileRepository,
 )
+from src.services.registry.provider_registry import ProviderRegistry
 from src.services.registry.voice_provider_mapping_repository import (
     JsonVoiceProviderMappingRepository,
 )
@@ -390,7 +397,55 @@ def get_production_runtime() -> ProductionApplicationRuntime:
     for profile in ([] if dry_run else desktop_profiles):
         runtime.infrastructure.provider_registry.register(profile, replace=True)
 
+    if not dry_run:
+        check_unknown_profiles_at_start(
+            runtime.infrastructure.provider_registry, secret_manager
+        )
+
     return runtime
+
+
+def check_unknown_profiles_at_start(
+    registry: ProviderRegistry, secret_manager: ProviderSecretManager
+) -> list[str]:
+    """Run the same configuration check as Provider Manager's "Test configuration" button
+    for every enabled API-key profile still marked "unknown", so no click is needed after a
+    restart. Live, 2026-10-09: the health status is not saved, a profile that is "unknown"
+    is refused by the content steps ("No usable LLM provider profiles are available"), and
+    the operator had to click the button after every start.
+
+    It only verifies that the stored key exists (the button's own check); it cannot tell
+    that the provider accepts it. Browser-account (external UI) profiles are left alone:
+    they authenticate through their own login flow. Returns the ids it checked."""
+
+    health = ProviderHealthService(registry)
+    checker = ProviderSecretResolutionChecker(secret_manager)
+    checked: list[str] = []
+
+    for profile in registry.list_all():
+        if (
+            not profile.enabled
+            or profile.health_status != ProviderHealthStatus.UNKNOWN
+            or profile.category == ProviderCategory.EXTERNAL_UI_VIDEO
+            or not profile.secret_reference
+        ):
+            continue
+
+        try:
+            health.check_profile(profile.profile_id, checker)
+        except (
+            Exception
+        ) as error:  # noqa: BLE001 - a failed check must not stop the app
+            logger.warning(
+                "The start-up check of provider profile %s failed: %s",
+                profile.profile_id,
+                type(error).__name__,
+            )
+            continue
+
+        checked.append(profile.profile_id)
+
+    return checked
 
 
 @lru_cache

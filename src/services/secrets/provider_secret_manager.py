@@ -105,9 +105,17 @@ class ProviderSecretManager:
         *,
         profile_id: str,
         secret_value: str,
+        keep_existing: bool = False,
     ) -> ProviderSecretResult:
         """
         Create or refresh a provider secret.
+
+        keep_existing=True (what the .env bootstrap uses): a key already stored for this
+        profile is left alone and only a missing one is created. Live, 2026-10-09: every
+        app start copied CLAUDE_API_KEY from .env over the vault entry, so a new key the
+        operator saved in Provider Manager (and the app's own "restart after saving" note)
+        was silently replaced by the old .env one at the very next start, and the app kept
+        failing with a 401 from an expired key. A key saved in the screen now wins.
 
         The reference is deterministic per profile_id (no random
         suffix) so calling this again for the same profile_id - the
@@ -130,6 +138,14 @@ class ProviderSecretManager:
         secret_reference = "secret://providers/" f"{normalized_profile_id}/" "default"
 
         already_existed = self.secret_store.contains(secret_reference)
+
+        if keep_existing and already_existed:
+            return ProviderSecretResult(
+                secret_reference=secret_reference,
+                masked_value=self.get_masked_secret(secret_reference),
+                created=False,
+                replaced=False,
+            )
 
         self.secret_store.save(
             secret_reference,

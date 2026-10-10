@@ -18,6 +18,7 @@ from src.services.secrets.provider_secret_manager import (
     ProviderSecretManager,
     SecretStore,
 )
+from src.shared.logger import logger
 
 _LLM_PROVIDER_SETTINGS_FIELDS: tuple[tuple[str, str], ...] = (
     ("openai", "OPENAI_API_KEY"),
@@ -196,10 +197,23 @@ class RuntimeConfigurationLoader:
         provider_name: str,
         secret_value: str,
     ) -> ProviderProfile:
+        # The .env key only fills a vault that has none: a key saved in Provider Manager is
+        # never overwritten at start (see ProviderSecretManager.create_secret).
         secret = secret_manager.create_secret(
             profile_id=profile_id,
             secret_value=secret_value,
+            keep_existing=True,
         )
+
+        stored = secret_manager.resolve_secret(secret.secret_reference)
+
+        if stored.strip() != secret_value.strip():
+            logger.warning(
+                "The key saved for %s in Provider Manager differs from the one in .env; "
+                "the saved key is used. Edit it in Provider Manager (or delete it there "
+                "to fall back to .env).",
+                profile_id,
+            )
 
         return ProviderProfile(
             profile_id=profile_id,

@@ -1086,6 +1086,23 @@ section records what changed and why so a later session does not undo it.
     collapse-then-regrow sequence at the keeper level, the slow regrow, the operator's scroll ending the restore,
     and a collapse not being read as a position. Not covered by an automated test: the full-window path (the probe
     script is not committed; a test would need a project big enough to scroll and takes minutes on this machine).
+  - **A key saved in Provider Manager is no longer overwritten by `.env` at start; a stored key marks its profile
+    usable without a click (2026-10-09, live).** The operator's Anthropic key expired; they saved a new one in
+    Provider Manager and the vault held it - until the next start, when `RuntimeConfigurationLoader._build_llm_profile`
+    called `ProviderSecretManager.create_secret` with `CLAUDE_API_KEY` from `.env` (still the old key), which
+    deliberately upserts, and every call failed with a 401. `create_secret(..., keep_existing=True)` (used only by the
+    `.env` bootstrap) leaves an existing vault key alone and creates one only when none exists; the loader logs a
+    warning (no key text) when the saved key differs from `.env`. Provider Manager's own Save still replaces the key.
+    Consequence to know: editing `CLAUDE_API_KEY` in `.env` no longer replaces a key already saved in the vault - change
+    it in Provider Manager (or delete the profile's key there to fall back to `.env`). Separately, the health status
+    is not persisted, and `ProviderProfile.usable` refuses an UNKNOWN profile, so after every restart the content steps
+    failed with "No usable LLM provider profiles are available" until the operator clicked "Test configuration".
+    `desktop.services.check_unknown_profiles_at_start` (called at the end of `get_production_runtime`, not in dry run)
+    runs the same `ProviderSecretResolutionChecker` check through `ProviderHealthService` for every enabled API-key
+    profile still UNKNOWN (all categories except browser-account profiles; a failing check is logged and skipped). It
+    only proves the key EXISTS - the button's own limit - so an expired key still fails at the first real call with the
+    provider's own error. Not done: persisting the health status itself; a real validity check of a key (a billed or
+    rate-limited call). Tests: `tests/test_saved_key_wins.py`.
   - **A reference picture the operator picks for ONE scene (2026-10-08, live: Lake Nyos
     village).** A character/place has one reference for every scene it is marked in; a scene that
     names none (stretches of village footage) had nothing to carry its scenery and light from the
