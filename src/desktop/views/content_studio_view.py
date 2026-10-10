@@ -4,7 +4,7 @@ from collections.abc import Callable
 from pathlib import Path
 from uuid import UUID
 
-from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QObject, Qt, QThread, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -33,6 +33,7 @@ from src.desktop.approval_mode_labels import (
 from src.desktop.error_log_text import format_error_log
 from src.desktop.job_store import JobStore
 from src.desktop.recovery_dialog import show_recoverable_error
+from src.desktop.scroll_preservation import ScrollKeeper
 from src.desktop.views.reference_candidates_dialog import ReferenceCandidatesDialog
 from src.desktop.widgets import (
     badge,
@@ -395,16 +396,6 @@ class ContentStudioView(QWidget):
         # position preservation possible.
         self._last_refreshed_job_id: UUID | None = None
 
-        # Fourth-pass fix state (see _schedule_scroll_restore()'s own
-        # docstring): a single user action can trigger refresh()
-        # several times in quick succession (confirmed via a real
-        # runtime log showing ~6 calls for one click), each starting
-        # its own listen-and-restore cycle - this tracks whichever one
-        # is currently active so a new cycle can cancel it, making the
-        # LATEST refresh() call's cycle the sole one that ends up
-        # applying a value, instead of several racing independently.
-        self._active_scroll_restore_cleanup: Callable[[], None] | None = None
-
         # Fifth-pass fix state (see refresh()'s own docstring): during
         # a rapid burst, the scroll area's own range/value can be
         # transiently zeroed by Qt itself while old cards are torn down
@@ -484,6 +475,7 @@ class ContentStudioView(QWidget):
         # view silently snapped back to the top after every single
         # click, a real, reported usability problem.
         self._scroll_area = scroll_area
+        self._scroll_restorer = ScrollKeeper(scroll_area)
 
     def set_job(self, job_id: UUID) -> None:
         self._job_id = job_id
@@ -679,90 +671,13 @@ class ContentStudioView(QWidget):
         cycle already correctly restored.
         """
 
-        scroll_bar = self._scroll_area.verticalScrollBar()
-        cancelled = False
-
-        def _apply() -> None:
-            if cancelled:
-                return
-
-            if scroll_bar.maximum() == 0:
-                # The scroll area's own range hasn't caught up to the
-                # just-rebuilt content yet (still mid-layout) - real,
-                # direct reproduction (instrumenting a full multi-stage
-                # "Run automation" burst, the exact scenario the
-                # original bug report was about) found this is NOT
-                # merely "restores to 0 this one time": Qt clamps
-                # setValue() to [0, maximum], so writing here can only
-                # ever produce 0 - and that 0 then gets read back by
-                # scroll_bar.value() as if it were the real, current
-                # position. refresh()'s OWN scroll-value capture at the
-                # TOP of the very next call in the burst reads exactly
-                # that corrupted 0, permanently losing the user's real
-                # position for the rest of the burst - not a one-cycle
-                # accident, the actual mechanism behind "the fix still
-                # doesn't resolve the real symptom." The fourth pass's
-                # own cancel-overlapping-cycles fix correctly picks one
-                # winning cycle, but did nothing to stop that winning
-                # cycle from having captured an already-corrupted value
-                # in the first place. Skipping the write here until the
-                # range is genuinely settled (via rangeChanged or the
-                # 50ms fallback below) leaves scroll_bar.value() exactly
-                # as it was - uncorrupted - for every reader in between.
-                return
-
-            scroll_bar.setValue(value)
-
-        def _on_range_changed(_minimum: int, _maximum: int) -> None:
-            _apply()
-
-        def _disconnect() -> None:
-            try:
-                scroll_bar.rangeChanged.disconnect(_on_range_changed)
-            except (TypeError, RuntimeError):
-                # Already disconnected - harmless.
-                pass
-
-        def _cancel() -> None:
-            # Called only by a NEWER cycle superseding this one -
-            # never by this cycle's own natural completion. Guarded
-            # against being invoked twice for the same cycle (found via
-            # a real, previously-uncaught pytest warning: PySide's own
-            # libpyside emits a RuntimeWarning, not the TypeError/
-            # RuntimeError _disconnect() already handles, when asked to
-            # disconnect a signal a second time - so a stale external
-            # reference to this exact closure calling it again would
-            # silently leak that warning into every real run this
-            # mechanism handles, not just this one test).
-            nonlocal cancelled
-
-            if cancelled:
-                return
-
-            cancelled = True
-            _disconnect()
-
-        def _stop_listening() -> None:
-            # This cycle's own 50ms timer firing - a no-op if a newer
-            # cycle already cancelled this one in the meantime, so a
-            # cancelled cycle's belated timer can never re-apply its
-            # now-stale value over a newer, correct restore.
-            if cancelled:
-                return
-
-            _disconnect()
-            _apply()  # one last attempt in case rangeChanged never fired
-
-            if self._active_scroll_restore_cleanup is _cancel:
-                self._active_scroll_restore_cleanup = None
-
-        if self._active_scroll_restore_cleanup is not None:
-            self._active_scroll_restore_cleanup()
-
-        self._active_scroll_restore_cleanup = _cancel
-        scroll_bar.rangeChanged.connect(_on_range_changed)
-        _apply()  # in case the range is already correct right now
-        QTimer.singleShot(50, _stop_listening)
+        # 2026-10-09: the listener that used to be here lived for 50 ms. On a slow machine the
+        # rebuilt tab is measured seconds later (the range collapsed to zero and came back
+        # 2.6 s after the rebuild on the real window), so every restore had already given up
+        # and the tab stayed at the top. The shared keeper keeps trying until the rebuilt
+        # content is tall enough to hold the position, and stops the moment the operator
+        # scrolls (see src/desktop/scroll_preservation.py).
+        self._scroll_restorer.restore(value)
 
     def _build_journey_card(self, job: VideoJob) -> None:
         """

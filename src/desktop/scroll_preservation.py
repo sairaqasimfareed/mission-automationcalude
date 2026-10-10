@@ -26,12 +26,17 @@ from uuid import UUID
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QScrollArea
 
-# The saved position keeps being re-applied after a rebuild until the scroll
-# range has been still for this long (the new content is measured in passes, and
-# a big tab can take well over a fixed 300 ms), but never for longer than the cap
-# so the operator's own scrolling is never fought for long.
+# The saved position keeps being re-applied after a rebuild until it has actually
+# been reached (the rebuilt content is tall enough to hold it) and the scroll range has
+# then been still for this long. Time alone is not a signal that the content is ready:
+# live (2026-10-09, on the real window) a tab's range collapsed to zero and was only
+# measured again 2.6 s later on a slow machine, long after any short quiet window had
+# given up, which left every tab at the top. So the wait for the content is long (the cap),
+# the wait after the position is reached is short, and the operator's own scrolling
+# (the bar's actionTriggered, which setValue never emits) ends the restore at once so it
+# is never fought.
 _QUIET_MILLISECONDS = 200
-_MAX_SETTLE_MILLISECONDS = 3000
+_MAX_SETTLE_MILLISECONDS = 20000
 
 
 class ScrollKeeper:
@@ -54,8 +59,12 @@ class ScrollKeeper:
 
     def _on_value_changed(self, value: int) -> None:
         # Only the operator's own scrolling counts as a real position; the
-        # clamping that follows a teardown is not.
-        if not self._settling:
+        # clamping that follows a teardown is not. A bar whose range has collapsed
+        # to zero cannot have been scrolled by anyone: a 0 reported then is the
+        # clamp of a relayout (live, 2026-10-09: rebuilding the project header above
+        # the tabs collapsed every tab's range for a moment and the keeper took the
+        # clamped 0 as the operator's position).
+        if not self._settling and self._scroll_area.verticalScrollBar().maximum() > 0:
             self._last_known = value
 
     def capture(self, job_key: object) -> int:
@@ -89,16 +98,23 @@ class ScrollKeeper:
         quiet_timer.setSingleShot(True)
         quiet_timer.setInterval(_QUIET_MILLISECONDS)
 
+        reached = False
+
         def apply() -> None:
+            nonlocal reached
+
             try:
                 if not cancelled and scroll_bar.maximum() > 0:
                     scroll_bar.setValue(value)
+                    # The position is only really back once the content is tall enough
+                    # to hold it (setValue clamps to the range as it is right now).
+                    reached = reached or scroll_bar.maximum() >= value
             except RuntimeError:
                 # The tab was closed while the restore was still waiting: its scroll
                 # bar no longer exists, so there is nothing to put back.
                 pass
 
-        def stop(*, finished: bool) -> None:
+        def stop(*, finished: bool, by_operator: bool = False) -> None:
             nonlocal cancelled
 
             if cancelled:
@@ -110,22 +126,47 @@ class ScrollKeeper:
             cancelled = True
             quiet_timer.stop()
 
-            try:
-                scroll_bar.rangeChanged.disconnect(on_range_changed)
-            except (RuntimeError, TypeError):
-                pass
+            for signal, slot in (
+                (scroll_bar.rangeChanged, on_range_changed),
+                (scroll_bar.actionTriggered, on_operator_action),
+            ):
+                try:
+                    signal.disconnect(slot)
+                except (RuntimeError, TypeError):
+                    pass
 
-            if finished:
+            if finished or by_operator:
                 self._settling = False
                 self._cancel_active = None
 
-        def on_range_changed(_minimum: int, _maximum: int) -> None:
+        def on_range_changed(_minimum: int, maximum: int) -> None:
+            nonlocal reached
+
+            if maximum < value:
+                # The content collapsed again (old cards are torn down after the new ones
+                # were laid out - live, 2026-10-09): the position that was reached against
+                # the old content is gone and must be reached again against the new.
+                reached = False
+
             apply()
             quiet_timer.start()
 
-        quiet_timer.timeout.connect(lambda: stop(finished=True))
+        def on_operator_action(_action: int) -> None:
+            # The operator scrolled (wheel, drag, key): theirs is the position now.
+            stop(finished=False, by_operator=True)
+
+        def on_quiet() -> None:
+            if reached:
+                stop(finished=True)
+            else:
+                # The rebuilt content is not tall enough yet: keep waiting for it.
+                apply()
+                quiet_timer.start()
+
+        quiet_timer.timeout.connect(on_quiet)
         self._cancel_active = lambda: stop(finished=False)
         scroll_bar.rangeChanged.connect(on_range_changed)
+        scroll_bar.actionTriggered.connect(on_operator_action)
         apply()
         quiet_timer.start()
         QTimer.singleShot(0, apply)

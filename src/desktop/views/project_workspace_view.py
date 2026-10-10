@@ -179,6 +179,9 @@ class ProjectWorkspaceView(QWidget):
         # so it's fine to keep as plain view state rather than
         # persisting it on VideoJob.
         self._status_card_expanded = False
+        # Each tab's scroll position taken before a whole-project refresh rebuilds anything
+        # (see refresh()); None outside one.
+        self._scroll_snapshots: dict[str, int] | None = None
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(24, 20, 24, 20)
@@ -437,7 +440,17 @@ class ProjectWorkspaceView(QWidget):
         self._missing_label.setVisible(False)
         self._stack.setVisible(True)
         self._heading.setText(job.project_name)
-        self._refresh_header_row(job)
+
+        # Every tab's scroll position is taken BEFORE anything is rebuilt: the header and the
+        # status card above the tabs are torn down and rebuilt first, which reflows every tab
+        # and used to leave all of them at the top after any action (reproduced live,
+        # 2026-10-09, on the real window).
+        self._scroll_snapshots = self._capture_scroll_positions(job.id)
+
+        try:
+            self._refresh_header_row(job)
+        finally:
+            self._scroll_snapshots = None
 
     def _clear_header_row(self) -> None:
         while self._header_row_layout.count():
@@ -592,9 +605,7 @@ class ProjectWorkspaceView(QWidget):
         refresh()'s own docstring for the full history.
         """
 
-        content_studio_scroll_value = self.content_studio.capture_scroll_position(
-            job.id
-        )
+        snapshots = self._scroll_snapshots or self._capture_scroll_positions(job.id)
 
         for _, _, tab_name, workspace in self._workspaces:
             if tab_name == "content_studio":
@@ -602,7 +613,35 @@ class ProjectWorkspaceView(QWidget):
             else:
                 workspace.refresh(job)  # type: ignore[attr-defined]
 
-        self.content_studio.restore_scroll_position(content_studio_scroll_value)
+                keeper = getattr(workspace, "scroll_keeper", None)
+
+                if keeper is not None and tab_name in snapshots:
+                    # The tab's own refresh restored what it captured mid-burst, which the
+                    # reflow may already have spoiled; the position taken before anything was
+                    # rebuilt wins (restore cancels the earlier one).
+                    keeper.restore(snapshots[tab_name])
+
+        self.content_studio.restore_scroll_position(snapshots.get("content_studio", 0))
+
+    def _capture_scroll_positions(self, job_id: UUID) -> dict[str, int]:
+        """Each tab's scroll position for this job, right now."""
+
+        positions: dict[str, int] = {}
+
+        for _, _, tab_name, workspace in self._workspaces:
+            if tab_name == "content_studio":
+                positions[tab_name] = self.content_studio.capture_scroll_position(
+                    job_id
+                )
+
+                continue
+
+            keeper = getattr(workspace, "scroll_keeper", None)
+
+            if keeper is not None:
+                positions[tab_name] = keeper.capture(job_id)
+
+        return positions
 
     def _current_job(self) -> VideoJob | None:
         if self._job_id is None:

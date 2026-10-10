@@ -247,3 +247,108 @@ def test_a_restore_still_waiting_when_the_tab_is_closed_does_not_raise(
         QThread.msleep(10)
 
     assert errors == []
+
+
+# ----------------------------------------------- a slow rebuild that collapses and regrows
+
+
+class _SlowRebuild:
+    """A scroll area whose content is torn down and re-laid-out slowly, the way a big
+    tab is on a slow machine: the range reads full right after the rebuild (the old
+    content is still there), collapses to zero when the old cards are deleted, and only
+    grows back seconds later."""
+
+    def __init__(self, app: QApplication) -> None:
+        from src.desktop.scroll_preservation import ScrollKeeper
+
+        self.app = app
+        self.area = QScrollArea()
+        self.content = QWidget()
+        self.content.setFixedSize(300, 3000)
+        self.area.setWidget(self.content)
+        self.area.resize(320, 400)
+        self.area.show()
+        self.keeper = ScrollKeeper(self.area)
+        self.bar = self.area.verticalScrollBar()
+        _settle(app)
+
+    def regrow_after(self, milliseconds: int) -> None:
+        from PySide6.QtCore import QTimer
+
+        self.content.setFixedHeight(10)  # the old cards are gone: range collapses
+        QTimer.singleShot(milliseconds, lambda: self.content.setFixedHeight(3000))
+
+    def wait(self, milliseconds: int) -> None:
+        waited = 0
+
+        while waited < milliseconds:
+            self.app.processEvents()
+            QThread.msleep(10)
+            waited += 10
+
+
+def test_a_position_is_restored_after_the_range_collapses_and_regrows_later(
+    qapp: QApplication,
+) -> None:
+    """Live, 2026-10-09 (the real window, every tab): the project refresh restored the
+    position against the old content, the old cards were then deleted, the range collapsed
+    and clamped the value to 0, and the content was measured again 2.7 s later - after the
+    restore had counted itself done and stopped. Every tab stayed at the top."""
+
+    scene = _SlowRebuild(qapp)
+    scene.bar.setValue(900)
+    scene.keeper.restore(
+        scene.keeper.capture(object()) or 900
+    )  # reached against the old range
+    scene.regrow_after(1200)
+
+    scene.wait(3000)
+
+    assert scene.bar.value() == 900
+
+
+def test_a_slow_regrow_is_waited_for_not_given_up_on(qapp: QApplication) -> None:
+    scene = _SlowRebuild(qapp)
+    scene.bar.setValue(1500)
+    scene.keeper.restore(1500)
+    scene.regrow_after(2500)  # far longer than any short quiet window
+
+    scene.wait(4500)
+
+    assert scene.bar.value() == 1500
+
+
+def test_the_operators_own_scroll_while_waiting_is_never_fought(
+    qapp: QApplication,
+) -> None:
+    from PySide6.QtWidgets import QAbstractSlider
+
+    scene = _SlowRebuild(qapp)
+    scene.bar.setValue(900)
+    scene.keeper.restore(900)
+    scene.regrow_after(1500)
+    scene.wait(200)
+
+    # the operator scrolls (a wheel step, a drag, a key): theirs is the position now
+    scene.bar.triggerAction(QAbstractSlider.SliderAction.SliderSingleStepAdd)
+    scene.wait(3000)
+
+    assert scene.bar.value() != 900
+    assert scene.keeper.is_settling is False
+
+
+def test_a_collapse_reading_zero_is_not_taken_for_the_operators_position(
+    qapp: QApplication,
+) -> None:
+    scene = _SlowRebuild(qapp)
+    key = object()
+    scene.bar.setValue(900)
+    scene.keeper.capture(key)  # remembers the key (a new project starts at the top)
+    scene.bar.setValue(0)
+    scene.bar.setValue(900)  # the operator scrolls down
+    scene.wait(50)
+
+    scene.content.setFixedHeight(10)  # relayout collapses the range; value clamps to 0
+    scene.wait(100)
+
+    assert scene.keeper.capture(key) == 900

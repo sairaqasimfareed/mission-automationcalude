@@ -200,7 +200,7 @@ def test_refresh_preserves_scroll_position_for_the_same_job(
     assert scrolled_to > 0  # sanity: there was real scrollable content
 
     with patch(
-        "src.desktop.views.content_studio_view.QTimer.singleShot",
+        "src.desktop.scroll_preservation.QTimer.singleShot",
         side_effect=_run_pending_timer,
     ):
         view.refresh(job)  # simulates any button-triggered rebuild
@@ -276,7 +276,7 @@ def test_manage_scroll_false_still_updates_bookkeeping_for_the_next_direct_call(
     view._scroll_area.verticalScrollBar().setValue(321)  # noqa: SLF001
 
     with patch(
-        "src.desktop.views.content_studio_view.QTimer.singleShot",
+        "src.desktop.scroll_preservation.QTimer.singleShot",
         side_effect=_run_pending_timer,
     ):
         # Simulates ProjectWorkspaceView's own multi-workspace burst -
@@ -318,7 +318,7 @@ def test_capture_and_restore_scroll_position_are_usable_from_outside(
     assert captured == scrolled_to
 
     with patch(
-        "src.desktop.views.content_studio_view.QTimer.singleShot",
+        "src.desktop.scroll_preservation.QTimer.singleShot",
         side_effect=_run_pending_timer,
     ):
         view.refresh(job, manage_scroll=False)
@@ -365,9 +365,7 @@ def test_scroll_restore_applies_via_range_changed(qapp: QApplication) -> None:
     view.set_job(job.id)
     view.refresh(job)
 
-    with patch(
-        "src.desktop.views.content_studio_view.QTimer.singleShot"
-    ) as fake_single_shot:
+    with patch("src.desktop.scroll_preservation.QTimer.singleShot") as fake_single_shot:
         view._schedule_scroll_restore(77)  # noqa: SLF001
 
         # rangeChanged fires for real here - no patching needed, this
@@ -406,7 +404,7 @@ def test_scroll_restore_survives_an_intermediate_zero_range_firing(
     view.set_job(job.id)
     view.refresh(job)
 
-    with patch("src.desktop.views.content_studio_view.QTimer.singleShot"):
+    with patch("src.desktop.scroll_preservation.QTimer.singleShot"):
         view._schedule_scroll_restore(1138)  # noqa: SLF001
 
         scroll_bar = view._scroll_area.verticalScrollBar()  # noqa: SLF001
@@ -484,32 +482,30 @@ def test_a_rapid_second_refresh_cancels_the_first_cycle_and_wins(
     view.set_job(job.id)
     view.refresh(job)
 
-    with patch("src.desktop.views.content_studio_view.QTimer.singleShot"):
-        view.refresh(job)  # first call in the burst
+    # The restore is the shared ScrollKeeper's (2026-10-09): one live cycle at a time, the
+    # most recently started one is the one that ends up applying its value.
+    restorer = view._scroll_restorer  # noqa: SLF001
 
-        first_cycle_cleanup = view._active_scroll_restore_cleanup  # noqa: SLF001
-        assert first_cycle_cleanup is not None
+    view.refresh(job)  # first call in the burst
 
-        view.refresh(job)  # second call in the burst, immediately after
+    first_cycle_cleanup = restorer._cancel_active  # noqa: SLF001
+    assert first_cycle_cleanup is not None
 
-        second_cycle_cleanup = view._active_scroll_restore_cleanup  # noqa: SLF001
-        assert second_cycle_cleanup is not None
-        assert second_cycle_cleanup is not first_cycle_cleanup
+    view.refresh(job)  # second call in the burst, immediately after
 
-        # The first cycle was genuinely superseded, not merely
-        # replaced in bookkeeping - its own cleanup must already be
-        # safe to invoke again (its belated real 50ms timer will do
-        # exactly this later) without disturbing the second cycle.
-        first_cycle_cleanup()
-        assert (
-            view._active_scroll_restore_cleanup is second_cycle_cleanup
-        )  # noqa: SLF001
+    second_cycle_cleanup = restorer._cancel_active  # noqa: SLF001
+    assert second_cycle_cleanup is not None
+    assert second_cycle_cleanup is not first_cycle_cleanup
 
-        # A cancelled cycle's own belated 50ms timer could still fire a
-        # THIRD time in real usage (its `_stop_listening` callback,
-        # which this test doesn't invoke directly) - calling the same
-        # cleanup callable yet again must stay just as safe.
-        first_cycle_cleanup()
+    # The first cycle was genuinely superseded, not merely replaced in bookkeeping: its
+    # own cleanup is safe to invoke again without disturbing the second cycle.
+    first_cycle_cleanup()
+    assert restorer._cancel_active is second_cycle_cleanup  # noqa: SLF001
+
+    # ... and once more, as a belated timer of the cancelled cycle might.
+    first_cycle_cleanup()
+
+    second_cycle_cleanup()  # leave nothing running behind the test
 
     assert not any(
         issubclass(warning.category, RuntimeWarning) for warning in recwarn.list
@@ -588,7 +584,7 @@ def test_refresh_falls_back_to_the_last_known_value_when_the_range_has_collapsed
     scroll_bar.setRange(0, 0)
     assert scroll_bar.value() == 0  # sanity: Qt itself clamped this
 
-    with patch("src.desktop.views.content_studio_view.QTimer.singleShot"):
+    with patch("src.desktop.scroll_preservation.QTimer.singleShot"):
         view.refresh(job)
 
         # refresh()'s own capture logic must have fallen back to 519
@@ -631,9 +627,7 @@ def test_an_earlier_scroll_restore_cycle_cannot_clobber_a_newer_one(
     view.set_job(job.id)
     view.refresh(job)
 
-    with patch(
-        "src.desktop.views.content_studio_view.QTimer.singleShot"
-    ) as fake_single_shot:
+    with patch("src.desktop.scroll_preservation.QTimer.singleShot") as fake_single_shot:
         view._schedule_scroll_restore(100)  # noqa: SLF001
         first_cycle_stop_listening = fake_single_shot.call_args.args[-1]
 
@@ -674,7 +668,7 @@ def test_refresh_resets_scroll_position_when_switching_projects(
     view.set_job(other_job.id)
 
     with patch(
-        "src.desktop.views.content_studio_view.QTimer.singleShot",
+        "src.desktop.scroll_preservation.QTimer.singleShot",
         side_effect=_run_pending_timer,
     ):
         view.refresh(other_job)

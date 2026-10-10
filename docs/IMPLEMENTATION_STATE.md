@@ -1063,6 +1063,29 @@ section records what changed and why so a later session does not undo it.
     take outfit and voice (limits 400 / 500; `update` keeps them when the caller gives None). Not verified live
     (no Muse, ElevenLabs or Claude credits were spent; the 3-scene pilot is NOT run). Tests:
     `tests/test_speech_budget.py`, `tests/test_character_sheet.py`.
+  - **Every tab scrolled to the top after any action - fixed, reproduced and verified on the real window
+    (2026-10-09).** The earlier fixes (Content Studio's own restore, then the shared `ScrollKeeper` on the other
+    seven tabs) were tested on ONE tab refreshing alone and passed; the operator still saw every tab jump. A probe
+    that opens the real `MainWindow` offscreen with the Lake Nyos project in an in-memory store, scrolls each tab
+    to 600 px and runs the whole-project refresh that follows every action reproduced it: every scrollable tab
+    ended at 0 (a tab refreshing itself kept its position). Traced (not guessed): the project refresh rebuilds the
+    header row and Project status card above the tabs, then each tab; the restore was applied against the OLD
+    content (still laid out), the old cards were then deleted (a deferred delete), the tab's scroll range collapsed
+    to 0 and clamped the value, and the new content was only measured again about 2.7 s later on this slow machine
+    - after the restore had counted itself done (200 ms quiet) and stopped. Content Studio's own restore listened
+    for only 50 ms. Fixes: (1) `ScrollKeeper.restore` no longer finishes on a timer - it finishes only once the
+    position has been reached AND the range has been quiet; a collapse of the range below the saved position
+    un-reaches it, so it waits for the content to grow back (cap 20 s); the operator's own scrolling (the bar's
+    `actionTriggered`, which `setValue` never emits) ends the restore at once so it never fights; a 0 read while
+    the range is collapsed is not taken as the operator's position. (2) `ProjectWorkspaceView.refresh` snapshots
+    every tab's position BEFORE rebuilding anything and restores from the snapshot after each tab's refresh.
+    (3) Content Studio's hand-written 50 ms restore is replaced by the same keeper (its old
+    `_active_scroll_restore_cleanup` is gone). Verified: the probe now keeps every scrollable tab at its position
+    for project refresh, two in a row, the tab's own refresh and the change callback (Render was too short to scroll
+    with this project but uses the same keeper); 4 new tests in `tests/test_scroll_preservation.py` reproduce the
+    collapse-then-regrow sequence at the keeper level, the slow regrow, the operator's scroll ending the restore,
+    and a collapse not being read as a position. Not covered by an automated test: the full-window path (the probe
+    script is not committed; a test would need a project big enough to scroll and takes minutes on this machine).
   - **A reference picture the operator picks for ONE scene (2026-10-08, live: Lake Nyos
     village).** A character/place has one reference for every scene it is marked in; a scene that
     names none (stretches of village footage) had nothing to carry its scenery and light from the
