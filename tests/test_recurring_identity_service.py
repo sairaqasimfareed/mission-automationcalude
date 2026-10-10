@@ -519,7 +519,8 @@ def test_the_section_offers_a_form_for_a_new_character_or_place(qapp) -> None:  
 
     view._render_recurring_identities_section(layout, job)  # noqa: SLF001
 
-    assert len(holder.findChildren(QLineEdit)) == 3
+    # name, description, outfit, voice, scenes (outfit and voice are for characters)
+    assert len(holder.findChildren(QLineEdit)) == 5
     buttons = [b.text() for b in holder.findChildren(QPushButton)]
     assert "Add to the video" in buttons
     assert "Suggest characters and places" in buttons

@@ -4,6 +4,7 @@ from collections.abc import Callable
 from typing import NamedTuple
 
 from src.models.cinematic_prompt import CinematicPromptPackage, ResolvedCinematicPrompt
+from src.models.dialogue import speakers_in
 from src.models.production_semantic_brief import ProductionSemanticBrief
 from src.models.project_look import ProjectLook
 from src.models.scene import Scene
@@ -19,6 +20,7 @@ from src.models.visual_continuity import (
     VisualContinuityBible,
 )
 from src.services.dialogue_prompt import dialogue_prompt_text, speakers_before
+from src.services.person_matching import find_person
 from src.services.prompt_wording import (
     is_unspecified,
     without_leading_relative_wording,
@@ -144,6 +146,30 @@ def _avoid_rule(graphic_text: str | None) -> str:
         " Do not show any text, captions, logos or watermarks, and nothing unrelated "
         "to this scene."
     )
+
+
+def _identity_text(identity: CanonicalEntityIdentity) -> str:
+    """A recurring identity as the prompt repeats it: its description, then its outfit when
+    one is written (Character-Oriented Video)."""
+
+    if not identity.outfit:
+        return identity.canonical_description
+
+    return f"{identity.canonical_description.rstrip('.')}. Outfit: {identity.outfit.rstrip('.')}"
+
+
+def _voices_for(scene: Scene, bible: VisualContinuityBible) -> dict[str, str]:
+    """Each speaker of this scene's written voice, for the speakers that have one."""
+
+    voices: dict[str, str] = {}
+
+    for speaker in speakers_in(scene.dialogue):
+        person = find_person(bible, speaker)
+
+        if person is not None and person.voice:
+            voices[speaker] = person.voice
+
+    return voices
 
 
 def _detail_sentence(detail: str) -> str:
@@ -287,7 +313,7 @@ class CinematicPromptCompilationService:
 
         identity_names = continuity.entity_names if continuity is not None else []
         identities = [
-            identity.canonical_description
+            _identity_text(identity)
             for identity in visual_continuity_bible.identities
             if identity.name in identity_names
         ]
@@ -388,6 +414,7 @@ class CinematicPromptCompilationService:
                 scene.dialogue,
                 earlier_speakers=earlier_speakers,
                 environment=environment,
+                voices=_voices_for(scene, visual_continuity_bible),
             ),
             detail=(
                 scene_detail_plan.current_text_for(

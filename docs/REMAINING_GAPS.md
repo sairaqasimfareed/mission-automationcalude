@@ -961,20 +961,19 @@ Clip check reports a pick a clip was made without.
 length; what an LLM-written "Cameroon, 1986" place sheet gets wrong (facts come from the research text and the
 operator approves each sheet); cost - a few calls per project plus about 4 batched scene calls for 32 scenes.
 
-## Character-mode gap: Character-Oriented Video mode - scope LOCKED 2026-10-08, Slice 1 IN PROGRESS
+## Character-mode gap: Character-Oriented Video mode - scope LOCKED 2026-10-08, Slice 1 and Slice 2 BUILT 2026-10-09
 
-**Status 2026-10-09:** built - dialogue model + strict `NAME: line` parser, script import into one scene per
-exchange, the project toggle and the preset, speakers as recurring people, and the dialogue prompt wording
-(steps 1-5 of Slice 1; see IMPLEMENTATION_STATE). Still to build: the speech budget (about 2.5 words/s, Muse
-10 s for two-line scenes), then Slice 2. The 3-scene Muse pilot (credits) has not been run.
-
-A project-level mode for videos where on-camera characters speak real, lip-synced dialogue.
-Evidence (live Muse tests by the operator, clips analysed 2026-10-08): lip sync correct; one
-character's face, outfit and voice stayed the same across scenes with a reference picture
-plus a repeated voice description; two characters in one scene kept two clearly different
-voices with correct turn-taking. Muse reuses one chat thread across clips, so earlier clips
-are context. Provider for this mode: **Muse** (Flow was tested earlier and works too, but is
-not the target). The script is the operator's own, imported with `NAME: line` labels.
+**Status 2026-10-09:** BUILT (all unit-tested, nothing run on Muse): dialogue model + strict `NAME: line` parser,
+script import into one scene per exchange, the project toggle and preset, speakers as recurring people, the
+tested dialogue wording (plus the reference-picture sentence at Muse submission), the speech budget (report
+only), per-character appearance / outfit / voice drafted automatically from the script and editable, and cast
+picture upload (see IMPLEMENTATION_STATE). **Still open:** (1) the 3-scene, one-character Muse pilot - costs
+Muse and ElevenLabs credits, so it has NOT been run; the pilot must check that the app's own Muse automation
+attaches the reference picture and that the prompt reads right in the Muse page, subtitle timing for dialogue,
+and the interaction with Manual/auto content mode. (2) Muse's 10 s length for two-line scenes (needs the pilot:
+render trimming / where the clip's own speech is cut). (3) A measured pitch band pre-filling the voice (the pitch
+tracker was unreliable). (4) The character sheets are applied automatically, not accepted one by one as the
+locked wording said - change if an accept step is wanted. (5) Slice 3 and everything under "Later" below.
 
 **In scope - Slice 1 (no credits needed to build):**
 - Project-creation toggle "Character-Oriented Video" (project-level, genre-independent). It

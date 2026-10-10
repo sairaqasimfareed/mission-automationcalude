@@ -357,6 +357,8 @@ class ContentStudioView(QWidget):
             "kind": "person",
             "description": "",
             "scenes": "",
+            "outfit": "",
+            "voice": "",
         }
         self._editing_identity_name: str | None = None
         # The suggestion the form was filled from, so saving marks it accepted.
@@ -2491,10 +2493,18 @@ class ContentStudioView(QWidget):
                 continue
 
             scene_numbers = service.scenes_of(job, identity.name)
+            extras = "".join(
+                f"  |  {label}: {value}"
+                for label, value in (
+                    ("Outfit", identity.outfit),
+                    ("Voice", identity.voice),
+                )
+                if value
+            )
             layout.addWidget(
                 small_muted(
                     f"{identity.entity_type.value.title()}: {identity.name} - "
-                    f"{identity.canonical_description}"
+                    f"{identity.canonical_description}{extras}"
                 )
             )
             layout.addLayout(self._reference_status_row(job, identity, scene_numbers))
@@ -2521,7 +2531,14 @@ class ContentStudioView(QWidget):
             )
             row.addWidget(edit_button)
             row.addWidget(repick_button)
+            upload_button = button("Upload a picture", variant="ghost")
+            upload_button.clicked.connect(
+                lambda _checked=False, n=identity.name: (
+                    self._handle_upload_identity_picture(n)
+                )
+            )
             row.addWidget(choose_button)
+            row.addWidget(upload_button)
             row.addWidget(remove_button)
             row.addStretch()
             layout.addLayout(row)
@@ -2566,6 +2583,26 @@ class ContentStudioView(QWidget):
             lambda text: self._recurring_form.__setitem__("description", text)
         )
         form.addRow("Description", description_field)
+
+        outfit_field = QLineEdit(self._recurring_form.get("outfit", ""))
+        outfit_field.setPlaceholderText(
+            "A character's clothes - repeated word for word (optional)"
+        )
+        outfit_field.setMaxLength(400)
+        outfit_field.textChanged.connect(
+            lambda text: self._recurring_form.__setitem__("outfit", text)
+        )
+        form.addRow("Outfit", outfit_field)
+
+        voice_field = QLineEdit(self._recurring_form.get("voice", ""))
+        voice_field.setPlaceholderText(
+            "A character's voice in words: age, pitch, tone, accent (optional)"
+        )
+        voice_field.setMaxLength(500)
+        voice_field.textChanged.connect(
+            lambda text: self._recurring_form.__setitem__("voice", text)
+        )
+        form.addRow("Voice", voice_field)
 
         scenes_field = QLineEdit(self._recurring_form["scenes"])
         scenes_field.setPlaceholderText("Scenes it appears in, e.g. 1-11, 14")
@@ -2763,6 +2800,13 @@ class ContentStudioView(QWidget):
         suggest_button.clicked.connect(self._handle_suggest_identities)
         layout.addWidget(suggest_button, alignment=_LEFT)
 
+        if job.character_oriented:
+            sheets_button = button(
+                "Draft appearance, outfit and voice from my script", variant="ghost"
+            )
+            sheets_button.clicked.connect(self._handle_draft_character_sheets)
+            layout.addWidget(sheets_button, alignment=_LEFT)
+
     def _identity_suggestion(self, suggestion_id: UUID) -> IdentitySuggestion | None:
         job = self._current_job()
 
@@ -2790,6 +2834,8 @@ class ContentStudioView(QWidget):
             ),
             "description": suggestion.description,
             "scenes": format_scene_numbers(suggestion.scene_numbers),
+            "outfit": "",
+            "voice": "",
         }
 
         return True
@@ -2838,12 +2884,72 @@ class ContentStudioView(QWidget):
             retry=self._handle_suggest_identities,
         )
 
+    def _handle_draft_character_sheets(self) -> None:
+        """Draft appearance, outfit and voice for every speaking character (one call), filling
+        only what is still empty. New projects get this inside the visual-continuity step;
+        this is for older ones or to fill what was left empty."""
+
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        def runner(target: VideoJob) -> VideoJob:
+            self._content_intelligence_pipeline.run_character_sheets(target)
+            self._recompile_prompts_if_present(target)
+
+            return target
+
+        self._run_stage(
+            job,
+            runner,
+            label="character sheets",
+            failure="Could not draft the character sheets",
+            retry=self._handle_draft_character_sheets,
+        )
+
+    def _handle_upload_identity_picture(self, name: str) -> None:
+        """Use a picture the operator chooses (a cast photo, an illustration) as this
+        character's or place's reference instead of a frame from a generated clip."""
+
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        file_path, _filter = QFileDialog.getOpenFileName(
+            self,
+            f"Choose a picture of {name}",
+            "",
+            "Pictures (*.png *.jpg *.jpeg *.webp)",
+        )
+
+        if not file_path:
+            return
+
+        service = self._recurring_identity_service
+
+        def runner(target: VideoJob) -> VideoJob:
+            service.set_reference_from_file(target, name, file_path)
+            self._recompile_prompts_if_present(target)
+
+            return target
+
+        self._run_stage(
+            job,
+            runner,
+            label=f"picture for {name}",
+            failure=f"Could not use that picture for {name}",
+        )
+
     def _reset_recurring_form(self) -> None:
         self._recurring_form = {
             "name": "",
             "kind": "person",
             "description": "",
             "scenes": "",
+            "outfit": "",
+            "voice": "",
         }
         self._editing_identity_name = None
         self._form_suggestion_id = None
@@ -2874,6 +2980,8 @@ class ContentStudioView(QWidget):
             "scenes": format_scene_numbers(
                 self._recurring_identity_service.scenes_of(job, name)
             ),
+            "outfit": identity.outfit,
+            "voice": identity.voice,
         }
         self.refresh(job)
 
@@ -2922,6 +3030,8 @@ class ContentStudioView(QWidget):
                     kind=kind,
                     description=form["description"],
                     scene_text=form["scenes"],
+                    outfit=form.get("outfit", ""),
+                    voice=form.get("voice", ""),
                 )
             else:
                 service.update(
@@ -2930,6 +3040,8 @@ class ContentStudioView(QWidget):
                     new_name=form["name"],
                     description=form["description"],
                     scene_text=form["scenes"],
+                    outfit=form.get("outfit", ""),
+                    voice=form.get("voice", ""),
                 )
 
             for suggestion in target.identity_suggestions:

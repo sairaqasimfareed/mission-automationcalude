@@ -36,6 +36,9 @@ from src.shared.logger import logger
 
 _MAX_NAME_LENGTH = 60
 _MAX_DESCRIPTION_LENGTH = 1200
+_MAX_OUTFIT_LENGTH = 400
+_MAX_VOICE_LENGTH = 500
+_PICTURE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp")
 
 
 class _Selector(Protocol):
@@ -280,10 +283,13 @@ class RecurringIdentityService:
         kind: CanonicalEntityType,
         description: str,
         scene_text: str,
+        outfit: str = "",
+        voice: str = "",
     ) -> CanonicalEntityIdentity:
         cleaned_name, cleaned_description, scenes = self.validate(
             job, name=name, description=description, scene_text=scene_text
         )
+        cleaned_outfit, cleaned_voice = self._cleaned_outfit_and_voice(outfit, voice)
 
         bible = job.visual_continuity_bible
         assert bible is not None
@@ -293,11 +299,74 @@ class RecurringIdentityService:
             name=cleaned_name,
             canonical_description=cleaned_description,
             is_manual=True,
+            outfit=cleaned_outfit,
+            voice=cleaned_voice,
         )
         bible.identities.append(identity)
         self._set_scenes(job, cleaned_name, scenes)
 
         return identity
+
+    @staticmethod
+    def _cleaned_outfit_and_voice(outfit: str, voice: str) -> tuple[str, str]:
+        cleaned_outfit = " ".join(outfit.split())
+        cleaned_voice = " ".join(voice.split())
+
+        if len(cleaned_outfit) > _MAX_OUTFIT_LENGTH:
+            raise ValueError(
+                f"The outfit is longer than {_MAX_OUTFIT_LENGTH} characters."
+            )
+
+        if len(cleaned_voice) > _MAX_VOICE_LENGTH:
+            raise ValueError(
+                f"The voice is longer than {_MAX_VOICE_LENGTH} characters."
+            )
+
+        return cleaned_outfit, cleaned_voice
+
+    def set_reference_from_file(
+        self, job: VideoJob, name: str, picture_path: str
+    ) -> ReferenceFillResult:
+        """Use a picture the operator uploads (a cast photo, an illustration) as this
+        character's or place's reference, instead of a frame taken from a generated clip.
+        """
+
+        identity = self._identity(job, name)
+        path = Path(picture_path)
+
+        if not path.is_file():
+            raise ValueError("That picture file could not be found.")
+
+        if path.suffix.lower() not in _PICTURE_SUFFIXES:
+            raise ValueError("Choose a PNG, JPG or WebP picture.")
+
+        scenes = self.scenes_of(job, identity.name)
+        storage = AssetStorageService(
+            storage_root=self._storage_root,
+            asset_index=job.extracted_frame_asset_index,
+        )
+        stored = storage.store_extracted_frame(
+            source_path=path,
+            project_id=str(job.id),
+            scene_number=scenes[0] if scenes else 1,
+            title=f"Reference - {identity.name} (uploaded)",
+            metadata={
+                "selection_method": "uploaded_by_operator",
+                "reference_kind": reference_kind_for(identity).value,
+                "named_by_operator": True,
+                "uploaded_by_operator": True,
+                "scene_number": scenes[0] if scenes else 1,
+            },
+        )
+
+        if not stored.success or stored.asset is None:
+            raise ValueError(f"The picture could not be saved: {stored.message}")
+
+        identity.reference_asset_ids = [str(stored.asset.id)]
+
+        return ReferenceFillResult(
+            True, f"{identity.name} will use the picture you uploaded."
+        )
 
     def mark_scenes(self, job: VideoJob, name: str, scene_numbers: list[int]) -> None:
         """Show the character or place `name` (already in the bible, however it got
@@ -325,6 +394,8 @@ class RecurringIdentityService:
         new_name: str,
         description: str,
         scene_text: str,
+        outfit: str | None = None,
+        voice: str | None = None,
     ) -> CanonicalEntityIdentity:
         identity = self._manual_identity(job, name)
         cleaned_name, cleaned_description, scenes = self.validate(
@@ -335,9 +406,18 @@ class RecurringIdentityService:
             existing_name=name,
         )
 
+        # None keeps what the identity has (an edit form that does not show these fields,
+        # or a caller that does not know them, must not blank them).
+        cleaned_outfit, cleaned_voice = self._cleaned_outfit_and_voice(
+            identity.outfit if outfit is None else outfit,
+            identity.voice if voice is None else voice,
+        )
+
         self._remove_from_scenes(job, identity.name)
         identity.name = cleaned_name
         identity.canonical_description = cleaned_description
+        identity.outfit = cleaned_outfit
+        identity.voice = cleaned_voice
         self._set_scenes(job, cleaned_name, scenes)
 
         return identity

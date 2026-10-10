@@ -122,6 +122,7 @@ def dialogue_prompt_text(
     *,
     earlier_speakers: set[str] | None = None,
     environment: str = "",
+    voices: dict[str, str] | None = None,
 ) -> str:
     """The speaking sentences for one scene, or "" for a scene with no dialogue."""
 
@@ -139,6 +140,14 @@ def dialogue_prompt_text(
 
     for index, line in enumerate(lines):
         parts.append(_says(line, first=index == 0))
+
+    # Each speaker's own voice, written once for the character and repeated word for word: it is
+    # what keeps a voice the same from clip to clip, and two voices apart in one clip.
+    for speaker in speakers:
+        voice = (voices or {}).get(speaker, "").strip().rstrip(".")
+
+        if voice:
+            parts.append(f"{speaker}'s voice: {voice}.")
 
     if several:
         faces = "Both faces are" if len(speakers) == 2 else "All faces are"

@@ -18,6 +18,8 @@ from src.services.dialogue_prompt import CONTINUITY_MARKER
 from src.services.enriched_scene_prompt_service import EnrichedScenePromptService
 from src.services.prompt_wording import is_unspecified, relative_words_in
 from src.services.scene_visual_treatment import renders_as_graphic
+from src.services.speech_budget import speech_budget, speech_budget_message
+from src.services.video_provider_rules import rules_for
 
 # A live-action prompt below this many characters cannot hold a place, its light, the action and
 # the camera in concrete words (the Lake Nyos prompts that went wrong were 380-500).
@@ -46,6 +48,7 @@ class FindingCode(str, Enum):
     RELATIVE_WORDING = "relative_wording"
     UNSPECIFIED = "unspecified"
     TOO_SHORT = "too_short"
+    SPEECH_TOO_LONG = "speech_too_long"
 
 
 @dataclass(frozen=True)
@@ -182,14 +185,32 @@ class PromptCompletenessService:
                 ),
             )
 
+            budget = speech_budget(
+                scene,
+                max_clip_seconds=rules_for(job.video_provider).max_single_clip_seconds,
+            )
+
             for entry in entries:
+                findings = check_prompt_text(entry.base_prompt_text, graphic=graphic)
+
+                # Characters speak at most about 2.5 words a second: more than the clip can
+                # carry is rushed. Said once per scene, on its first clip.
+                if (
+                    budget is not None
+                    and budget.over
+                    and entry.clip_sequence_index == 0
+                ):
+                    findings.append(
+                        PromptFinding(
+                            FindingCode.SPEECH_TOO_LONG, speech_budget_message(budget)
+                        )
+                    )
+
                 result.scenes.append(
                     ScenePromptFindings(
                         scene_number=scene.scene_number,
                         clip_sequence_index=entry.clip_sequence_index,
-                        findings=check_prompt_text(
-                            entry.base_prompt_text, graphic=graphic
-                        ),
+                        findings=findings,
                     )
                 )
 

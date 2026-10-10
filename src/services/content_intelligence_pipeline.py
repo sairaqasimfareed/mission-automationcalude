@@ -31,6 +31,7 @@ from src.models.visual_continuity import (
 from src.providers.google_flow.locators import clamp_to_verified_duration
 from src.services.approval_gate_service import ApprovalGateService
 from src.services.audience_promise_service import AudiencePromiseService
+from src.services.character_sheet_service import CharacterSheetService
 from src.services.cinematic_prompt_compilation_service import (
     CinematicPromptCompilationService,
 )
@@ -252,6 +253,11 @@ class ContentIntelligencePipeline:
             estimated_cost_usd=estimated_cost_usd,
         )
         self.project_style_sheet_service = ProjectStyleSheetService(
+            llm_service=llm_service,
+            profile_ids=profile_ids,
+            estimated_cost_usd=estimated_cost_usd,
+        )
+        self.character_sheet_service = CharacterSheetService(
             llm_service=llm_service,
             profile_ids=profile_ids,
             estimated_cost_usd=estimated_cost_usd,
@@ -1434,6 +1440,16 @@ class ContentIntelligencePipeline:
                 "Expanding the identity descriptions failed: %s", type(error).__name__
             )
 
+        # Character-Oriented Video: appearance, outfit and voice for every speaker, drafted
+        # from the script (one call), filling only what is still empty. Best effort.
+        if job.character_oriented:
+            try:
+                self.run_character_sheets(job)
+            except Exception as error:  # noqa: BLE001 - the sheets are an enhancement
+                logger.warning(
+                    "Drafting the character sheets failed: %s", type(error).__name__
+                )
+
         self.approval_gate_service.record_event(
             job=job,
             stage="visual_continuity",
@@ -1444,6 +1460,16 @@ class ContentIntelligencePipeline:
             ),
             category=DecisionCategory.GENERATION,
         )
+
+        return job
+
+    def run_character_sheets(self, job: VideoJob) -> VideoJob:
+        """Draft appearance, outfit and voice for every speaking character (one call) and
+        write them into the people who still lack them. What the operator wrote is kept.
+        """
+
+        sheets = self.character_sheet_service.draft(job)
+        self.character_sheet_service.apply(job, sheets)
 
         return job
 

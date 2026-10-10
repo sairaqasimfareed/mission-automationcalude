@@ -1034,6 +1034,35 @@ section records what changed and why so a later session does not undo it.
     same train", is not the prompt's own relative wording). Not verified live (no Muse credits spent). Not done:
     the speech budget (step 6), Slice 2, the pilot. Tests: `tests/test_speaker_identity.py`,
     `tests/test_dialogue_prompt.py`, `tests/test_prompt_completeness.py`.
+  - **Character-Oriented Video mode, Slice 1 step 6 and Slice 2 (2026-10-09, built unattended overnight):
+    speech budget, character sheets, cast picture upload.** (6) `services/speech_budget.py`: on camera people
+    speak at most about 2.5 words a second (live, 2026-10-08: lines written for ~9.6 s squeezed into 8 s ran at
+    3.5-3.9 words/s); `speech_budget(scene, max_clip_seconds=)` = the scene's words against its planned length
+    capped at the provider's longest clip (Muse 10 s -> 25 words, Flow 8 s -> 20); `PromptCompletenessService`
+    adds `FindingCode.SPEECH_TOO_LONG` (once per scene, on its first clip) with the words, the clip, the rate and
+    what to do - REPORT ONLY, nothing is rewritten or split. NOT built, deliberately: Muse's 10 s length for
+    two-line scenes (it changes how the render trims clips to the narration-sized timeline and where the clip's
+    own speech would be cut - needs the live pilot) and a measured pitch band pre-filling the voice (the pitch
+    tracker was unreliable on the earlier clips). (Slice 2) `CanonicalEntityIdentity.outfit` / `.voice` (the
+    description is the appearance). `CharacterSheetService` (prompt `character_sheet_prompt_v1.0.0`, ONE call for
+    everyone who speaks and still lacks a real appearance / outfit / voice): drafts APPEARANCE, OUTFIT and VOICE
+    (age band, pitch word, tone, enunciation, volume, accent; no speaking-speed numbers) from the script, genre
+    and style sheet; told never to guess gender, age or origin from a name and to make characters distinguishable
+    by look AND voice; `apply` fills ONLY empty fields (the appearance counts as empty while it is the speaker
+    placeholder) so what the operator wrote or edited is never overwritten, and a second apply changes nothing.
+    DECISION, differs from the locked wording ("the operator accepts, edits or discards"): the drafted sheet is
+    applied AUTOMATICALLY inside `run_visual_continuity` for a character project (best effort, after the speakers
+    are linked and the style sheet drafted) and is editable afterwards - the operator's standing requirement is a
+    run with no per-item decisions; revisit if an accept step is wanted. `person_matching.find_person` (shared by
+    the speaker linking and the compiler). The compiler repeats "Appearance. Outfit: ..." in the Identity field
+    and "<Name>'s voice: ..." word for word in the dialogue wording (found under a longer bible name too). Content
+    Studio's characters block: Outfit and Voice fields in the add/edit form, both shown in the listing, an "Upload
+    a picture" button per character or place (`RecurringIdentityService.set_reference_from_file`: PNG/JPG/WebP,
+    stored like an extracted frame, replaces the reference, plain errors for a missing file / wrong type / unknown
+    name) and, for a character project, "Draft appearance, outfit and voice from my script". `add` / `update`
+    take outfit and voice (limits 400 / 500; `update` keeps them when the caller gives None). Not verified live
+    (no Muse, ElevenLabs or Claude credits were spent; the 3-scene pilot is NOT run). Tests:
+    `tests/test_speech_budget.py`, `tests/test_character_sheet.py`.
   - **A reference picture the operator picks for ONE scene (2026-10-08, live: Lake Nyos
     village).** A character/place has one reference for every scene it is marked in; a scene that
     names none (stretches of village footage) had nothing to carry its scenery and light from the

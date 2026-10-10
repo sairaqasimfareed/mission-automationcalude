@@ -73,6 +73,12 @@ class CanonicalEntityIdentity(MissionBaseModel):
     # this marks the ones the operator can edit and remove.
     is_manual: bool = False
 
+    # Character-Oriented Video: what a person wears and how they sound, repeated word for word
+    # in every scene they speak in (the voice comes only from the prompt - Muse has no voice-ID
+    # input). Empty = not written. canonical_description is the appearance.
+    outfit: str = ""
+    voice: str = ""
+
     @field_validator("name", "canonical_description")
     @classmethod
     def clean_text(cls, value: str) -> str:
@@ -82,6 +88,11 @@ class CanonicalEntityIdentity(MissionBaseModel):
             raise ValueError("Canonical entity identity text cannot be empty.")
 
         return cleaned
+
+    @field_validator("outfit", "voice")
+    @classmethod
+    def clean_optional_text(cls, value: str) -> str:
+        return " ".join(value.split())
 
 
 class ClipContinuityEntry(MissionBaseModel):

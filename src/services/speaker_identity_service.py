@@ -19,6 +19,7 @@ import logging
 from src.models.dialogue import speakers_in
 from src.models.video_job import VideoJob
 from src.models.visual_continuity import CanonicalEntityIdentity, CanonicalEntityType
+from src.services.person_matching import find_person
 from src.services.recurring_identity_service import (
     RecurringIdentityService,
     format_scene_numbers,
@@ -55,36 +56,9 @@ class SpeakerIdentityService:
 
     @staticmethod
     def find_identity(job: VideoJob, speaker: str) -> CanonicalEntityIdentity | None:
-        """The person in the bible this speaker is: the same name, or the same first name
-        where one name continues the other ("Walter" and "Walter Hale"). More than one
-        candidate is no match - guessing would put a line in the wrong character's mouth.
-        """
+        """The person in the bible this speaker is (see person_matching.find_person)."""
 
-        bible = job.visual_continuity_bible
-
-        if bible is None:
-            return None
-
-        people = [
-            identity
-            for identity in bible.identities
-            if identity.entity_type == CanonicalEntityType.PERSON
-        ]
-        wanted = speaker.lower().split()
-
-        exact = [i for i in people if i.name.lower().split() == wanted]
-
-        if exact:
-            return exact[0]
-
-        partial = [
-            i
-            for i in people
-            if (theirs := i.name.lower().split())
-            and (theirs[: len(wanted)] == wanted or wanted[: len(theirs)] == theirs)
-        ]
-
-        return partial[0] if len(partial) == 1 else None
+        return find_person(job.visual_continuity_bible, speaker)
 
     def link(self, job: VideoJob) -> list[str]:
         """Add or mark every speaker. Returns the names of the people now linked.
