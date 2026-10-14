@@ -1045,8 +1045,8 @@ ElevenLabs credits; ElevenLabs was at zero on 2026-10-07).
   Not measured: whether the genre direction actually makes a real horror clip look different from a documentary one -
   that needs a real Muse/Flow generation (credits), not yet run.
 
-- Scene visuals (2026-10-10): the "Suggest visuals" button (Claude proposing a visual per scene for the operator to
-  accept) is not built, nor is loading the table from a .txt file. After applying visuals the shot plan and the written
+- Scene visuals (2026-10-10): loading the table from a .txt file is not built ("Write visuals with Claude" was built
+  2026-10-14). After applying visuals the shot plan and the written
   scene text still describe the earlier visuals until "Save and rebuild" (or their own buttons) runs; the compiled
   prompts carry them at once. A scene collecting three or more pasted rows is flagged only. Editing directions inside a
   visual (a title card, "hard cut to black", "montage", "match cut") are passed to the generator as written; a single

@@ -113,6 +113,10 @@ from src.services.scene_visual_matching_service import (
     RowStatus,
     SceneVisualMatchingService,
 )
+from src.services.scene_visual_writer_service import (
+    VisualRange,
+    default_range_for,
+)
 from src.services.topic_candidate_generation_service import (
     TopicCandidateGenerationService,
 )
@@ -451,6 +455,10 @@ class ContentStudioView(QWidget):
         self._visual_match: MatchResult | None = None
         self._visual_match_plan: SceneVisualPlan | None = None
         self._visual_message = ""
+        self._visual_info = ""
+        self._visual_before_improve: dict[int, str] = {}
+        self._visual_range: VisualRange | None = None
+        self._visual_range_select: QComboBox | None = None
         self._visual_drafts: dict[int, str] = {}
         self._visual_editors: dict[int, QTextEdit] = {}
         self._visual_assign_selects: dict[int, QComboBox] = {}
@@ -5461,6 +5469,39 @@ class ContentStudioView(QWidget):
             )
         )
 
+        layout.addWidget(
+            small_muted(
+                "Or let Claude write them. It fills only the empty boxes below, nothing is saved "
+                "until you press Save visuals, and a scene it would show plainly stays empty."
+            )
+        )
+        range_row = QHBoxLayout()
+        range_select = QComboBox()
+        range_select.addItem(
+            "Stay with the story - only what the script says", VisualRange.STORY_ONLY
+        )
+        range_select.addItem(
+            "Cinematic - add glimpses and atmosphere that serve the genre",
+            VisualRange.CINEMATIC,
+        )
+        chosen_range = self._visual_range or default_range_for(job.genre_id)
+        range_select.setCurrentIndex(max(range_select.findData(chosen_range), 0))
+        range_select.currentIndexChanged.connect(
+            lambda _index: setattr(self, "_visual_range", range_select.currentData())
+        )
+        self._visual_range_select = range_select
+        write_button = button("Write visuals with Claude", variant="primary")
+        write_button.clicked.connect(self._handle_write_visuals)
+        range_row.addWidget(range_select)
+        range_row.addWidget(write_button)
+        range_row.addStretch()
+        layout.addLayout(range_row)
+
+        if self._visual_info:
+            layout.addWidget(small_muted(self._visual_info))
+
+        layout.addWidget(separator())
+
         paste = QTextEdit()
         paste.setPlaceholderText(
             "Paste the table here - columns: narration, then what is on screen. A header row "
@@ -5614,12 +5655,34 @@ class ContentStudioView(QWidget):
         revision = plan.revision if plan is not None else ""
 
         if shot_plan is not None and shot_plan.visual_revision != revision:
+            behind = (
+                "The shot plan and the written scene text were made with visuals that have "
+                "since been removed or changed. The compiled prompts already follow the "
+                'visuals saved now; use "Save and rebuild" (or regenerate the shot plan and '
+                "the scene text) so the rest follows."
+                if plan is None
+                else "The shot plan and the written scene text were made before these "
+                'visuals. The compiled prompts already carry them; use "Save and '
+                'rebuild" (or regenerate the shot plan and the scene text) so the '
+                "rest follows."
+            )
+            layout.addWidget(status_label(behind, role="warning"))
+
+        unsaved = [
+            scene.scene_number
+            for scene in job.scenes
+            if self._visual_drafts.get(
+                scene.scene_number, current.get(scene.scene_number, "")
+            ).strip()
+            != current.get(scene.scene_number, "").strip()
+        ]
+
+        if unsaved:
             layout.addWidget(
                 status_label(
-                    "The shot plan and the written scene text were made before these "
-                    'visuals. The compiled prompts already carry them; use "Save and '
-                    'rebuild" (or regenerate the shot plan and the scene text) so the '
-                    "rest follows.",
+                    f"The box(es) of scene(s) {format_scene_numbers(unsaved)} hold text that "
+                    'is not saved yet. Press "Save visuals" (or "Save and rebuild") to keep '
+                    "it.",
                     role="warning",
                 )
             )
@@ -5658,6 +5721,11 @@ class ContentStudioView(QWidget):
             self._visual_editors[number] = editor
             layout.addWidget(editor)
 
+        # The result of the last Write / Check action, repeated here: the buttons are far below the
+        # top of a long list of boxes, and a message only at the top was never seen (live, 2026-10-14).
+        if self._visual_info:
+            layout.addWidget(status_label(self._visual_info, role="success"))
+
         row = QHBoxLayout()
         save_button = button("Save visuals", variant="primary")
         save_button.clicked.connect(lambda: self._handle_save_visuals(False))
@@ -5665,14 +5733,208 @@ class ContentStudioView(QWidget):
             "Save and rebuild shots, scene text and prompts", variant="ghost"
         )
         rebuild_button.clicked.connect(lambda: self._handle_save_visuals(True))
+        improve_button = button("Check and improve visuals", variant="ghost")
+        improve_button.clicked.connect(self._handle_improve_visuals)
         clear_button = button("Remove all visuals", variant="ghost")
         clear_button.setEnabled(plan is not None)
         clear_button.clicked.connect(self._handle_clear_visuals)
         row.addWidget(save_button)
         row.addWidget(rebuild_button)
+        row.addWidget(improve_button)
+
+        if self._visual_before_improve:
+            undo_button = button("Undo the improvements", variant="ghost")
+            undo_button.clicked.connect(self._handle_undo_improvements)
+            row.addWidget(undo_button)
+
         row.addWidget(clear_button)
         row.addStretch()
         layout.addLayout(row)
+
+    def _box_text(self, job: VideoJob, scene_number: int) -> str:
+        """What a scene's visual box holds right now (typed text, else a draft, else the saved one)."""
+
+        editor = self._visual_editors.get(scene_number)
+
+        if editor is not None:
+            return editor.toPlainText().strip()
+
+        return self._visual_drafts.get(
+            scene_number, job.current_scene_visuals.get(scene_number, "")
+        ).strip()
+
+    def _handle_write_visuals(self) -> None:
+        """Ask Claude to write the visual of every scene whose box is empty. The proposals go into
+        the boxes unsaved; a box the operator filled, or a saved visual, is never touched.
+        """
+
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        empty = [
+            scene.scene_number
+            for scene in sorted(job.scenes, key=lambda s: s.scene_number)
+            if not self._box_text(job, scene.scene_number)
+        ]
+
+        if not empty:
+            self._visual_info = "Every scene already has a visual. Clear a box to have Claude write that one again."
+            self.refresh(job)
+
+            return
+
+        selected = self._visual_range or default_range_for(job.genre_id)
+        asked = list(empty)
+        proposals: dict[int, str] = {}
+
+        def runner(target: VideoJob) -> VideoJob:
+            proposals.update(
+                self._content_intelligence_pipeline.write_scene_visuals(
+                    target, visual_range=selected, scene_numbers=asked
+                )
+            )
+
+            return target
+
+        def done() -> None:
+            current_job = self._current_job()
+
+            if current_job is None:
+                return
+
+            applied = 0
+
+            for number, text in proposals.items():
+                # The boxes were just redrawn: only a box that is STILL empty receives a proposal.
+                if not self._box_text(current_job, number):
+                    self._visual_drafts[number] = text
+                    applied += 1
+
+            plain = len(asked) - len(proposals)
+            self._visual_info = (
+                f"Claude wrote {applied} visual(s) into the empty boxes - read or edit them, then press "
+                "Save visuals. "
+                + (
+                    f"{plain} scene(s) were left empty because Claude would show them plainly; they are "
+                    "described from their narration."
+                    if plain > 0
+                    else ""
+                )
+            ).strip()
+            self.refresh(current_job)
+
+        self._run_stage(
+            job,
+            runner,
+            label="writing the scene visuals",
+            failure="Could not write the scene visuals",
+            retry=self._handle_write_visuals,
+            on_done=done,
+        )
+
+    def _handle_improve_visuals(self) -> None:
+        """Check the visuals in the boxes (free) and, when some have problems a video generator cannot
+        use, have Claude rewrite ONLY those scenes (one short call). The rewrites go into the boxes
+        unsaved and can be undone; a box edited while Claude was working is left alone.
+        """
+
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        texts = {
+            scene.scene_number: self._box_text(job, scene.scene_number)
+            for scene in job.scenes
+        }
+        texts = {number: text for number, text in texts.items() if text}
+
+        if not texts:
+            self._visual_info = (
+                "There are no visuals to check yet. Write, paste or type some first."
+            )
+            self.refresh(job)
+
+            return
+
+        flagged = self._content_intelligence_pipeline.check_scene_visuals(texts)
+
+        if not flagged:
+            self._visual_info = (
+                f"Checked {len(texts)} visual(s): no problems found (editing words, text in the picture, "
+                "too long, several moments in one clip, references to another scene, repeated effects)."
+            )
+            self.refresh(job)
+
+            return
+
+        results: dict[int, str] = {}
+
+        def runner(target: VideoJob) -> VideoJob:
+            rewritten, _issues = (
+                self._content_intelligence_pipeline.improve_scene_visuals(target, texts)
+            )
+            results.update(rewritten)
+
+            return target
+
+        def done() -> None:
+            current_job = self._current_job()
+
+            if current_job is None:
+                return
+
+            before: dict[int, str] = {}
+
+            for number, new_text in results.items():
+                # Only a box still holding what was checked is replaced.
+                if self._box_text(current_job, number) == texts[number]:
+                    before[number] = texts[number]
+                    self._visual_drafts[number] = new_text
+
+            self._visual_before_improve = before
+            unresolved = [n for n in flagged if n not in before]
+            kinds = sorted(
+                {issue.kind.value for issues in flagged.values() for issue in issues}
+            )
+            self._visual_info = (
+                f"Checked {len(texts)} visual(s): {len(flagged)} had problems ({', '.join(kinds)}). "
+                f"Claude rewrote {len(before)} scene(s) ({format_scene_numbers(list(before))}) into the "
+                "boxes - not saved yet; press Undo to bring the originals back."
+                if before
+                else f"Checked {len(texts)} visual(s): {len(flagged)} had problems ({', '.join(kinds)}), "
+                "but Claude could not improve them."
+            )
+
+            if before and unresolved:
+                self._visual_info += f" Scene(s) {format_scene_numbers(unresolved)} still have problems - edit them by hand."
+
+            self.refresh(current_job)
+
+        self._run_stage(
+            job,
+            runner,
+            label="improving the scene visuals",
+            failure="Could not improve the scene visuals",
+            retry=self._handle_improve_visuals,
+            on_done=done,
+        )
+
+    def _handle_undo_improvements(self) -> None:
+        job = self._current_job()
+
+        if job is None or not self._visual_before_improve:
+            return
+
+        for number, text in self._visual_before_improve.items():
+            self._visual_drafts[number] = text
+
+        restored = format_scene_numbers(list(self._visual_before_improve))
+        self._visual_before_improve = {}
+        self._visual_info = f"Brought back the original visuals of scene(s) {restored}."
+        self.refresh(job)
 
     def _handle_match_visuals(self) -> None:
         job = self._current_job()

@@ -1222,6 +1222,59 @@ section records what changed and why so a later session does not undo it.
     render is unchanged. Findings left as they are (see REMAINING_GAPS): a genre applies ONE transition preset to every
     boundary (horror: `fade_black`, 0.8 s), nothing chooses a transition from a scene's content, the shot plan's own
     `transition_in`/`transition_out` words are never read, and the Timeline tab cannot force a hard cut.
+  - **Claude writes the scene visuals (2026-10-14).** The third way into the Scene visuals tab, beside pasting a table and
+    typing: "Write visuals with Claude" (`SceneVisualWriterService`, prompt v1.0.0, 12 scenes per call;
+    `ContentIntelligencePipeline.write_scene_visuals`). It was asked for once Haiku 5.5 made a rebuild cost cents. The
+    prompt carries the whole script for context, the genre treatment, the project style sheet, the project's known
+    people and places (so names stay the same across scenes) and an accepted opening image, and asks for one or two
+    plain sentences (at most 45 words) of what one clip SEES, or NONE for a scene best shown plainly. The operator
+    chooses a range: STAY WITH THE STORY (only what the script names or clearly implies; no added creature, person or
+    event) or CINEMATIC (atmosphere and half-seen glimpses that serve the genre, never changing what the script claims;
+    a presence half-seen, in about one scene in four, described the same way each time); it starts on CINEMATIC for
+    horror and mystery and STORY_ONLY otherwise (`default_range_for`). Proposals are returned, never stored on the job:
+    the screen puts them in the scene boxes UNSAVED (the operator reads, edits and presses Save visuals), and it asks
+    only for scenes whose box is empty - a box the operator typed in and a saved visual are never sent or overwritten
+    (a box filled while Claude was writing keeps the operator's text). Editing words ("hard cut", "montage", "title
+    card", "fade in", "flash frames") are stripped out of a proposal, a reply is read in the separate-line and inline
+    (`SCENE 5 VISUAL: ...`) forms, a failed batch keeps the others, and a call that fails or returns nothing changes no
+    box. Not done: a "rewrite this one scene" button (clear its box and write again); a consistency pass that checks a
+    recurring creature is described the same way in every scene; whether CINEMATIC visuals survive Muse/Flow
+    refusals on real clips. Tests: `tests/test_scene_visual_writer.py`.
+    **Made stronger the same day (prompt v1.1.0), after comparing it with a table written outside the app on
+    Haunted wife** (cost of the first writer run about $0.0013): the writer had put the cold museum gallery into
+    three scenes set in ancient Egypt (it was sent the style sheet's setting, which names BOTH worlds), showed the
+    unseen wife clearly in about 8 of 18 scenes against a rule of one in four, wrote atmosphere where the narration
+    names a specific event, and called people by the project's labels ("The Unnamed Letter Writer"). Now: it is sent
+    only the style sheet's colour palette and camera feel, and each scene carries its own `[set in: ...]` place from
+    the continuity bible (decided from the narration when there is no bible); the whole script goes in ONE call (up to
+    40 scenes, `BATCH_SIZE`) so a presence can be paced across the video; in the CINEMATIC range it labels each
+    scene `none | effect | glimpse` and at most one scene in four (`glimpse_cap`) may show a visible glimpse - when
+    more do, ONE repair call asks it to keep the ones that matter most and rewrite the rest without any figure,
+    shape, shadow or face (a failed or partial repair keeps the originals and is logged; each batch of a long script
+    gets its share of the cap); a person the script says is dead or unseen is never shown clearly and a scene that
+    merely names her is not a reason to show her; every visual needs one specific event, neighbouring scenes must
+    differ, people are named in plain words, 40 words at most. Not done: a quality score for the proposals, and a
+    check that a recurring presence is described identically in every scene it appears in. Tests:
+    `tests/test_scene_visual_writer_strong.py`.
+  - **Check and improve visuals (2026-10-14).** Found by comparing two visual sets for the same project (a table written
+    outside the app against the app's own Haiku writer): the outside set had the better ideas but 5 of 19 scenes carried
+    editing instructions a clip cannot do ("Hard cut to black", "Montage", "Match cut", a title card, "the shot cuts away"),
+    four held several beats in one clip (two because the matcher joined table rows with "Then"), and three referred to
+    another scene ("the same papyrus", "from the opening", "dents again"); the writer's set was renderable but repeated
+    one effect (a mat that moves by itself) in three scenes and ran long. `SceneVisualReviewService.check` is
+    deterministic and free: editing words, text in the picture, over 48 words, more than 3 sentences or a "Then" joining
+    two images, a reference to another scene, and an effect object (mat, jar, flame, linen, ...) that moves or changes by
+    itself in more than two scenes (the third and later are flagged). `improve` is ONE short call for the flagged scenes
+    only (their narration, place, current text and problems, the other scenes' first 14 words so effects are not
+    repeated); it asks for one continuous moment of at most 40 words, keeping the idea, and for an editing-only visual
+    ("hard cut to black") a renderable equivalent or NONE. The pipeline exposes `check_scene_visuals` and
+    `improve_scene_visuals`; the tab's "Check and improve visuals" button runs them on what is in the BOXES (pasted,
+    typed or written by Claude), puts the rewrites in the boxes unsaved, names the scenes it could not fix, and an "Undo
+    the improvements" button restores the originals; a box edited while Claude worked is left alone. The writer now
+    polishes its own output with the same two steps (a failed polish keeps the proposals), and its prompt (v1.1.0 text)
+    gained example images from an unrelated story (so they lend no props), a rule that the first scene is the most
+    arresting image and the last lands the final beat, and a limit of two scenes per effect. Not done: a quality score,
+    and rewriting the scenes that two table rows were joined into. Tests: `tests/test_scene_visual_review.py`.
   - **Story treatment: a proposed opening image and one recurring presence (2026-10-10, built after the genre mood).**
     Opt-in and manual only (not in `run_all`; nothing is applied on its own). "Suggest an opening and a recurring
     presence" in Content Studio's characters section runs `ContentIntelligencePipeline.run_story_treatment` (one call,

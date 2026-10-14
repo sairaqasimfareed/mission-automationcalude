@@ -79,6 +79,14 @@ from src.services.research_planning_service import ResearchPlanningService
 from src.services.retention_audit_service import RetentionAuditService
 from src.services.scene_detail_service import SceneDetailService
 from src.services.scene_sound_design_service import SceneSoundDesignService
+from src.services.scene_visual_review_service import (
+    SceneVisualReviewService,
+    VisualIssue,
+)
+from src.services.scene_visual_writer_service import (
+    SceneVisualWriterService,
+    VisualRange,
+)
 from src.services.script_generation_service import ScriptGenerationService
 from src.services.script_intake_service import ScriptIntakeService
 from src.services.script_lock_service import ScriptLockService
@@ -271,6 +279,16 @@ class ContentIntelligencePipeline:
             estimated_cost_usd=estimated_cost_usd,
         )
         self.identity_detail_service = IdentityDetailService(
+            llm_service=llm_service,
+            profile_ids=profile_ids,
+            estimated_cost_usd=estimated_cost_usd,
+        )
+        self.scene_visual_review_service = SceneVisualReviewService(
+            llm_service=llm_service,
+            profile_ids=profile_ids,
+            estimated_cost_usd=estimated_cost_usd,
+        )
+        self.scene_visual_writer_service = SceneVisualWriterService(
             llm_service=llm_service,
             profile_ids=profile_ids,
             estimated_cost_usd=estimated_cost_usd,
@@ -1599,6 +1617,67 @@ class ContentIntelligencePipeline:
             plan.details = [d for d in plan.details if d.scene_number != first]
 
         return self.run_scene_detail(job)
+
+    def write_scene_visuals(
+        self,
+        job: VideoJob,
+        *,
+        visual_range: VisualRange,
+        scene_numbers: list[int] | None = None,
+    ) -> dict[int, str]:
+        """Ask Claude what the given scenes (all by default) should SHOW and return the proposals,
+        {scene number: visual}. Nothing is stored on the job: the screen puts them in the scene boxes
+        unsaved and the operator saves what they keep (`apply_scene_visuals`). One short call per
+        batch of scenes."""
+
+        if not job.scenes:
+            raise RuntimeError("Writing visuals needs planned scenes.")
+
+        written = self.scene_visual_writer_service.write(
+            job, visual_range=visual_range, scene_numbers=scene_numbers
+        )
+
+        # The same check the operator can run on any visuals: a proposal that is too long, refers to
+        # another scene or repeats an effect is rewritten (one short call) before it is shown. Best
+        # effort - a failed polish keeps the proposals as written.
+        try:
+            rewritten, _issues = self.improve_scene_visuals(job, written)
+        except RuntimeError as error:
+            logger.warning(
+                "Polishing the written visuals failed; keeping them as written: %s",
+                error,
+            )
+
+            return written
+
+        return {**written, **rewritten}
+
+    def check_scene_visuals(
+        self, visuals: dict[int, str]
+    ) -> dict[int, list[VisualIssue]]:
+        """{scene number: problems} for visuals a video generator cannot use well (editing words, text,
+        too long, several moments, a reference to another scene, a repeated effect). Free: no model
+        call."""
+
+        return self.scene_visual_review_service.check(visuals)
+
+    def improve_scene_visuals(
+        self, job: VideoJob, visuals: dict[int, str]
+    ) -> tuple[dict[int, str], dict[int, list[VisualIssue]]]:
+        """Rewrite ONLY the scenes `check_scene_visuals` flags (one short call): returns the new
+        texts and the problems that were found. Nothing is stored on the job; the screen puts the
+        rewrites in the boxes unsaved. Returns ({}, {}) without a call when nothing is flagged.
+        """
+
+        flagged = self.check_scene_visuals(visuals)
+
+        if not flagged:
+            return {}, {}
+
+        return (
+            self.scene_visual_review_service.improve(job, visuals, flagged),
+            flagged,
+        )
 
     def apply_scene_visuals(
         self, job: VideoJob, plan: SceneVisualPlan | None
