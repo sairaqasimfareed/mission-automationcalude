@@ -195,6 +195,9 @@ class MediaGenerationPipeline:
 
             # The voice was just regenerated, so any earlier real duration
             # on a scene is stale: re-read every scene's from its new track.
+            # (The new timeline replaces any that was marked stale by scene re-planning, so that
+            # flag is cleared first - a stale timeline is never read for lengths.)
+            self.invalidation_service.clear_stale(job, "audio_timeline")
             sync_real_narration_durations(job, overwrite=True)
 
             job.voice_file = results[0].output_file

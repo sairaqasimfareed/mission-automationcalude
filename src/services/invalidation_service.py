@@ -34,6 +34,13 @@ _SCENE_REPLACEMENT_DOWNSTREAM = (
     "render_result",
 )
 
+_SCENES_REPLANNED_DOWNSTREAM = (
+    # Scene-number keyed: the voiceover (one track per old scene) and everything built on it.
+    "audio_timeline",
+    "video_timeline",
+    "render_result",
+)
+
 _AUDIO_REGENERATION_DOWNSTREAM = (
     # video_timeline is deliberately excluded: GenreTimelinePipelineService
     # builds it purely from scenes/clips/genre_id - it embeds no audio
@@ -79,6 +86,16 @@ class InvalidationService:
             _SCENE_REPLACEMENT_DOWNSTREAM,
             reason=message,
             triggered_by="scene_replacement",
+        )
+
+    def on_scenes_replanned(
+        self, job: VideoJob, *, reason: str = "Scenes were planned again."
+    ) -> list[StaleArtifact]:
+        return self._mark_stale(
+            job,
+            _SCENES_REPLANNED_DOWNSTREAM,
+            reason=reason,
+            triggered_by="scene_replanning",
         )
 
     def on_audio_regenerated(

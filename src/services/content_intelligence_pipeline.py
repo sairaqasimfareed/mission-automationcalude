@@ -4,7 +4,7 @@ from collections.abc import Callable
 from uuid import UUID
 
 from src.agents.research_agent.agent import ResearchAgent
-from src.agents.scene_planner.agent import ScenePlannerAgent
+from src.agents.scene_planner.agent import MergeSettings, ScenePlannerAgent
 from src.models.approval import ApprovalDecision, HumanApprovalAction
 from src.models.automation_status import AutomationStatus
 from src.models.clip_materialization import ClipMaterializationStatus
@@ -16,7 +16,7 @@ from src.models.production_handoff import (
     ProductionHandoffState,
     ProductionHandoffStatus,
 )
-from src.models.scene_visual import SceneVisualPlan
+from src.models.scene_visual import SceneVisualPlan, narration_key
 from src.models.script_intake import ScriptIntakeMode
 from src.models.script_lock import ScriptProvenance
 from src.models.script_production_readiness import ScriptProductionReadinessReport
@@ -62,6 +62,7 @@ from src.services.information_reveal_planning_service import (
 )
 from src.services.invalidation_service import InvalidationService
 from src.services.llm.llm_service import LLMService
+from src.services.narration_duration_sync_service import sync_real_narration_durations
 from src.services.narrative_compression_service import NarrativeCompressionService
 from src.services.packaging_hypothesis_service import PackagingHypothesisService
 from src.services.production_ambiguity_service import ProductionAmbiguityService
@@ -109,6 +110,7 @@ from src.services.story_blueprint_generation_service import (
 )
 from src.services.story_treatment_service import StoryTreatmentService
 from src.services.top10_rank_assignment_service import TopTenRankAssignmentService
+from src.services.video_provider_rules import merge_target_seconds
 from src.services.visual_continuity_service import VisualContinuityService
 from src.services.visual_continuity_validation_service import (
     VisualContinuityValidationService,
@@ -2011,6 +2013,98 @@ class ContentIntelligencePipeline:
 
         return job
 
+    @staticmethod
+    def scene_merge_settings(job: VideoJob) -> MergeSettings | None:
+        """None (the normal plan) unless the project has asked for short scenes to be merged."""
+
+        if not job.merge_short_scenes:
+            return None
+
+        return MergeSettings(
+            target_seconds=merge_target_seconds(job.video_provider),
+            keep_beats=job.keep_beat_lines,
+        )
+
+    def set_scene_merge(
+        self, job: VideoJob, *, enabled: bool, keep_beats: bool
+    ) -> VideoJob:
+        """Remember the project's merge choice. It takes effect the next time scenes are planned."""
+
+        job.merge_short_scenes = enabled
+        job.keep_beat_lines = keep_beats
+
+        return job
+
+    def preview_scene_merge(self, job: VideoJob) -> tuple[int, int] | None:
+        """Free: (scenes planned normally, scenes planned with merging on), or None when there
+        is no script yet. Plans twice in memory and changes nothing."""
+
+        if job.generated_script is None:
+            return None
+
+        editorial_profile = job.editorial_profile_snapshot or (
+            self.resolve_editorial_profile(job)
+        )
+        settings = MergeSettings(
+            target_seconds=merge_target_seconds(job.video_provider),
+            keep_beats=job.keep_beat_lines,
+        )
+        normal = self.scene_planner.plan_from_generated_script(
+            job.generated_script, editorial_profile
+        )
+        merged = self.scene_planner.plan_from_generated_script(
+            job.generated_script, editorial_profile, merge=settings
+        )
+
+        return len(normal), len(merged)
+
+    def _detach_replanned_scene_artifacts(
+        self, job: VideoJob, previous_keys: dict[int, str]
+    ) -> None:
+        """
+        Planning again (merging on or off, a changed script) renumbers scenes, but the voiceover,
+        clip records and per-scene overrides are keyed by scene NUMBER - left alone they land on
+        whatever scene now has that number (a merged scene taking the 1.8s of an old short one).
+        Records of a scene whose narration changed or that no longer exists are dropped; scenes
+        that came out identical keep theirs. A changed voiceover is marked stale, to be made again.
+        """
+
+        if not previous_keys:
+            return
+
+        current_keys = {
+            scene.scene_number: narration_key(scene.narration) for scene in job.scenes
+        }
+        changed = {
+            number
+            for number, key in previous_keys.items()
+            if current_keys.get(number) != key
+        }
+
+        if not changed:
+            return
+
+        job.scene_asset_states = [
+            state
+            for state in job.scene_asset_states
+            if state.scene_number not in changed
+        ]
+        job.video_clips = [
+            clip for clip in job.video_clips if clip.scene_number not in changed
+        ]
+        job.scene_editing_overrides = {
+            number: override
+            for number, override in job.scene_editing_overrides.items()
+            if number not in changed
+        }
+        self.invalidation_service.on_scenes_replanned(
+            job,
+            reason=(
+                "Scenes were planned again and scene(s) "
+                f"{format_scene_numbers(sorted(changed))} changed."
+            ),
+        )
+
     def run_scene_planning(self, job: VideoJob) -> VideoJob:
         """
         Stage 12: break the finished script into genre-aware scenes
@@ -2027,10 +2121,19 @@ class ContentIntelligencePipeline:
             self.resolve_editorial_profile(job)
         )
 
+        previous_keys = {
+            scene.scene_number: narration_key(scene.narration) for scene in job.scenes
+        }
+
         job.scenes = self.scene_planner.plan_from_generated_script(
             job.generated_script,
             editorial_profile,
+            merge=self.scene_merge_settings(job),
         )
+        self._detach_replanned_scene_artifacts(job, previous_keys)
+        # New scene objects start without real lengths: re-read them from a voiceover that still
+        # matches (never from one just marked stale).
+        sync_real_narration_durations(job)
 
         if job.script_lock is not None:
             # Post-Script-Approval Production Plan, Phase 0: "All

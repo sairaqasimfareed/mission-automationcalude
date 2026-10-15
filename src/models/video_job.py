@@ -464,6 +464,12 @@ class VideoJob(MissionBaseModel):
     # genre-agnostic opt-in).
     top10_countdown_include_numbering_voiceover: bool = True
 
+    # Scene planning: merge short neighbouring scenes into fewer, longer clips so fewer clips
+    # have to be generated. Off = the planner behaves exactly as it always did. keep_beat_lines
+    # leaves a one-line dramatic beat (a whole segment of four words or fewer) as its own scene.
+    merge_short_scenes: bool = False
+    keep_beat_lines: bool = True
+
     # Content-aware sound design (scene-specific SFX cues + a music
     # mood curve, generated from the actual script) - optional. None
     # means the render pipeline falls back to genre-level

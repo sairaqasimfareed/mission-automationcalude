@@ -1066,6 +1066,15 @@ ElevenLabs credits; ElevenLabs was at zero on 2026-10-07).
   transition length have the same audio drift. (3) The shot plan's `transition_in`/`transition_out` text is unused.
   (4) A genre has one preset for all boundaries; nothing picks per scene from content or tension.
 
+- Merge short scenes (2026-10-15): the target (Muse 9 s, Flow 7 s) uses the 2.3 words/second estimate; the real voice
+  can run longer, in which case a merged scene needs the existing multi-clip split. Not measured on a real merged
+  project end to end (shot plan to generated clip). A merged scene's visual must pick one moment (the visual review
+  flags several); no "merge only the very short ones" threshold, and cross-segment merging blends beats (the most tense
+  piece wins). After planning again the voiceover must be made again (it is marked stale, not reused - there is no
+  per-scene voice reuse for scenes that did not change), and a clip's reference frame taken from a scene that was
+  dropped is not removed from the continuity bible. A place reference taken from a scene's own clip is also attached to
+  that scene on regeneration (seen on Haunted wife scene 2) - not investigated.
+
 ## Explicitly out of scope
 
 - Google Flow, or any browser automation targeting Google Flow's web UI.

@@ -459,6 +459,8 @@ class ContentStudioView(QWidget):
         self._visual_before_improve: dict[int, str] = {}
         self._visual_range: VisualRange | None = None
         self._visual_range_select: QComboBox | None = None
+        self._merge_short_scenes_box: QCheckBox | None = None
+        self._keep_beat_lines_box: QCheckBox | None = None
         self._visual_drafts: dict[int, str] = {}
         self._visual_editors: dict[int, QTextEdit] = {}
         self._visual_assign_selects: dict[int, QComboBox] = {}
@@ -5425,7 +5427,79 @@ class ContentStudioView(QWidget):
 
         return True
 
+    def _render_scene_merge_controls(self, layout: QVBoxLayout, job: VideoJob) -> None:
+        """The switch to read BEFORE running scene planning: fold short neighbouring scenes into
+        fewer, longer clips (fewer clips to generate). Off = planning works exactly as before.
+        """
+
+        merge_box = QCheckBox("Merge short scenes into fewer, longer clips")
+        merge_box.setChecked(job.merge_short_scenes)
+        beats_box = QCheckBox("Keep one-line beats as their own scene")
+        beats_box.setChecked(job.keep_beat_lines)
+        beats_box.setEnabled(job.merge_short_scenes)
+        self._merge_short_scenes_box = merge_box
+        self._keep_beat_lines_box = beats_box
+
+        def save_choice() -> None:
+            self._handle_scene_merge_changed(
+                merge_box.isChecked(), beats_box.isChecked()
+            )
+
+        merge_box.toggled.connect(lambda _checked: save_choice())
+        beats_box.toggled.connect(lambda _checked: save_choice())
+        layout.addWidget(merge_box)
+        layout.addWidget(beats_box)
+        layout.addWidget(
+            small_muted(
+                "Off: scenes are planned as usual. On: neighbouring scenes whose narration is "
+                "short are joined, as long as they still fit one clip. Spoken exchanges are "
+                "never merged. Takes effect the next time you run scene planning."
+            )
+        )
+
+        if job.merge_short_scenes:
+            counts = self._content_intelligence_pipeline.preview_scene_merge(job)
+
+            if counts is not None:
+                normal, merged = counts
+                layout.addWidget(
+                    small_muted(
+                        f"Preview: {normal} scenes planned as usual, {merged} with merging "
+                        f"({normal - merged} fewer clips to generate)."
+                    )
+                )
+
+        if job.scenes:
+            layout.addWidget(
+                small_muted(
+                    "Scenes are already planned. Running scene planning again replaces them, so "
+                    "the look guide, shot plan, scene details and visuals built on the old scenes "
+                    "need to be rebuilt."
+                )
+            )
+
+        layout.addWidget(separator())
+
+    def _handle_scene_merge_changed(self, enabled: bool, keep_beats: bool) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        pipeline = self._content_intelligence_pipeline
+
+        self._run_stage(
+            job,
+            lambda target: pipeline.set_scene_merge(
+                target, enabled=enabled, keep_beats=keep_beats
+            ),
+            label="saving the scene merge choice",
+            failure="Could not save the scene merge choice",
+        )
+
     def _render_scene_planning_panel(self, layout: QVBoxLayout, job: VideoJob) -> bool:
+        self._render_scene_merge_controls(layout, job)
+
         if not job.scenes:
             can_run = job.generated_script is not None
             layout.addWidget(

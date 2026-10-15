@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass, field
 
 from src.models.editorial_profile import EditorialProfile
 from src.models.generated_script import GeneratedScript, ScriptSegment
@@ -94,6 +95,37 @@ _MAXIMUM_SCENE_DURATION_SECONDS = 8
 # _MINIMUM_SCENE_DURATION_SECONDS above already established for the
 # legacy plan() path, not a new design decision.
 _MINIMUM_FLOW_SCENE_DURATION_SECONDS = 4
+
+# A segment of this many words or fewer is a deliberate one-line dramatic beat ("Nobody
+# answered."). With MergeSettings.keep_beats it is never folded into a neighbour.
+_BEAT_LINE_MAX_WORDS = 4
+
+# Genres where every scene is one list item (a countdown rank card); merging would break the
+# one-scene-per-item structure.
+_NEVER_MERGED_GENRES = frozenset({"genre.top10"})
+
+
+@dataclass(frozen=True)
+class MergeSettings:
+    """Fold short neighbouring scenes into fewer, longer ones. ``target_seconds`` is the longest
+    a merged scene's narration may run; ``keep_beats`` leaves one-line beats as their own scene.
+    """
+
+    target_seconds: float
+    keep_beats: bool = True
+
+
+@dataclass
+class _Unit:
+    """One planned scene before numbering - the stage where short neighbours can still join."""
+
+    segment: ScriptSegment
+    narration: str
+    duration_seconds: float
+    source_type: SceneSourceType
+    dialogue: bool = False
+    is_beat: bool = False
+    segment_numbers: list[int] = field(default_factory=list)
 
 
 class ScenePlannerAgent:
@@ -232,6 +264,8 @@ class ScenePlannerAgent:
         self,
         script: GeneratedScript,
         editorial_profile: EditorialProfile,
+        *,
+        merge: MergeSettings | None = None,
     ) -> list[Scene]:
         """
         Plan genre-aware scenes from a content-intelligence
@@ -244,6 +278,9 @@ class ScenePlannerAgent:
         target count and average_visual_duration_seconds as a floor
         against over-fragmenting a short segment, rather than
         splitting on sentence punctuation with a fixed 8s guess.
+
+        ``merge`` is None for the normal plan. With settings, short neighbouring scenes are
+        then folded together (see _merge_units); everything else is unchanged.
         """
 
         content_intelligence = editorial_profile.content_intelligence
@@ -251,8 +288,7 @@ class ScenePlannerAgent:
             script.segments, key=lambda segment: segment.start_seconds
         )
 
-        scenes: list[Scene] = []
-        scene_number = 1
+        units: list[_Unit] = []
 
         for segment in ordered_segments:
             if segment.dialogue:
@@ -266,44 +302,121 @@ class ScenePlannerAgent:
                     float(self._narration_timing_service.estimate_seconds(words)),
                     float(_MINIMUM_FLOW_SCENE_DURATION_SECONDS),
                 )
-                scene = self._build_scene(
-                    scene_number=scene_number,
-                    narration=segment.narration,
-                    duration_seconds=duration_seconds,
-                    segment=segment,
-                    topic=script.topic,
-                    # Characters speak in a generated clip, whatever the genre's default
-                    # source is (stock footage cannot lip-sync a script).
-                    source_type=SceneSourceType.AI_GENERATE,
+                units.append(
+                    _Unit(
+                        segment=segment,
+                        narration=segment.narration,
+                        duration_seconds=duration_seconds,
+                        # Characters speak in a generated clip, whatever the genre's default
+                        # source is (stock footage cannot lip-sync a script).
+                        source_type=SceneSourceType.AI_GENERATE,
+                        dialogue=True,
+                        segment_numbers=[segment.segment_number],
+                    )
                 )
-                scene.dialogue = list(segment.dialogue)
-                scenes.append(scene)
-                scene_number += 1
 
                 continue
 
-            for sentences, sub_duration_seconds in self._subdivide_segment(
+            sub_scenes = self._subdivide_segment(
                 segment,
                 scene_density_per_minute=content_intelligence.scene_density_per_minute,
                 average_visual_duration_seconds=(
                     content_intelligence.average_visual_duration_seconds
                 ),
-            ):
-                narration = " ".join(sentences)
+            )
+            whole_segment_is_beat = (
+                len(sub_scenes) == 1
+                and len(segment.narration.split()) <= _BEAT_LINE_MAX_WORDS
+            )
 
-                scenes.append(
-                    self._build_scene(
-                        scene_number=scene_number,
-                        narration=narration,
-                        duration_seconds=sub_duration_seconds,
+            for sentences, sub_duration_seconds in sub_scenes:
+                units.append(
+                    _Unit(
                         segment=segment,
-                        topic=script.topic,
+                        narration=" ".join(sentences),
+                        duration_seconds=sub_duration_seconds,
                         source_type=content_intelligence.default_scene_source_type,
+                        is_beat=whole_segment_is_beat,
+                        segment_numbers=[segment.segment_number],
                     )
                 )
-                scene_number += 1
+
+        if merge is not None and editorial_profile.genre_id not in _NEVER_MERGED_GENRES:
+            units = self._merge_units(units, merge)
+
+        scenes: list[Scene] = []
+
+        for scene_number, unit in enumerate(units, start=1):
+            scene = self._build_scene(
+                scene_number=scene_number,
+                narration=unit.narration,
+                duration_seconds=unit.duration_seconds,
+                segment=unit.segment,
+                topic=script.topic,
+                source_type=unit.source_type,
+            )
+
+            if unit.dialogue:
+                scene.dialogue = list(unit.segment.dialogue)
+            elif len(unit.segment_numbers) > 1:
+                scene.metadata["merged_segment_numbers"] = list(unit.segment_numbers)
+
+            scenes.append(scene)
 
         return scenes
+
+    def _merge_units(self, units: list[_Unit], merge: MergeSettings) -> list[_Unit]:
+        """
+        Fold runs of short neighbouring scenes into one, as long as the joined narration (timed
+        from its combined word count, not the 4-second floor each piece was lifted to) still
+        fits ``merge.target_seconds``. A spoken exchange is never merged, and with
+        ``keep_beats`` neither is a one-line beat. The merged scene keeps the structure of its
+        most tense piece and carries all the narration, in order.
+        """
+
+        merged: list[_Unit] = []
+
+        for unit in units:
+            if merged and self._can_join(merged[-1], unit, merge):
+                merged[-1] = self._join(merged[-1], unit)
+            else:
+                merged.append(unit)
+
+        return merged
+
+    def _can_join(self, first: _Unit, second: _Unit, merge: MergeSettings) -> bool:
+        if first.dialogue or second.dialogue:
+            return False
+
+        if merge.keep_beats and (first.is_beat or second.is_beat):
+            return False
+
+        joined_words = len(f"{first.narration} {second.narration}".split())
+        joined_seconds = self._narration_timing_service.estimate_seconds(joined_words)
+
+        return joined_seconds <= merge.target_seconds
+
+    def _join(self, first: _Unit, second: _Unit) -> _Unit:
+        narration = f"{first.narration} {second.narration}"
+        joined_seconds = self._narration_timing_service.estimate_seconds(
+            len(narration.split())
+        )
+        # The more tense piece sets the scene's beat, camera language and title.
+        lead = (
+            second.segment
+            if second.segment.tension_level > first.segment.tension_level
+            else first.segment
+        )
+
+        return _Unit(
+            segment=lead,
+            narration=narration,
+            duration_seconds=max(
+                float(joined_seconds), float(_MINIMUM_FLOW_SCENE_DURATION_SECONDS)
+            ),
+            source_type=first.source_type,
+            segment_numbers=[*first.segment_numbers, *second.segment_numbers],
+        )
 
     def _subdivide_segment(
         self,

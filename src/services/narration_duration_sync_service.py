@@ -1,7 +1,32 @@
 from __future__ import annotations
 
 from src.models.video_job import VideoJob
+from src.services.invalidation_service import InvalidationService
 from src.services.voice_timeline_service import VoiceTimelineService
+
+
+def voice_matches_scenes(job: VideoJob) -> bool:
+    """
+    False when the stored voiceover was made for a different scene plan than the current one:
+    it was marked stale (scenes planned again), or it has a track for a scene number the plan no
+    longer has (scenes merged into fewer). Its per-scene lengths then belong to other scenes.
+    """
+
+    if job.audio_timeline is None:
+        return False
+
+    if InvalidationService.is_stale(job, "audio_timeline"):
+        return False
+
+    last_scene_number = max((scene.scene_number for scene in job.scenes), default=0)
+
+    for track in job.audio_timeline.tracks:
+        number = track.metadata.get("scene_number")
+
+        if isinstance(number, int) and number > last_scene_number:
+            return False
+
+    return True
 
 
 def sync_real_narration_durations(job: VideoJob, *, overwrite: bool = False) -> int:
@@ -26,6 +51,18 @@ def sync_real_narration_durations(job: VideoJob, *, overwrite: bool = False) -> 
 
     if job.audio_timeline is None:
         return 0
+
+    if not voice_matches_scenes(job):
+        # Lengths copied earlier came from a voiceover made for other scenes: forget them, so
+        # clips and prompts are sized from the script estimate until the voice is made again.
+        cleared = 0
+
+        for scene in job.scenes:
+            if scene.real_narration_duration_seconds is not None:
+                scene.real_narration_duration_seconds = None
+                cleared += 1
+
+        return cleared
 
     timeline_service = VoiceTimelineService()
     changed = 0

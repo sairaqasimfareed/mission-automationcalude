@@ -1275,6 +1275,25 @@ section records what changed and why so a later session does not undo it.
     gained example images from an unrelated story (so they lend no props), a rule that the first scene is the most
     arresting image and the last lands the final beat, and a limit of two scenes per effect. Not done: a quality score,
     and rewriting the scenes that two table rows were joined into. Tests: `tests/test_scene_visual_review.py`.
+  - **Merge short scenes (2026-10-15).** A project switch on the Scene planning panel (`VideoJob.merge_short_scenes`,
+    default OFF; `keep_beat_lines`, default ON), read BEFORE "Run scene planning". Off, the planner is unchanged.
+    On, `ScenePlannerAgent.plan_from_generated_script(..., merge=MergeSettings(target_seconds, keep_beats))` builds its
+    scenes as units first, then folds adjacent units while the joined narration (timed from the combined word count,
+    not the 4 s floor each piece had) still fits `merge_target_seconds(provider)` (Muse 9 s, Flow 7 s, one second under
+    the clip). Never merged: a spoken exchange, a one-line beat (a whole segment of four words or fewer) while
+    "Keep one-line beats" is on, and the top10 genre. The merged scene takes the beat/tension/camera of its most tense
+    piece and records `metadata["merged_segment_numbers"]`. The panel shows a free preview (scenes as usual vs merged)
+    and a warning when scenes already exist. Prompts, shot plan, scene text and visuals are NOT merged: they are made
+    again, per scene, from the merged scene's narration, so visuals saved against the old scenes show as stale.
+    **Found live the same day (Haunted wife) and fixed: planning again kept the old voiceover, clip records and
+    per-scene records, which are keyed by scene NUMBER.** A merged scene 3 (three old scenes, about 9 s) was sized from
+    the old scene 3's 1.8 s of voice, so the shot plan (9 s), compiled prompt (3 s) and Clips tab (planned 3 s) all
+    disagreed. Now `run_scene_planning` drops the clip/asset/override records of every scene whose narration changed or
+    that no longer exists, marks `audio_timeline`/`video_timeline`/`render_result` stale
+    (`InvalidationService.on_scenes_replanned`), and `sync_real_narration_durations` never reads a voiceover that is
+    stale or has a track past the last scene (`voice_matches_scenes`) - it clears lengths copied from one instead,
+    which also heals a project already in that state. A fresh voiceover clears the stale flag before its lengths are
+    read. Tests: `tests/test_scene_merge.py`, `tests/test_scene_replanning_artifacts.py`.
   - **Story treatment: a proposed opening image and one recurring presence (2026-10-10, built after the genre mood).**
     Opt-in and manual only (not in `run_all`; nothing is applied on its own). "Suggest an opening and a recurring
     presence" in Content Studio's characters section runs `ContentIntelligencePipeline.run_story_treatment` (one call,

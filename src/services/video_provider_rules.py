@@ -62,6 +62,20 @@ MUSE_MIN_CLIP_SECONDS = 3.0
 
 _MAX_FLOW_CLIP_SECONDS = float(max(VERIFIED_DURATIONS_SECONDS))
 
+# Longest narration a MERGED scene is planned for, a little under the provider's clip so an
+# estimate that runs slightly short of the real voice still fits one clip: Muse's fixed 10s
+# clip, Flow's longest verified clip.
+_MERGE_HEADROOM_SECONDS = 1.0
+
+
+def merge_target_seconds(provider: VideoProvider) -> float:
+    """How long a scene may get when short scenes are merged for this provider."""
+
+    if provider == VideoProvider.MUSE:
+        return MUSE_CLIP_DURATION_SECONDS - _MERGE_HEADROOM_SECONDS
+
+    return _MAX_FLOW_CLIP_SECONDS - _MERGE_HEADROOM_SECONDS
+
 
 def _identity(seconds: float) -> float:
     return seconds
