@@ -257,3 +257,30 @@ def test_default_browsers_path_is_none_when_localappdata_is_unset(
     monkeypatch.delenv("LOCALAPPDATA", raising=False)
 
     assert _default_browsers_path() is None
+
+
+def test_a_frozen_app_prefers_the_chromium_the_installer_shipped(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    from src.browser import chromium_bootstrap
+
+    shipped = tmp_path / "tools" / "playwright-browsers"
+    shipped.mkdir(parents=True)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "MissionAutomation.exe"))
+
+    assert chromium_bootstrap._default_browsers_path() == str(shipped)  # noqa: SLF001
+
+
+def test_without_a_shipped_chromium_the_usual_cache_is_used(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    from src.browser import chromium_bootstrap
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "MissionAutomation.exe"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+
+    path = chromium_bootstrap._default_browsers_path()  # noqa: SLF001
+
+    assert path is not None and path.endswith("ms-playwright")

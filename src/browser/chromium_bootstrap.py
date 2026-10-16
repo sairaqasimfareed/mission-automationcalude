@@ -33,6 +33,17 @@ INTERNAL_PLAYWRIGHT_INSTALL_FLAG = "--internal-playwright-install"
 _INSTALL_TIMEOUT_SECONDS = 900.0
 
 
+def _bundled_browsers_path() -> str | None:
+    """tools/playwright-browsers next to MissionAutomation.exe, when the installer put one there."""
+
+    if not getattr(sys, "frozen", False):
+        return None
+
+    candidate = Path(sys.executable).resolve().parent / "tools" / "playwright-browsers"
+
+    return str(candidate) if candidate.is_dir() else None
+
+
 def _default_browsers_path() -> str | None:
     """
     Real-world finding: Playwright's own Node driver decides where to
@@ -59,6 +70,13 @@ def _default_browsers_path() -> str | None:
     %LOCALAPPDATA% is somehow unset, letting Playwright fall back to
     its own default rather than pointing at a guessed, wrong path.
     """
+
+    # The installer ships Chromium next to the app (tools\playwright-browsers): use it, so the
+    # installed app needs no download. Only a frozen build can have it.
+    bundled = _bundled_browsers_path()
+
+    if bundled is not None:
+        return bundled
 
     if sys.platform != "win32":
         return None

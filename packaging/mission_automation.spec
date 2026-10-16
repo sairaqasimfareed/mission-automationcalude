@@ -67,11 +67,12 @@ hiddenimports = [
 ]
 datas = [entry for entry in datas if "genai/tests" not in entry[0].replace("\\", "/")]
 
-# Face-detection model for choosing character reference frames (see
-# models/face/NOTICE.md). The detector is small and bundled; the larger
-# similarity model is fetched on first use.
+# Face models for choosing character reference frames (see models/face/NOTICE.md): the
+# detector (YuNet) and the face-similarity model (SFace), both bundled so the installed
+# app needs nothing fetched at run time.
 datas += [
     (str(REPO_ROOT / "models" / "face" / "face_detection_yunet_2023mar.onnx"), "models/face"),
+    (str(REPO_ROOT / "models" / "face" / "face_recognition_sface_2021dec.onnx"), "models/face"),
     (str(REPO_ROOT / "models" / "face" / "NOTICE.md"), "models/face"),
 ]
 excludes = ["google.genai.tests"]
