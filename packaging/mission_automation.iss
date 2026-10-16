@@ -78,6 +78,9 @@ Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: no
 ; under the install root so the app's first real run has somewhere to
 ; write without needing elevated permissions beyond the install itself.
 Name: "{app}\data"; Permissions: users-modify
+; The app writes its log here. Under Program Files a normal (non-admin) user could not create it,
+; and the app failed to start with "Access is denied: logs" (found on a second machine).
+Name: "{app}\logs"; Permissions: users-modify
 
 [UninstallDelete]
 ; Uninstall must not silently delete a user's real generated projects/
@@ -86,3 +89,4 @@ Name: "{app}\data"; Permissions: users-modify
 ; is left in place; Inno Setup's own uninstaller reports this rather
 ; than forcing deletion.
 Type: dirifempty; Name: "{app}\data"
+Type: dirifempty; Name: "{app}\logs"
