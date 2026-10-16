@@ -214,6 +214,7 @@ class ProductionAudioView(QWidget):
         tracks = job.audio_timeline.tracks if job.audio_timeline is not None else []
         plan = job.sound_design_plan
 
+        narrated_scene_count = sum(1 for scene in job.scenes if not scene.silent)
         voice_tracks = self._tracks_of(tracks, AudioTrackType.VOICEOVER)
         sfx_tracks = self._tracks_of(tracks, AudioTrackType.SOUND_EFFECT)
         music_tracks = self._tracks_of(tracks, AudioTrackType.BACKGROUND_MUSIC)
@@ -222,7 +223,14 @@ class ProductionAudioView(QWidget):
             layout,
             title="Voiceover",
             tracks=voice_tracks,
-            count_text=f"{len(voice_tracks)} of {len(job.scenes)} scenes",
+            count_text=(
+                f"{len(voice_tracks)} of {narrated_scene_count} "
+                + (
+                    "narrated scenes"
+                    if narrated_scene_count < len(job.scenes)
+                    else "scenes"
+                )
+            ),
             labeler=lambda track: self._voice_label(track),
             empty_text="No voiceover generated yet - use Generate voiceover above.",
             noun="voiceover files",

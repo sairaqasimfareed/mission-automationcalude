@@ -217,10 +217,30 @@ class VoicePipelineStage(BasePipelineStage):
                         - self._transition_duration_seconds,
                     )
 
+        # A visual-only scene has no voice but takes its own fixed slot in the video, so every
+        # voiced scene after it starts later by that much.
+        pending_silent_scenes = sorted(
+            (scene for scene in context.job.scenes if scene.silent),
+            key=lambda scene: scene.scene_number,
+        )
+
         for blueprint in sorted(
             self._blueprints,
             key=lambda value: (value.scene_number),
         ):
+            while (
+                pending_silent_scenes
+                and pending_silent_scenes[0].scene_number < blueprint.scene_number
+            ):
+                silent_scene = pending_silent_scenes.pop(0)
+                running_video_position = (
+                    max(0.0, running_video_position)
+                    + self._clip_duration_rounding_fn(
+                        float(silent_scene.estimated_duration_seconds)
+                    )
+                    - self._transition_duration_seconds
+                )
+
             scene_start_seconds = max(0.0, running_video_position)
 
             result = self._generation_service.generate(
@@ -439,7 +459,10 @@ class VoicePipelineStage(BasePipelineStage):
         Ensure the supplied blueprints map exactly to the planned scenes.
         """
 
-        expected = {scene.scene_number for scene in (context.job.scenes)}
+        # A visual-only scene has no voice blueprint: nothing is said in it.
+        expected = {
+            scene.scene_number for scene in context.job.scenes if not scene.silent
+        }
 
         supplied = {blueprint.scene_number for blueprint in (self._blueprints)}
 

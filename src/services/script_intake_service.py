@@ -12,6 +12,7 @@ from src.models.video_job import VideoJob
 from src.services.dialogue_script_parser import parse_dialogue_script
 from src.services.llm.labeled_block_parser import extract_labeled_field
 from src.services.llm.llm_service import LLMService
+from src.services.visual_scene_marker import VisualMarker, parse_visual_marker
 from src.shared.llm.models import LLMProvider
 from src.shared.llm.request import LLMRequest
 
@@ -47,6 +48,40 @@ _TENSION_LEVEL_BY_BEAT: dict[StoryBeatType, int] = {
     StoryBeatType.PAYOFF: 45,
     StoryBeatType.AFTERSHOCK: 30,
 }
+
+
+def _split_visual_blocks(raw_text: str) -> tuple[list[VisualMarker | None], str]:
+    """The blank-line separated blocks of a dialogue script, in order - a VisualMarker for a
+    "[VISUAL 8s] ..." block, None for a block of dialogue - and the text with the visual blocks
+    blanked out (same line count, so the dialogue parser's line numbers still match)."""
+
+    lines = raw_text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    blocks: list[VisualMarker | None] = []
+    masked = list(lines)
+    start: int | None = None
+
+    for index in range(len(lines) + 1):
+        blank = index == len(lines) or not lines[index].strip()
+
+        if not blank:
+            if start is None:
+                start = index
+
+            continue
+
+        if start is None:
+            continue
+
+        visual = parse_visual_marker("\n".join(lines[start:index]))
+        blocks.append(visual)
+
+        if visual is not None:
+            for line_index in range(start, index):
+                masked[line_index] = ""
+
+        start = None
+
+    return blocks, "\n".join(masked)
 
 
 def _infer_narrative_function(*, index: int, total: int) -> StoryBeatType:
@@ -166,9 +201,15 @@ class ScriptIntakeService:
         total_segments = len(paragraphs)
 
         for position, paragraph in enumerate(paragraphs):
+            # "[VISUAL 8s] ..." is a shot with no narration: it runs its own fixed length.
+            visual = parse_visual_marker(paragraph)
             word_count = len(paragraph.split())
-            duration = max(
-                word_count / _WORDS_PER_MINUTE * 60.0, _MIN_SEGMENT_DURATION_SECONDS
+            duration = (
+                visual.seconds
+                if visual is not None
+                else max(
+                    word_count / _WORDS_PER_MINUTE * 60.0, _MIN_SEGMENT_DURATION_SECONDS
+                )
             )
 
             narrative_function = _infer_narrative_function(
@@ -181,8 +222,9 @@ class ScriptIntakeService:
                     start_seconds=cursor_seconds,
                     end_seconds=cursor_seconds + duration,
                     narrative_function=narrative_function,
-                    narration=paragraph,
+                    narration=visual.description if visual is not None else paragraph,
                     tension_level=_TENSION_LEVEL_BY_BEAT[narrative_function],
+                    silent_seconds=visual.seconds if visual is not None else None,
                 )
             )
             cursor_seconds += duration
@@ -203,18 +245,44 @@ class ScriptIntakeService:
         genre_id: str,
         target_duration_seconds: int,
     ) -> GeneratedScript:
-        scenes = parse_dialogue_script(raw_text)
+        # A "[VISUAL 8s] ..." block is a shot with no speaker. It is blanked out of the text the
+        # strict dialogue parser reads (so its line numbers in an error still match the operator's
+        # script) and put back, in order, among the dialogue scenes.
+        blocks, masked_text = _split_visual_blocks(raw_text)
+        dialogue_scenes = iter(
+            parse_dialogue_script(masked_text)
+            if not blocks or any(block is None for block in blocks)
+            else []
+        )
         segments: list[ScriptSegment] = []
         cursor_seconds = 0.0
 
-        for position, lines in enumerate(scenes):
+        for position, visual in enumerate(blocks):
+            narrative_function = _infer_narrative_function(
+                index=position, total=len(blocks)
+            )
+
+            if visual is not None:
+                segments.append(
+                    ScriptSegment(
+                        segment_number=position + 1,
+                        start_seconds=cursor_seconds,
+                        end_seconds=cursor_seconds + visual.seconds,
+                        narrative_function=narrative_function,
+                        narration=visual.description,
+                        tension_level=_TENSION_LEVEL_BY_BEAT[narrative_function],
+                        silent_seconds=visual.seconds,
+                    )
+                )
+                cursor_seconds += visual.seconds
+
+                continue
+
+            lines = next(dialogue_scenes)
             narration = spoken_text(lines)
             duration = max(
                 len(narration.split()) / _WORDS_PER_MINUTE * 60.0,
                 _MIN_SEGMENT_DURATION_SECONDS,
-            )
-            narrative_function = _infer_narrative_function(
-                index=position, total=len(scenes)
             )
             segments.append(
                 ScriptSegment(

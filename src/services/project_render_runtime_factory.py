@@ -145,8 +145,11 @@ class ProjectRenderRuntimeFactory:
                 for scene in job.scenes
             }
 
+        # A visual-only scene says nothing: it has no voice directive, blueprint or track.
+        voiced_scenes = [scene for scene in job.scenes if not scene.silent]
+
         directives = self._voice_directive_generation_service.generate_many(
-            scenes=job.scenes,
+            scenes=voiced_scenes,
             genre_id=genre_id,
             language=language,
             language_code=language_code,
@@ -177,7 +180,7 @@ class ProjectRenderRuntimeFactory:
             for directive, scene in zip(
                 directives,
                 sorted(
-                    job.scenes,
+                    voiced_scenes,
                     key=lambda item: item.scene_number,
                 ),
                 strict=True,

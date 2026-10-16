@@ -124,6 +124,8 @@ class _Unit:
     duration_seconds: float
     source_type: SceneSourceType
     dialogue: bool = False
+    # A "[VISUAL 8s]" shot: nothing is said, `narration` describes the picture.
+    silent: bool = False
     is_beat: bool = False
     segment_numbers: list[int] = field(default_factory=list)
 
@@ -291,6 +293,21 @@ class ScenePlannerAgent:
         units: list[_Unit] = []
 
         for segment in ordered_segments:
+            if segment.silent_seconds is not None:
+                # One shot of fixed length, never split or merged: nothing is spoken to time it by.
+                units.append(
+                    _Unit(
+                        segment=segment,
+                        narration=segment.narration,
+                        duration_seconds=segment.silent_seconds,
+                        source_type=content_intelligence.default_scene_source_type,
+                        silent=True,
+                        segment_numbers=[segment.segment_number],
+                    )
+                )
+
+                continue
+
             if segment.dialogue:
                 # A spoken exchange is ONE scene: splitting it by sentence would cut a line
                 # in half, or separate a question from its answer, and the clip is lip-synced
@@ -356,7 +373,10 @@ class ScenePlannerAgent:
                 source_type=unit.source_type,
             )
 
-            if unit.dialogue:
+            if unit.silent:
+                scene.silent = True
+                scene.title = f"Scene {scene_number} (visual only)"
+            elif unit.dialogue:
                 scene.dialogue = list(unit.segment.dialogue)
             elif len(unit.segment_numbers) > 1:
                 scene.metadata["merged_segment_numbers"] = list(unit.segment_numbers)
@@ -385,7 +405,7 @@ class ScenePlannerAgent:
         return merged
 
     def _can_join(self, first: _Unit, second: _Unit, merge: MergeSettings) -> bool:
-        if first.dialogue or second.dialogue:
+        if first.dialogue or second.dialogue or first.silent or second.silent:
             return False
 
         if merge.keep_beats and (first.is_beat or second.is_beat):

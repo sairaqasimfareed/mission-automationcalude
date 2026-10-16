@@ -1117,12 +1117,14 @@ class SceneVideoGenerationService:
             # operation should never hit it.
             target_seconds = float(scene.estimated_duration_seconds)
 
-            logger.warning(
-                "Scene %s was submitted for video generation before its "
-                "real narration duration was known; falling back to the "
-                "pre-generation estimate.",
-                scene.scene_number,
-            )
+            # A visual-only scene never has a measured narration: its fixed length is the plan.
+            if not scene.silent:
+                logger.warning(
+                    "Scene %s was submitted for video generation before its "
+                    "real narration duration was known; falling back to the "
+                    "pre-generation estimate.",
+                    scene.scene_number,
+                )
 
         duration_seconds = self._clamp_to_verified_duration(target_seconds)
 

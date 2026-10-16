@@ -100,6 +100,11 @@ class GenreDirectiveGenerationService:
                 overrides=overrides,
             )
 
+        if scene.silent:
+            # Nothing is said in a visual-only scene, so there is nothing to caption - whatever a
+            # project-wide subtitle override says.
+            directives.subtitles.enabled = False
+
         directives.metadata.update(
             {
                 "requested_genre_id": genre_id.strip().lower(),

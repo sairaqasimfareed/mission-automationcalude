@@ -117,7 +117,17 @@ class MediaGenerationPipeline:
         )
 
         try:
-            ordered_scenes = sorted(job.scenes, key=lambda scene: scene.scene_number)
+            # A visual-only scene says nothing, so it gets no voice track.
+            ordered_scenes = sorted(
+                (scene for scene in job.scenes if not scene.silent),
+                key=lambda scene: scene.scene_number,
+            )
+
+            if not ordered_scenes:
+                raise RuntimeError(
+                    "Voice generation needs at least one scene with narration; "
+                    "every scene is visual-only."
+                )
 
             requests: list[VoiceResolutionRequest] = [
                 (

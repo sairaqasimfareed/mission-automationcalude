@@ -63,6 +63,21 @@ class Scene(MissionBaseModel):
     # attached - so it matches the filmed scenes around it. Default off.
     treat_as_live_footage: bool = False
 
+    # A visual-only scene (written "[VISUAL 8s] ..." in the script): nothing is said, so it gets no
+    # voice track and no subtitles. `narration` holds the description of what the picture shows, and
+    # `estimated_duration_seconds` is its fixed length. Music and sound effects still play under it.
+    silent: bool = False
+
+    @property
+    def narration_for_prompt(self) -> str:
+        """The scene's text as an AI prompt should see it: a visual-only scene is labelled, so the
+        model describes the picture instead of treating the text as spoken."""
+
+        if self.silent:
+            return f"(VISUAL-ONLY SHOT - nothing is said; the picture is: {self.narration})"
+
+        return self.narration
+
     camera_direction: str = ""
     sound_design: str = ""
 

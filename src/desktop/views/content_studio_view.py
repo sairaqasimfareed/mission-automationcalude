@@ -4893,10 +4893,12 @@ class ContentStudioView(QWidget):
         intake_editor.setPlaceholderText(
             "Write each line as NAME: what they say. Put a blank line between "
             "scenes; lines in the same block are spoken in order, each by the "
-            "character named."
+            "character named. For a shot with nobody speaking, write "
+            "[VISUAL 8s] and describe what is shown."
             if job.character_oriented
             else "Paste your script here (separate segments/paragraphs with "
-            "a blank line)..."
+            "a blank line). For a shot with no narration, write [VISUAL 8s] "
+            "and describe what is shown..."
         )
         intake_editor.setFixedHeight(120)
         # Restore whatever was typed before the last rebuild (see

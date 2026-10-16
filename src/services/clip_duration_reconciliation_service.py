@@ -127,11 +127,18 @@ class ClipDurationReconciliationService:
 
             scene = scenes_by_number.get(clip.scene_number)
 
-            if scene is None or scene.real_narration_duration_seconds is None:
+            # A visual-only scene has no narration to measure: its fixed length is the target.
+            target = (
+                float(scene.estimated_duration_seconds)
+                if scene is not None and scene.silent
+                else (scene.real_narration_duration_seconds if scene else None)
+            )
+
+            if scene is None or target is None:
                 updated_clips.append(clip)
                 continue
 
-            narration_seconds = scene.real_narration_duration_seconds
+            narration_seconds = target
             clip_seconds = float(clip.duration_seconds)
             difference = clip_seconds - narration_seconds
 

@@ -192,7 +192,7 @@ class VisualContinuityService:
         )
 
         scene_lines = "\n".join(
-            f"SCENE {scene.scene_number}: {scene.narration}"
+            f"SCENE {scene.scene_number}: {scene.narration_for_prompt}"
             + (
                 f"\n  REQUIRED ON-SCREEN VISUAL (the operator's own instruction): "
                 f"{(scene_visuals or {})[scene.scene_number]}"

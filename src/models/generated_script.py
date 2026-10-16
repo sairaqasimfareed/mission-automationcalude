@@ -39,6 +39,15 @@ class ScriptSegment(MissionBaseModel):
     # ordinary narrated segment. `narration` is then the spoken words (see spoken_text).
     dialogue: list[DialogueLine] = Field(default_factory=list)
 
+    # A visual-only segment ("[VISUAL 8s] ..." in the operator's script): `narration` then holds
+    # the DESCRIPTION of what the picture shows, nobody says it, and this is how long the shot
+    # runs. None for an ordinary spoken segment.
+    silent_seconds: float | None = Field(default=None, gt=0.0)
+
+    @property
+    def is_silent(self) -> bool:
+        return self.silent_seconds is not None
+
     @field_validator("narration")
     @classmethod
     def clean_narration(cls, value: str) -> str:
@@ -68,9 +77,9 @@ class ScriptSegment(MissionBaseModel):
 
     @property
     def word_count(self) -> int:
-        """Word count of this segment's narration only."""
+        """Word count of what is SPOKEN in this segment (a visual-only one speaks nothing)."""
 
-        return len(self.narration.split())
+        return 0 if self.is_silent else len(self.narration.split())
 
 
 class GeneratedScript(MissionBaseModel):
@@ -120,11 +129,14 @@ class GeneratedScript(MissionBaseModel):
 
     @property
     def full_narration(self) -> str:
-        """Every segment's narration joined in chronological order."""
+        """Every SPOKEN segment's narration joined in chronological order (visual-only
+        segments are descriptions of the picture, not words said)."""
 
         ordered = sorted(self.segments, key=lambda segment: segment.start_seconds)
 
-        return " ".join(segment.narration for segment in ordered)
+        return " ".join(
+            segment.narration for segment in ordered if not segment.is_silent
+        )
 
     @property
     def word_count(self) -> int:

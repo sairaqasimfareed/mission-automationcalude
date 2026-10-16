@@ -282,7 +282,10 @@ class SceneDetailService:
             entry = (
                 bible.entry_for_scene(scene.scene_number) if bible is not None else None
             )
-            lines = [f"SCENE {scene.scene_number}", f"Narration: {scene.narration}"]
+            lines = [
+                f"SCENE {scene.scene_number}",
+                f"Narration: {scene.narration_for_prompt}",
+            ]
 
             if scene.scene_number in wanted:
                 lines.append(

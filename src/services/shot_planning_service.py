@@ -237,7 +237,7 @@ class ShotPlanningService:
             scene_lines.append(
                 f"SCENE {scene.scene_number} "
                 f"(duration {scene.estimated_duration_seconds}s): "
-                f"{scene.narration}\nContinuity: {continuity_note}"
+                f"{scene.narration_for_prompt}\nContinuity: {continuity_note}"
                 + (
                     "\nREQUIRED ON-SCREEN VISUAL (the operator's own instruction - "
                     "the shot must show it; choose size, angle, lens and movement to "

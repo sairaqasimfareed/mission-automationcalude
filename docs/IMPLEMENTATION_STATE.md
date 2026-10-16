@@ -1294,6 +1294,22 @@ section records what changed and why so a later session does not undo it.
     stale or has a track past the last scene (`voice_matches_scenes`) - it clears lengths copied from one instead,
     which also heals a project already in that state. A fresh voiceover clears the stale flag before its lengths are
     read. Tests: `tests/test_scene_merge.py`, `tests/test_scene_replanning_artifacts.py`.
+  - **Visual-only scenes (2026-10-15).** A script paragraph written `[VISUAL 8s] description` (also `[VISUAL]`, `[visual 5]`,
+    `[VISUAL: 4 seconds]`; 2 to 8 seconds, default 6; one clip's worth, so a longer silent stretch is two markers) is a shot with a
+    picture and no narration. `src/services/visual_scene_marker.py` parses it; `ScriptIntakeService` (ordinary AND
+    `NAME: line` dialogue scripts - the marker block is blanked out of the text the strict dialogue parser reads, so its line
+    numbers still match) stores it as `ScriptSegment.silent_seconds` with the description as `narration`;
+    `GeneratedScript.full_narration`/`word_count` count spoken segments only. `ScenePlannerAgent` makes ONE scene
+    (`Scene.silent=True`, `estimated_duration_seconds` = the written length, title "(visual only)"), never split or merged.
+    It stays an ordinary scene with one clip and one crossfade, so the render slicing arithmetic is unchanged. What skips it:
+    voice directives/blueprints/tracks (`run_voice`, `ProjectRenderRuntimeFactory`), the voice stage's coverage check, and
+    subtitles (`GenreDirectiveGenerationService` disables them for a silent scene even under a project-wide subtitle override).
+    What accounts for it: the voice stage's running video position steps past a silent scene's fixed length, the clip-duration
+    reconciliation trims a stock/manual clip to the written length, Flow/Muse size its clip from the written length without the
+    "no real narration yet" warning, and the shot-plan/scene-detail/continuity prompts label it "VISUAL-ONLY SHOT - nothing is
+    said" (`Scene.narration_for_prompt`). Music and sound effects still play under it. Verified with a real FFmpeg render
+    (spoken, silent, spoken): the voice after the silent shot starts where its own scene's picture starts. Tests:
+    `tests/test_visual_only_scenes.py`.
   - **Story treatment: a proposed opening image and one recurring presence (2026-10-10, built after the genre mood).**
     Opt-in and manual only (not in `run_all`; nothing is applied on its own). "Suggest an opening and a recurring
     presence" in Content Studio's characters section runs `ContentIntelligencePipeline.run_story_treatment` (one call,

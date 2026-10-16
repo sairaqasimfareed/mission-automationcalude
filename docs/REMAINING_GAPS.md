@@ -1075,6 +1075,12 @@ ElevenLabs credits; ElevenLabs was at zero on 2026-10-07).
   dropped is not removed from the continuity bible. A place reference taken from a scene's own clip is also attached to
   that scene on regeneration (seen on Haunted wife scene 2) - not investigated.
 
+- Visual-only scenes (2026-10-15): limited to 2 to 8 seconds (one clip); a longer silent stretch must be written as several
+  markers, and nothing yet joins them. The script-writing prompts the operator gives an outside assistant do not mention
+  the marker. A silent scene's description is also its "narration" text everywhere that text is only read (visuals writer,
+  visual matching, scene visuals tab), so the visuals writer may write a visual for it instead of leaving it alone. Sound
+  effects/music directed per scene still treat it as an ordinary scene (they play under it). Not tried on real Muse/Flow clips.
+
 ## Explicitly out of scope
 
 - Google Flow, or any browser automation targeting Google Flow's web UI.
