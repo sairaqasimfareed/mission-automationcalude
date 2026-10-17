@@ -23,6 +23,9 @@ from src.services.registry.provider_profile_repository import (
 from src.services.registry.provider_registry import ProviderRegistry
 from src.services.secrets.provider_secret_manager import ProviderSecretManager
 
+# The LLM placeholder RuntimeConfigurationLoader adds in dry-run mode (never stored).
+DRY_RUN_LLM_PROFILE_ID = "provider.llm.dry_run"
+
 
 class ProviderSecretResolutionChecker:
     """
@@ -79,6 +82,8 @@ class ProviderProfileManagementService:
     ) -> None:
         self._registry = registry
         self._repository = repository
+        # Profiles the operator deleted in this session: the only ones _persist may drop from storage.
+        self._deleted_profile_ids: set[str] = set()
         self._secret_manager = secret_manager
         self._health_service = health_service or ProviderHealthService(
             registry=registry,
@@ -198,6 +203,7 @@ class ProviderProfileManagementService:
         profile_id: str,
     ) -> None:
         profile = self._registry.unregister(profile_id)
+        self._deleted_profile_ids.add(profile_id)
 
         if profile.secret_reference and self._secret_manager.secret_exists(
             profile.secret_reference
@@ -282,7 +288,30 @@ class ProviderProfileManagementService:
         return self._to_summary(updated)
 
     def _persist(self) -> None:
-        self._repository.save_all(self._registry.list_all())
+        """
+        Save the registry's profiles WITHOUT dropping stored ones the registry does not hold.
+
+        Found live, 2026-10-16: in dry-run mode the registry holds only the dry-run placeholder (the
+        operator's real profiles are deliberately not registered, so nothing real is called). Saving
+        used to write exactly the registry, so one save - disabling the placeholder - erased every
+        profile the operator had added. Now a stored profile survives unless it was deleted here, and
+        the dry-run placeholder is never written to storage (it is rebuilt at every dry-run start).
+        """
+
+        current = {profile.profile_id: profile for profile in self._registry.list_all()}
+        kept = [
+            stored
+            for stored in self._repository.load_all()
+            if stored.profile_id not in current
+            and stored.profile_id not in self._deleted_profile_ids
+        ]
+        self._repository.save_all(
+            [
+                profile
+                for profile in [*kept, *current.values()]
+                if profile.profile_id != DRY_RUN_LLM_PROFILE_ID
+            ]
+        )
 
     def _to_summary(
         self,

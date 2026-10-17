@@ -83,6 +83,15 @@ def main() -> int:
     if INTERNAL_PLAYWRIGHT_INSTALL_FLAG in sys.argv:
         return run_playwright_install_entrypoint()
 
+    # The installed app's own FFmpeg/FFprobe, for every step that just runs "ffmpeg"/"ffprobe".
+    from src.shared.bundled_tools import (
+        add_bundled_tools_to_path,
+        use_install_folder_as_working_directory,
+    )
+
+    add_bundled_tools_to_path()
+    use_install_folder_as_working_directory()
+
     from PySide6.QtWidgets import QApplication
 
     from src.desktop import services
