@@ -25,11 +25,12 @@ from src.models.script_selection_edit import SelectionEditRequest
 from src.models.story_blueprint import StoryBeatType, StoryBlueprint
 from src.models.suggestions import IdentitySuggestion, SuggestionStatus
 from src.models.video_job import VideoJob
+from src.models.video_provider import VideoProvider
 from src.models.visual_continuity import (
     CanonicalEntityType,
     VisualContinuityValidationResult,
 )
-from src.providers.google_flow.locators import clamp_to_verified_duration
+from src.providers.google_flow.clip_profile import flow_clip_profile_for
 from src.services.approval_gate_service import ApprovalGateService
 from src.services.audience_promise_service import AudiencePromiseService
 from src.services.character_sheet_service import CharacterSheetService
@@ -1901,7 +1902,7 @@ class ContentIntelligencePipeline:
             # compiled prompt's stated duration always matches
             # what scene_video_generation_service.py actually
             # requests, instead of the two drifting independently.
-            duration_seconds_resolver=clamp_to_verified_duration,
+            duration_seconds_resolver=flow_clip_profile_for(job.video_provider).clamp,
             project_look=job.project_look,
             scene_detail_plan=job.scene_detail_plan,
             scene_visuals=job.current_scene_visuals,
@@ -2012,6 +2013,15 @@ class ContentIntelligencePipeline:
         )
 
         return job
+
+    @staticmethod
+    def _max_scene_seconds(job: VideoJob) -> float:
+        """The longest one scene is planned for: Flow's 8 s unless the project uses the Omni model."""
+
+        if job.video_provider == VideoProvider.GOOGLE_FLOW_OMNI:
+            return flow_clip_profile_for(job.video_provider).max_seconds
+
+        return 8.0
 
     @staticmethod
     def scene_merge_settings(job: VideoJob) -> MergeSettings | None:
@@ -2129,6 +2139,7 @@ class ContentIntelligencePipeline:
             job.generated_script,
             editorial_profile,
             merge=self.scene_merge_settings(job),
+            max_scene_seconds=self._max_scene_seconds(job),
         )
         self._detach_replanned_scene_artifacts(job, previous_keys)
         # New scene objects start without real lengths: re-read them from a voiceover that still

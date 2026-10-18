@@ -84,6 +84,22 @@ VERIFIED_RESOLUTIONS: tuple[str, ...] = ("360p", "720p")
 VERIFIED_DURATIONS_SECONDS: tuple[int, ...] = (4, 6, 8)
 
 
+# Confirmed live by the account owner, 2026-10-18, on a real settings popover for "Omni 1.1 Flash": the
+# duration row is 4s/6s/8s/10s, and image ingredients (reference images) stay attachable at 4s and 6s -
+# unlike the older model above, which refuses them below 8s. 4s costs 7 credits, 6s costs 10.
+OMNI_FLASH_MODEL_FAMILY = "Omni 1.1 Flash"
+OMNI_FLASH_DURATIONS_SECONDS: tuple[int, ...] = (4, 6, 8, 10)
+
+
+def clamp_to_durations(requested_seconds: float, durations: tuple[int, ...]) -> int:
+    """Round UP to the nearest length in `durations` that still covers the request (see
+    clamp_to_verified_duration for why up, never down); the longest if none does."""
+
+    at_or_above = [value for value in durations if value >= requested_seconds]
+
+    return min(at_or_above) if at_or_above else max(durations)
+
+
 def clamp_to_verified_duration(requested_seconds: float) -> int:
     """
     Google Flow only accepts VERIFIED_DURATIONS_SECONDS - requesting
@@ -114,16 +130,7 @@ def clamp_to_verified_duration(requested_seconds: float) -> int:
     shorter than what was planned is not.
     """
 
-    at_or_above = [
-        verified
-        for verified in VERIFIED_DURATIONS_SECONDS
-        if verified >= requested_seconds
-    ]
-
-    if at_or_above:
-        return min(at_or_above)
-
-    return max(VERIFIED_DURATIONS_SECONDS)
+    return clamp_to_durations(requested_seconds, VERIFIED_DURATIONS_SECONDS)
 
 
 # How many video variations one submission generates for the same

@@ -268,6 +268,7 @@ class ScenePlannerAgent:
         editorial_profile: EditorialProfile,
         *,
         merge: MergeSettings | None = None,
+        max_scene_seconds: float = _MAXIMUM_SCENE_DURATION_SECONDS,
     ) -> list[Scene]:
         """
         Plan genre-aware scenes from a content-intelligence
@@ -340,6 +341,7 @@ class ScenePlannerAgent:
                 average_visual_duration_seconds=(
                     content_intelligence.average_visual_duration_seconds
                 ),
+                max_scene_seconds=max_scene_seconds,
             )
             whole_segment_is_beat = (
                 len(sub_scenes) == 1
@@ -444,6 +446,7 @@ class ScenePlannerAgent:
         *,
         scene_density_per_minute: float,
         average_visual_duration_seconds: float,
+        max_scene_seconds: float = _MAXIMUM_SCENE_DURATION_SECONDS,
     ) -> list[tuple[list[str], float]]:
         """
         Return [(sentences, duration_seconds), ...] sub-scenes for one
@@ -529,9 +532,9 @@ class ScenePlannerAgent:
             ) * duration_seconds
             raw_duration = max(proportional_share, required_seconds)
 
-            if required_seconds <= _MAXIMUM_SCENE_DURATION_SECONDS:
+            if required_seconds <= max_scene_seconds:
                 bounded_duration = max(
-                    min(raw_duration, _MAXIMUM_SCENE_DURATION_SECONDS),
+                    min(raw_duration, max_scene_seconds),
                     _MINIMUM_FLOW_SCENE_DURATION_SECONDS,
                 )
                 chunks.append((chunk, bounded_duration))
@@ -543,12 +546,14 @@ class ScenePlannerAgent:
             # one whose AI-generated clip would silently get clamped
             # far short of its actual narration (see
             # _MAXIMUM_SCENE_DURATION_SECONDS' own real-world finding).
-            chunks.extend(self._split_chunk_to_fit_ceiling(chunk))
+            chunks.extend(self._split_chunk_to_fit_ceiling(chunk, max_scene_seconds))
 
         return chunks
 
     def _split_chunk_to_fit_ceiling(
-        self, sentences: list[str]
+        self,
+        sentences: list[str],
+        max_scene_seconds: float = _MAXIMUM_SCENE_DURATION_SECONDS,
     ) -> list[tuple[list[str], float]]:
         """
         Greedily regroup one over-long chunk's sentences into smaller
@@ -576,7 +581,7 @@ class ScenePlannerAgent:
                 len(" ".join(candidate).split())
             )
 
-            if current and candidate_seconds > _MAXIMUM_SCENE_DURATION_SECONDS:
+            if current and candidate_seconds > max_scene_seconds:
                 groups.append((current, self._floored_required_seconds(current)))
                 current = [sentence]
             else:

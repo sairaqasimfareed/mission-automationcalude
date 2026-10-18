@@ -1081,6 +1081,11 @@ ElevenLabs credits; ElevenLabs was at zero on 2026-10-07).
   visual matching, scene visuals tab), so the visuals writer may write a visual for it instead of leaving it alone. Sound
   effects/music directed per scene still treat it as an ordinary scene (they play under it). Not tried on real Muse/Flow clips.
 
+- Google Flow Omni (2026-10-18): not tried live - one real submission at 4 s or 6 s WITH a reference and one real 10 s clip
+  are still needed (they spend Flow credits). A 10 s clip costs more credits than an 8 s one and the app does not show that.
+  The Omni model name is fixed in code ("Omni 1.1 Flash"): a renamed model in Flow's picker would fail as "not one of the real
+  options". Clips are still not trimmed to their narration on Flow, so a 10 s clip for a 6 s line plays its tail.
+
 ## Explicitly out of scope
 
 - Google Flow, or any browser automation targeting Google Flow's web UI.

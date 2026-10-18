@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 from src.models.audio_inclusion_preferences import AudioInclusionPreferences
@@ -242,6 +243,7 @@ class RenderWorkflowStageFactory:
         letterbox_enabled_override: bool | None = None,
         audio_inclusion_preferences: AudioInclusionPreferences | None = None,
         subtitles_enabled: bool = True,
+        clip_duration_rounding_fn: Callable[[float], float] | None = None,
     ) -> list[BasePipelineStage]:
         """
         Build one ordered render workflow.
@@ -344,7 +346,9 @@ class RenderWorkflowStageFactory:
             timeline_service=(self._voice_timeline_service),
             provider_name=(voice_provider_name),
             transition_duration_seconds=transition_duration_seconds,
-            clip_duration_rounding_fn=clamp_to_verified_duration,
+            # The length a scene's clip is really requested at (an Omni project rounds to 4/6/8/10).
+            clip_duration_rounding_fn=clip_duration_rounding_fn
+            or clamp_to_verified_duration,
         )
 
         asset_stage = AssetPipelineStage(

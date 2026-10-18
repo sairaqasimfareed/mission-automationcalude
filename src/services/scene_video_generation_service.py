@@ -35,6 +35,7 @@ from src.models.specification_enums import AspectRatio
 from src.models.video_job import VideoJob
 from src.models.visual_continuity import CanonicalEntityIdentity, CanonicalEntityType
 from src.providers.external_ui_generation_provider import ExternalUIGenerationProvider
+from src.providers.google_flow.clip_profile import flow_clip_profile_for
 from src.providers.google_flow.locators import (
     VERIFIED_DURATIONS_SECONDS,
     clamp_to_verified_duration,
@@ -66,9 +67,6 @@ from src.services.scene_asset_video_clip_builder_service import (
     SceneAssetVideoClipBuilderService,
 )
 from src.services.scene_asset_workflow_service import SceneAssetWorkflowService
-from src.services.scene_clip_split_planning_service import (
-    SceneClipSplitPlanningService,
-)
 from src.services.scene_completeness_service import SceneCompletenessService
 from src.services.scene_hold import clip_sizing_seconds
 from src.services.scene_prompt_export_service import ScenePromptExportService
@@ -376,13 +374,10 @@ class SceneVideoGenerationService:
         # single-clip path below (matching this class's own existing
         # "fall back to the estimate" behavior for that case), only
         # ever reconsidering the split question once real data exists.
-        sizing_seconds = clip_sizing_seconds(
-            job, scene, SceneClipSplitPlanningService.plan
-        )
+        profile = flow_clip_profile_for(job.video_provider)
+        sizing_seconds = clip_sizing_seconds(job, scene, profile.plan)
 
-        if sizing_seconds is not None and SceneClipSplitPlanningService.needs_split(
-            sizing_seconds
-        ):
+        if sizing_seconds is not None and profile.needs_split(sizing_seconds):
             return self._generate_split_scene(job, scene)
 
         attempt = self._drive_to_terminal(job, scene)
@@ -686,12 +681,11 @@ class SceneVideoGenerationService:
         seam in this codebase rather than raising.
         """
 
-        real_duration = clip_sizing_seconds(
-            job, scene, SceneClipSplitPlanningService.plan
-        )
+        profile = flow_clip_profile_for(job.video_provider)
+        real_duration = clip_sizing_seconds(job, scene, profile.plan)
         assert real_duration is not None  # narrowed by generate_one()'s own check
 
-        durations = SceneClipSplitPlanningService.plan(real_duration)
+        durations = profile.plan(real_duration)
 
         sub_clip_prompt_texts = self._resolve_sub_clip_prompt_texts(
             job, scene, durations
@@ -1108,7 +1102,9 @@ class SceneVideoGenerationService:
             # sized from truth, not a guess (the actual root cause of
             # the destructive narration-trimming this replaces).
             target_seconds = (
-                clip_sizing_seconds(job, scene, SceneClipSplitPlanningService.plan)
+                clip_sizing_seconds(
+                    job, scene, flow_clip_profile_for(job.video_provider).plan
+                )
                 or scene.real_narration_duration_seconds
             )
         else:
@@ -1126,7 +1122,8 @@ class SceneVideoGenerationService:
                     scene.scene_number,
                 )
 
-        duration_seconds = self._clamp_to_verified_duration(target_seconds)
+        profile = flow_clip_profile_for(job.video_provider)
+        duration_seconds = profile.clamp(target_seconds)
 
         # Phase 4 (real visual continuity): resolve this scene's
         # featured identities' CURRENT self-extracted reference assets
@@ -1144,8 +1141,8 @@ class SceneVideoGenerationService:
             extra_reference_assets or []
         )
 
-        if reference_assets:
-            duration_seconds = _MINIMUM_DURATION_SECONDS_FOR_REFERENCE_ASSETS
+        if reference_assets and profile.references_need_max_duration:
+            duration_seconds = int(profile.max_seconds)
 
         # Real-world finding, 2026-09-20: confirmed on a real
         # submission (scene 17) - the compiled prompt's own "Duration:
@@ -1213,7 +1210,9 @@ class SceneVideoGenerationService:
                 prompt_version=_PROMPT_VERSION,
                 idempotency_key=str(uuid.uuid4()),
                 execution_settings=GoogleFlowExecutionSettings(
-                    model_family=self._configured_model_family(),
+                    # Omni projects pin their own model; others use the account's configured one.
+                    model_family=profile.model_family
+                    or self._configured_model_family(),
                     duration_seconds=float(duration_seconds),
                     # Only a 9:16 project sets Flow's aspect control (verified
                     # vocabulary: "16:9" / "9:16"); 16:9 leaves it as it always was.

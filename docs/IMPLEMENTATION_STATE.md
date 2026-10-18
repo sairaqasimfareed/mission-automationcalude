@@ -1310,6 +1310,18 @@ section records what changed and why so a later session does not undo it.
     said" (`Scene.narration_for_prompt`). Music and sound effects still play under it. Verified with a real FFmpeg render
     (spoken, silent, spoken): the voice after the silent shot starts where its own scene's picture starts. Tests:
     `tests/test_visual_only_scenes.py`.
+  - **Third video provider: Google Flow Omni (2026-10-18).** `VideoProvider.GOOGLE_FLOW_OMNI` ("Google Flow Omni 1.1 Flash - up
+    to 10s clips (4/6/8/10s), references at any length") in the project's Video provider dropdown. It reuses ALL the Flow browser
+    automation, accounts and per-scene account choice; only the clip rules differ, held in
+    `src/providers/google_flow/clip_profile.py` (`STANDARD` 4/6/8 s with "a reference forces 8 s", `OMNI` 4/6/8/10 s, references
+    accepted at every length, model "Omni 1.1 Flash" selected on every submission). Confirmed live by the account owner on the real
+    settings popover: lengths 4s/6s/8s/10s, Ingredients mode, references attachable at 4 s and 6 s, 4 s = 7 credits, 6 s = 10.
+    Wired through: the Flow service (clamp, split plan, reference rule, model family), `VideoProviderRules` (summary, max clip, plan,
+    merge target 9 s), prompt compilation's duration resolver, the voice stage's running position (`clip_duration_rounding_fn`), the
+    prompt previews, the scene planner (`max_scene_seconds`: Omni scenes up to 10 s, so a 9 s narration is one clip instead of two),
+    and `resolve_scene_video_provider` (a scene's Flow account keeps the project's Omni rules). `SceneClipSplitPlanningService.plan`
+    takes an optional `durations` grid. Tests: `tests/test_flow_omni_provider.py`. NOT yet verified live: a real 4 s/6 s submission
+    WITH a reference, and a real 10 s clip, through the automation (spends Flow credits; waits for the operator's go).
   - **Story treatment: a proposed opening image and one recurring presence (2026-10-10, built after the genre mood).**
     Opt-in and manual only (not in `run_all`; nothing is applied on its own). "Suggest an opening and a recurring
     presence" in Content Studio's characters section runs `ContentIntelligencePipeline.run_story_treatment` (one call,

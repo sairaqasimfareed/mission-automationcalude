@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import cast
 
 from src.models.advanced_settings import AdvancedSettings
@@ -275,6 +276,7 @@ class RecordingStageFactory(RenderWorkflowStageFactory):
         letterbox_enabled_override: bool | None = None,
         audio_inclusion_preferences: AudioInclusionPreferences | None = None,
         subtitles_enabled: bool = True,
+        clip_duration_rounding_fn: Callable[[float], float] | None = None,
     ) -> list[BasePipelineStage]:
         self.calls.append(
             (

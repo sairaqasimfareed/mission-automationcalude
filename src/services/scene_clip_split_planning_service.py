@@ -6,6 +6,7 @@ from itertools import combinations_with_replacement
 
 from src.providers.google_flow.locators import (
     VERIFIED_DURATIONS_SECONDS,
+    clamp_to_durations,
     clamp_to_verified_duration,
 )
 
@@ -62,6 +63,7 @@ class SceneClipSplitPlanningService:
         *,
         max_single_clip_seconds: float = _FLOW_MAX_SINGLE_CLIP_SECONDS,
         clamp: Callable[[float], float] = clamp_to_verified_duration,
+        durations: tuple[int, ...] | None = None,
     ) -> list[float]:
         """
         Return the ordered list of sub-clip durations needed to cover
@@ -94,6 +96,23 @@ class SceneClipSplitPlanningService:
                 "Split planning requires a positive real narration duration."
             )
 
+        if durations is not None:
+            # A Flow model with its own length grid (e.g. Omni 1.1 Flash: 4/6/8/10): plan on that grid.
+            grid_max = float(max(durations))
+
+            if real_narration_duration_seconds <= grid_max:
+                return [
+                    float(
+                        clamp_to_durations(real_narration_duration_seconds, durations)
+                    )
+                ]
+
+            return cls._plan_on_grid(
+                real_narration_duration_seconds,
+                math.ceil(real_narration_duration_seconds / grid_max),
+                durations,
+            )
+
         if not cls.needs_split(
             real_narration_duration_seconds,
             max_single_clip_seconds=max_single_clip_seconds,
@@ -108,8 +127,10 @@ class SceneClipSplitPlanningService:
             # Flow's discrete 4/6/8s grid: dividing evenly and then
             # rounding each share UP wastes footage (9s became 6+6=12s
             # when 6+4=10s covers it). Search the grid instead.
-            return cls._plan_on_verified_grid(
-                real_narration_duration_seconds, sub_clip_count
+            return cls._plan_on_grid(
+                real_narration_duration_seconds,
+                sub_clip_count,
+                VERIFIED_DURATIONS_SECONDS,
             )
 
         even_share = real_narration_duration_seconds / sub_clip_count
@@ -117,8 +138,10 @@ class SceneClipSplitPlanningService:
         return [float(clamp(even_share)) for _ in range(sub_clip_count)]
 
     @staticmethod
-    def _plan_on_verified_grid(
-        real_narration_duration_seconds: float, sub_clip_count: int
+    def _plan_on_grid(
+        real_narration_duration_seconds: float,
+        sub_clip_count: int,
+        grid_values: tuple[int, ...],
     ) -> list[float]:
         """
         The cheapest set of `sub_clip_count` verified clip lengths whose
@@ -132,7 +155,7 @@ class SceneClipSplitPlanningService:
         reference-image hand-off and a visible join.
         """
 
-        grid = sorted(float(value) for value in VERIFIED_DURATIONS_SECONDS)
+        grid = sorted(float(value) for value in grid_values)
 
         best: tuple[float, ...] | None = None
         best_key: tuple[float, float] | None = None

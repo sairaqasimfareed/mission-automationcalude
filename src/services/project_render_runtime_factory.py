@@ -6,6 +6,7 @@ from src.models.editing_directives import (
     SubtitleDirective,
 )
 from src.models.video_job import VideoJob
+from src.providers.google_flow.clip_profile import flow_clip_profile_for
 from src.services.genre_voice_directive_generation_service import (
     GenreVoiceDirectiveGenerationService,
 )
@@ -200,6 +201,7 @@ class ProjectRenderRuntimeFactory:
             letterbox_enabled_override=job.letterbox_enabled,
             audio_inclusion_preferences=job.audio_inclusion_preferences,
             subtitles_enabled=job.subtitles_enabled,
+            clip_duration_rounding_fn=flow_clip_profile_for(job.video_provider).clamp,
         )
 
         return RenderOrchestratorService(

@@ -7,7 +7,7 @@ from src.models.enriched_scene_prompt import EnrichedScenePrompt
 from src.models.scene import Scene
 from src.models.video_job import VideoJob
 from src.models.video_provider import VideoProvider
-from src.providers.google_flow.locators import VERIFIED_DURATIONS_SECONDS
+from src.providers.google_flow.clip_profile import flow_clip_profile_for
 from src.services.narration_duration_sync_service import (
     sync_real_narration_durations,
 )
@@ -185,10 +185,12 @@ class EnrichedScenePromptService:
         # frame) is always requested at that maximum - mirrors
         # SceneVideoGenerationService._submit(). Muse has no duration
         # control, so nothing is forced there.
-        if rules.provider == VideoProvider.GOOGLE_FLOW and (
-            reference_assets or has_seam_reference
+        if (
+            rules.provider.is_flow
+            and flow_clip_profile_for(rules.provider).references_need_max_duration
+            and (reference_assets or has_seam_reference)
         ):
-            duration_seconds = float(max(VERIFIED_DURATIONS_SECONDS))
+            duration_seconds = flow_clip_profile_for(rules.provider).max_seconds
 
         # Worded exactly as a submission would send it (stated duration,
         # last shot beat, and - for Muse - the trim instruction).

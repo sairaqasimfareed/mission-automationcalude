@@ -16,3 +16,12 @@ class VideoProvider(str, Enum):
 
     GOOGLE_FLOW = "google_flow"
     MUSE = "muse"
+    # Google Flow on an account whose "Omni 1.1 Flash" model makes 4/6/8/10 s clips and accepts reference
+    # images at every length. Same browser automation and accounts as GOOGLE_FLOW; only the clip rules differ.
+    GOOGLE_FLOW_OMNI = "google_flow_omni"
+
+    @property
+    def is_flow(self) -> bool:
+        """Generated through Google Flow's browser automation (either clip profile)."""
+
+        return self in (VideoProvider.GOOGLE_FLOW, VideoProvider.GOOGLE_FLOW_OMNI)

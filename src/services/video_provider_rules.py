@@ -8,9 +8,9 @@ from src.models.scene import Scene
 from src.models.specification_enums import AspectRatio
 from src.models.video_job import VideoJob
 from src.models.video_provider import VideoProvider
+from src.providers.google_flow.clip_profile import flow_clip_profile_for
 from src.providers.google_flow.locators import (
     VERIFIED_DURATIONS_SECONDS,
-    clamp_to_verified_duration,
 )
 from src.services.scene_clip_split_planning_service import SceneClipSplitPlanningService
 from src.services.scene_video_generation_service import (
@@ -74,7 +74,7 @@ def merge_target_seconds(provider: VideoProvider) -> float:
     if provider == VideoProvider.MUSE:
         return MUSE_CLIP_DURATION_SECONDS - _MERGE_HEADROOM_SECONDS
 
-    return _MAX_FLOW_CLIP_SECONDS - _MERGE_HEADROOM_SECONDS
+    return flow_clip_profile_for(provider).max_seconds - _MERGE_HEADROOM_SECONDS
 
 
 def _identity(seconds: float) -> float:
@@ -110,14 +110,21 @@ class VideoProviderRules:
 
     @property
     def display_name(self) -> str:
-        return "Muse" if self.provider == VideoProvider.MUSE else "Google Flow"
+        if self.provider == VideoProvider.MUSE:
+            return "Muse"
+
+        return (
+            "Google Flow (Omni)"
+            if self.provider == VideoProvider.GOOGLE_FLOW_OMNI
+            else "Google Flow"
+        )
 
     @property
     def max_single_clip_seconds(self) -> float:
         return (
             MUSE_CLIP_DURATION_SECONDS
             if self.provider == VideoProvider.MUSE
-            else _MAX_FLOW_CLIP_SECONDS
+            else flow_clip_profile_for(self.provider).max_seconds
         )
 
     @property
@@ -126,6 +133,9 @@ class VideoProviderRules:
 
         if self.provider == VideoProvider.MUSE:
             return f"Muse - {MUSE_CLIP_DURATION_SECONDS:.0f}s clips, trimmed to length"
+
+        if self.provider == VideoProvider.GOOGLE_FLOW_OMNI:
+            return "Google Flow Omni 1.1 Flash - up to 10s clips (4/6/8/10s), references at any length"
 
         return f"Google Flow - up to {_MAX_FLOW_CLIP_SECONDS:.0f}s clips (4/6/8s)"
 
@@ -146,7 +156,7 @@ class VideoProviderRules:
                 clamp=_identity,
             )
 
-        return SceneClipSplitPlanningService.plan(narration_seconds)
+        return flow_clip_profile_for(self.provider).plan(narration_seconds)
 
     def single_clip_seconds(self, narration_seconds: float) -> float:
         """The length of the one clip generated for a scene that does not
@@ -157,7 +167,7 @@ class VideoProviderRules:
         if self.provider == VideoProvider.MUSE:
             return muse_target_seconds(max(narration_seconds, MUSE_MIN_CLIP_SECONDS))
 
-        return float(clamp_to_verified_duration(narration_seconds))
+        return float(flow_clip_profile_for(self.provider).clamp(narration_seconds))
 
     def finalize_prompt(
         self,
@@ -243,9 +253,13 @@ def resolve_scene_video_provider(
         provider_name = provider_name_for_profile(scene.preferred_profile_id)
 
         if provider_name is not None:
+            if provider_name.strip().lower() == "muse":
+                return VideoProvider.MUSE
+
+            # A Flow account: the project's own Flow rules (an Omni project stays Omni).
             return (
-                VideoProvider.MUSE
-                if provider_name.strip().lower() == "muse"
+                job.video_provider
+                if job.video_provider.is_flow
                 else VideoProvider.GOOGLE_FLOW
             )
 
