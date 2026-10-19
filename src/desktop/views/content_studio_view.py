@@ -5751,6 +5751,14 @@ class ContentStudioView(QWidget):
                     self._handle_identity_scenes(n, f.text(), valid_numbers)
                 )
             )
+            # Enter, or leaving the field, applies the scenes too: a typed list that was never
+            # applied attached the picture to nothing (found live, Joan arc).
+            scenes_before = format_scene_numbers(scenes_now)
+            scenes_field.editingFinished.connect(
+                lambda n=identity.name, f=scenes_field, was=scenes_before: (
+                    self._apply_scenes_if_changed(n, f.text(), was, valid_numbers)
+                )
+            )
             scenes_row.addWidget(apply_button)
             layout.addLayout(scenes_row)
             layout.addLayout(self._reference_status_row(job, identity, scenes_now))
@@ -5834,6 +5842,14 @@ class ContentStudioView(QWidget):
             label="saving the reference mode",
             failure="Could not save the reference mode",
         )
+
+    def _apply_scenes_if_changed(
+        self, name: str, text: str, previous: str, valid_numbers: set[int]
+    ) -> None:
+        if " ".join(text.split()) == " ".join(previous.split()):
+            return
+
+        self._handle_identity_scenes(name, text, valid_numbers)
 
     def _handle_identity_scenes(
         self, name: str, text: str, valid_numbers: set[int]

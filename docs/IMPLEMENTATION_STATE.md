@@ -1561,3 +1561,5 @@ for the phase sequence) updates the rows it touches in this file as part
 of the same commit that does the work - not as a follow-up. A row that
 still says "Missing" or "Partial" after a phase claims to have addressed
 it is a bug in that phase's completion, not in this document.
+
+**Reference fixes (2026-10-19):** typing a scene number in the Characters and places "Scenes" field now applies on Enter / leaving the field (not only the "Apply scenes" button), so an uploaded picture attaches to those clips. The Clips tab shows one thumbnail per picture marked for a scene (`SceneReferenceStatus.image_paths`), not only the first. Tests in `tests/test_reference_modes.py`.

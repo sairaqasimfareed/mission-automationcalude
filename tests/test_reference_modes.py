@@ -419,3 +419,118 @@ def test_manual_mode_shows_each_character_once_plus_the_add_form(qapp) -> None: 
         sum(1 for t in texts if t.endswith(f": {name}")) == 1
     )  # one card, not two lists
     assert "Or add one yourself:" in texts
+
+
+# ------------------------------------------------------------------ found live: Joan arc (2026-10-19)
+
+
+def _picture(tmp_path: Path, name: str, red: int = 200) -> Path:
+    from PIL import Image
+
+    path = tmp_path / name
+    Image.new("RGB", (64, 64), (red, 30, 30)).save(path)
+
+    return path
+
+
+def _service_for(tmp_path: Path):  # type: ignore[no-untyped-def]
+    from src.services.recurring_identity_service import RecurringIdentityService
+
+    return RecurringIdentityService(storage_root=tmp_path / "store")
+
+
+def test_a_picture_uploaded_before_any_scene_is_attached_once_scenes_are_given(
+    tmp_path: Path,
+) -> None:
+    """Upload first, then type the scenes: the picture must go to those scenes."""
+
+    job = _job(_scene(1), _scene(2), _scene(3))
+    job.reference_mode = ReferenceMode.MANUAL
+    job.visual_continuity_bible = _continuity_bible(
+        reference_asset_ids=[], scene_numbers=[1, 2, 3]
+    )
+    name = job.visual_continuity_bible.identities[0].name
+    set_scenes_of(job, name, [])
+    assert scenes_of(job, name) == []
+
+    _service_for(tmp_path).set_reference_from_file(
+        job, name, str(_picture(tmp_path, "a.png"))
+    )
+    set_scenes_of(job, name, [2])
+
+    identity = job.visual_continuity_bible.identities[0]
+    asset = job.extracted_frame_asset_index.get(identity.reference_asset_ids[0])
+    assert asset is not None and picture_is_attachable(job, asset)
+    assert scenes_of(job, name) == [2]
+
+
+def test_leaving_the_scenes_field_applies_it_without_pressing_the_button(qapp) -> None:  # type: ignore[no-untyped-def]
+    from PySide6.QtWidgets import QLineEdit, QVBoxLayout, QWidget
+
+    from tests.test_scene_detail import _job as scene_job
+    from tests.test_suggestions import _studio
+
+    view, job, _errors = _studio(scene_job(3))
+    job.visual_continuity_bible = _continuity_bible(
+        reference_asset_ids=[], scene_numbers=[1, 2, 3]
+    )
+    name = job.visual_continuity_bible.identities[0].name
+    set_scenes_of(job, name, [])
+    job.reference_mode = ReferenceMode.MANUAL
+    holder2 = QWidget()
+    view._render_references_panel(QVBoxLayout(holder2), job)  # noqa: SLF001
+    field = next(
+        f
+        for f in holder2.findChildren(QLineEdit)
+        if f.placeholderText() == "e.g. 1-3, 7"
+    )
+
+    field.setText("2")
+    field.editingFinished.emit()
+
+    saved = view._current_job()  # noqa: SLF001
+    assert saved is not None
+    assert scenes_of(saved, name) == [2]
+
+
+def test_the_clips_tab_shows_every_picture_of_a_scene_not_only_the_first(
+    tmp_path: Path,
+) -> None:
+    from src.services.scene_reference_service import SceneReferenceService
+
+    job = _job(_scene(1), _scene(2))
+    job.visual_continuity_bible = _continuity_bible(
+        reference_asset_ids=[], scene_numbers=[1, 2]
+    )
+    service = _service_for(tmp_path)
+    identity = job.visual_continuity_bible.identities[0]
+    service.set_reference_from_file(
+        job, identity.name, str(_picture(tmp_path, "one.png"))
+    )
+
+    from src.models.visual_continuity import (
+        CanonicalEntityIdentity,
+        CanonicalEntityType,
+    )
+
+    second = CanonicalEntityIdentity(
+        entity_type=CanonicalEntityType.LOCATION,
+        name="The courtroom",
+        canonical_description="A dark-wood courtroom.",
+    )
+    job.visual_continuity_bible.identities.append(second)
+    for entry in job.visual_continuity_bible.clip_entries:
+        entry.entity_names.append(second.name)
+        entry.on_screen_entity_names.append(second.name)
+    service.set_reference_from_file(
+        job, second.name, str(_picture(tmp_path, "two.png", red=20))
+    )
+
+    status = SceneReferenceService(
+        selection_service=object(),  # type: ignore[arg-type]
+        storage_root=tmp_path / "scene_store",
+    ).status(job, job.scenes[0])
+
+    assert len(status.image_paths) == 2
+    assert status.image_path == status.image_paths[0]
+    assert "Marked here:" in status.text and status.text.count("(reference") == 2

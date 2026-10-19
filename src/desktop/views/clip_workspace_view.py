@@ -1418,8 +1418,14 @@ class ClipWorkspaceView(QWidget):
 
         line = QHBoxLayout()
 
-        if reference.image_path is not None:
-            pixmap = QPixmap(reference.image_path)
+        # Every picture that goes with the scene, side by side (a scene with two characters
+        # shows both), not just the first.
+        paths = list(reference.image_paths) or (
+            [reference.image_path] if reference.image_path is not None else []
+        )
+
+        for path in paths:
+            pixmap = QPixmap(path)
 
             if not pixmap.isNull():
                 picture = QLabel()

@@ -15,7 +15,7 @@ was made with it.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
@@ -73,6 +73,9 @@ class SceneReferenceStatus:
     needs_reference: bool
     has_override: bool
     image_path: str | None = None
+    # EVERY picture that goes with this scene (one per character or place that has one), in the order
+    # they are listed - image_path is just the first. The Clips tab shows them all.
+    image_paths: list[str] = field(default_factory=list)
 
 
 def _normalised_location(job: VideoJob, scene_number: int) -> str | None:
@@ -461,6 +464,7 @@ class SceneReferenceService:
         parts: list[str] = []
         with_reference = 0
         image_path: str | None = None
+        image_paths: list[str] = []
 
         for name in names:
             identity = by_name.get(name)
@@ -473,6 +477,10 @@ class SceneReferenceService:
             if found.has_reference:
                 with_reference += 1
                 image_path = image_path or found.image_path
+
+                if found.image_path is not None and found.image_path not in image_paths:
+                    image_paths.append(found.image_path)
+
                 source = (
                     f", from scene {found.from_scene}"
                     if found.from_scene is not None
@@ -491,6 +499,7 @@ class SceneReferenceService:
             needs_reference=not has_reference,
             has_override=False,
             image_path=image_path,
+            image_paths=image_paths,
         )
 
     def _override_status(self, job: VideoJob, scene: Scene) -> SceneReferenceStatus:
