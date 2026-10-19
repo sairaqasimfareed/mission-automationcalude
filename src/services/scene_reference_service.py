@@ -76,6 +76,8 @@ class SceneReferenceStatus:
     # EVERY picture that goes with this scene (one per character or place that has one), in the order
     # they are listed - image_path is just the first. The Clips tab shows them all.
     image_paths: list[str] = field(default_factory=list)
+    # The character or place each entry of image_paths belongs to (same order).
+    image_names: list[str] = field(default_factory=list)
 
 
 def _normalised_location(job: VideoJob, scene_number: int) -> str | None:
@@ -465,6 +467,7 @@ class SceneReferenceService:
         with_reference = 0
         image_path: str | None = None
         image_paths: list[str] = []
+        image_names: list[str] = []
 
         for name in names:
             identity = by_name.get(name)
@@ -480,6 +483,7 @@ class SceneReferenceService:
 
                 if found.image_path is not None and found.image_path not in image_paths:
                     image_paths.append(found.image_path)
+                    image_names.append(name)
 
                 source = (
                     f", from scene {found.from_scene}"
@@ -500,6 +504,7 @@ class SceneReferenceService:
             has_override=False,
             image_path=image_path,
             image_paths=image_paths,
+            image_names=image_names,
         )
 
     def _override_status(self, job: VideoJob, scene: Scene) -> SceneReferenceStatus:

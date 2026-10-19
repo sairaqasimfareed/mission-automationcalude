@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMessageBox,
+    QPushButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
@@ -77,6 +78,7 @@ from src.services.recurring_identity_service import ReferenceCandidate
 from src.services.reference_frame_selection_service import (
     ReferenceFrameSelectionService,
 )
+from src.services.reference_picture_service import remove_from_scene
 from src.services.reference_refresh_service import (
     ReferenceRefreshReport,
     ReferenceRefreshService,
@@ -1263,7 +1265,7 @@ class ClipWorkspaceView(QWidget):
 
             self._add_graphic_treatment_row(row_layout, job, scene)
             reference = self._scene_reference_service.status(job, scene)
-            self._add_scene_reference_line(row_layout, reference)
+            self._add_scene_reference_line(row_layout, reference, scene.scene_number)
 
             if not sub_clip_statuses:
                 plan_text = self._planned_split_text(job, scene)
@@ -1406,7 +1408,7 @@ class ClipWorkspaceView(QWidget):
         self._layout.addWidget(frame)
 
     def _add_scene_reference_line(
-        self, row_layout: QVBoxLayout, reference: object
+        self, row_layout: QVBoxLayout, reference: object, scene_number: int
     ) -> None:
         """One line under a scene: its reference picture (if it has one) and where it
         came from, or why it has none."""
@@ -1424,15 +1426,40 @@ class ClipWorkspaceView(QWidget):
             [reference.image_path] if reference.image_path is not None else []
         )
 
-        for path in paths:
+        for index, path in enumerate(paths):
             pixmap = QPixmap(path)
 
-            if not pixmap.isNull():
-                picture = QLabel()
-                picture.setPixmap(
-                    pixmap.scaledToWidth(72, Qt.TransformationMode.SmoothTransformation)
-                )
+            if pixmap.isNull():
+                continue
+
+            picture = QLabel()
+            picture.setPixmap(
+                pixmap.scaledToWidth(72, Qt.TransformationMode.SmoothTransformation)
+            )
+            name = (
+                reference.image_names[index]
+                if index < len(reference.image_names)
+                else None
+            )
+
+            if name is None:
                 line.addWidget(picture)
+                continue
+
+            # One cross per picture: takes just that character or place off this scene.
+            cell = QVBoxLayout()
+            cross = QPushButton("✕")
+            cross.setFixedSize(24, 24)
+            cross.setToolTip(f"Remove {name} from this scene")
+            cross.setAccessibleName(f"Remove {name} from scene {scene_number}")
+            cross.clicked.connect(
+                lambda _=False, n=name, s=scene_number: self._handle_remove_reference(
+                    n, s
+                )
+            )
+            cell.addWidget(picture)
+            cell.addWidget(cross, alignment=Qt.AlignmentFlag.AlignHCenter)
+            line.addLayout(cell)
 
         line.addWidget(
             (
@@ -1573,6 +1600,16 @@ class ClipWorkspaceView(QWidget):
 
             return
 
+        self._job_store.add(job)
+        self._on_change()
+
+    def _handle_remove_reference(self, name: str, scene_number: int) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        remove_from_scene(job, name, scene_number)
         self._job_store.add(job)
         self._on_change()
 

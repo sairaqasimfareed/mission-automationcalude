@@ -107,6 +107,22 @@ def set_scenes_of(job: VideoJob, name: str, scene_numbers: list[int]) -> None:
             ]
 
 
+def remove_from_scene(job: VideoJob, name: str, scene_number: int) -> None:
+    """Stop showing `name` in this one scene (its other scenes and its picture are kept)."""
+
+    bible = job.visual_continuity_bible
+
+    if bible is None:
+        return
+
+    for entry in bible.clip_entries:
+        if entry.scene_number == scene_number:
+            entry.entity_names = [n for n in entry.entity_names if n != name]
+            entry.on_screen_entity_names = [
+                n for n in entry.on_screen_entity_names if n != name
+            ]
+
+
 def clear_picture(job: VideoJob, name: str) -> None:
     """Take the reference picture off a character or place (the stored file is kept)."""
 

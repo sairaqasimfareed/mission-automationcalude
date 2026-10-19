@@ -534,3 +534,20 @@ def test_the_clips_tab_shows_every_picture_of_a_scene_not_only_the_first(
     assert len(status.image_paths) == 2
     assert status.image_path == status.image_paths[0]
     assert "Marked here:" in status.text and status.text.count("(reference") == 2
+
+
+def test_removing_one_picture_from_a_scene_keeps_the_other_and_other_scenes() -> None:
+    from src.services.reference_picture_service import remove_from_scene
+
+    job = _job(_scene(1), _scene(2))
+    job.visual_continuity_bible = _continuity_bible(
+        reference_asset_ids=[], scene_numbers=[1, 2]
+    )
+    name = job.visual_continuity_bible.identities[0].name
+
+    remove_from_scene(job, name, 1)
+
+    entries = {e.scene_number: e for e in job.visual_continuity_bible.clip_entries}
+    assert name not in entries[1].entity_names
+    assert name not in entries[1].on_screen_entity_names
+    assert name in entries[2].on_screen_entity_names
