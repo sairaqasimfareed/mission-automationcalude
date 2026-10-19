@@ -24,7 +24,7 @@ from src.models.scene_detail import (
     SceneDetailPlan,
 )
 from src.models.video_job import VideoJob
-from src.services.genre_visual_mood import genre_direction
+from src.services.genre_visual_mood import visual_direction
 from src.services.llm.labeled_block_parser import extract_labeled_field, split_blocks
 from src.services.llm.llm_service import LLMService
 from src.services.scene_detail_source import scene_detail_source_hash
@@ -266,7 +266,7 @@ class SceneDetailService:
         bible = job.visual_continuity_bible
         brief = job.production_semantic_brief
         look = job.project_look.as_prompt_sentence() if job.project_look else ""
-        direction = genre_direction(job.genre_id)
+        direction = visual_direction(job.genre_id, job.style_brief)
         hook = job.story_treatment.accepted_hook if job.story_treatment else ""
         first_number = min((s.scene_number for s in job.scenes), default=0)
         wanted = job.current_scene_visuals

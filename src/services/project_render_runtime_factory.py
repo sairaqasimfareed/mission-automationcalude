@@ -25,6 +25,7 @@ from src.services.render_orchestrator_service import (
 from src.services.render_workflow_stage_factory import (
     RenderWorkflowStageFactory,
 )
+from src.services.voice_cast_service import attach_line_blueprints
 from src.services.voice_resolution_runtime import (
     VoiceResolutionRequest,
     VoiceResolutionRuntime,
@@ -189,6 +190,16 @@ class ProjectRenderRuntimeFactory:
         ]
 
         voice_blueprints = self._voice_resolution_runtime.resolve_many(requests)
+        attach_line_blueprints(
+            job=job,
+            scenes=voiced_scenes,
+            blueprints=voice_blueprints,
+            directive_service=self._voice_directive_generation_service,
+            resolution_runtime=self._voice_resolution_runtime,
+            genre_id=genre_id,
+            language=language,
+            language_code=language_code,
+        )
 
         stages = self._stage_factory.build(
             voice_blueprints=voice_blueprints,

@@ -42,6 +42,7 @@ from src.services.narration_duration_sync_service import (
     sync_real_narration_durations,
 )
 from src.services.sound_effect_generation_service import SoundEffectGenerationService
+from src.services.voice_cast_service import attach_line_blueprints
 from src.services.voice_generation_service import VoiceGenerationService
 from src.services.voice_resolution_runtime import (
     VoiceResolutionRequest,
@@ -155,6 +156,15 @@ class MediaGenerationPipeline:
             ]
 
             blueprints = self.voice_resolution_runtime.resolve_many(requests)
+            attach_line_blueprints(
+                job=job,
+                scenes=ordered_scenes,
+                blueprints=blueprints,
+                directive_service=self.voice_directive_generation_service,
+                resolution_runtime=self.voice_resolution_runtime,
+                genre_id=job.genre_id,
+                language=job.language,
+            )
             results = self.voice_generation_service.generate_many(blueprints)
 
             failed = next((result for result in results if not result.success), None)

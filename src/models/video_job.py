@@ -50,6 +50,7 @@ from src.models.production_semantic_brief import ProductionSemanticBrief
 from src.models.project_look import ProjectLook
 from src.models.provider_preferences import ProviderPreferences
 from src.models.re_hook import ReHookPlan
+from src.models.reference_mode import ReferenceMode
 from src.models.render_result import RenderResult
 from src.models.research import ResearchResult, ResearchStatus
 from src.models.research_plan import ResearchPlan
@@ -467,6 +468,21 @@ class VideoJob(MissionBaseModel):
     # Scene planning: merge short neighbouring scenes into fewer, longer clips so fewer clips
     # have to be generated. Off = the planner behaves exactly as it always did. keep_beat_lines
     # leaves a one-line dramatic beat (a whole segment of four words or fewer) as its own scene.
+    # Voice cast: the script names its speakers ("JUDGE: ...", "VOICE (Joan of Arc): ...") and each is read by
+    # its own voice, as voice-over. voice_cast maps a speaker's name (lower case) to a voice profile id; a
+    # speaker with no entry, and every unlabelled line, is read by the project's usual narrator voice.
+    # How reference pictures are obtained: automatically from generated clips (the default), or only the
+    # pictures the operator uploads (see src/models/reference_mode.py).
+    reference_mode: ReferenceMode = ReferenceMode.AUTO
+
+    # The operator's own series style brief, pasted once (the look, locked sets, a recurring persona, colour
+    # rules, how flashbacks differ). Every visual step is told it as binding; it is NOT part of the script and
+    # is never spoken. See genre_visual_mood.visual_direction.
+    style_brief: str = ""
+
+    voice_cast_enabled: bool = False
+    voice_cast: dict[str, str] = Field(default_factory=dict)
+
     merge_short_scenes: bool = False
     keep_beat_lines: bool = True
 

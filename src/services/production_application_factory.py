@@ -33,6 +33,7 @@ from src.services.genre_voice_directive_generation_service import (
 from src.services.mission_application_service import (
     MissionApplicationService,
 )
+from src.services.multi_voice_generation_service import MultiVoiceGenerationService
 from src.services.music_generation_service import MusicGenerationService
 from src.services.narration_condensation_service import (
     NarrationCondensationService,
@@ -465,7 +466,7 @@ class ProductionApplicationFactory:
             dynamic_voice_selection_service=self._dynamic_voice_selection_service,
         )
 
-        voice_generation_service = VoiceGenerationService(
+        voice_generation_service = MultiVoiceGenerationService(
             providers=list(self._voice_providers),
             narration_condensation_service=NarrationCondensationService(
                 llm_service=(infrastructure.llm_service),

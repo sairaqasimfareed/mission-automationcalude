@@ -502,12 +502,12 @@ def _plan_for_scene_one(text: str = _LONG, *, hash_override: str | None = None):
     )
 
 
-def test_a_current_detail_is_in_the_prompt_between_composition_and_camera() -> None:
+def test_a_current_detail_is_in_the_prompt_before_the_camera_line() -> None:
     text = _compile_with(_plan_for_scene_one())
 
     assert "Scene detail: A low, wide view across the village" in text
     assert (
-        text.index("Composition:")
+        text.index("Identity:")
         < text.index("Scene detail:")
         < text.index("Lens/camera:")
     )

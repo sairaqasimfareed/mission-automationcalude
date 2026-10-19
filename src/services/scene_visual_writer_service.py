@@ -32,7 +32,7 @@ from enum import Enum
 from src.models.scene import Scene
 from src.models.scene_visual import MAX_VISUAL_CHARACTERS
 from src.models.video_job import VideoJob
-from src.services.genre_visual_mood import genre_direction
+from src.services.genre_visual_mood import visual_direction
 from src.services.llm.labeled_block_parser import extract_labeled_field, split_blocks
 from src.services.llm.llm_service import LLMService
 from src.shared.llm.models import LLMProvider
@@ -370,7 +370,7 @@ class SceneVisualWriterService:
             if bible is not None and bible.identities
             else ""
         )
-        direction = genre_direction(job.genre_id)
+        direction = visual_direction(job.genre_id, job.style_brief)
         hook = job.story_treatment.accepted_hook if job.story_treatment else ""
         first = all_scenes[0].scene_number
         # Only the colour and camera feel: the style sheet's setting can name TWO worlds (a past and a

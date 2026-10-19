@@ -16,6 +16,7 @@ from src.models.production_handoff import (
     ProductionHandoffState,
     ProductionHandoffStatus,
 )
+from src.models.reference_mode import ReferenceMode
 from src.models.scene_visual import SceneVisualPlan, narration_key
 from src.models.script_intake import ScriptIntakeMode
 from src.models.script_lock import ScriptProvenance
@@ -50,7 +51,7 @@ from src.services.editorial_profile_composition_service import (
 from src.services.genre_profile_registry_service import (
     GenreProfileRegistryService,
 )
-from src.services.genre_visual_mood import genre_direction
+from src.services.genre_visual_mood import visual_direction
 from src.services.hook_evaluation_service import (
     HookEvaluationService,
     select_winning_hook,
@@ -1422,7 +1423,7 @@ class ContentIntelligencePipeline:
             scenes=job.scenes,
             continuity_bible=job.continuity_bible,
             script_lock_hash=job.script_lock.script_content_hash,
-            genre_direction=genre_direction(job.genre_id),
+            genre_direction=visual_direction(job.genre_id, job.style_brief),
             scene_visuals=job.current_scene_visuals,
         )
 
@@ -1843,7 +1844,7 @@ class ContentIntelligencePipeline:
             script_lock_hash=job.script_lock.script_content_hash,
             topic=job.topic,
             aspect_ratio=job.aspect_ratio,
-            genre_direction=genre_direction(job.genre_id),
+            genre_direction=visual_direction(job.genre_id, job.style_brief),
             scene_visuals=job.current_scene_visuals,
         )
         job.cinematic_shot_plan.visual_revision = (
@@ -2034,6 +2035,41 @@ class ContentIntelligencePipeline:
             target_seconds=merge_target_seconds(job.video_provider),
             keep_beats=job.keep_beat_lines,
         )
+
+    @staticmethod
+    def set_reference_mode(job: VideoJob, mode: ReferenceMode) -> VideoJob:
+        """Automatic (reference frames are taken from generated clips) or manual (only pictures the
+        operator uploaded are attached)."""
+
+        job.reference_mode = mode
+
+        return job
+
+    @staticmethod
+    def set_style_brief(job: VideoJob, text: str) -> VideoJob:
+        """Store the operator's series style brief (plain text, trimmed to the supported length)."""
+
+        job.style_brief = text.strip()[:6000]
+
+        return job
+
+    @staticmethod
+    def set_voice_cast(
+        job: VideoJob, *, enabled: bool, cast: dict[str, str] | None = None
+    ) -> VideoJob:
+        """Switch the voice cast on or off and/or replace which voice reads each speaker. Speakers are
+        matched by lower-cased name; an empty profile id removes that speaker's voice (the narrator
+        reads it). Takes effect when the script is imported and when the voiceover is made.
+        """
+
+        job.voice_cast_enabled = enabled
+
+        if cast is not None:
+            job.voice_cast = {
+                key: profile_id for key, profile_id in cast.items() if profile_id
+            }
+
+        return job
 
     def set_scene_merge(
         self, job: VideoJob, *, enabled: bool, keep_beats: bool

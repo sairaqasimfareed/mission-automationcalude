@@ -17,7 +17,7 @@ import logging
 
 from src.models.project_look import ProjectLook
 from src.models.video_job import VideoJob
-from src.services.genre_visual_mood import genre_direction, genre_style_defaults
+from src.services.genre_visual_mood import genre_style_defaults, visual_direction
 from src.services.llm.labeled_block_parser import extract_labeled_field
 from src.services.llm.llm_service import LLMService
 from src.shared.llm.models import LLMProvider
@@ -184,7 +184,7 @@ class ProjectStyleSheetService:
                     settings.append(location)
 
         known = "; ".join(settings[:12]) or "none listed"
-        direction = genre_direction(job.genre_id)
+        direction = visual_direction(job.genre_id, job.style_brief)
         genre_note = (
             f"Genre treatment (how the video should FEEL - let the lighting, palette, "
             f"camera and sound follow it): {direction}\n\n"

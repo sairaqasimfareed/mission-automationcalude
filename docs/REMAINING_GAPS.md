@@ -1086,6 +1086,25 @@ ElevenLabs credits; ElevenLabs was at zero on 2026-10-07).
   The Omni model name is fixed in code ("Omni 1.1 Flash"): a renamed model in Flow's picker would fail as "not one of the real
   options". Clips are still not trimmed to their narration on Flow, so a 10 s clip for a 6 s line plays its tail.
 
+- Voice cast (2026-10-18): voice-over only. No per-speaker or per-line delivery (calm, trembling, whispered) yet - a "voice style"
+  (per-speaker emotion/pace/energy presets, a per-line tag such as `JOAN (trembling):`, and a Claude proposal step) was agreed as the
+  next step and is not built. A speaker is matched by exact name (JUDGE / Judge are one speaker, a typo is a new one) and chooses from
+  the built-in voice profiles only. A narration line that starts with an ALL-CAPS word and a colon is read as a speaker. Lines are
+  voiced and cached one by one, so a regeneration spends credits on every line of the scene. Subtitles show the spoken text without
+  the speaker's name. Not tried with real ElevenLabs voices.
+- Style brief (2026-10-18): it only reaches the Claude steps that write visuals; the video generators may still drift from it. It
+  does not itself create recurring people (Judge Marsh) or the locked courtroom: those still come from the continuity bible steps
+  reading it. Changing it marks nothing stale - the steps must be rebuilt by hand.
+
+- Reference modes (2026-10-19): people and places only (no props such as a gavel or an exhibit card); one picture per identity (no
+  front/profile set); regenerating the visual continuity bible resets the GENERATED characters' scenes and pictures (ones added by hand
+  are kept); a scene with several pictured characters may attach more references than Flow or Muse accept (unconfirmed); the image
+  prompt only helps if the operator's image tool follows it. A gavel-only close-up still gets the full character descriptions in its
+  Identity line (asking for hands and robe only was offered, not built).
+- Compact prompts (2026-10-19): the paragraph itself, the Identity line and the look sentence can still repeat each other's wording;
+  only the labelled duplicate sections were removed.
+  Whether the video generators now hold the series style in flashbacks (Joan arc clip 6 drifted before this) is not yet re-tested on a real clip; attaching a style frame from the first clip to every clip was suggested, not built.
+
 ## Explicitly out of scope
 
 - Google Flow, or any browser automation targeting Google Flow's web UI.

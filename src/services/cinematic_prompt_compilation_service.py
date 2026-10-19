@@ -183,10 +183,49 @@ def _visual_sentence(visual: str) -> str:
     return f"On screen: {visual.rstrip('. ')}. " if visual else ""
 
 
+def _plain(text: str) -> str:
+    """A prompt field without its trailing full stops, so the label that follows it does not double them."""
+
+    return text.rstrip(". ")
+
+
+def _prompt_body(
+    common: _ResolvedSceneFields, action_line: str, *, show_visual: bool
+) -> str:
+    """The part of a prompt from the identities to the lens.
+
+    A scene with its own written paragraph (`common.detail`) already says its place, light, composition
+    and what the operator wanted shown - the paragraph is built from exactly those fields. Repeating them
+    as separate Environment / Lighting / On screen / Composition sections told the generator the same thing
+    three or four times (live, 2026-10-18: the gavel, the flame and the gold chain each four times, the cold
+    slate light four times), which over-weights it and wastes the prompt's length. So such a scene keeps
+    the identities, the timed action, the paragraph and the lens; a scene without a paragraph keeps the
+    full set of sections exactly as before."""
+
+    identities = _plain(", ".join(common.identities) or "no recurring identity present")
+    dialogue = f"{common.dialogue} " if common.dialogue else ""
+
+    if common.detail:
+        return (
+            f"Identity: {identities}. {dialogue}{_plain(action_line)}. "
+            f"{_detail_sentence(common.detail)}"
+            f"Lens/camera: {common.lens}, {common.camera}. "
+        )
+
+    return (
+        f"Identity: {identities}. "
+        f"Environment: {_plain(common.environment)}. Lighting: {_plain(common.lighting)}. "
+        f"{dialogue}"
+        f"{_visual_sentence(common.visual) if show_visual else ''}"
+        f"{action_line} Composition: {_plain(common.composition)}. "
+        f"Lens/camera: {common.lens}, {common.camera}. "
+    )
+
+
 def _detail_sentence(detail: str) -> str:
     """The scene's own written paragraph as a prompt sentence, or "" when there is none."""
 
-    return f"Scene detail: {detail}. " if detail else ""
+    return f"Scene detail: {_plain(detail)}. " if detail else ""
 
 
 def _identity_names_shown(
@@ -544,18 +583,12 @@ class CinematicPromptCompilationService:
         action_line = (
             action_progression_line
             if action_progression_line is not None
-            else f"Action progression: {common.action}."
+            else f"Action progression: {_plain(common.action)}."
         )
 
         prompt_text = (
-            f"Identity: {', '.join(common.identities) or 'no recurring identity present'}. "
-            f"Environment: {common.environment}. Lighting: {common.lighting}. "
-            f"{common.dialogue + ' ' if common.dialogue else ''}"
-            f"{_visual_sentence(common.visual) if action_progression_line is not None else ''}"
-            f"{action_line} Composition: {common.composition}. "
-            f"{_detail_sentence(common.detail)}"
-            f"Lens/camera: {common.lens}, {common.camera}. "
             f"{common.look + ' ' if common.look else ''}"
+            f"{_prompt_body(common, action_line, show_visual=action_progression_line is not None)}"
             f"Duration: {duration:.0f} seconds."
             f"{common.reveal_note}"
             f"{_graphic_text_rule(common.graphic_text)}"
@@ -643,7 +676,7 @@ class CinematicPromptCompilationService:
             action_line = (
                 action_progression_line
                 if action_progression_line is not None
-                else f"Action progression: {common.action}."
+                else f"Action progression: {_plain(common.action)}."
             )
 
             continuation_note = (
@@ -656,14 +689,8 @@ class CinematicPromptCompilationService:
             )
 
             prompt_text = (
-                f"Identity: {', '.join(common.identities) or 'no recurring identity present'}. "
-                f"Environment: {common.environment}. Lighting: {common.lighting}. "
-                f"{common.dialogue + ' ' if common.dialogue else ''}"
-                f"{_visual_sentence(common.visual) if action_progression_line is not None else ''}"
-                f"{action_line} Composition: {common.composition}. "
-                f"{_detail_sentence(common.detail)}"
-                f"Lens/camera: {common.lens}, {common.camera}. "
                 f"{common.look + ' ' if common.look else ''}"
+                f"{_prompt_body(common, action_line, show_visual=action_progression_line is not None)}"
                 f"Duration: {sub_duration:.0f} seconds "
                 f"(part {index + 1} of {total_sub_clips})."
                 f"{common.reveal_note}{continuation_note}"
@@ -750,7 +777,7 @@ class CinematicPromptCompilationService:
             for beat in usable
         ]
 
-        return f"Shot progression: {'; '.join(rendered)}."
+        return f"Shot progression: {_plain('; '.join(rendered))}."
 
     @staticmethod
     def _render_shot_progression_window(
@@ -798,4 +825,4 @@ class CinematicPromptCompilationService:
             for beat in overlapping
         ]
 
-        return f"Shot progression: {'; '.join(rendered)}."
+        return f"Shot progression: {_plain('; '.join(rendered))}."

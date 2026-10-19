@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from src.models.dialogue import NARRATOR_NAME, DialogueLine
 from src.models.editorial_profile import EditorialProfile
 from src.models.generated_script import GeneratedScript, ScriptSegment
 from src.models.media_strategy import SceneSourceType
@@ -126,6 +127,8 @@ class _Unit:
     dialogue: bool = False
     # A "[VISUAL 8s]" shot: nothing is said, `narration` describes the picture.
     silent: bool = False
+    # Voice-over lines read by different voices (empty = the narrator reads the narration).
+    voice_lines: list[DialogueLine] = field(default_factory=list)
     is_beat: bool = False
     segment_numbers: list[int] = field(default_factory=list)
 
@@ -335,6 +338,30 @@ class ScenePlannerAgent:
 
                 continue
 
+            voice_lines = self._reconciled_voice_lines(segment)
+
+            if voice_lines:
+                # A line read by a named voice stays whole: splitting it by sentence would cut a
+                # voice in half. Its length is the time its words take to say.
+                words = len(segment.narration.split())
+                units.append(
+                    _Unit(
+                        segment=segment,
+                        narration=segment.narration,
+                        duration_seconds=max(
+                            float(
+                                self._narration_timing_service.estimate_seconds(words)
+                            ),
+                            float(_MINIMUM_FLOW_SCENE_DURATION_SECONDS),
+                        ),
+                        source_type=content_intelligence.default_scene_source_type,
+                        voice_lines=voice_lines,
+                        segment_numbers=[segment.segment_number],
+                    )
+                )
+
+                continue
+
             sub_scenes = self._subdivide_segment(
                 segment,
                 scene_density_per_minute=content_intelligence.scene_density_per_minute,
@@ -375,6 +402,8 @@ class ScenePlannerAgent:
                 source_type=unit.source_type,
             )
 
+            scene.voice_lines = list(unit.voice_lines)
+
             if unit.silent:
                 scene.silent = True
                 scene.title = f"Scene {scene_number} (visual only)"
@@ -386,6 +415,28 @@ class ScenePlannerAgent:
             scenes.append(scene)
 
         return scenes
+
+    @staticmethod
+    def _reconciled_voice_lines(segment: ScriptSegment) -> list[DialogueLine]:
+        """The segment's voice lines, made to agree with its narration. Editing a segment's text (by hand
+        or by a rewrite) changes `narration` but not the stored lines; voicing the stale lines would speak
+        the OLD words. One line takes the edited text; several lines that no longer add up to it are
+        dropped, so the narrator reads the edited text."""
+
+        lines = list(segment.voice_lines)
+
+        if not lines:
+            return []
+
+        spoken = " ".join(line.text for line in lines).split()
+
+        if spoken == segment.narration.split():
+            return lines
+
+        if len(lines) == 1:
+            return [DialogueLine(speaker=lines[0].speaker, text=segment.narration)]
+
+        return []
 
     def _merge_units(self, units: list[_Unit], merge: MergeSettings) -> list[_Unit]:
         """
@@ -418,6 +469,21 @@ class ScenePlannerAgent:
 
         return joined_seconds <= merge.target_seconds
 
+    @staticmethod
+    def _joined_voice_lines(first: _Unit, second: _Unit) -> list[DialogueLine]:
+        """When either piece has a named voice, the joined scene lists EVERY line with its reader (the
+        other piece is the narrator's); two narrator pieces stay a plain narration."""
+
+        if not first.voice_lines and not second.voice_lines:
+            return []
+
+        def lines_of(unit: _Unit) -> list[DialogueLine]:
+            return unit.voice_lines or [
+                DialogueLine(speaker=NARRATOR_NAME, text=unit.narration)
+            ]
+
+        return [*lines_of(first), *lines_of(second)]
+
     def _join(self, first: _Unit, second: _Unit) -> _Unit:
         narration = f"{first.narration} {second.narration}"
         joined_seconds = self._narration_timing_service.estimate_seconds(
@@ -432,6 +498,7 @@ class ScenePlannerAgent:
 
         return _Unit(
             segment=lead,
+            voice_lines=self._joined_voice_lines(first, second),
             narration=narration,
             duration_seconds=max(
                 float(joined_seconds), float(_MINIMUM_FLOW_SCENE_DURATION_SECONDS)

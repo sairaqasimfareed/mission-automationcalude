@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from src.models.dialogue import spoken_text
+from src.models.dialogue import DialogueLine, spoken_text
 from src.models.generated_script import GeneratedScript, ScriptSegment
 from src.models.script_intake import (
     ScriptIntakeMismatch,
@@ -9,6 +9,7 @@ from src.models.script_intake import (
 )
 from src.models.story_blueprint import StoryBeatType
 from src.models.video_job import VideoJob
+from src.services.cast_script_parser import CastLine, parse_cast_script
 from src.services.dialogue_script_parser import parse_dialogue_script
 from src.services.llm.labeled_block_parser import extract_labeled_field
 from src.services.llm.llm_service import LLMService
@@ -160,6 +161,7 @@ class ScriptIntakeService:
         genre_id: str,
         target_duration_seconds: int,
         character_oriented: bool = False,
+        voice_cast: bool = False,
     ) -> GeneratedScript:
         """
         With `character_oriented`, the text is a `NAME: line` dialogue script (see
@@ -181,6 +183,14 @@ class ScriptIntakeService:
 
         if character_oriented:
             return self._normalize_dialogue_script(
+                raw_text=raw_text,
+                topic=topic,
+                genre_id=genre_id,
+                target_duration_seconds=target_duration_seconds,
+            )
+
+        if voice_cast:
+            return self._normalize_cast_script(
                 raw_text=raw_text,
                 topic=topic,
                 genre_id=genre_id,
@@ -235,6 +245,68 @@ class ScriptIntakeService:
             target_duration_seconds=target_duration_seconds,
             segments=segments,
             prompt_version="script_intake_prompt_v1.0.0",
+        )
+
+    @staticmethod
+    def _normalize_cast_script(
+        *,
+        raw_text: str,
+        topic: str,
+        genre_id: str,
+        target_duration_seconds: int,
+    ) -> GeneratedScript:
+        """A voice-cast script: one segment per line; a line with a named speaker carries it as a
+        voice line, a "[VISUAL 4s]" line is a silent shot, every other line is the narrator's.
+        """
+
+        items = parse_cast_script(raw_text)
+        segments: list[ScriptSegment] = []
+        cursor_seconds = 0.0
+
+        for position, item in enumerate(items):
+            narrative_function = _infer_narrative_function(
+                index=position, total=len(items)
+            )
+
+            if isinstance(item, VisualMarker):
+                duration = item.seconds
+                narration = item.description
+                silent_seconds: float | None = item.seconds
+                voice_lines: list[DialogueLine] = []
+            else:
+                assert isinstance(item, CastLine)
+                duration = max(
+                    len(item.text.split()) / _WORDS_PER_MINUTE * 60.0,
+                    _MIN_SEGMENT_DURATION_SECONDS,
+                )
+                narration = item.text
+                silent_seconds = None
+                voice_lines = (
+                    [DialogueLine(speaker=item.speaker, text=item.text)]
+                    if item.speaker
+                    else []
+                )
+
+            segments.append(
+                ScriptSegment(
+                    segment_number=position + 1,
+                    start_seconds=cursor_seconds,
+                    end_seconds=cursor_seconds + duration,
+                    narrative_function=narrative_function,
+                    narration=narration,
+                    tension_level=_TENSION_LEVEL_BY_BEAT[narrative_function],
+                    silent_seconds=silent_seconds,
+                    voice_lines=voice_lines,
+                )
+            )
+            cursor_seconds += duration
+
+        return GeneratedScript(
+            topic=topic,
+            genre_id=genre_id,
+            target_duration_seconds=target_duration_seconds,
+            segments=segments,
+            prompt_version="script_intake_cast_prompt_v1.0.0",
         )
 
     @staticmethod
@@ -374,6 +446,7 @@ class ScriptIntakeService:
             genre_id=job.genre_id,
             target_duration_seconds=job.target_duration_seconds,
             character_oriented=job.character_oriented,
+            voice_cast=job.voice_cast_enabled and not job.character_oriented,
         )
 
         mismatches: list[ScriptIntakeMismatch] = []

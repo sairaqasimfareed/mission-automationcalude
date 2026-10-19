@@ -51,6 +51,10 @@ from src.services.reference_frame_selection_service import (
     ReferenceFrameSelectionService,
     extract_references_for_identities,
 )
+from src.services.reference_picture_service import (
+    automatic_references_enabled,
+    picture_is_attachable,
+)
 from src.services.scene_asset_video_clip_builder_service import (
     SceneAssetVideoClipBuilderService,
 )
@@ -1228,6 +1232,9 @@ class MuseSceneVideoGenerationService:
     ) -> None:
         """Same reasoning as Google Flow's own equivalent."""
 
+        if not automatic_references_enabled(job):
+            return  # manual mode: only pictures the operator supplied are used
+
         self._sync_extracted_frame_asset_index(job)
 
         if (
@@ -1332,6 +1339,9 @@ class MuseSceneVideoGenerationService:
         if self._scene_reference_service is None:
             return
 
+        if not automatic_references_enabled(job):
+            return
+
         try:
             self._sync_extracted_frame_asset_index(job)
             self._scene_reference_service.ensure_automatic(job, scene.scene_number)
@@ -1409,6 +1419,9 @@ class MuseSceneVideoGenerationService:
                         asset_id,
                     )
 
+                    continue
+
+                if not picture_is_attachable(job, asset):
                     continue
 
                 asset_path = Path(asset.file_path)

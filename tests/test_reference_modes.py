@@ -1,0 +1,328 @@
+"""
+Reference pictures, automatic or manual (2026-10-19). Automatic is the long-standing behaviour. In manual mode the
+app takes no reference frame by itself and attaches only pictures the operator supplied (uploaded for a character
+or place, or chosen for one scene), to the scenes each is marked in. The References tab lists every character and
+place with its scenes, its picture and an image-generator prompt written in the series style.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from src.models.asset_index import AssetIndex
+from src.models.google_flow_generation import GoogleFlowGenerationState
+from src.models.reference_mode import ReferenceMode
+from src.models.specification_enums import AspectRatio
+from src.services.asset_storage_service import AssetStorageService
+from src.services.content_intelligence_pipeline import ContentIntelligencePipeline
+from src.services.reference_picture_service import (
+    clear_picture,
+    has_operator_picture,
+    is_operator_picture,
+    missing_pictures,
+    picture_is_attachable,
+    reference_image_prompt,
+    scenes_of,
+    set_scenes_of,
+)
+from tests.test_scene_video_generation_service import (
+    _continuity_bible,
+    _job,
+    _real_video_file,
+    _scene,
+    _ScriptedProvider,
+    _service,
+    _stored_reference_asset,
+)
+from tests.test_suggestions import qapp as qapp  # noqa: PLC0414 - fixture
+
+
+def _provider(tmp_path: Path) -> _ScriptedProvider:
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            GoogleFlowGenerationState.GENERATING,
+            GoogleFlowGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    provider.downloaded_file = str(_real_video_file(tmp_path))
+
+    return provider
+
+
+def _job_with_reference(tmp_path: Path, *, mode: ReferenceMode, operator: bool):  # type: ignore[no-untyped-def]
+    scene = _scene(2)
+    scene.real_narration_duration_seconds = 5.0
+    job = _job(scene)
+    job.reference_mode = mode
+    asset_id = _stored_reference_asset(job, tmp_path)
+    job.visual_continuity_bible = _continuity_bible(
+        reference_asset_ids=[asset_id], scene_numbers=[2]
+    )
+
+    if operator:
+        asset = job.extracted_frame_asset_index.get(asset_id)
+        assert asset is not None
+        asset.metadata["uploaded_by_operator"] = True
+
+    return job
+
+
+def _generate(tmp_path: Path, job):  # type: ignore[no-untyped-def]
+    provider = _provider(tmp_path)
+    storage = AssetStorageService(
+        storage_root=tmp_path / "storage", asset_index=AssetIndex()
+    )
+    _service(provider, asset_storage_service=storage).generate_one(job, 2)
+
+    return provider.submitted_requests[0]
+
+
+# ------------------------------------------------------------------ the mode and the rules
+
+
+def test_a_new_project_gets_references_automatically() -> None:
+    assert _job().reference_mode == ReferenceMode.AUTO
+
+
+def test_the_mode_is_saved_on_the_job() -> None:
+    job = _job()
+
+    ContentIntelligencePipeline.set_reference_mode(job, ReferenceMode.MANUAL)
+    assert job.reference_mode == ReferenceMode.MANUAL
+
+    ContentIntelligencePipeline.set_reference_mode(job, ReferenceMode.AUTO)
+    assert job.reference_mode == ReferenceMode.AUTO
+
+
+def test_only_pictures_the_operator_supplied_count_in_manual_mode(
+    tmp_path: Path,
+) -> None:
+    job = _job_with_reference(tmp_path, mode=ReferenceMode.AUTO, operator=False)
+    identity = job.visual_continuity_bible.identities[0]  # type: ignore[union-attr]
+    asset = job.extracted_frame_asset_index.get(identity.reference_asset_ids[0])
+    assert asset is not None
+
+    assert is_operator_picture(asset) is False
+    assert picture_is_attachable(job, asset) is True  # automatic: any picture
+
+    job.reference_mode = ReferenceMode.MANUAL
+    assert picture_is_attachable(job, asset) is False
+
+    asset.metadata["chosen_by_operator"] = True
+    assert picture_is_attachable(job, asset) is True
+    assert has_operator_picture(job, identity) is True
+
+
+# ------------------------------------------------------------------ scenes and missing pictures
+
+
+def test_a_characters_scenes_can_be_added_and_removed() -> None:
+    job = _job(_scene(1), _scene(2), _scene(3))
+    job.visual_continuity_bible = _continuity_bible(
+        reference_asset_ids=[], scene_numbers=[1, 2, 3]
+    )
+    name = job.visual_continuity_bible.identities[0].name
+
+    set_scenes_of(job, name, [1, 2])
+    assert scenes_of(job, name) == [1, 2]
+
+    set_scenes_of(job, name, [2, 3])
+    assert scenes_of(job, name) == [2, 3]
+
+    set_scenes_of(job, name, [])
+    assert scenes_of(job, name) == []
+
+
+def test_marking_an_unknown_scene_is_refused_with_a_clear_message() -> None:
+    job = _job(_scene(1))
+    job.visual_continuity_bible = _continuity_bible(
+        reference_asset_ids=[], scene_numbers=[1]
+    )
+    name = job.visual_continuity_bible.identities[0].name
+
+    with pytest.raises(ValueError, match="Scene 9"):
+        set_scenes_of(job, name, [9])
+
+
+def test_missing_pictures_lists_who_is_marked_in_a_scene_but_has_no_operator_picture(
+    tmp_path: Path,
+) -> None:
+    job = _job_with_reference(tmp_path, mode=ReferenceMode.MANUAL, operator=False)
+
+    missing = missing_pictures(job)
+    assert [m.scenes for m in missing] == [[2]]
+
+    identity = job.visual_continuity_bible.identities[0]  # type: ignore[union-attr]
+    asset = job.extracted_frame_asset_index.get(identity.reference_asset_ids[0])
+    assert asset is not None
+    asset.metadata["uploaded_by_operator"] = True
+
+    assert missing_pictures(job) == []
+
+
+def test_removing_a_picture_clears_it_from_the_character(tmp_path: Path) -> None:
+    job = _job_with_reference(tmp_path, mode=ReferenceMode.MANUAL, operator=True)
+    identity = job.visual_continuity_bible.identities[0]  # type: ignore[union-attr]
+
+    clear_picture(job, identity.name)
+
+    assert identity.reference_asset_ids == []
+
+
+# ------------------------------------------------------------------ the image prompt carries the style
+
+
+def test_the_image_prompt_carries_the_series_style_and_the_description() -> None:
+    job = _job(_scene(1))
+    job.visual_continuity_bible = _continuity_bible(
+        reference_asset_ids=[], scene_numbers=[1]
+    )
+    job.style_brief = (
+        "Anime courtroom, stark noir. Ink-heavy linework. Deep teal for defense."
+    )
+    identity = job.visual_continuity_bible.identities[0]
+
+    text = reference_image_prompt(job, identity)
+
+    assert identity.name in text
+    assert identity.canonical_description.rstrip(".") in text
+    assert "Anime courtroom, stark noir" in text
+    assert "exactly the style of the series" in text
+    assert "no text" in text
+
+
+def test_the_image_prompt_follows_the_project_look_and_the_frame_shape() -> None:
+    from src.models.project_look import ProjectLook
+
+    job = _job(_scene(1))
+    job.visual_continuity_bible = _continuity_bible(
+        reference_asset_ids=[], scene_numbers=[1]
+    )
+    job.project_look = ProjectLook(color_palette="cold slate and ink")
+    identity = job.visual_continuity_bible.identities[0]
+
+    job.aspect_ratio = AspectRatio.PORTRAIT
+    assert "vertical portrait (9:16)" in reference_image_prompt(job, identity)
+    assert "cold slate and ink" in reference_image_prompt(job, identity)
+
+    job.aspect_ratio = AspectRatio.LANDSCAPE
+    assert "horizontal landscape (16:9)" in reference_image_prompt(job, identity)
+
+
+def test_a_very_long_brief_is_cut_in_the_image_prompt() -> None:
+    job = _job(_scene(1))
+    job.visual_continuity_bible = _continuity_bible(
+        reference_asset_ids=[], scene_numbers=[1]
+    )
+    job.style_brief = "x " * 4000
+    identity = job.visual_continuity_bible.identities[0]
+
+    assert len(reference_image_prompt(job, identity)) < 2600
+
+
+# ------------------------------------------------------------------ what a submission attaches
+
+
+def test_automatic_mode_still_attaches_the_apps_own_picture(tmp_path: Path) -> None:
+    job = _job_with_reference(tmp_path, mode=ReferenceMode.AUTO, operator=False)
+
+    request = _generate(tmp_path, job)
+
+    assert len(request.reference_assets) == 1
+
+
+def test_manual_mode_does_not_attach_a_picture_the_app_picked(tmp_path: Path) -> None:
+    job = _job_with_reference(tmp_path, mode=ReferenceMode.MANUAL, operator=False)
+
+    request = _generate(tmp_path, job)
+
+    assert request.reference_assets == []
+
+
+def test_manual_mode_attaches_the_picture_the_operator_uploaded(tmp_path: Path) -> None:
+    job = _job_with_reference(tmp_path, mode=ReferenceMode.MANUAL, operator=True)
+
+    request = _generate(tmp_path, job)
+
+    assert len(request.reference_assets) == 1
+
+
+def test_manual_mode_takes_no_reference_frame_from_a_finished_clip(
+    tmp_path: Path,
+) -> None:
+    job = _job_with_reference(tmp_path, mode=ReferenceMode.MANUAL, operator=False)
+    before = len(job.extracted_frame_asset_index.assets)
+
+    _generate(tmp_path, job)
+
+    assert len(job.extracted_frame_asset_index.assets) == before
+
+
+# ------------------------------------------------------------------ the screen
+
+
+def test_the_references_tab_sits_after_scene_visuals_and_has_no_run_button() -> None:
+    from src.desktop.views.content_studio_view import _CI_STAGES, _PANEL_ONLY_STAGES
+
+    keys = [key for key, _label in _CI_STAGES]
+
+    assert keys.index("references") == keys.index("scene_visuals") + 1
+    assert "references" in _PANEL_ONLY_STAGES
+
+
+def test_manual_mode_shows_a_row_prompt_and_upload_for_every_character(qapp) -> None:  # type: ignore[no-untyped-def]
+    from PySide6.QtWidgets import QPushButton, QTextEdit, QVBoxLayout, QWidget
+
+    from tests.test_scene_detail import _job as scene_job
+    from tests.test_suggestions import _studio, _texts
+
+    view, job, _errors = _studio(scene_job(3))
+    job.visual_continuity_bible = _continuity_bible(
+        reference_asset_ids=[], scene_numbers=[1]
+    )
+    job.reference_mode = ReferenceMode.MANUAL
+    job.style_brief = "Anime courtroom, stark noir."
+    holder = QWidget()
+    view._render_references_panel(QVBoxLayout(holder), job)  # noqa: SLF001
+    buttons = [b.text() for b in holder.findChildren(QPushButton)]
+    prompts = [e.toPlainText() for e in holder.findChildren(QTextEdit)]
+    texts = _texts(holder)
+
+    assert "Upload picture" in buttons
+    assert "Copy prompt" in buttons
+    assert "Apply scenes" in buttons
+    assert prompts and all("Anime courtroom, stark noir." in p for p in prompts)
+    assert any("No picture yet for" in t for t in texts)
+
+
+def test_automatic_mode_lists_the_status_without_manual_controls(qapp) -> None:  # type: ignore[no-untyped-def]
+    from PySide6.QtWidgets import QPushButton, QVBoxLayout, QWidget
+
+    from tests.test_scene_detail import _job as scene_job
+    from tests.test_suggestions import _studio, _texts
+
+    view, job, _errors = _studio(scene_job(3))
+    job.visual_continuity_bible = _continuity_bible(
+        reference_asset_ids=[], scene_numbers=[1]
+    )
+    holder = QWidget()
+    view._render_references_panel(QVBoxLayout(holder), job)  # noqa: SLF001
+    buttons = [b.text() for b in holder.findChildren(QPushButton)]
+
+    assert "Upload picture" not in buttons
+    assert any("Automatic:" in t for t in _texts(holder))
+
+
+def test_switching_the_mode_is_saved_and_changing_scenes_applies(qapp) -> None:  # type: ignore[no-untyped-def]
+    from tests.test_scene_detail import _job as scene_job
+    from tests.test_suggestions import _studio
+
+    view, job, _errors = _studio(scene_job(3))
+    job.visual_continuity_bible = _continuity_bible(
+        reference_asset_ids=[], scene_numbers=[1]
+    )
+    view._handle_reference_mode_changed(ReferenceMode.MANUAL)  # noqa: SLF001
+    saved = view._current_job()  # noqa: SLF001
+    assert saved is not None and saved.reference_mode == ReferenceMode.MANUAL

@@ -246,6 +246,10 @@ class ResolvedVoiceBlueprint(MissionBaseModel):
 
     output_file: str | None = None
 
+    # A voice-cast scene (several readers): one blueprint per line, read with that line's own voice and
+    # joined into this scene's single track (see MultiVoiceGenerationService). Empty = one voice.
+    line_blueprints: list[ResolvedVoiceBlueprint] = Field(default_factory=list)
+
     @field_validator(
         "narration_text",
         "language",

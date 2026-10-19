@@ -44,6 +44,10 @@ class ScriptSegment(MissionBaseModel):
     # runs. None for an ordinary spoken segment.
     silent_seconds: float | None = Field(default=None, gt=0.0)
 
+    # Voice-cast script ("JUDGE: ..." / "VOICE (Joan of Arc): ..."): who reads this segment aloud, as
+    # voice-over (NOT on-screen characters - that is `dialogue`). Empty = the narrator reads it.
+    voice_lines: list[DialogueLine] = Field(default_factory=list)
+
     @property
     def is_silent(self) -> bool:
         return self.silent_seconds is not None

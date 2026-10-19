@@ -53,9 +53,11 @@ class GenreVoiceDirectiveGenerationService:
         genre_id: str,
         language: str = "English",
         language_code: str = "en",
+        voice_profile_id: str | None = None,
     ) -> SceneVoiceDirectives:
         """
-        Generate voice directives for one scene.
+        Generate voice directives for one scene. `voice_profile_id` names a different voice profile
+        than the genre's own (a voice-cast speaker); every other genre default still applies.
 
         Unknown or unavailable genres use the existing genre-registry
         fallback behavior. Voice-profile fallback remains delegated to
@@ -76,7 +78,9 @@ class GenreVoiceDirectiveGenerationService:
 
         genre_profile = genre_resolution.profile
 
-        requested_voice_profile_id = genre_profile.voice.voice_profile_id
+        requested_voice_profile_id = (
+            voice_profile_id or genre_profile.voice.voice_profile_id
+        )
 
         voice_resolution = self._voice_profile_registry.resolve(
             requested_voice_profile_id,

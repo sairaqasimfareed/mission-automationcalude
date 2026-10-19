@@ -94,6 +94,31 @@ def genre_direction(genre_id: str) -> str:
     return mood.direction if mood is not None else ""
 
 
+_STYLE_BRIEF_MAX_CHARACTERS = 6000
+
+
+def visual_direction(genre_id: str, style_brief: str = "") -> str:
+    """What every visual step is told about the video's look: the genre's treatment direction, then
+    the operator's own style brief (binding - it wins where the two differ). "" when neither exists.
+    """
+
+    direction = genre_direction(genre_id)
+    brief = " ".join(style_brief.split())[:_STYLE_BRIEF_MAX_CHARACTERS]
+
+    if not brief:
+        return direction
+
+    brief_block = (
+        "STYLE BRIEF FROM THE OPERATOR - binding for this whole video; follow it, and where it differs "
+        f"from the genre direction it wins: {brief} "
+        "A different palette for one kind of scene (a flashback, a night scene, a verdict) is only a "
+        "colour GRADE of the same look: keep the same drawing style, line quality, contrast, "
+        "shadows and framing, and change only the colour."
+    )
+
+    return direction + "\n\n" + brief_block if direction else brief_block
+
+
 def genre_style_defaults(genre_id: str) -> dict[str, str]:
     """Style fields (ProjectLook names) to use where the script gave nothing; {} for a
     genre with no mood."""

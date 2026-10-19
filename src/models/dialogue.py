@@ -5,6 +5,8 @@ from pydantic import Field, field_validator
 from src.models.base import MissionBaseModel
 
 MAX_SPEAKER_NAME_CHARACTERS = 60
+# The voice that reads every line that names no speaker in a voice-cast script.
+NARRATOR_NAME = "Narrator"
 MAX_SPOKEN_LINE_CHARACTERS = 1200
 
 

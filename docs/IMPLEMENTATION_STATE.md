@@ -1321,6 +1321,43 @@ section records what changed and why so a later session does not undo it.
     prompt previews, the scene planner (`max_scene_seconds`: Omni scenes up to 10 s, so a 9 s narration is one clip instead of two),
     and `resolve_scene_video_provider` (a scene's Flow account keeps the project's Omni rules). `SceneClipSplitPlanningService.plan`
     takes an optional `durations` grid. Tests: `tests/test_flow_omni_provider.py`. NOT yet verified live: a real 4 s/6 s submission
+  - **Voice cast (2026-10-18).** A script read by several voices as VOICE-OVER (not on-screen lip-sync - that is character mode).
+    Project switch `VideoJob.voice_cast_enabled` (Content tab, above "import a script": "Read this script with a cast of voices"),
+    which makes `ScriptIntakeService` read the script with `cast_script_parser`: ONE LINE PER BEAT; a line starting with an ALL-CAPS
+    name and a colon (`JUDGE:`) or `VOICE (Joan of Arc):` is read by that speaker (`ScriptSegment.voice_lines` / `Scene.voice_lines`),
+    every other line - including narration that merely contains a colon - by the narrator, `[VISUAL 4s] ...` is a silent shot (see
+    visual-only scenes). A named line stays one whole scene; merging keeps every line with its reader. `VideoJob.voice_cast` maps a
+    speaker (lower case) to one of the app's voice profiles (a row per speaker with a dropdown in the same panel; an unassigned
+    speaker is read by the project's usual voice and the panel says so). `voice_cast_service.attach_line_blueprints` resolves one
+    voice blueprint PER LINE with that speaker's profile (`GenreVoiceDirectiveGenerationService.generate(voice_profile_id=)`) and hangs
+    them on the scene blueprint (`ResolvedVoiceBlueprint.line_blueprints`) at both blueprint-building sites (`run_voice`,
+    `ProjectRenderRuntimeFactory`). `MultiVoiceGenerationService` (the production voice service) reads each line through the unchanged
+    single-voice path and JOINS the lines with ffmpeg (`audio_join_service`, 0.3 s pause between lines) into the scene's ONE voice
+    track, so clip sizing, voice positions, render timing and subtitles are untouched. Dry-run keeps a placeholder instead of joining.
+    Tests: `tests/test_voice_cast.py` (incl. a real ffmpeg join). NOT yet tried with real ElevenLabs voices.
+  - **Style brief (2026-10-18).** `VideoJob.style_brief` (plain text, up to 6,000 characters), a box at the top of the Content tab's
+    Project look section ("Save style brief"). `genre_visual_mood.visual_direction(genre_id, style_brief)` returns the genre's
+    direction followed by the brief marked binding (it wins where the two differ); every step that used `genre_direction(job.genre_id)`
+    now uses it (visual continuity bible, style sheet, shot planning, scene detail, story treatment, scene visuals writer and review).
+    The brief is not part of the script and is never spoken. Tests: `tests/test_style_brief.py`.
+  - **Reference pictures: automatic or manual, and a References tab (2026-10-19).** `VideoJob.reference_mode`
+    (`ReferenceMode.AUTO` default / `MANUAL`), chosen at the top of the new **References** tab (Content Studio, after Scene visuals;
+    panel-only). AUTO is the unchanged behaviour. MANUAL: the app takes no reference frame by itself (`_extract_reference_for_new_identities`
+    and `_ensure_automatic_reference` return early in both the Flow and Muse services) and `_resolve_reference_assets` attaches only
+    pictures the operator supplied (`reference_picture_service.picture_is_attachable`: an asset with `uploaded_by_operator` or
+    `chosen_by_operator`); a scene's own chosen picture still wins. The tab lists EVERY character and place of the bible (generated or
+    added by hand, however many scenes), each with an editable scene list (`set_scenes_of` adds AND removes), its picture with Upload /
+    Remove, and an image-generator prompt (`reference_image_prompt`: the identity's description, the project look and the Style brief up to
+    1,500 characters, "exactly the style of the series", front-facing and plain for a person, an empty wide view for a place, the
+    project's frame shape) with a Copy button; a line names anyone marked in a scene who still has no picture. In manual mode the
+    Continuity bible tab's automatic frame pickers are hidden (the character list, suggestions and add-by-hand stay). Tests:
+    `tests/test_reference_modes.py`. Still only people and places (no props), ONE picture per identity, and the number of references
+    Flow/Muse accept at once is unconfirmed.
+  - **Compact prompts (2026-10-19).** A scene with its own written paragraph ("Scene detail") already states its place, light,
+    composition and what was asked to be shown, so its compiled prompt now keeps only Identity, the timed action, the paragraph, the lens
+    line, the look and the duration - the Environment / Lighting / On screen / Composition sections that repeated it are dropped
+    (`_prompt_body`). A scene without a paragraph keeps every section. Trailing full stops are no longer doubled by the next label. The
+    flat-action bounding regex accepts the new layout. The series style (the project look sentence) now LEADS every prompt instead of trailing it - found on Joan arc clip 6, whose bright, clear-faced sepia drifted from the stark-noir series while the style sat at the very end of a 3,000-character prompt - and the Style brief tells every visual step that a flashback/night palette is only a colour GRADE of the same look (same drawing style, line, contrast, shadows, framing). Tests: `tests/test_compact_prompt.py`.
     WITH a reference, and a real 10 s clip, through the automation (spends Flow credits; waits for the operator's go).
   - **Story treatment: a proposed opening image and one recurring presence (2026-10-10, built after the genre mood).**
     Opt-in and manual only (not in `run_all`; nothing is applied on its own). "Suggest an opening and a recurring

@@ -62,6 +62,10 @@ from src.services.reference_frame_selection_service import (
     ReferenceFrameSelectionService,
     extract_references_for_identities,
 )
+from src.services.reference_picture_service import (
+    automatic_references_enabled,
+    picture_is_attachable,
+)
 from src.services.registry.provider_registry import ProviderRegistry
 from src.services.scene_asset_video_clip_builder_service import (
     SceneAssetVideoClipBuilderService,
@@ -134,7 +138,8 @@ def _extend_last_beat_to_real_duration(prompt: str, real_duration: float) -> str
 
 
 _FLAT_ACTION_PATTERN = re.compile(
-    r"Action progression: (.+?)(?= Composition:)", re.DOTALL
+    r"Action progression: (.+?)(?= Composition:| Scene detail:| Lens/camera:)",
+    re.DOTALL,
 )
 
 
@@ -1369,6 +1374,9 @@ class SceneVideoGenerationService:
         _self_heal_flow_account_health).
         """
 
+        if not automatic_references_enabled(job):
+            return  # manual mode: only pictures the operator supplied are used
+
         self._sync_extracted_frame_asset_index(job)
 
         if (
@@ -1446,6 +1454,9 @@ class SceneVideoGenerationService:
         ensure_automatic). Best effort: a failure here never stops the scene."""
 
         if self._scene_reference_service is None:
+            return
+
+        if not automatic_references_enabled(job):
             return
 
         try:
@@ -1545,6 +1556,9 @@ class SceneVideoGenerationService:
                         asset_id,
                     )
 
+                    continue
+
+                if not picture_is_attachable(job, asset):
                     continue
 
                 asset_path = Path(asset.file_path)

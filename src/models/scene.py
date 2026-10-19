@@ -68,6 +68,10 @@ class Scene(MissionBaseModel):
     # `estimated_duration_seconds` is its fixed length. Music and sound effects still play under it.
     silent: bool = False
 
+    # Voice-over lines read by different voices (a voice-cast script). Empty = one narrator reads the
+    # whole narration. When set, the lines in order ARE the narration (see voice_cast_service).
+    voice_lines: list[DialogueLine] = Field(default_factory=list)
+
     @property
     def narration_for_prompt(self) -> str:
         """The scene's text as an AI prompt should see it: a visual-only scene is labelled, so the

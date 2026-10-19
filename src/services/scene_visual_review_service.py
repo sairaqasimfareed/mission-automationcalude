@@ -20,7 +20,7 @@ from enum import Enum
 
 from src.models.scene import Scene
 from src.models.video_job import VideoJob
-from src.services.genre_visual_mood import genre_direction
+from src.services.genre_visual_mood import visual_direction
 from src.services.llm.llm_service import LLMService
 from src.services.scene_visual_writer_service import SceneVisualWriterService
 from src.shared.llm.models import LLMProvider
@@ -269,7 +269,7 @@ class SceneVisualReviewService:
         wanted: dict[int, list[VisualIssue]],
     ) -> str:
         bible = job.visual_continuity_bible
-        direction = genre_direction(job.genre_id)
+        direction = visual_direction(job.genre_id, job.style_brief)
         blocks: list[str] = []
 
         for number in sorted(wanted):

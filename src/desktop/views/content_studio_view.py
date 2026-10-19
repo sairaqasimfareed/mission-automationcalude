@@ -7,6 +7,7 @@ from uuid import UUID
 from PySide6.QtCore import QObject, Qt, QThread, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QFileDialog,
@@ -54,6 +55,7 @@ from src.models.hook import HookCandidate, HookEvaluation
 from src.models.music_mode import MusicMode
 from src.models.production_handoff import ProductionHandoffState
 from src.models.project_look import ProjectLook
+from src.models.reference_mode import ReferenceMode
 from src.models.research import ResearchResult, ResearchSource, SourceStatus
 from src.models.research_evidence import (
     EvidenceRecord,
@@ -101,9 +103,16 @@ from src.services.recurring_identity_service import (
     RecurringIdentityService,
     ReferenceCandidate,
     format_scene_numbers,
+    parse_scene_numbers,
 )
 from src.services.reference_frame_selection_service import (
     ReferenceFrameSelectionService,
+)
+from src.services.reference_picture_service import (
+    clear_picture,
+    missing_pictures,
+    reference_image_prompt,
+    set_scenes_of,
 )
 from src.services.reference_status import reference_status
 from src.services.reviewer_service import ReviewerService
@@ -121,6 +130,13 @@ from src.services.topic_candidate_generation_service import (
     TopicCandidateGenerationService,
 )
 from src.services.video_provider_rules import rules_for
+from src.services.voice_cast_service import (
+    cast_key,
+    cast_speakers,
+    speaker_profile_id,
+    unassigned_speakers,
+)
+from src.services.voice_profile_registry_service import VoiceProfileRegistryService
 
 _LEFT = Qt.AlignmentFlag.AlignLeft
 
@@ -150,6 +166,7 @@ _CI_STAGES: list[tuple[str, str]] = [
     ("packaging_hypothesis", "Packaging hypothesis"),
     ("scene_planning", "Scene planning"),
     ("scene_visuals", "Scene visuals"),
+    ("references", "References"),
     ("production_readiness", "Production readiness"),
 ]
 
@@ -174,7 +191,7 @@ _UPSTREAM_CI_STAGE_KEYS = frozenset(
 
 
 # Stages whose panel has its own buttons: no generic Run / Review row under them.
-_PANEL_ONLY_STAGES = frozenset({"scene_visuals"})
+_PANEL_ONLY_STAGES = frozenset({"scene_visuals", "references"})
 
 
 def _is_manual_content_mode(job: VideoJob) -> bool:
@@ -460,6 +477,11 @@ class ContentStudioView(QWidget):
         self._visual_range: VisualRange | None = None
         self._visual_range_select: QComboBox | None = None
         self._merge_short_scenes_box: QCheckBox | None = None
+        self._voice_cast_box: QCheckBox | None = None
+        self._style_brief_editor: QTextEdit | None = None
+        self._reference_mode_select: QComboBox | None = None
+        self._reference_message = ""
+        self._style_brief_message = ""
         self._keep_beat_lines_box: QCheckBox | None = None
         self._visual_drafts: dict[int, str] = {}
         self._visual_editors: dict[int, QTextEdit] = {}
@@ -2080,6 +2102,57 @@ class ContentStudioView(QWidget):
 
         self._layout.addWidget(frame)
 
+    def _render_style_brief_box(self, layout: QVBoxLayout, job: VideoJob) -> None:
+        """The series style brief: pasted once, told to every visual step as binding."""
+
+        layout.addWidget(badge("Style brief"))
+        layout.addWidget(
+            small_muted(
+                "Paste the series' visual style here once: the look, locked sets, a recurring "
+                "character, colour rules, how flashbacks differ. Every step that writes visuals "
+                "(look guide, shot plan, scene text, Claude-written visuals) is told it as binding. "
+                "It is not part of the script and is never spoken. Rebuild the steps after changing it."
+            )
+        )
+        editor = QTextEdit()
+        editor.setAcceptRichText(False)
+        editor.setPlainText(job.style_brief)
+        editor.setPlaceholderText("VISUAL STYLE ... (up to 6,000 characters)")
+        editor.setFixedHeight(150)
+        self._style_brief_editor = editor
+        layout.addWidget(editor)
+        save = button("Save style brief", variant="primary")
+        save.clicked.connect(self._handle_save_style_brief)
+        layout.addWidget(save)
+
+        if self._style_brief_message:
+            layout.addWidget(small_muted(self._style_brief_message))
+
+    def _handle_save_style_brief(self) -> None:
+        job = self._current_job()
+        editor = self._style_brief_editor
+
+        if job is None or editor is None:
+            return
+
+        text = editor.toPlainText()
+        pipeline = self._content_intelligence_pipeline
+
+        def done() -> None:
+            self._style_brief_message = (
+                "Saved. Rebuild the look guide and the scene visuals to apply it."
+                if text.strip()
+                else "Style brief cleared."
+            )
+
+        self._run_stage(
+            job,
+            lambda target: pipeline.set_style_brief(target, text),
+            label="saving the style brief",
+            failure="Could not save the style brief",
+            on_done=done,
+        )
+
     def _render_project_look_section(self, layout: QVBoxLayout, job: VideoJob) -> None:
         """
         The video-wide style and world - setting, buildings, climate, lighting, colour
@@ -2093,6 +2166,8 @@ class ContentStudioView(QWidget):
         look = job.project_look or ProjectLook()
 
         self._ensure_look_suggestions(job)
+
+        self._render_style_brief_box(layout, job)
 
         layout.addWidget(badge("Project look"))
         layout.addWidget(
@@ -2394,9 +2469,10 @@ class ContentStudioView(QWidget):
             )
             layout.addLayout(self._reference_status_row(job, identity, scene_numbers))
 
-            if len(scene_numbers) < 2:
+            if len(scene_numbers) < 2 or job.reference_mode == ReferenceMode.MANUAL:
                 # A reference keeps a look the same ACROSS scenes; with one scene
-                # there is nothing for it to help.
+                # there is nothing for it to help. In manual mode pictures are managed
+                # in the References tab instead.
                 continue
 
             frame_row = QHBoxLayout()
@@ -2479,12 +2555,15 @@ class ContentStudioView(QWidget):
                 lambda _checked=False, n=identity.name: self._handle_choose_frame(n)
             )
             # One scene only: a reference has nothing to keep consistent.
-            choose_button.setVisible(len(scene_numbers) >= 2)
+            choose_button.setVisible(
+                len(scene_numbers) >= 2 and job.reference_mode != ReferenceMode.MANUAL
+            )
             remove_button = button("Remove", variant="ghost")
             remove_button.clicked.connect(
                 lambda _checked=False, n=identity.name: self._handle_remove_identity(n)
             )
             row.addWidget(edit_button)
+            repick_button.setVisible(job.reference_mode != ReferenceMode.MANUAL)
             row.addWidget(repick_button)
             upload_button = button("Upload a picture", variant="ghost")
             upload_button.clicked.connect(
@@ -3641,6 +3720,7 @@ class ContentStudioView(QWidget):
             "packaging_hypothesis": self._render_packaging_hypothesis_panel,
             "scene_planning": self._render_scene_planning_panel,
             "scene_visuals": self._render_scene_visuals_panel,
+            "references": self._render_references_panel,
             "production_readiness": self._render_production_readiness_panel,
         }
 
@@ -4804,6 +4884,12 @@ class ContentStudioView(QWidget):
                     f"Segment {segment.segment_number} "
                     f"[{segment.narrative_function.value}, "
                     f"{segment.start_seconds:.0f}s-{segment.end_seconds:.0f}s]"
+                    + (
+                        f" - read by {', '.join(sorted({line.speaker for line in segment.voice_lines}))}"
+                        if segment.voice_lines
+                        else ""
+                    )
+                    + (" - visual only, no voice" if segment.is_silent else "")
                 )
             )
 
@@ -4881,6 +4967,7 @@ class ContentStudioView(QWidget):
         """
 
         layout.addWidget(separator())
+        self._render_voice_cast_controls(layout, job)
 
         label = (
             "Replace this script entirely by importing a different one:"
@@ -5428,6 +5515,319 @@ class ContentStudioView(QWidget):
         )
 
         return True
+
+    def _render_voice_cast_controls(self, layout: QVBoxLayout, job: VideoJob) -> None:
+        """Read the script with a CAST of voices: lines tagged "JUDGE: ..." or "VOICE (Joan of Arc): ..."
+        are read by their own voice, every other line by the narrator. Voice-over only (no lip-sync).
+        """
+
+        cast_box = QCheckBox("Read this script with a cast of voices")
+        cast_box.setChecked(job.voice_cast_enabled)
+        cast_box.setEnabled(not job.character_oriented)
+        self._voice_cast_box = cast_box
+        cast_box.toggled.connect(self._handle_voice_cast_toggled)
+        layout.addWidget(cast_box)
+        layout.addWidget(
+            small_muted(
+                "Turn this on BEFORE importing. Write one line per beat; start a line with an ALL-CAPS "
+                'name and a colon ("JUDGE: ...") or VOICE (Name): to give it its own voice. Lines '
+                'with no name are read by the narrator, and "[VISUAL 4s] ..." is a shot with no '
+                "voice. Not used in character mode."
+            )
+        )
+
+        if not job.voice_cast_enabled:
+            return
+
+        speakers = cast_speakers(job)
+
+        if not speakers:
+            layout.addWidget(
+                small_muted("The speakers appear here once a script has been imported.")
+            )
+
+            return
+
+        profiles = VoiceProfileRegistryService.with_default_profiles().list_all()
+
+        for speaker in speakers:
+            row = QHBoxLayout()
+            row.addWidget(QLabel(speaker))
+            choice = QComboBox()
+            choice.addItem("Narrator voice (default)", "")
+
+            for profile in profiles:
+                choice.addItem(profile.display_name, profile.profile_id)
+
+            choice.setCurrentIndex(
+                max(choice.findData(speaker_profile_id(job, speaker) or ""), 0)
+            )
+            choice.currentIndexChanged.connect(
+                lambda _index, name=speaker, box=choice: self._handle_voice_cast_choice(
+                    name, str(box.currentData() or "")
+                )
+            )
+            row.addWidget(choice, 1)
+            layout.addLayout(row)
+
+        layout.addWidget(
+            small_muted(
+                "Voice choices are saved as soon as you pick them - there is no Save button."
+            )
+        )
+        missing = unassigned_speakers(job)
+
+        if missing:
+            layout.addWidget(
+                small_muted(
+                    f"No voice chosen yet for {', '.join(missing)} - the narrator voice reads them."
+                )
+            )
+
+    def _handle_voice_cast_toggled(self, enabled: bool) -> None:
+        job = self._current_job()
+
+        if job is None or job.voice_cast_enabled == enabled:
+            return
+
+        pipeline = self._content_intelligence_pipeline
+        self._run_stage(
+            job,
+            lambda target: pipeline.set_voice_cast(target, enabled=enabled),
+            label="saving the voice cast choice",
+            failure="Could not save the voice cast choice",
+        )
+
+    def _handle_voice_cast_choice(self, speaker: str, profile_id: str) -> None:
+        job = self._current_job()
+
+        if job is None or job.voice_cast.get(cast_key(speaker), "") == profile_id:
+            return
+
+        pipeline = self._content_intelligence_pipeline
+        cast = {**job.voice_cast, cast_key(speaker): profile_id}
+        self._run_stage(
+            job,
+            lambda target: pipeline.set_voice_cast(target, enabled=True, cast=cast),
+            label="saving the voice cast",
+            failure="Could not save the voice cast",
+        )
+
+    # ---------------------------------------------------------------- references tab
+
+    def _render_references_panel(self, layout: QVBoxLayout, job: VideoJob) -> bool:
+        """Where reference pictures come from, and - in manual mode - one row per character or place with
+        its scenes, your picture, and a prompt for an image generator in the series style.
+        """
+
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(QLabel("Reference pictures"))
+        mode_select = QComboBox()
+        mode_select.addItem(
+            "Automatic - the app picks the best frame from generated clips",
+            ReferenceMode.AUTO,
+        )
+        mode_select.addItem(
+            "Manual - only pictures you upload are used", ReferenceMode.MANUAL
+        )
+        mode_select.setCurrentIndex(max(mode_select.findData(job.reference_mode), 0))
+        mode_select.currentIndexChanged.connect(
+            lambda _index: self._handle_reference_mode_changed(
+                mode_select.currentData()
+            )
+        )
+        self._reference_mode_select = mode_select
+        mode_row.addWidget(mode_select, 1)
+        layout.addLayout(mode_row)
+
+        bible = job.visual_continuity_bible
+
+        if bible is None:
+            layout.addWidget(small_muted("Requires the continuity bible first."))
+
+            return False
+
+        if self._reference_message:
+            layout.addWidget(small_muted(self._reference_message))
+
+        if job.reference_mode == ReferenceMode.AUTO:
+            layout.addWidget(
+                small_muted(
+                    "Automatic: after a clip is generated the app takes the best frame of each character "
+                    "or place on screen and attaches it to later scenes. Switch to Manual to supply your own."
+                )
+            )
+
+            for identity in bible.identities:
+                layout.addWidget(
+                    small_muted(
+                        f"{identity.name}: {reference_status(job, identity).text}"
+                    )
+                )
+
+            return False
+
+        layout.addWidget(
+            small_muted(
+                "Manual: the app takes no reference by itself. Upload a picture for each character or "
+                "place below (make it with your image generator using the prompt shown) and say which "
+                "scenes it appears in - it is then attached to those scenes. A character or place with "
+                "no picture is described in words only. Add more characters and places in the "
+                "Continuity bible tab."
+            )
+        )
+
+        missing = missing_pictures(job)
+
+        if missing:
+            layout.addWidget(
+                small_muted(
+                    "No picture yet for: "
+                    + "; ".join(
+                        f"{item.name} (scenes {format_scene_numbers(item.scenes)})"
+                        for item in missing
+                    )
+                )
+            )
+
+        valid_numbers = {scene.scene_number for scene in job.scenes}
+
+        for identity in bible.identities:
+            scenes_now = self._recurring_identity_service.scenes_of(job, identity.name)
+            layout.addWidget(separator())
+            layout.addWidget(
+                badge(f"{identity.entity_type.value.title()}: {identity.name}")
+            )
+            layout.addWidget(small_muted(identity.canonical_description[:300]))
+
+            scenes_row = QHBoxLayout()
+            scenes_row.addWidget(QLabel("Scenes"))
+            scenes_field = QLineEdit(format_scene_numbers(scenes_now))
+            scenes_field.setPlaceholderText("e.g. 1-3, 7")
+            scenes_row.addWidget(scenes_field, 1)
+            apply_button = button("Apply scenes", variant="ghost")
+            apply_button.clicked.connect(
+                lambda _checked=False, n=identity.name, f=scenes_field: (
+                    self._handle_identity_scenes(n, f.text(), valid_numbers)
+                )
+            )
+            scenes_row.addWidget(apply_button)
+            layout.addLayout(scenes_row)
+            layout.addLayout(self._reference_status_row(job, identity, scenes_now))
+
+            picture_row = QHBoxLayout()
+            upload_button = button("Upload picture", variant="ghost")
+            upload_button.clicked.connect(
+                lambda _checked=False, n=identity.name: (
+                    self._handle_upload_identity_picture(n)
+                )
+            )
+            remove_button = button("Remove picture", variant="ghost")
+            remove_button.setEnabled(bool(identity.reference_asset_ids))
+            remove_button.clicked.connect(
+                lambda _checked=False, n=identity.name: (
+                    self._handle_clear_identity_picture(n)
+                )
+            )
+            picture_row.addWidget(upload_button)
+            picture_row.addWidget(remove_button)
+            picture_row.addStretch()
+            layout.addLayout(picture_row)
+
+            prompt_text = reference_image_prompt(job, identity)
+            layout.addWidget(
+                small_muted("Image prompt for your generator (in the series style):")
+            )
+            prompt_box = QTextEdit()
+            prompt_box.setReadOnly(True)
+            prompt_box.setPlainText(prompt_text)
+            prompt_box.setFixedHeight(110)
+            layout.addWidget(prompt_box)
+            copy_button = button("Copy prompt", variant="ghost")
+            copy_button.clicked.connect(
+                lambda _checked=False, t=prompt_text, n=identity.name: (
+                    self._handle_copy_reference_prompt(t, n)
+                )
+            )
+            layout.addWidget(copy_button, alignment=_LEFT)
+
+        return False
+
+    def _handle_reference_mode_changed(self, mode: ReferenceMode) -> None:
+        job = self._current_job()
+
+        if job is None or job.reference_mode == mode:
+            return
+
+        pipeline = self._content_intelligence_pipeline
+        self._reference_message = ""
+        self._run_stage(
+            job,
+            lambda target: pipeline.set_reference_mode(target, mode),
+            label="saving the reference mode",
+            failure="Could not save the reference mode",
+        )
+
+    def _handle_identity_scenes(
+        self, name: str, text: str, valid_numbers: set[int]
+    ) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        try:
+            scenes = parse_scene_numbers(text, valid_numbers)
+        except ValueError as error:
+            self._reference_message = str(error)
+            self.refresh(job)
+
+            return
+
+        def runner(target: VideoJob) -> VideoJob:
+            set_scenes_of(target, name, scenes)
+            self._recompile_prompts_if_present(target)
+
+            return target
+
+        self._reference_message = f"{name} is now marked in scene(s) {format_scene_numbers(scenes) or 'none'}."
+        self._run_stage(
+            job,
+            runner,
+            label=f"scenes for {name}",
+            failure=f"Could not set the scenes for {name}",
+        )
+
+    def _handle_clear_identity_picture(self, name: str) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        def runner(target: VideoJob) -> VideoJob:
+            clear_picture(target, name)
+            self._recompile_prompts_if_present(target)
+
+            return target
+
+        self._run_stage(
+            job,
+            runner,
+            label=f"removing the picture of {name}",
+            failure=f"Could not remove the picture of {name}",
+        )
+
+    def _handle_copy_reference_prompt(self, text: str, name: str) -> None:
+        clipboard = QApplication.clipboard()
+
+        if clipboard is not None:
+            clipboard.setText(text)
+
+        self._reference_message = f"Copied the image prompt for {name}."
+        job = self._current_job()
+
+        if job is not None:
+            self.refresh(job)
 
     def _render_scene_merge_controls(self, layout: QVBoxLayout, job: VideoJob) -> None:
         """The switch to read BEFORE running scene planning: fold short neighbouring scenes into

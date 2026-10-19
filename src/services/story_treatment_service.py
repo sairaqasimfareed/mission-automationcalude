@@ -14,7 +14,7 @@ from src.models.story_treatment import StoryTreatment
 from src.models.suggestions import IdentitySuggestion, SuggestionStatus
 from src.models.video_job import VideoJob
 from src.models.visual_continuity import CanonicalEntityType
-from src.services.genre_visual_mood import genre_direction
+from src.services.genre_visual_mood import visual_direction
 from src.services.identity_suggestion_service import _scene_numbers
 from src.services.llm.labeled_block_parser import extract_labeled_field
 from src.services.llm.llm_service import LLMService
@@ -111,7 +111,7 @@ class StoryTreatmentService:
             if bible is not None and bible.identities
             else "nobody yet"
         )
-        direction = genre_direction(job.genre_id)
+        direction = visual_direction(job.genre_id, job.style_brief)
         genre_note = f"Genre treatment: {direction}\n\n" if direction else ""
         last = scenes[-1].scene_number
 
