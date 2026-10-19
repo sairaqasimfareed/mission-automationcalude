@@ -52,6 +52,7 @@ from src.models.provider_preferences import ProviderPreferences
 from src.models.re_hook import ReHookPlan
 from src.models.reference_mode import ReferenceMode
 from src.models.render_result import RenderResult
+from src.models.render_speed import RenderSpeed
 from src.models.research import ResearchResult, ResearchStatus
 from src.models.research_plan import ResearchPlan
 from src.models.retention_audit import RetentionAuditReport
@@ -471,6 +472,9 @@ class VideoJob(MissionBaseModel):
     # Voice cast: the script names its speakers ("JUDGE: ...", "VOICE (Joan of Arc): ...") and each is read by
     # its own voice, as voice-over. voice_cast maps a speaker's name (lower case) to a voice profile id; a
     # speaker with no entry, and every unlabelled line, is read by the project's usual narrator voice.
+    # How long a render may take (see src/models/render_speed.py). FINAL = the full look, as always.
+    render_speed: RenderSpeed = RenderSpeed.FINAL
+
     # How reference pictures are obtained: automatically from generated clips (the default), or only the
     # pictures the operator uploads (see src/models/reference_mode.py).
     reference_mode: ReferenceMode = ReferenceMode.AUTO

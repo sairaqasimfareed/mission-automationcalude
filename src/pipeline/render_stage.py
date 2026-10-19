@@ -6,6 +6,7 @@ from pathlib import Path
 from src.models.audio_inclusion_preferences import AudioInclusionPreferences
 from src.models.audio_timeline import AudioTimeline
 from src.models.render_result import RenderResult
+from src.models.render_speed import RenderSpeed
 from src.models.resolved_voice_blueprint import (
     ResolvedVoiceBlueprint,
 )
@@ -38,6 +39,7 @@ from src.services.production_render_service import (
     ProductionRenderService,
 )
 from src.services.render_service import RenderService
+from src.services.render_speed_rules import timeline_for_render_speed
 from src.services.seo.seo_context_builder import SEOContextBuilder
 from src.services.subtitle_cue_resolution_service import (
     resolve_absolute_subtitle_cues,
@@ -330,6 +332,12 @@ class RenderPipelineStage(BasePipelineStage):
             raise RuntimeError("Production render requires " "VideoJob.video_timeline.")
 
         video_timeline = self._with_color_corrections(context.job, video_timeline)
+        video_timeline = timeline_for_render_speed(context.job, video_timeline)
+        production_render_service.set_render_preset(
+            context.job.render_speed.x264_preset
+            if context.job.render_speed != RenderSpeed.FINAL
+            else None
+        )
         video_timeline = self._with_clip_dimensions(video_timeline)
 
         unfiltered_audio_timeline = context.job.audio_timeline

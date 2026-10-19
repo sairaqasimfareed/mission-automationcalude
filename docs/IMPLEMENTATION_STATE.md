@@ -1347,6 +1347,14 @@ section records what changed and why so a later session does not undo it.
     drop_superseded_whole_video_music` now removes the whole-video track when a piece is generated and again at render for projects already
     in that state. The Audio tab says "press Build editing timeline first" while the music and sound-effect buttons are greyed (they need
     the timeline). Tests: `tests/test_music_track_rules.py`, `tests/test_voice_cast.py`.
+  - **Render speed (2026-10-19).** Found on Joan arc (a 12-clip, 88 s, 1080x1920 render ran at 0.02x speed on an i7-5600U laptop with only
+    Intel HD graphics): measured per filter (CPU-seconds for 30 frames, 1080x1920): scale + encode (x264 medium) 14, vignette +14, eq +
+    colorbalance +27, **film grain (`noise ... allf=t`) +93**, zoompan +4 - the grain alone is about 6-7x the cost of encoding the picture
+    (non-temporal noise would cost +3 but is a fixed pattern, not grain). `VideoJob.render_speed` (`RenderSpeed`: FINAL default = unchanged,
+    BALANCED, DRAFT), a "Render speed" dropdown on the Render tab: the two faster modes render a COPY of the timeline without the
+    `visual.film_grain_light` effect (`render_speed_rules.timeline_for_render_speed`; the stored timeline keeps it) and use x264 preset
+    fast / veryfast (`ProductionRenderService.set_render_preset`). Everything else (cuts, transitions, colour, vignette, zoom, titles, audio)
+    is identical. Tests: `tests/test_render_speed.py`.
   - **Reference pictures: automatic or manual, and a References tab (2026-10-19).** `VideoJob.reference_mode`
     (`ReferenceMode.AUTO` default / `MANUAL`), chosen at the top of the new **References** tab (Content Studio, after Scene visuals;
     panel-only). AUTO is the unchanged behaviour. MANUAL: the app takes no reference frame by itself (`_extract_reference_for_new_identities`

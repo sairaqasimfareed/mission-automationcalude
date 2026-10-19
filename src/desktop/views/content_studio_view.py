@@ -5763,8 +5763,13 @@ class ContentStudioView(QWidget):
 
         return False
 
-    def _handle_reference_mode_changed(self, mode: ReferenceMode) -> None:
+    def _handle_reference_mode_changed(self, chosen: object) -> None:
         job = self._current_job()
+
+        try:
+            mode = ReferenceMode(chosen)  # Qt hands a str-enum back as its plain value
+        except ValueError:
+            return
 
         if job is None or job.reference_mode == mode:
             return

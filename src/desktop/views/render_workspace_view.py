@@ -40,6 +40,7 @@ from src.desktop.widgets import (
 from src.models.asset_state import SceneAssetState
 from src.models.render_orchestration_result import RenderOrchestrationResult
 from src.models.render_progress import RenderProgress
+from src.models.render_speed import RenderSpeed
 from src.models.scene import Scene
 from src.models.specification_enums import AspectRatio
 from src.models.video_job import VideoJob
@@ -254,6 +255,7 @@ class RenderWorkspaceView(QWidget):
             return
 
         self._build_output_resolution_choice(layout, job)
+        self._build_render_speed_choice(layout, job)
         self._build_subtitles_choice(layout, job)
         layout.addWidget(
             small_muted(
@@ -437,6 +439,45 @@ class RenderWorkspaceView(QWidget):
             lambda _index, box=combo: self._handle_output_resolution_changed(box)
         )
         layout.addWidget(combo)
+
+    def _build_render_speed_choice(self, layout: QVBoxLayout, job: VideoJob) -> None:
+        """How long the render may take. The film grain is the costliest part of the picture, so the two
+        faster modes leave it out; everything else about the video is the same."""
+
+        layout.addWidget(small_muted("Render speed"))
+        combo = QComboBox()
+        combo.addItem("Final - full look with film grain (slowest)", RenderSpeed.FINAL)
+        combo.addItem("Balanced - no film grain, faster encoding", RenderSpeed.BALANCED)
+        combo.addItem("Draft - no film grain, fastest encoding", RenderSpeed.DRAFT)
+        combo.setCurrentIndex(max(combo.findData(job.render_speed), 0))
+        combo.currentIndexChanged.connect(
+            lambda _index, box=combo: self._handle_render_speed_changed(box)
+        )
+        layout.addWidget(combo)
+        layout.addWidget(
+            small_muted(
+                "Film grain is the most expensive effect in a render. Draft and Balanced skip it "
+                "(cuts, transitions, colour, titles and audio are the same)."
+            )
+        )
+
+    def _handle_render_speed_changed(self, combo: QComboBox) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        # Qt hands a str-enum back as its plain value.
+        try:
+            speed = RenderSpeed(combo.currentData())
+        except ValueError:
+            return
+
+        if speed == job.render_speed:
+            return
+
+        job.render_speed = speed
+        self._on_change()
 
     def _build_subtitles_choice(self, layout: QVBoxLayout, job: VideoJob) -> None:
         """

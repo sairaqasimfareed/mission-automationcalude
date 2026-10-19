@@ -1105,6 +1105,12 @@ ElevenLabs credits; ElevenLabs was at zero on 2026-10-07).
   only the labelled duplicate sections were removed.
   Whether the video generators now hold the series style in flashbacks (Joan arc clip 6 drifted before this) is not yet re-tested on a real clip; attaching a style frame from the first clip to every clip was suggested, not built.
 
+- Render speed (2026-10-19): measured on a CPU-only 2-core laptop with other work running, so absolute speeds vary. FINAL is still slow
+  (the grain). Not done: a cheaper grain that still changes every frame (a pre-made grain loop blended per frame measured +40 CPU-s, not a win),
+  rendering the effects at the clips' own 720x1280 before scaling, hardware encoding (this machine has no NVIDIA card; Intel Quick Sync was
+  not tried and the filters, not the encoder, dominate), and the vertical-project letterbox: a genre with letterbox bars crops a 9:16 picture
+  to a 1080x458 band (Joan arc, genre mystery); whether that is wanted for vertical video is for the operator to decide.
+
 ## Explicitly out of scope
 
 - Google Flow, or any browser automation targeting Google Flow's web UI.

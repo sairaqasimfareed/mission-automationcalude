@@ -190,6 +190,8 @@ class ProductionRenderService:
         )
 
         self._ffmpeg_config = ffmpeg_config or FFmpegConfig()
+        # A render-speed choice's encoder preset (None = the configured one).
+        self._preset_override: str | None = None
 
         cleaned_output_file = output_file.strip()
 
@@ -203,6 +205,17 @@ class ProductionRenderService:
         """Return the configured default output file."""
 
         return self._output_file
+
+    def set_render_preset(self, preset: str | None) -> None:
+        """Use this x264 preset for the next renders (None = the configured preset)."""
+
+        self._preset_override = preset
+
+    def _config_for_render(self) -> FFmpegConfig:
+        if self._preset_override is None:
+            return self._ffmpeg_config
+
+        return self._ffmpeg_config.model_copy(update={"preset": self._preset_override})
 
     @property
     def ffmpeg_config(self) -> FFmpegConfig:
@@ -294,7 +307,7 @@ class ProductionRenderService:
         target_output_file = self._resolve_output_file(output_file)
 
         effective_ffmpeg_config = self._with_bounded_keyframe_interval(
-            self._ffmpeg_config,
+            self._config_for_render(),
             frame_rate=video_timeline.frame_rate,
         )
 
@@ -480,7 +493,7 @@ class ProductionRenderService:
         target_output_file = self._resolve_output_file(output_file)
 
         effective_ffmpeg_config = self._with_bounded_keyframe_interval(
-            self._ffmpeg_config,
+            self._config_for_render(),
             frame_rate=video_timeline.frame_rate,
         )
 
@@ -643,7 +656,7 @@ class ProductionRenderService:
         target_output_file = self._resolve_output_file(output_file)
 
         effective_ffmpeg_config = self._with_bounded_keyframe_interval(
-            self._ffmpeg_config,
+            self._config_for_render(),
             frame_rate=video_timeline.frame_rate,
         )
 
