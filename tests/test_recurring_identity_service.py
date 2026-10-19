@@ -870,7 +870,7 @@ def test_the_picker_buttons_are_on_every_identity_row(qapp) -> None:  # type: ig
     holder = QWidget()
     layout = QVBoxLayout(holder)
 
-    view._render_visual_continuity_section(layout, job)  # noqa: SLF001
+    view._render_references_panel(layout, job)  # noqa: SLF001
 
     texts = [b.text() for b in holder.findChildren(QPushButton)]
     assert "Choose a reference frame" in texts  # the generated "Lake Nyos"
@@ -896,7 +896,7 @@ def test_the_picker_buttons_are_off_until_a_clip_exists(  # type: ignore[no-unty
     def frame_buttons() -> list[QPushButton]:
         holder = QWidget()
         layout = QVBoxLayout(holder)
-        view._render_visual_continuity_section(layout, job)  # noqa: SLF001
+        view._render_references_panel(layout, job)  # noqa: SLF001
         found = [
             b
             for b in holder.findChildren(QPushButton)

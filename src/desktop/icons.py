@@ -76,6 +76,9 @@ _ICONS: dict[str, str] = {
         '<path d="M21 15l-5.5-5.5a1.5 1.5 0 0 0-2.1 0L3 20"/>'
     ),
     "play": ('<circle cx="12" cy="12" r="9"/>' '<polygon points="10 8 16 12 10 16"/>'),
+    "stop": (
+        '<circle cx="12" cy="12" r="9"/>' '<rect x="9" y="9" width="6" height="6"/>'
+    ),
     "package": (
         '<path d="M21 8 12 3 3 8v8l9 5 9-5z"/>'
         '<polyline points="3 8 12 13 21 8"/>'

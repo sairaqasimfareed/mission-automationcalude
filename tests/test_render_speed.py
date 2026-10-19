@@ -164,3 +164,73 @@ def test_the_render_tab_offers_the_three_speeds_and_saves_the_choice() -> None:
     speed_combo.setCurrentIndex(2)
 
     assert job.render_speed == RenderSpeed.DRAFT
+
+
+# ------------------------------------------------------------------ black bars (letterbox)
+
+
+def test_vertical_and_square_projects_render_without_bars_unless_the_operator_chose() -> (
+    None
+):
+    from src.models.specification_enums import AspectRatio
+    from src.services.letterbox_rules import letterbox_choice_for
+
+    job = build_job()
+
+    job.aspect_ratio = AspectRatio.PORTRAIT
+    assert letterbox_choice_for(job) is False
+
+    job.aspect_ratio = AspectRatio.SQUARE
+    assert letterbox_choice_for(job) is False
+
+    job.aspect_ratio = AspectRatio.LANDSCAPE
+    assert letterbox_choice_for(job) is None  # the genre's own default
+
+
+def test_the_operators_own_letterbox_choice_always_wins() -> None:
+    from src.models.specification_enums import AspectRatio
+    from src.services.letterbox_rules import letterbox_choice_for
+
+    job = build_job()
+    job.aspect_ratio = AspectRatio.PORTRAIT
+    job.letterbox_enabled = True
+    assert letterbox_choice_for(job) is True
+
+    job.aspect_ratio = AspectRatio.LANDSCAPE
+    job.letterbox_enabled = False
+    assert letterbox_choice_for(job) is False
+
+
+def test_the_render_tab_has_a_letterbox_choice_that_is_saved() -> None:
+    from PySide6.QtWidgets import QApplication, QComboBox
+
+    from src.desktop.job_store import InMemoryJobStore
+    from src.desktop.views.render_workspace_view import RenderWorkspaceView
+    from tests.test_render_workspace_view_output_resolution import (
+        _FakeRenderRuntimeFactory,
+        _job,
+    )
+
+    _app = QApplication.instance() or QApplication([])
+    store = InMemoryJobStore()
+    job = _job()
+    store.add(job)
+    view = RenderWorkspaceView(
+        job_store=store,
+        render_runtime_factory=_FakeRenderRuntimeFactory(),  # type: ignore[arg-type]
+        asset_workflow_service=object(),  # type: ignore[arg-type]
+        on_change=lambda: None,
+    )
+    view.set_job(job.id)
+    view.refresh(job)
+    bars = next(
+        c
+        for c in view.findChildren(QComboBox)
+        if c.count() == 3 and c.itemText(2).startswith("Never")
+    )
+
+    assert [bars.itemData(i) for i in range(3)] == [None, True, False]
+
+    bars.setCurrentIndex(2)
+
+    assert job.letterbox_enabled is False

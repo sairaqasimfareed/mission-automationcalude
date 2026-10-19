@@ -29,6 +29,20 @@ CancellationCheck = Callable[
 ]
 
 
+# A process-wide stop for renders. The render pipeline above this service has no cancellation path of its own
+# (and its runner retries a failed stage), so the Render tab's Stop button sets this: every FFmpeg run stops at its
+# next poll, including the retries, until the next render clears it.
+_CANCEL_ALL = threading.Event()
+
+
+def request_cancel_all() -> None:
+    _CANCEL_ALL.set()
+
+
+def clear_cancel_all() -> None:
+    _CANCEL_ALL.clear()
+
+
 class FFmpegExecutionService:
     """
     Execute one prepared FFmpeg command plan.
@@ -258,7 +272,9 @@ class FFmpegExecutionService:
 
                 elapsed = time.perf_counter() - start_time
 
-                if cancellation_check is not None and cancellation_check():
+                if _CANCEL_ALL.is_set() or (
+                    cancellation_check is not None and cancellation_check()
+                ):
                     termination_status = FFmpegExecutionStatus.CANCELLED
 
                     termination_message = "FFmpeg render was " "cancelled."

@@ -143,7 +143,7 @@ def test_an_id_that_is_not_a_real_asset_is_treated_as_missing() -> None:
 def _render(view, job):  # type: ignore[no-untyped-def]
     holder = QWidget()
     layout = QVBoxLayout(holder)
-    view._render_visual_continuity_section(layout, job)  # noqa: SLF001
+    view._render_references_panel(layout, job)  # noqa: SLF001
 
     return holder
 

@@ -83,7 +83,11 @@ from src.models.suggestions import IdentitySuggestion, SuggestionStatus
 from src.models.topic_candidate import TopicCandidate
 from src.models.video_job import VideoJob
 from src.models.video_provider import VideoProvider
-from src.models.visual_continuity import CanonicalEntityIdentity, CanonicalEntityType
+from src.models.visual_continuity import (
+    CanonicalEntityIdentity,
+    CanonicalEntityType,
+    VisualContinuityBible,
+)
 from src.services.approval_gate_service import ApprovalGateService
 from src.services.content_intelligence_pipeline import ContentIntelligencePipeline
 from src.services.content_pipeline import ContentPipeline
@@ -167,7 +171,7 @@ _CI_STAGES: list[tuple[str, str]] = [
     ("packaging_hypothesis", "Packaging hypothesis"),
     ("scene_planning", "Scene planning"),
     ("scene_visuals", "Scene visuals"),
-    ("references", "References"),
+    ("references", "Characters and places"),
     ("production_readiness", "Production readiness"),
 ]
 
@@ -2455,6 +2459,37 @@ class ContentStudioView(QWidget):
                 status_label("No continuity conflicts detected.", role="success")
             )
 
+        pictured = sum(
+            1 for identity in bible.identities if identity.reference_asset_ids
+        )
+        layout.addWidget(
+            small_muted(
+                f"{len(bible.identities)} characters and places, {pictured} with a reference "
+                "picture. Their descriptions, scenes, pictures, suggestions and the form to add "
+                "more are in the Characters and places tab."
+            )
+        )
+        open_button = button("Open Characters and places", variant="ghost")
+        open_button.clicked.connect(self._handle_open_characters_and_places)
+        layout.addWidget(open_button, alignment=_LEFT)
+
+        regenerate_button = button(
+            "Regenerate visual continuity bible", variant="ghost"
+        )
+        regenerate_button.clicked.connect(self._handle_generate_visual_continuity)
+        layout.addWidget(regenerate_button, alignment=_LEFT)
+
+    def _handle_open_characters_and_places(self) -> None:
+        index = next(
+            i for i, (key, _label) in enumerate(_CI_STAGES) if key == "references"
+        )
+        self._handle_select_ci_stage(index)
+
+    def _render_generated_identities(
+        self, layout: QVBoxLayout, job: VideoJob, bible: VisualContinuityBible
+    ) -> None:
+        """The characters and places the generated bible found: description, scenes, reference."""
+
         for identity in bible.identities:
             if identity.is_manual:
                 continue
@@ -2486,17 +2521,12 @@ class ContentStudioView(QWidget):
             frame_row.addStretch()
             layout.addLayout(frame_row)
 
-        regenerate_button = button(
-            "Regenerate visual continuity bible", variant="ghost"
-        )
-        regenerate_button.clicked.connect(self._handle_generate_visual_continuity)
-        layout.addWidget(regenerate_button, alignment=_LEFT)
-
-        layout.addWidget(separator())
-        self._render_recurring_identities_section(layout, job)
-
     def _render_recurring_identities_section(
-        self, layout: QVBoxLayout, job: VideoJob
+        self,
+        layout: QVBoxLayout,
+        job: VideoJob,
+        *,
+        show_identity_list: bool = True,
     ) -> None:
         """
         Characters and places the operator names by hand: the generated bible can
@@ -2520,7 +2550,7 @@ class ContentStudioView(QWidget):
             )
         )
 
-        for identity in bible.identities:
+        for identity in bible.identities if show_identity_list else []:
             if not identity.is_manual:
                 continue
 
@@ -5626,9 +5656,10 @@ class ContentStudioView(QWidget):
     # ---------------------------------------------------------------- references tab
 
     def _render_references_panel(self, layout: QVBoxLayout, job: VideoJob) -> bool:
-        """Where reference pictures come from, and - in manual mode - one row per character or place with
-        its scenes, your picture, and a prompt for an image generator in the series style.
-        """
+        """The ONE place for the video's recurring characters and places: who they are, which scenes they are
+        in, their reference pictures (the app picks them, or you upload them), suggestions, and the form to
+        add more. In manual mode each appears once as a card with an upload slot and an image-generator prompt
+        in the series style."""
 
         mode_row = QHBoxLayout()
         mode_row.addWidget(QLabel("Reference pictures"))
@@ -5653,7 +5684,11 @@ class ContentStudioView(QWidget):
         bible = job.visual_continuity_bible
 
         if bible is None:
-            layout.addWidget(small_muted("Requires the continuity bible first."))
+            layout.addWidget(
+                small_muted(
+                    "Requires the continuity bible first (Continuity bible tab)."
+                )
+            )
 
             return False
 
@@ -5667,13 +5702,9 @@ class ContentStudioView(QWidget):
                     "or place on screen and attaches it to later scenes. Switch to Manual to supply your own."
                 )
             )
-
-            for identity in bible.identities:
-                layout.addWidget(
-                    small_muted(
-                        f"{identity.name}: {reference_status(job, identity).text}"
-                    )
-                )
+            self._render_generated_identities(layout, job, bible)
+            layout.addWidget(separator())
+            self._render_recurring_identities_section(layout, job)
 
             return False
 
@@ -5682,8 +5713,7 @@ class ContentStudioView(QWidget):
                 "Manual: the app takes no reference by itself. Upload a picture for each character or "
                 "place below (make it with your image generator using the prompt shown) and say which "
                 "scenes it appears in - it is then attached to those scenes. A character or place with "
-                "no picture is described in words only. Add more characters and places in the "
-                "Continuity bible tab."
+                "no picture is described in words only."
             )
         )
 
@@ -5741,6 +5771,24 @@ class ContentStudioView(QWidget):
             )
             picture_row.addWidget(upload_button)
             picture_row.addWidget(remove_button)
+
+            if identity.is_manual:
+                # A character or place you added yourself can also be edited or deleted.
+                edit_button = button("Edit", variant="ghost")
+                edit_button.clicked.connect(
+                    lambda _checked=False, n=identity.name: self._handle_edit_identity(
+                        n
+                    )
+                )
+                delete_button = button("Delete character", variant="ghost")
+                delete_button.clicked.connect(
+                    lambda _checked=False, n=identity.name: (
+                        self._handle_remove_identity(n)
+                    )
+                )
+                picture_row.addWidget(edit_button)
+                picture_row.addWidget(delete_button)
+
             picture_row.addStretch()
             layout.addLayout(picture_row)
 
@@ -5760,6 +5808,10 @@ class ContentStudioView(QWidget):
                 )
             )
             layout.addWidget(copy_button, alignment=_LEFT)
+
+        layout.addWidget(separator())
+        # Suggestions, the story treatment and the add-one-yourself form (the list itself is above).
+        self._render_recurring_identities_section(layout, job, show_identity_list=False)
 
         return False
 

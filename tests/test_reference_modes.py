@@ -326,3 +326,96 @@ def test_switching_the_mode_is_saved_and_changing_scenes_applies(qapp) -> None: 
     view._handle_reference_mode_changed(ReferenceMode.MANUAL)  # noqa: SLF001
     saved = view._current_job()  # noqa: SLF001
     assert saved is not None and saved.reference_mode == ReferenceMode.MANUAL
+
+
+# ------------------------------------------------------------------ one place for characters and places
+
+
+def _bible_job():  # type: ignore[no-untyped-def]
+    from tests.test_scene_detail import _job as scene_job
+
+    job = scene_job(3)
+    job.visual_continuity_bible = _continuity_bible(
+        reference_asset_ids=[], scene_numbers=[1, 2]
+    )
+
+    return job
+
+
+def test_the_tab_is_called_characters_and_places() -> None:
+    from src.desktop.views.content_studio_view import _CI_STAGES
+
+    assert dict(_CI_STAGES)["references"] == "Characters and places"
+
+
+def test_the_continuity_bible_tab_only_summarises_them_and_points_to_the_new_tab(
+    qapp,
+) -> None:  # type: ignore[no-untyped-def]
+    from PySide6.QtWidgets import QPushButton, QVBoxLayout, QWidget
+
+    from tests.test_suggestions import _studio, _texts
+
+    view, job, _errors = _studio(_bible_job())
+    holder = QWidget()
+    view._render_visual_continuity_section(QVBoxLayout(holder), job)  # noqa: SLF001
+    texts = _texts(holder)
+    buttons = [b.text() for b in holder.findChildren(QPushButton)]
+
+    assert any(
+        "characters and places" in t and "with a reference picture" in t for t in texts
+    )
+    assert "Open Characters and places" in buttons
+    # none of the management moved to the new tab is repeated here
+    assert not any(t.startswith("Your characters and places") for t in texts)
+    for gone in (
+        "Upload a picture",
+        "Choose a reference frame",
+        "Suggest characters and places",
+    ):
+        assert gone not in buttons
+
+
+def test_the_open_button_goes_to_the_new_tab(qapp) -> None:  # type: ignore[no-untyped-def]
+    from src.desktop.views.content_studio_view import _CI_STAGES
+    from tests.test_suggestions import _studio
+
+    view, _job, _errors = _studio(_bible_job())
+
+    view._handle_open_characters_and_places()  # noqa: SLF001
+
+    assert _CI_STAGES[view._selected_ci_stage_index][0] == "references"  # noqa: SLF001
+
+
+def test_automatic_mode_shows_the_list_suggestions_and_the_add_form_in_the_new_tab(
+    qapp,
+) -> None:  # type: ignore[no-untyped-def]
+    from PySide6.QtWidgets import QVBoxLayout, QWidget
+
+    from tests.test_suggestions import _studio, _texts
+
+    view, job, _errors = _studio(_bible_job())
+    holder = QWidget()
+    view._render_references_panel(QVBoxLayout(holder), job)  # noqa: SLF001
+    texts = _texts(holder)
+
+    assert any(t.startswith("Automatic:") for t in texts)
+    assert "Your characters and places" in texts
+    assert "Or add one yourself:" in texts
+
+
+def test_manual_mode_shows_each_character_once_plus_the_add_form(qapp) -> None:  # type: ignore[no-untyped-def]
+    from PySide6.QtWidgets import QVBoxLayout, QWidget
+
+    from tests.test_suggestions import _studio, _texts
+
+    view, job, _errors = _studio(_bible_job())
+    job.reference_mode = ReferenceMode.MANUAL
+    name = job.visual_continuity_bible.identities[0].name  # type: ignore[union-attr]
+    holder = QWidget()
+    view._render_references_panel(QVBoxLayout(holder), job)  # noqa: SLF001
+    texts = _texts(holder)
+
+    assert (
+        sum(1 for t in texts if t.endswith(f": {name}")) == 1
+    )  # one card, not two lists
+    assert "Or add one yourself:" in texts

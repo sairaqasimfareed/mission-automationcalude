@@ -45,6 +45,7 @@ from src.models.scene import Scene
 from src.models.specification_enums import AspectRatio
 from src.models.video_job import VideoJob
 from src.services.caption_style_options_service import CaptionStyleOptionsService
+from src.services.ffmpeg_execution_service import clear_cancel_all, request_cancel_all
 from src.services.policy_service import PolicyService
 from src.services.project_render_runtime_factory import ProjectRenderRuntimeFactory
 from src.services.render_dependents_invalidation_service import (
@@ -256,6 +257,7 @@ class RenderWorkspaceView(QWidget):
 
         self._build_output_resolution_choice(layout, job)
         self._build_render_speed_choice(layout, job)
+        self._build_letterbox_choice(layout, job)
         self._build_subtitles_choice(layout, job)
         layout.addWidget(
             small_muted(
@@ -439,6 +441,39 @@ class RenderWorkspaceView(QWidget):
             lambda _index, box=combo: self._handle_output_resolution_changed(box)
         )
         layout.addWidget(combo)
+
+    def _build_letterbox_choice(self, layout: QVBoxLayout, job: VideoJob) -> None:
+        """Cinematic black bars. They crop the picture to a wide band, which suits a wide video but would cut a
+        vertical one to a thin strip, so Automatic leaves them off for vertical and square projects.
+        """
+
+        layout.addWidget(small_muted("Black bars (letterbox)"))
+        combo = QComboBox()
+        combo.addItem("Automatic - the genre's bars for wide videos only", None)
+        combo.addItem("Always - crop the picture to a wide band", True)
+        combo.addItem("Never - keep the full picture", False)
+        combo.setCurrentIndex(max(combo.findData(job.letterbox_enabled), 0))
+        combo.currentIndexChanged.connect(
+            lambda _index, box=combo: self._handle_letterbox_changed(box)
+        )
+        layout.addWidget(combo)
+
+    def _handle_letterbox_changed(self, combo: QComboBox) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        choice = combo.currentData()
+
+        if choice is not None and not isinstance(choice, bool):
+            return
+
+        if choice == job.letterbox_enabled:
+            return
+
+        job.letterbox_enabled = choice
+        self._on_change()
 
     def _build_render_speed_choice(self, layout: QVBoxLayout, job: VideoJob) -> None:
         """How long the render may take. The film grain is the costliest part of the picture, so the two
@@ -658,6 +693,17 @@ class RenderWorkspaceView(QWidget):
         render_button = button("Run render", variant="primary", icon_name="play")
         render_button.setEnabled(False)
         layout.addWidget(render_button, alignment=_LEFT)
+
+        stop_button = button("Stop render", variant="ghost", icon_name="stop")
+        stop_button.clicked.connect(self._handle_stop_render)
+        layout.addWidget(stop_button, alignment=_LEFT)
+
+    def _handle_stop_render(self) -> None:
+        """Stop the render in progress: its FFmpeg run ends at the next check (and so do the automatic
+        retries), and the render is reported as stopped."""
+
+        request_cancel_all()
+        self._progress_speed_label.setText("Stopping the render...")
 
     def _build_scene_asset_choice(
         self,
@@ -881,6 +927,8 @@ class RenderWorkspaceView(QWidget):
             # Already rendering this job - the UI already reflects this
             # (disabled button), this is just defense in depth.
             return
+
+        clear_cancel_all()  # a previous Stop must not stop this render
 
         try:
             render_orchestrator = self._render_runtime_factory.build(

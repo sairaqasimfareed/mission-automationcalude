@@ -1368,6 +1368,11 @@ section records what changed and why so a later session does not undo it.
     Continuity bible tab's automatic frame pickers are hidden (the character list, suggestions and add-by-hand stay). Tests:
     `tests/test_reference_modes.py`. Still only people and places (no props), ONE picture per identity, and the number of references
     Flow/Muse accept at once is unconfirmed.
+    **One screen for characters and places (2026-10-19):** the tab is now called **Characters and places** and holds ALL of their management
+    (the list, scenes, pictures, suggestions, the add-by-hand form). In automatic mode it shows the generated list and "Your characters and
+    places" exactly as the Continuity bible tab used to; in manual mode every character or place appears ONCE as a card (scenes, upload,
+    image prompt, Edit/Delete for ones added by hand). The Continuity bible tab keeps only the bible summary, a count line and an "Open
+    Characters and places" button, so it is no longer long and duplicated.
   - **Compact prompts (2026-10-19).** A scene with its own written paragraph ("Scene detail") already states its place, light,
     composition and what was asked to be shown, so its compiled prompt now keeps only Identity, the timed action, the paragraph, the lens
     line, the look and the duration - the Environment / Lighting / On screen / Composition sections that repeated it are dropped

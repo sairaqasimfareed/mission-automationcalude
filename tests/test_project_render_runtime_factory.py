@@ -161,6 +161,7 @@ class RecordingDirectiveService(GenreVoiceDirectiveGenerationService):
         genre_id: str,
         language: str = "English",
         language_code: str = "en",
+        voice_profile_id: str | None = None,
     ) -> list[SceneVoiceDirectives]:
         self.calls.append(
             (

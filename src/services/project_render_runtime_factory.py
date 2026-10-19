@@ -10,6 +10,7 @@ from src.providers.google_flow.clip_profile import flow_clip_profile_for
 from src.services.genre_voice_directive_generation_service import (
     GenreVoiceDirectiveGenerationService,
 )
+from src.services.letterbox_rules import letterbox_choice_for
 from src.services.pipeline_checkpoint_service import (
     PipelineCheckpointService,
 )
@@ -210,7 +211,7 @@ class ProjectRenderRuntimeFactory:
             output_resolution=output_resolution,
             frame_rate=frame_rate,
             warn_on_blueprint_fallbacks=(warn_on_blueprint_fallbacks),
-            letterbox_enabled_override=job.letterbox_enabled,
+            letterbox_enabled_override=letterbox_choice_for(job),
             audio_inclusion_preferences=job.audio_inclusion_preferences,
             subtitles_enabled=job.subtitles_enabled,
             clip_duration_rounding_fn=flow_clip_profile_for(job.video_provider).clamp,
