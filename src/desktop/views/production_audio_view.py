@@ -180,6 +180,15 @@ class ProductionAudioView(QWidget):
         sound_effect_button.clicked.connect(self._handle_run_sound_effects)
         layout.addWidget(sound_effect_button, alignment=_LEFT)
 
+        if job.video_timeline is None:
+            layout.addWidget(
+                small_muted(
+                    "Music and sound effects are placed on the editing timeline: press "
+                    "Build editing timeline first (it needs the generated clips), then these "
+                    "two buttons unlock."
+                )
+            )
+
         layout.addWidget(
             small_muted(
                 "Or coordinate all four in one action - reuses whatever is "

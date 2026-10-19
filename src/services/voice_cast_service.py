@@ -24,12 +24,20 @@ def cast_key(speaker: str) -> str:
 
 
 def speaker_profile_id(job: VideoJob, speaker: str) -> str | None:
-    """The voice profile assigned to `speaker`, or None for the narrator / an unassigned speaker."""
-
-    if cast_key(speaker) == cast_key(NARRATOR_NAME):
-        return None
+    """The voice profile assigned to `speaker` (the narrator included), or None when none was chosen."""
 
     return job.voice_cast.get(cast_key(speaker))
+
+
+def narrator_profile_id(job: VideoJob) -> str | None:
+    """The voice chosen for the narrator in a voice-cast project (None = the project's usual voice). It reads every
+    line that names no speaker, including whole scenes that have no named voice at all.
+    """
+
+    if not job.voice_cast_enabled:
+        return None
+
+    return job.voice_cast.get(cast_key(NARRATOR_NAME))
 
 
 def cast_speakers(job: VideoJob) -> list[str]:

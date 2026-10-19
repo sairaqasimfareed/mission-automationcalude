@@ -162,6 +162,7 @@ class GenreVoiceDirectiveGenerationService:
         genre_id: str,
         language: str = "English",
         language_code: str = "en",
+        voice_profile_id: str | None = None,
     ) -> list[SceneVoiceDirectives]:
         """
         Generate ordered voice directives for multiple scenes.
@@ -183,6 +184,7 @@ class GenreVoiceDirectiveGenerationService:
                 genre_id=genre_id,
                 language=language,
                 language_code=language_code,
+                voice_profile_id=voice_profile_id,
             )
             for scene in scenes
         ]

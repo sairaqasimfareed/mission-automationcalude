@@ -574,8 +574,11 @@ def test_the_intake_section_has_the_cast_switch_and_lists_speakers_once_on(qapp)
     view._render_voice_cast_controls(QVBoxLayout(holder2), job)  # noqa: SLF001
     choices = holder2.findChildren(QComboBox)
 
-    assert len(choices) == 2  # Judge and Joan of Arc
-    assert choices[0].itemText(0) == "Narrator voice (default)"
+    assert len(choices) == 3  # Narrator, Judge and Joan of Arc
+    assert (
+        choices[0].itemText(0) == "The project's usual voice (default)"
+    )  # the narrator
+    assert choices[1].itemText(0) == "Narrator voice (default)"
     assert any("No voice chosen yet" in t for t in _texts(holder2))
 
 
@@ -700,3 +703,74 @@ def test_a_single_named_line_scene_goes_through_a_dry_run_voiceover() -> None:
     result = _cast_pipeline().run_voice(job)
 
     assert result.audio_timeline is not None
+
+
+# ------------------------------------------------------------------ the narrator's own voice
+
+
+def test_the_narrator_can_have_a_voice_chosen_for_it() -> None:
+    from src.services.voice_cast_service import narrator_profile_id
+
+    job = _job(2)
+    assert narrator_profile_id(job) is None
+
+    ContentIntelligencePipeline.set_voice_cast(
+        job, enabled=True, cast={"narrator": "voice.history_narrator"}
+    )
+    assert narrator_profile_id(job) == "voice.history_narrator"
+    assert speaker_profile_id(job, "Narrator") == "voice.history_narrator"
+
+    ContentIntelligencePipeline.set_voice_cast(job, enabled=False)
+    assert narrator_profile_id(job) is None  # cast switched off: the usual voice
+
+
+def test_a_scene_read_only_by_the_narrator_uses_the_narrators_chosen_voice() -> None:
+    job = _job_with_cast_scenes(
+        {"narrator": "voice.history_narrator", "judge": "voice.tense_suspense"}
+    )
+    plain = [s for s in job.scenes if not s.voice_lines and not s.silent]
+    assert plain
+
+    result = _cast_pipeline().run_voice(job)
+
+    assert result.audio_timeline is not None
+    by_scene = {
+        int(t.metadata["scene_number"]): t.metadata["requested_voice_profile_id"]
+        for t in result.audio_timeline.tracks
+        if t.track_type == AudioTrackType.VOICEOVER
+    }
+    assert {by_scene[s.scene_number] for s in plain} == {"voice.history_narrator"}
+
+
+def test_the_cast_panel_lists_the_narrator_first(qapp) -> None:  # type: ignore[no-untyped-def]
+    from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+
+    from tests.test_suggestions import _studio
+
+    view, job, _errors = _studio(_job(2))
+    job.voice_cast_enabled = True
+    job.scenes = _scenes()
+    holder = QWidget()
+    view._render_voice_cast_controls(QVBoxLayout(holder), job)  # noqa: SLF001
+    names = [label.text() for label in holder.findChildren(QLabel)]
+
+    assert "Narrator" in names
+    assert names.index("Narrator") < names.index("Judge")
+
+
+def test_a_greyed_music_button_says_what_to_do_first(qapp) -> None:  # type: ignore[no-untyped-def]
+    from PySide6.QtWidgets import QLabel
+
+    from src.desktop.job_store import InMemoryJobStore
+    from tests.test_production_audio_generation_gui import _job as audio_job
+    from tests.test_production_audio_generation_gui import _view as audio_view
+
+    store = InMemoryJobStore()
+    job = audio_job(with_scenes=True, with_clips=True)
+    store.add(job)
+    view = audio_view(store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    texts = [label.text() for label in view.findChildren(QLabel)]
+    assert any("Build editing timeline first" in t for t in texts)

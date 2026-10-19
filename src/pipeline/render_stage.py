@@ -29,6 +29,7 @@ from src.services.ffmpeg_execution_service import ProgressCallback
 from src.services.media_technical_validation_service import (
     MediaTechnicalValidationService,
 )
+from src.services.music_track_rules import drop_superseded_whole_video_music
 from src.services.post_render_subtitle_burn_service import (
     PostRenderSubtitleBurnService,
 )
@@ -199,6 +200,10 @@ class RenderPipelineStage(BasePipelineStage):
         start_time = time.perf_counter()
 
         timeline = context.job.video_timeline
+
+        if context.job.audio_timeline is not None:
+            # Projects that already hold both a whole-video music track and the mood pieces play only the pieces.
+            drop_superseded_whole_video_music(context.job.audio_timeline)
 
         if timeline is None:
             return self._failed_result(

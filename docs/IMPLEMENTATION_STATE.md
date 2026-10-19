@@ -1340,6 +1340,13 @@ section records what changed and why so a later session does not undo it.
     direction followed by the brief marked binding (it wins where the two differ); every step that used `genre_direction(job.genre_id)`
     now uses it (visual continuity bible, style sheet, shot planning, scene detail, story treatment, scene visuals writer and review).
     The brief is not part of the script and is never spoken. Tests: `tests/test_style_brief.py`.
+  - **Narrator voice, music fix, audio hint (2026-10-19).** The cast panel now has a **Narrator** row (first), so the narrator's voice can
+    be chosen like any speaker's (`narrator_profile_id`; plain narrator scenes use it too - found on Joan arc, where the narrator fell back
+    to the genre voice and sounded the same as Joan). Found live: pressing "Generate background music" (one whole-video track) and then the
+    planned music pieces left BOTH playing (the Music card read "6 tracks, 2m 56s" for an 88 s video); `music_track_rules.
+    drop_superseded_whole_video_music` now removes the whole-video track when a piece is generated and again at render for projects already
+    in that state. The Audio tab says "press Build editing timeline first" while the music and sound-effect buttons are greyed (they need
+    the timeline). Tests: `tests/test_music_track_rules.py`, `tests/test_voice_cast.py`.
   - **Reference pictures: automatic or manual, and a References tab (2026-10-19).** `VideoJob.reference_mode`
     (`ReferenceMode.AUTO` default / `MANUAL`), chosen at the top of the new **References** tab (Content Studio, after Scene visuals;
     panel-only). AUTO is the unchanged behaviour. MANUAL: the app takes no reference frame by itself (`_extract_reference_for_new_identities`

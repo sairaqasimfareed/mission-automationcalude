@@ -25,7 +25,7 @@ from src.services.render_orchestrator_service import (
 from src.services.render_workflow_stage_factory import (
     RenderWorkflowStageFactory,
 )
-from src.services.voice_cast_service import attach_line_blueprints
+from src.services.voice_cast_service import attach_line_blueprints, narrator_profile_id
 from src.services.voice_resolution_runtime import (
     VoiceResolutionRequest,
     VoiceResolutionRuntime,
@@ -155,6 +155,7 @@ class ProjectRenderRuntimeFactory:
             genre_id=genre_id,
             language=language,
             language_code=language_code,
+            voice_profile_id=narrator_profile_id(job),
         )
 
         # Real-world finding, 2026-09-20: scene.estimated_duration_seconds

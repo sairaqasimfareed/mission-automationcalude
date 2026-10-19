@@ -38,11 +38,12 @@ from src.services.genre_voice_directive_generation_service import (
 )
 from src.services.invalidation_service import InvalidationService
 from src.services.music_generation_service import MusicGenerationService
+from src.services.music_track_rules import drop_superseded_whole_video_music
 from src.services.narration_duration_sync_service import (
     sync_real_narration_durations,
 )
 from src.services.sound_effect_generation_service import SoundEffectGenerationService
-from src.services.voice_cast_service import attach_line_blueprints
+from src.services.voice_cast_service import attach_line_blueprints, narrator_profile_id
 from src.services.voice_generation_service import VoiceGenerationService
 from src.services.voice_resolution_runtime import (
     VoiceResolutionRequest,
@@ -136,6 +137,7 @@ class MediaGenerationPipeline:
                         scene=scene,
                         genre_id=job.genre_id,
                         language=job.language,
+                        voice_profile_id=narrator_profile_id(job),
                     ),
                     scene.narration,
                     # Real-world finding, 2026-10-03: passing the scene's
@@ -665,6 +667,8 @@ class MediaGenerationPipeline:
                 }
             )
             audio_timeline.tracks.append(audio_track)
+            # A whole-video music track made earlier would now play on top of the pieces.
+            drop_superseded_whole_video_music(audio_timeline)
             job.audio_timeline = audio_timeline
 
             segment.status = SoundDesignItemStatus.GENERATED

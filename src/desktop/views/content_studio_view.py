@@ -50,6 +50,7 @@ from src.models.artifact_lifecycle import ArtifactType
 from src.models.cinematic_prompt import CinematicPromptPackage
 from src.models.content_decision_record import ContentDecisionRecord, DecisionCategory
 from src.models.creative_direction import CreativeDirection
+from src.models.dialogue import NARRATOR_NAME
 from src.models.enums import Platform, ProductionMode, ScriptOrigin, WorkflowStage
 from src.models.hook import HookCandidate, HookEvaluation
 from src.models.music_mode import MusicMode
@@ -5548,13 +5549,22 @@ class ContentStudioView(QWidget):
 
             return
 
+        speakers = [NARRATOR_NAME, *speakers]
+
         profiles = VoiceProfileRegistryService.with_default_profiles().list_all()
 
         for speaker in speakers:
             row = QHBoxLayout()
             row.addWidget(QLabel(speaker))
             choice = QComboBox()
-            choice.addItem("Narrator voice (default)", "")
+            choice.addItem(
+                (
+                    "The project's usual voice (default)"
+                    if speaker == NARRATOR_NAME
+                    else "Narrator voice (default)"
+                ),
+                "",
+            )
 
             for profile in profiles:
                 choice.addItem(profile.display_name, profile.profile_id)
