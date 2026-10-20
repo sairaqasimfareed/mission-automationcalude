@@ -17,6 +17,7 @@ from src.models.video_job import VideoJob
 from src.services.caption_style_options_service import (
     CaptionStyleOptionsService,
 )
+from src.services.edited_video_service import edited_video_in_use
 from src.services.ffmpeg_execution_service import (
     CancellationCheck,
     ProgressCallback,
@@ -54,6 +55,12 @@ class SubtitleBurnActionService:
 
         if render is None or not render.success:
             return "Render the video first."
+
+        if edited_video_in_use(job):
+            return (
+                "Your edited video is in use - it has its own subtitles, so burning the app's "
+                "is skipped. Bring the app's render back above to burn them."
+            )
 
         if not render.subtitle_cues:
             return (

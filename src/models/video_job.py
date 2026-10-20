@@ -456,6 +456,11 @@ class VideoJob(MissionBaseModel):
     # variant always carried a watermark before; an operator who wants only the end CTA turns it off.
     cta_watermark_enabled: bool = True
 
+    # A video edited outside the app (CapCut...) that took the render output's place for packaging: the
+    # kept copy of it and its checksum (see src/services/edited_video_service.py). None = the app's own render.
+    edited_video_path: str | None = None
+    edited_video_checksum: str | None = None
+
     # REQ-12 (top10 countdown rank cards), 2026-09-23: set at project
     # creation time (New Project form, only shown for genre.top10) -
     # same "None means auto-generate, a real path means use this

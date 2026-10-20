@@ -1827,3 +1827,58 @@ def test_the_watermark_can_be_turned_off_and_saved(
     ).click()
 
     assert view._job_store.get(job.id).cta_watermark_enabled is False
+
+
+def test_the_edited_video_card_uses_a_chosen_file_and_can_bring_the_render_back(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    from src.models.media_technical_validation import MediaTechnicalValidationResult
+    from src.services.edited_video_service import (
+        EditedVideoService,
+        edited_video_in_use,
+    )
+
+    class _Probe:
+        def validate(self, file_path: Path) -> MediaTechnicalValidationResult:
+            return MediaTechnicalValidationResult(
+                is_readable=True, duration_seconds=70.0, has_video_stream=True
+            )
+
+    output = tmp_path / "final_video.mp4"
+    output.write_bytes(b"app render")
+    edited = tmp_path / "capcut.mp4"
+    edited.write_bytes(b"edited in capcut")
+    view = PackagingView(
+        job_store=InMemoryJobStore(),
+        seo_package_service=None,  # type: ignore[arg-type]
+        thumbnail_package_service=None,  # type: ignore[arg-type]
+        final_export_service=FinalExportService(export_root=tmp_path / "exports"),
+        on_change=lambda: None,
+        export_variant_render_service=_FakeExportVariantRenderService(),  # type: ignore[arg-type]
+        edited_video_service=EditedVideoService(media_validation_service=_Probe()),  # type: ignore[arg-type]
+    )
+    job = _bare_job()
+    orchestration = _render_orchestration_result(job, output_file=output.as_posix())
+    view._job_store.add(job)
+    view.set_job(job.id)
+    view._job_store.set_render_result(job.id, orchestration)
+    job.render_result = orchestration.render_result
+    view.refresh(job)
+
+    texts = [b.text() for b in view.findChildren(QPushButton)]
+    assert "Use my edited video..." in texts
+    assert "Bring back the app's render" not in texts
+
+    view._apply_edited_video(job, str(edited))
+    stored = view._job_store.get(job.id)
+
+    assert edited_video_in_use(stored) is True
+    assert output.read_bytes() == b"edited in capcut"
+    view.refresh(stored)
+    assert "Bring back the app's render" in [
+        b.text() for b in view.findChildren(QPushButton)
+    ]
+
+    view._handle_restore_app_render()
+
+    assert output.read_bytes() == b"app render"

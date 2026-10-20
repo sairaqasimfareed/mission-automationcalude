@@ -52,6 +52,7 @@ from src.models.thumbnail import (
 )
 from src.models.video_job import VideoJob
 from src.services.approval_gate_service import ApprovalGateService
+from src.services.edited_video_service import EditedVideoService, edited_video_in_use
 from src.services.export_variant_render_service import ExportVariantRenderService
 from src.services.final_export.final_export_service import FinalExportService
 from src.services.opening_title_card_service import OpeningTitleCardService
@@ -415,6 +416,7 @@ class PackagingView(QWidget):
         export_variant_render_service: ExportVariantRenderService | None = None,
         subtitle_burn_action_service: SubtitleBurnActionService | None = None,
         opening_title_card_service: OpeningTitleCardService | None = None,
+        edited_video_service: EditedVideoService | None = None,
     ) -> None:
         super().__init__()
 
@@ -435,6 +437,7 @@ class PackagingView(QWidget):
         # card shows a real, disclosed message instead of a button
         # rather than crashing.
         self._opening_title_card_service = opening_title_card_service
+        self._edited_video_service = edited_video_service or EditedVideoService()
         self._job_id: UUID | None = None
 
         # Real-world finding, 2026-10-01: both export-variant and
@@ -526,6 +529,7 @@ class PackagingView(QWidget):
         self._build_seo_card(job)
         self._build_title_card_card(job)
         self._build_thumbnail_card(job)
+        self._build_edited_video_card(job)
         self._build_export_variants_card(job)
         self._build_subtitle_burn_card(job)
         self._build_final_export_card(job)
@@ -1611,6 +1615,125 @@ class PackagingView(QWidget):
 
         if job_id is not None:
             self._subtitle_threads.pop(job_id, None)
+
+    def _build_edited_video_card(self, job: VideoJob) -> None:
+        """Use a video edited elsewhere (CapCut...) as the finished video, so the title card, CTA and
+        export variants are added to it."""
+
+        frame, layout = card("Your edited video", icon_name="clapper")
+
+        render = job.render_result
+
+        if render is None or not render.success or not render.output_file:
+            layout.addWidget(
+                small_muted(
+                    "Render the video first - the edited video takes its place."
+                )
+            )
+            self._layout.addWidget(frame)
+
+            return
+
+        in_use = edited_video_in_use(job)
+
+        if in_use:
+            layout.addWidget(
+                status_label(
+                    f"Your edited video is in use: {job.edited_video_path}",
+                    role="success",
+                )
+            )
+            layout.addWidget(
+                small_muted(
+                    "Title card, watermark, end CTA and export variants are added to it. Its own subtitles "
+                    "are kept, so burning the app's subtitles is skipped."
+                )
+            )
+        else:
+            layout.addWidget(
+                small_muted(
+                    "Edited the video in CapCut or another editor? Choose your exported file: it takes the "
+                    "render's place for everything below (title card, CTA, export variants). The app's own "
+                    "render is kept and can be brought back."
+                )
+            )
+
+            if job.edited_video_path:
+                layout.addWidget(
+                    status_label(
+                        "A newer render has replaced your edited video. Your edited file is still kept at "
+                        f"{job.edited_video_path} - choose it again to use it.",
+                        role="warning",
+                    )
+                )
+
+        use_button = button("Use my edited video...", icon_name="upload")
+        use_button.clicked.connect(self._handle_use_edited_video)
+        layout.addWidget(use_button, alignment=_LEFT)
+
+        if in_use:
+            restore_button = button("Bring back the app's render")
+            restore_button.clicked.connect(self._handle_restore_app_render)
+            layout.addWidget(restore_button, alignment=_LEFT)
+
+        self._layout.addWidget(frame)
+
+    def _handle_use_edited_video(self) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        file_path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "Select your edited video",
+            "",
+            "Video files (*.mp4 *.mov *.mkv *.m4v *.webm)",
+        )
+
+        if file_path:
+            self._apply_edited_video(job, file_path)
+
+    def _apply_edited_video(self, job: VideoJob, file_path: str) -> None:
+        try:
+            updated = self._edited_video_service.use_edited_video(job, file_path)
+        except (ValueError, OSError) as error:
+            self._record_error(job, f"Could not use that video: {error}")
+
+            return
+
+        self._store_render_result_change(job, updated)
+
+    def _handle_restore_app_render(self) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        try:
+            updated = self._edited_video_service.restore_app_render(job)
+        except (ValueError, OSError) as error:
+            self._record_error(job, f"Could not bring the render back: {error}")
+
+            return
+
+        self._store_render_result_change(job, updated)
+
+    def _store_render_result_change(self, job: VideoJob, updated: RenderResult) -> None:
+        assert self._job_id is not None
+
+        orchestration = resolve_effective_render_orchestration_result(
+            job, self._job_store.get_render_result(self._job_id)
+        )
+
+        if orchestration is not None:
+            self._job_store.set_render_result(
+                self._job_id,
+                replace_orchestration_render_result(orchestration, updated),
+            )
+
+        self._job_store.add(job)
+        self._on_change()
 
     def _build_export_variants_card(self, job: VideoJob) -> None:
         """
