@@ -260,6 +260,19 @@ class ExportVariantRenderService:
         )
         master_orientation = self._master_orientation(job)
 
+        # A video edited elsewhere (CapCut exports 1440x2560 at 60 fps) keeps its own size: the CTA clip /
+        # end card is sized to the VIDEO, not the other way round. Before, the clip was scaled to the
+        # project's resolution while the main video was not, and joining two different sizes failed
+        # ("Conversion failed", live 2026-10-20). A reformat (other orientation) still uses the tier.
+        if (
+            orientation == master_orientation
+            and probed.width
+            and probed.height
+            and (probed.height > probed.width) == (target_height > target_width)
+        ):
+            target_width = probed.width // 2 * 2
+            target_height = probed.height // 2 * 2
+
         clauses: list[str] = []
         video_label = "0:v"
 

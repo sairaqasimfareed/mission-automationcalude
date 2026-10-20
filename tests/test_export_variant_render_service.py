@@ -869,3 +869,46 @@ def test_with_the_watermark_off_only_the_end_card_is_added() -> None:
     assert "x=w-text_w-30" not in command_plan.filter_complex
     assert "tpad=stop_mode=clone:stop_duration=5" in command_plan.filter_complex
     assert total_duration_seconds == 65.0
+
+
+def test_a_cta_clip_is_sized_to_the_video_not_to_the_projects_resolution(
+    tmp_path: Path,
+) -> None:
+    """A CapCut export (1440x2560) joined with a 720x1280 CTA clip failed: concat needs equal sizes."""
+
+    from src.models.media_technical_validation import MediaTechnicalValidationResult
+
+    class _Probe:
+        def validate(self, file_path: Path) -> MediaTechnicalValidationResult:
+            big = "cta" not in file_path.name
+            return MediaTechnicalValidationResult(
+                is_readable=True,
+                duration_seconds=88.6 if big else 3.0,
+                width=1440 if big else 720,
+                height=2560 if big else 1280,
+                has_video_stream=True,
+                has_audio_stream=True,
+            )
+
+    cta = tmp_path / "cta.mp4"
+    cta.write_bytes(b"x")
+    execution = _FakeExecutionService()
+    service = ExportVariantRenderService(
+        capability_service=_FakeCapabilityService(),  # type: ignore[arg-type]
+        execution_service=execution,  # type: ignore[arg-type]
+        media_validation_service=_Probe(),  # type: ignore[arg-type]
+    )
+    job = _job(output_resolution="720x1280")
+    job.aspect_ratio = AspectRatio.PORTRAIT
+    job.cta_end_clip_path = str(cta)
+
+    service.build(
+        job=job,
+        render_result=_render_result(duration_seconds=88),
+        orientation=AspectRatio.PORTRAIT,
+        platform=Platform.TIKTOK,
+    )
+
+    command_plan, _ = execution.calls[0]
+    assert "scale=1440:2560" in command_plan.filter_complex
+    assert "scale=720:1280" not in command_plan.filter_complex
