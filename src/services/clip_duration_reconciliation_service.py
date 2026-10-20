@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -61,6 +62,15 @@ _RECONCILABLE_SOURCE_TYPES = frozenset(
         SceneSourceType.IMAGE_TO_VIDEO,
     }
 )
+
+
+_CLIP_LENGTH_WARNING = re.compile(r"^Scene \d+: the (voice|clip|selected clip) \(")
+
+
+def is_clip_length_warning(text: str) -> bool:
+    """Whether `text` is one of this service's per-render notes about a clip's length."""
+
+    return bool(_CLIP_LENGTH_WARNING.match(text))
 
 
 @dataclass(frozen=True, slots=True)
@@ -308,17 +318,17 @@ class ClipDurationReconciliationService:
                 type(error).__name__,
             )
             warnings.append(
-                f"Scene {clip.scene_number}: the voice ({narration:.1f}s) is longer than "
-                f"its clip ({float(clip.duration_seconds):.1f}s) and the clip could not be "
+                f"Scene {clip.scene_number}: the clip ({float(clip.duration_seconds):.1f}s) is shorter "
+                f"than its voice ({narration:.1f}s) plus the pause and the crossfade and could not be "
                 "extended - the voice may run into the next scene."
             )
 
             return clip
 
         warnings.append(
-            f"Scene {clip.scene_number}: the voice ({narration:.1f}s) is longer than its "
-            f"clip ({float(clip.duration_seconds):.1f}s), so the last picture is held for "
-            f"{shortfall:.1f}s. Generate this clip again to fill the time with new motion."
+            f"Scene {clip.scene_number}: the clip ({float(clip.duration_seconds):.1f}s) is shorter than "
+            f"its voice ({narration:.1f}s) plus the pause and the crossfade, so its last picture is "
+            f"held for {shortfall:.1f}s. Generate this clip again to fill the time with new motion."
         )
 
         return clip.model_copy(

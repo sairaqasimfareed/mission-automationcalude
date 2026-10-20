@@ -384,3 +384,16 @@ def test_a_failed_cut_keeps_the_long_clip_instead_of_failing(tmp_path: Path) -> 
 
     assert result.clips[0].duration_seconds == 10
     assert result.errors == []
+
+
+def test_clip_length_notes_are_recognised_so_old_ones_can_be_dropped() -> None:
+    from src.services.clip_duration_reconciliation_service import is_clip_length_warning
+
+    assert is_clip_length_warning(
+        "Scene 3: the clip (6.0s) is shorter than its voice (5.4s) plus the pause and the crossfade"
+    )
+    assert is_clip_length_warning("Scene 1: the selected clip (7.0s) is 3.3s shorter")
+    assert is_clip_length_warning("Scene 7: the clip (10s) was longer than its voice")
+    assert not is_clip_length_warning(
+        "Scene 1: no usable reference frame found for The judges"
+    )

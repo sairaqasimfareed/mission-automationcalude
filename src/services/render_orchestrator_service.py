@@ -32,6 +32,7 @@ from src.pipeline.pipeline_stage import (
 )
 from src.pipeline.stage_context import StageContext
 from src.pipeline.stage_result import StageResult
+from src.services.clip_duration_reconciliation_service import is_clip_length_warning
 from src.services.pipeline_checkpoint_service import (
     PipelineCheckpointService,
 )
@@ -166,6 +167,12 @@ class RenderOrchestratorService:
         """
 
         start_time = time.perf_counter()
+
+        # Clip-length notes belong to one render: they are worked out again every run, and the old
+        # ones (about clips since regenerated) used to stay in the list for good.
+        job.warnings = [
+            warning for warning in job.warnings if not is_clip_length_warning(warning)
+        ]
 
         effective_dry_run = (
             self._advanced_settings.dry_run

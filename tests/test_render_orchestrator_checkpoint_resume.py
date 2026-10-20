@@ -792,3 +792,23 @@ def test_rendering_again_after_a_finished_run_runs_every_stage_again(
     assert second_result.success is True
     assert voice_stage.execution_count == 1
     assert render_stage.execution_count == 1
+
+
+def test_a_render_forgets_the_clip_length_notes_of_the_one_before(
+    tmp_path: Path,
+) -> None:
+    job = build_job()
+    job.warnings = [
+        "Scene 1: the clip (7.0s) is shorter than its voice (10.3s) plus the pause",
+        "Scene 1: no usable reference frame found for The judges",
+    ]
+    service = RenderOrchestratorService(
+        stages=[SuccessfulVoiceStage(), SuccessfulRenderStage()],
+        advanced_settings=build_settings(),
+        checkpoint_storage_service=build_storage(tmp_path),
+    )
+
+    service.execute(job)
+
+    assert not any("the clip (7.0s)" in warning for warning in job.warnings)
+    assert any("no usable reference frame" in warning for warning in job.warnings)
