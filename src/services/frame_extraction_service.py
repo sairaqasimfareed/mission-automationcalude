@@ -4,7 +4,9 @@ import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
-_FRAME_EXTRACTION_TIMEOUT_SECONDS = 30.0
+# Generous: a re-encode of a 10 s clip took 55 s on a busy machine (live, 2026-10-20) and the 30 s limit
+# silently kept the clip too short.
+_FRAME_EXTRACTION_TIMEOUT_SECONDS = 300.0
 
 
 def _run_ffmpeg(command: list[str]) -> None:
@@ -184,6 +186,12 @@ class FrameExtractionService:
             "-t",
             f"{target_duration_seconds:.3f}",
             "-an",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-crf",
+            "18",
             "-pix_fmt",
             "yuv420p",
             str(destination.resolve()),
