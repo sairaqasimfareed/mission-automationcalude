@@ -626,9 +626,17 @@ class RenderOrchestratorService:
 
             return checkpoint
 
-        return storage.load_latest(
+        latest = storage.load_latest(
             job_id=job.id,
         )
+
+        # A checkpoint of a run that FINISHED has nothing left to resume. Treating it as "nothing
+        # to do" made every later render (after a new voiceover, a changed subtitle style...) end
+        # at once as "completed" without rendering anything. Start a fresh run instead.
+        if latest is not None and not latest.resumable:
+            return None
+
+        return latest
 
     def _build_resume_plan(
         self,

@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.desktop.icons import icon
 from src.desktop.job_store import JobStore
 from src.desktop.recovery_dialog import show_recoverable_error
 from src.desktop.scroll_preservation import keep_scroll_on_refresh
@@ -1453,8 +1454,9 @@ class ClipWorkspaceView(QWidget):
 
             # One cross per picture: takes just that character or place off this scene.
             cell = QVBoxLayout()
-            cross = QPushButton("×")
-            cross.setFixedSize(24, 24)
+            cross = QPushButton()
+            cross.setIcon(icon("x-circle"))
+            cross.setFixedSize(28, 28)
             cross.setToolTip(f"Remove {name} from this scene")
             cross.setAccessibleName(f"Remove {name} from scene {scene_number}")
             cross.clicked.connect(

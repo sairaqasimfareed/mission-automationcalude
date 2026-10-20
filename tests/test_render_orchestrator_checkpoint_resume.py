@@ -763,3 +763,32 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+def test_rendering_again_after_a_finished_run_runs_every_stage_again(
+    tmp_path: Path,
+) -> None:
+    job = build_job()
+    storage = build_storage(tmp_path)
+
+    first_service = RenderOrchestratorService(
+        stages=[SuccessfulVoiceStage(), SuccessfulRenderStage()],
+        advanced_settings=build_settings(),
+        checkpoint_storage_service=storage,
+    )
+
+    assert first_service.execute(job).success is True
+
+    voice_stage = SuccessfulVoiceStage()
+    render_stage = SuccessfulRenderStage()
+    second_service = RenderOrchestratorService(
+        stages=[voice_stage, render_stage],
+        advanced_settings=build_settings(),
+        checkpoint_storage_service=storage,
+    )
+
+    second_result = second_service.execute(job)
+
+    assert second_result.success is True
+    assert voice_stage.execution_count == 1
+    assert render_stage.execution_count == 1
