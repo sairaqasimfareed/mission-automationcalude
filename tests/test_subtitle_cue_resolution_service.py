@@ -344,4 +344,6 @@ def test_subtitles_are_timed_to_the_voice_not_to_a_longer_clip() -> None:
 
     assert cues
     assert cues[0].start_seconds == pytest.approx(4.0, abs=0.01)
-    assert max(cue.end_seconds for cue in cues) <= 4.0 + 5.5 + 0.25
+    # ...and the last words end when the real voice does (4.0 + 5.5), however long the word-count
+    # estimate said the line would take.
+    assert max(cue.end_seconds for cue in cues) == pytest.approx(9.5, abs=0.05)

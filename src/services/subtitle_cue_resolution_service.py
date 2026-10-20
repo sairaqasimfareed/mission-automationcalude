@@ -148,15 +148,22 @@ def resolve_absolute_subtitle_cues(
         scene_real_start = union_start[scene_number]
         scene_real_duration = union_end[scene_number] - scene_real_start
 
-        scale_factor = (
-            1.0
-            if timed_to_voice
-            else (
+        if timed_to_voice and executions:
+            # The chunks are timed from a word-count estimate of how long the line takes to say; the real
+            # voice is often slower (scene 8: 8.4 s said against 6.6 s estimated, so its last words came
+            # up 1.8 s after the voice had finished them). Stretch the scene's cues so the last one ends
+            # exactly when the real voice does.
+            assert narration_seconds is not None
+            last_end = max(
+                execution.local_end_offset_seconds for execution in executions
+            )
+            scale_factor = narration_seconds / last_end if last_end > 0 else 1.0
+        else:
+            scale_factor = (
                 scene_real_duration / item.duration_seconds
                 if item.duration_seconds > 0
                 else 1.0
             )
-        )
 
         for execution in executions:
             cues.append(

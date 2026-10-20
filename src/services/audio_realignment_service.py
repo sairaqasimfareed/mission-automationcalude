@@ -4,6 +4,7 @@ from collections.abc import Iterable
 
 from src.models.audio_timeline import AudioTimeline
 from src.models.audio_track import AudioTrack, AudioTrackType
+from src.models.editing_directives import DirectiveTimingMode
 from src.models.render_result import SceneRenderTiming
 from src.models.sound_design_plan import SoundDesignPlan
 from src.models.video_timeline import VideoTimeline
@@ -41,6 +42,7 @@ def realign_audio_to_scene_timings(
     video_timeline: VideoTimeline,
     scene_timings: Iterable[SceneRenderTiming],
     sound_design_plan: SoundDesignPlan | None = None,
+    transition_seconds: float = 0.7,
 ) -> int:
     """
     Move audio generated from the Audio tab onto the video's REAL scene timing.
@@ -104,6 +106,21 @@ def realign_audio_to_scene_timings(
                 continue
 
             real_start, real_end = real[scene_number]
+            planned = _planned_effect_start(
+                track,
+                plan=sound_design_plan,
+                real=real,
+                scene_number=scene_number,
+                transition_seconds=transition_seconds,
+            )
+
+            if planned is not None:
+                # The plan says where in its scene the effect goes (at the start, at 40 %...): measured
+                # from the scene's CURRENT real span, whatever an earlier render did with it - a stamp
+                # meant for scene 9 stayed under scene 8's voice (live, 2026-10-20).
+                moved += _move(track, start=planned, placed_scene_start=real_start)
+
+                continue
 
             if basis == BASIS_NOMINAL and scene_number in nominal:
                 offset = max(0.0, track.start_time_seconds - nominal[scene_number][0])
@@ -150,6 +167,49 @@ def realign_audio_to_scene_timings(
                     moved += _move(track, start=start, duration=span)
 
     return moved
+
+
+def _planned_effect_start(
+    track: AudioTrack,
+    *,
+    plan: SoundDesignPlan | None,
+    real: dict[int, tuple[float, float]],
+    scene_number: int,
+    transition_seconds: float,
+) -> float | None:
+    """Where the sound-design plan puts this effect on its scene's real span, or None when the track has no
+    plan cue (then the offset-keeping rules above apply)."""
+
+    if plan is None:
+        return None
+
+    cue_id = track.metadata.get("sound_design_cue_id")
+    cue = next((c for c in plan.sfx_cues if str(c.id) == cue_id), None)
+
+    if cue is None:
+        return None
+
+    real_start, real_end = real[scene_number]
+    duration = max(real_end - real_start, 0.0)
+    window_start = transition_seconds if scene_number != min(real) else 0.0
+    window_end = (
+        max(window_start, duration - transition_seconds)
+        if scene_number != max(real)
+        else duration
+    )
+
+    if cue.relative_position_percent is not None:
+        offset = duration * (cue.relative_position_percent / 100.0)
+    elif cue.timing_mode == DirectiveTimingMode.SCENE_START:
+        offset = window_start
+    elif cue.timing_mode == DirectiveTimingMode.SCENE_MIDDLE:
+        offset = (window_start + window_end) / 2.0
+    elif cue.timing_mode == DirectiveTimingMode.SCENE_END:
+        offset = window_end
+    else:
+        offset = cue.start_offset_seconds
+
+    return real_start + min(max(offset, window_start), window_end)
 
 
 def _move(

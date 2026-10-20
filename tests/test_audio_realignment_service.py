@@ -450,3 +450,67 @@ class TestClipsChangedSinceTheLastRender:
 
         assert second == 0
         assert sfx.start_time_seconds == pytest.approx(12.6)
+
+
+class TestEffectsFollowThePlan:
+    """Live, 2026-10-20: the stamp meant for the visual-only scene 9 stayed at 57.4 s, under scene 8's voice."""
+
+    def _plan(self, **cue_fields: object):  # type: ignore[no-untyped-def]
+        from src.models.editing_directives import DirectiveTimingMode
+        from src.models.sound_design_plan import SoundEffectCueDirective
+
+        cue = SoundEffectCueDirective(
+            scene_number=2,
+            generation_prompt="A heavy rubber stamp striking paper.",
+            rationale="a stamp on paper",
+            timing_mode=DirectiveTimingMode.ABSOLUTE_SECONDS,
+            **cue_fields,  # type: ignore[arg-type]
+        )
+
+        return cue, SoundDesignPlan(sfx_cues=[cue], music_segments=[])
+
+    def test_an_effect_at_a_percentage_lands_that_far_into_the_scenes_real_span(
+        self,
+    ) -> None:
+        cue, plan = self._plan(relative_position_percent=40.0)
+        sfx = _track(
+            AudioTrackType.SOUND_EFFECT,
+            57.4,
+            2.0,
+            scene_number=2,
+            basis=BASIS_REAL,
+            sound_design_cue_id=str(cue.id),
+        )
+
+        realign_audio_to_scene_timings(
+            AudioTimeline(tracks=[sfx]),
+            video_timeline=_video((1, 0, 8), (2, 8, 18)),
+            scene_timings=_timings((1, 0.0, 8.0), (2, 61.7, 66.7)),
+            sound_design_plan=plan,
+        )
+
+        assert sfx.start_time_seconds == pytest.approx(61.7 + 0.4 * 5.0)
+
+    def test_a_scene_start_effect_goes_to_the_start_of_the_scene(self) -> None:
+        from src.models.editing_directives import DirectiveTimingMode
+
+        cue, plan = self._plan()
+        cue.timing_mode = DirectiveTimingMode.SCENE_START
+        sfx = _track(
+            AudioTrackType.SOUND_EFFECT,
+            16.9,
+            0.5,
+            scene_number=2,
+            basis=BASIS_REAL,
+            sound_design_cue_id=str(cue.id),
+        )
+
+        realign_audio_to_scene_timings(
+            AudioTimeline(tracks=[sfx]),
+            video_timeline=_video((1, 0, 8), (2, 8, 18)),
+            scene_timings=_timings((1, 0.0, 8.0), (2, 20.9, 27.9)),
+            sound_design_plan=plan,
+        )
+
+        # the crossfade into a scene takes 0.7 s, so the effect starts once it is over
+        assert sfx.start_time_seconds == pytest.approx(20.9 + 0.7)
