@@ -15,6 +15,7 @@ import pytest  # noqa: E402
 from PySide6.QtCore import QEvent  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
+    QCheckBox,
     QComboBox,
     QLabel,
     QLineEdit,
@@ -1784,3 +1785,45 @@ def test_remove_then_save_returns_to_the_generated_defaults(
 
     assert job.cta_watermark_image_path is None
     assert job.cta_end_clip_path is None
+
+
+def test_the_variant_platform_starts_on_the_projects_own_platform(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    """A TikTok project used to show YouTube in the platform dropdown (the first entry)."""
+
+    view = PackagingView(
+        job_store=InMemoryJobStore(),
+        seo_package_service=None,  # type: ignore[arg-type]
+        thumbnail_package_service=None,  # type: ignore[arg-type]
+        final_export_service=FinalExportService(export_root=tmp_path / "exports"),
+        on_change=lambda: None,
+        export_variant_render_service=_FakeExportVariantRenderService(),  # type: ignore[arg-type]
+    )
+    job = _bare_job()
+    job.platform = Platform.TIKTOK
+    view._job_store.add(job)
+    view.set_job(job.id)
+    view._job_store.set_render_result(job.id, _render_orchestration_result(job))
+    view.refresh(job)
+
+    assert _platform_combo(view).currentText() == "TikTok"
+
+
+def test_the_watermark_can_be_turned_off_and_saved(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    view, job = _view_with_render_result(tmp_path, _FakeExportVariantRenderService())
+    box = next(
+        b
+        for b in view.findChildren(QCheckBox)
+        if b.text() == "Show a watermark over the video"
+    )
+    assert box.isChecked() is True
+
+    box.setChecked(False)
+    next(
+        b for b in view.findChildren(QPushButton) if b.text() == "Save CTA settings"
+    ).click()
+
+    assert view._job_store.get(job.id).cta_watermark_enabled is False

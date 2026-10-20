@@ -1700,6 +1700,12 @@ class PackagingView(QWidget):
             for label, value in _PLATFORM_LABELS:
                 platform_combo.addItem(label, userData=value)
 
+            # Start on the project's own platform (it used to start on the first entry, YouTube, even
+            # for a TikTok project).
+            platform_combo.setCurrentIndex(
+                max(0, platform_combo.findData(job.platform.value))
+            )
+
             generate_button = button(
                 "Generate variant",
                 variant="primary",
@@ -1757,6 +1763,13 @@ class PackagingView(QWidget):
             )
         )
 
+        watermark_box = QCheckBox("Show a watermark over the video")
+        watermark_box.setChecked(job.cta_watermark_enabled)
+        watermark_box.setToolTip(
+            "Turn off to add only the end card or your CTA clip, with nothing over the video itself."
+        )
+        layout.addWidget(watermark_box)
+
         layout.addWidget(small_muted("Watermark image (shown over the video)"))
         watermark_display = QLineEdit(job.cta_watermark_image_path or "")
         watermark_display.setReadOnly(True)
@@ -1796,6 +1809,7 @@ class PackagingView(QWidget):
             lambda: self._handle_save_cta_settings(
                 watermark_display=watermark_display,
                 clip_display=clip_display,
+                watermark_box=watermark_box,
             )
         )
         layout.addWidget(save_button, alignment=_LEFT)
@@ -1812,7 +1826,11 @@ class PackagingView(QWidget):
             display.setText(file_path)
 
     def _handle_save_cta_settings(
-        self, *, watermark_display: QLineEdit, clip_display: QLineEdit
+        self,
+        *,
+        watermark_display: QLineEdit,
+        clip_display: QLineEdit,
+        watermark_box: QCheckBox,
     ) -> None:
         job = self._current_job()
 
@@ -1821,6 +1839,7 @@ class PackagingView(QWidget):
 
         job.cta_watermark_image_path = watermark_display.text().strip() or None
         job.cta_end_clip_path = clip_display.text().strip() or None
+        job.cta_watermark_enabled = watermark_box.isChecked()
 
         self._on_change()
 

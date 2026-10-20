@@ -306,34 +306,37 @@ class ExportVariantRenderService:
                 title_card_seconds + _WATERMARK_DELAY_SECONDS, content_duration - 1.0
             )
 
-            if watermark_image is not None:
-                extra_input_files.append(str(watermark_image))
-                # An uploaded image is a persistent badge: visible as soon as the
-                # title card (if any) ends - the text watermark's hook-skipping
-                # delay is a choice about generated text, not about a logo the
-                # operator deliberately supplied. With a CTA clip there is no frozen
-                # tail to keep clean - the clip is joined after this stream - so it
-                # runs to the end.
-                watermark_clause, video_label = self._watermark_image_clause(
-                    input_label=video_label,
-                    image_input_index=len(extra_input_files),
-                    orientation=orientation,
-                    frame_width=target_width,
-                    start_seconds=title_card_seconds,
-                    end_seconds=(
-                        None if cta_clip is not None else watermark_end_seconds
-                    ),
-                )
-            else:
-                watermark_clause, video_label = self._watermark_clause(
-                    input_label=video_label,
-                    platform=platform,
-                    orientation=orientation,
-                    start_seconds=title_card_seconds + _WATERMARK_DELAY_SECONDS,
-                    end_seconds=watermark_end_seconds,
-                )
+            # With the watermark off nothing is drawn over the video; the end card / CTA clip below is
+            # still added.
+            if job.cta_watermark_enabled:
+                if watermark_image is not None:
+                    extra_input_files.append(str(watermark_image))
+                    # An uploaded image is a persistent badge: visible as soon as the
+                    # title card (if any) ends - the text watermark's hook-skipping
+                    # delay is a choice about generated text, not about a logo the
+                    # operator deliberately supplied. With a CTA clip there is no frozen
+                    # tail to keep clean - the clip is joined after this stream - so it
+                    # runs to the end.
+                    watermark_clause, video_label = self._watermark_image_clause(
+                        input_label=video_label,
+                        image_input_index=len(extra_input_files),
+                        orientation=orientation,
+                        frame_width=target_width,
+                        start_seconds=title_card_seconds,
+                        end_seconds=(
+                            None if cta_clip is not None else watermark_end_seconds
+                        ),
+                    )
+                else:
+                    watermark_clause, video_label = self._watermark_clause(
+                        input_label=video_label,
+                        platform=platform,
+                        orientation=orientation,
+                        start_seconds=title_card_seconds + _WATERMARK_DELAY_SECONDS,
+                        end_seconds=watermark_end_seconds,
+                    )
 
-            clauses.append(watermark_clause)
+                clauses.append(watermark_clause)
 
             if cta_clip is not None:
                 clip_path, clip_probe = cta_clip

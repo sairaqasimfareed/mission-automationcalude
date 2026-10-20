@@ -850,3 +850,22 @@ def test_a_variant_without_the_recorded_value_is_still_valid() -> None:
     variant = ExportVariant(orientation=AspectRatio.LANDSCAPE, output_file="x.mp4")
 
     assert variant.title_card_seconds is None
+
+
+def test_with_the_watermark_off_only_the_end_card_is_added() -> None:
+    service, execution = _service()
+    job = _job()
+    job.cta_watermark_enabled = False
+
+    service.build(
+        job=job,
+        render_result=_render_result(duration_seconds=60),
+        orientation=AspectRatio.LANDSCAPE,
+        platform=Platform.YOUTUBE,
+    )
+
+    command_plan, total_duration_seconds = execution.calls[0]
+    # no watermark text over the video, but the end card is still appended
+    assert "x=w-text_w-30" not in command_plan.filter_complex
+    assert "tpad=stop_mode=clone:stop_duration=5" in command_plan.filter_complex
+    assert total_duration_seconds == 65.0

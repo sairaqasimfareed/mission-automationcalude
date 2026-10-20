@@ -452,6 +452,10 @@ class VideoJob(MissionBaseModel):
     # generated text end-card (no end-card is built when this is set).
     cta_end_clip_path: str | None = None
 
+    # False = no watermark over the video at all (the end card or CTA clip is still added). A platform
+    # variant always carried a watermark before; an operator who wants only the end CTA turns it off.
+    cta_watermark_enabled: bool = True
+
     # REQ-12 (top10 countdown rank cards), 2026-09-23: set at project
     # creation time (New Project form, only shown for genre.top10) -
     # same "None means auto-generate, a real path means use this
