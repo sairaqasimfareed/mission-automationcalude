@@ -4,7 +4,7 @@ from collections.abc import Callable
 from pathlib import Path
 from uuid import UUID
 
-from PySide6.QtCore import QObject, Qt, QThread, Signal
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -479,6 +479,8 @@ class ClipWorkspaceView(QWidget):
         # preserve older call sites" convention.
         self._scene_video_generation_service = scene_video_generation_service
         self._generating_job_ids: set[UUID] = set()
+        # Scenes still to regenerate for "Refresh clips to the voiceover", by job.
+        self._refresh_queue: dict[UUID, list[int]] = {}
         self._generation_threads: dict[
             UUID, tuple[QThread, _SceneVideoGenerationWorker]
         ] = {}
@@ -1202,6 +1204,15 @@ class ClipWorkspaceView(QWidget):
 
         layout.addLayout(row(all_button, account_combo))
 
+        refresh_button = button("Refresh clips to the voiceover", icon_name="clapper")
+        refresh_button.setEnabled(not is_generating)
+        refresh_button.setToolTip(
+            "After the voiceover was made again: finds the clips that are now shorter than "
+            "their voice and, once you confirm, regenerates just those."
+        )
+        refresh_button.clicked.connect(self._handle_refresh_clips_to_voiceover)
+        layout.addWidget(refresh_button, alignment=_LEFT)
+
         missing_reference = self._scene_reference_service.scenes_needing_reference(job)
         layout.addWidget(
             small_muted(
@@ -1875,9 +1886,8 @@ class ClipWorkspaceView(QWidget):
         return f"planned {rules.single_clip_seconds(seconds):.0f}s{narration_text}"
 
     @staticmethod
-    def _too_short_text(job: VideoJob, scene: Scene) -> str | None:
-        """A clip made before the voice was (re)generated keeps its old length. Say so when
-        it no longer covers the voice, so it is clear which clips to regenerate."""
+    def _short_clip_lengths(job: VideoJob, scene: Scene) -> tuple[int, float] | None:
+        """(clip seconds, voice seconds) when this scene's clip(s) no longer cover its voice."""
 
         narration = scene.real_narration_duration_seconds
 
@@ -1893,8 +1903,22 @@ class ClipWorkspaceView(QWidget):
         if not lengths or sum(lengths) >= narration - 0.5:
             return None
 
+        return sum(lengths), narration
+
+    @staticmethod
+    def _too_short_text(job: VideoJob, scene: Scene) -> str | None:
+        """A clip made before the voice was (re)generated keeps its old length. Say so when
+        it no longer covers the voice, so it is clear which clips to regenerate."""
+
+        found = ClipWorkspaceView._short_clip_lengths(job, scene)
+
+        if found is None:
+            return None
+
+        clip_seconds, narration = found
+
         return (
-            f"The clip ({sum(lengths)}s) is shorter than the voice ({narration:.1f}s) - "
+            f"The clip ({clip_seconds}s) is shorter than the voice ({narration:.1f}s) - "
             "press Regenerate to make it fit. Until then the last picture is held."
         )
 
@@ -2002,6 +2026,73 @@ class ClipWorkspaceView(QWidget):
 
         self._job_store.add(job)
         self._on_change()
+
+    def _handle_refresh_clips_to_voiceover(self) -> None:
+        job = self._current_job()
+
+        if job is None or job.id in self._generating_job_ids:
+            return
+
+        from src.services.narration_duration_sync_service import (
+            sync_real_narration_durations,
+        )
+
+        sync_real_narration_durations(job, overwrite=True)
+        self._job_store.add(job)
+
+        stale = [
+            (scene.scene_number, found)
+            for scene in sorted(job.scenes, key=lambda item: item.scene_number)
+            if (found := self._short_clip_lengths(job, scene)) is not None
+        ]
+
+        if not stale:
+            QMessageBox.information(
+                self,
+                "Clips match the voiceover",
+                "Every clip already covers its voice. Nothing to regenerate.",
+            )
+            self._on_change()
+
+            return
+
+        lines = "\n".join(
+            f"Scene {number}: clip {clip}s, voice {voice:.1f}s"
+            for number, (clip, voice) in stale
+        )
+        answer = QMessageBox.question(
+            self,
+            "Regenerate clips that are too short?",
+            f"{len(stale)} clip(s) are shorter than their voice:\n\n{lines}\n\n"
+            "Regenerating makes a new clip for each (a scene with a long voice may become "
+            "two clips) and uses video-generation credits. Regenerate them now?",
+        )
+
+        if answer != QMessageBox.StandardButton.Yes:
+            self._on_change()
+
+            return
+
+        self._refresh_queue[job.id] = [number for number, _found in stale]
+        self._run_next_refresh(job.id)
+
+    def _run_next_refresh(self, job_id: UUID) -> None:
+        queue = self._refresh_queue.get(job_id)
+
+        if not queue:
+            self._refresh_queue.pop(job_id, None)
+
+            return
+
+        job = self._job_store.get(job_id)
+
+        if job is None:
+            self._refresh_queue.pop(job_id, None)
+
+            return
+
+        number = queue.pop(0)
+        self._execute_scene_generation(job, scene_number=number)
 
     def _handle_generate_all_scene_videos(self) -> None:
         job = self._current_job()
@@ -2127,6 +2218,7 @@ class ClipWorkspaceView(QWidget):
         job_id = worker.job_id
         scene_number = worker.scene_number
         self._generating_job_ids.discard(job_id)
+        self._refresh_queue.pop(job_id, None)
 
         job = worker.job
         job.errors.append(f"Scene video generation failed: {message}")
@@ -2155,6 +2247,11 @@ class ClipWorkspaceView(QWidget):
 
         if job_id is not None:
             self._generation_threads.pop(job_id, None)
+
+            if self._refresh_queue.get(job_id):
+                # The next clip of "Refresh clips to the voiceover": started only now, once this
+                # thread has really stopped, so its bookkeeping cannot drop the next one's.
+                QTimer.singleShot(0, lambda: self._run_next_refresh(job_id))
 
     def _rebuild_card(self, job: VideoJob) -> None:
         if job.id == self._job_id:

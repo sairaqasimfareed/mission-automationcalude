@@ -182,3 +182,61 @@ def test_the_planned_length_includes_the_projects_hold(
 
     assert "planned 8s" in _row(view, 1)
     assert "narration 6.7s" in _row(view, 1)
+
+
+def test_refresh_regenerates_only_clips_shorter_than_their_voice_after_confirming(
+    qapp: QApplication,  # noqa: F811
+    monkeypatch,  # type: ignore[no-untyped-def]
+) -> None:
+    from PySide6.QtWidgets import QMessageBox
+
+    job = _job(1, 2, 3)
+    job.scene_hold_seconds = 0.0
+    for scene, narration in zip(job.scenes, (9.0, 4.0, 8.0), strict=True):
+        scene.real_narration_duration_seconds = narration
+    job.video_clips = [_clip(1, 6), _clip(2, 6), _clip(3, 6)]
+    view = _build_view(job, service=_FakeSceneVideoGenerationService())
+    view.refresh(job)
+
+    started: list[int | None] = []
+    monkeypatch.setattr(
+        view,
+        "_execute_scene_generation",
+        lambda _job, *, scene_number, **_kw: started.append(scene_number),
+    )
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *_a, **_k: QMessageBox.StandardButton.Yes
+    )
+
+    view._handle_refresh_clips_to_voiceover()  # noqa: SLF001
+
+    # Scenes 1 (9.0 s of voice) and 3 (8.0 s) are too short; scene 2 (4.0 s) already fits.
+    assert started == [1]
+    assert view._refresh_queue[job.id] == [3]  # noqa: SLF001
+
+
+def test_refresh_does_nothing_when_the_user_says_no(
+    qapp: QApplication,  # noqa: F811
+    monkeypatch,  # type: ignore[no-untyped-def]
+) -> None:
+    from PySide6.QtWidgets import QMessageBox
+
+    job = _job(1)
+    job.scenes[0].real_narration_duration_seconds = 9.0
+    job.video_clips = [_clip(1, 6)]
+    view = _build_view(job, service=_FakeSceneVideoGenerationService())
+    view.refresh(job)
+
+    started: list[int | None] = []
+    monkeypatch.setattr(
+        view,
+        "_execute_scene_generation",
+        lambda _job, *, scene_number, **_kw: started.append(scene_number),
+    )
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *_a, **_k: QMessageBox.StandardButton.No
+    )
+
+    view._handle_refresh_clips_to_voiceover()  # noqa: SLF001
+
+    assert started == []
