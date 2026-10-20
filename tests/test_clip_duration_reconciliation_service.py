@@ -225,3 +225,56 @@ def test_severe_shortfall_ratio_out_of_range_is_rejected() -> None:
 
     with pytest.raises(ValueError):
         ClipDurationReconciliationService(severe_shortfall_ratio=1.5)
+
+
+def test_an_ai_clip_shorter_than_its_voice_is_held_on_its_last_frame(
+    tmp_path: Path,
+) -> None:
+    frame_extraction, commands = _frame_extraction_service(tmp_path)
+    source = _real_video_file(tmp_path)
+    service = ClipDurationReconciliationService(
+        frame_extraction_service=frame_extraction
+    )
+
+    result = service.reconcile(
+        scenes=[_scene(1, real_narration_duration_seconds=9.7)],
+        clips=[
+            _clip(
+                1,
+                duration_seconds=7,
+                source_type=SceneSourceType.AI_GENERATE,
+                local_file=str(source),
+            )
+        ],
+    )
+
+    assert result.clips[0].duration_seconds == 10
+    assert result.clips[0].local_file is not None
+    assert result.clips[0].local_file.endswith("_held.mp4")
+    assert "tpad=stop_mode=clone" in " ".join(commands[0])
+    assert any("held" in warning for warning in result.warnings)
+
+
+def test_an_ai_clip_that_already_covers_its_voice_is_left_alone(
+    tmp_path: Path,
+) -> None:
+    frame_extraction, commands = _frame_extraction_service(tmp_path)
+    source = _real_video_file(tmp_path)
+    service = ClipDurationReconciliationService(
+        frame_extraction_service=frame_extraction
+    )
+
+    result = service.reconcile(
+        scenes=[_scene(1, real_narration_duration_seconds=5.5)],
+        clips=[
+            _clip(
+                1,
+                duration_seconds=10,
+                source_type=SceneSourceType.AI_GENERATE,
+                local_file=str(source),
+            )
+        ],
+    )
+
+    assert result.clips[0].duration_seconds == 10
+    assert commands == []

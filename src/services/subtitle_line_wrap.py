@@ -52,3 +52,21 @@ def wrap_for_frame(text: str, *, frame_width: int | None, fontsize: int) -> str:
     )
 
     return "\n".join(wrapped)
+
+
+def split_to_single_rows(text: str, *, maximum: int) -> list[str]:
+    """`text` cut at word boundaries into the fewest balanced pieces of at most `maximum`
+    characters each (a single word longer than that stays whole). A text that already fits
+    is returned as one piece."""
+
+    flat = " ".join(text.split())
+
+    if len(flat) <= maximum:
+        return [flat]
+
+    pieces = math.ceil(len(flat) / maximum)
+    width = min(maximum, math.ceil(len(flat) / pieces) + 4)
+
+    return textwrap.wrap(
+        flat, width=width, break_long_words=False, break_on_hyphens=False
+    )

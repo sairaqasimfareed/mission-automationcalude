@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -120,7 +121,25 @@ class ClipDurationReconciliationService:
         warnings: list[str] = []
         errors: list[str] = []
 
+        clips_per_scene: dict[int, int] = {}
+
         for clip in clips:
+            clips_per_scene[clip.scene_number] = (
+                clips_per_scene.get(clip.scene_number, 0) + 1
+            )
+
+        for clip in clips:
+            if clip.source_type == SceneSourceType.AI_GENERATE:
+                updated_clips.append(
+                    self._hold_short_ai_clip(
+                        clip=clip,
+                        scene=scenes_by_number.get(clip.scene_number),
+                        single_clip=clips_per_scene[clip.scene_number] == 1,
+                        warnings=warnings,
+                    )
+                )
+                continue
+
             if clip.source_type not in _RECONCILABLE_SOURCE_TYPES:
                 updated_clips.append(clip)
                 continue
@@ -177,6 +196,77 @@ class ClipDurationReconciliationService:
             clips=updated_clips,
             warnings=warnings,
             errors=errors,
+        )
+
+    def _hold_short_ai_clip(
+        self,
+        *,
+        clip: VideoClip,
+        scene: Scene | None,
+        single_clip: bool,
+        warnings: list[str],
+    ) -> VideoClip:
+        """
+        An AI clip is sized to the narration when it is generated, but the voice can be made
+        again afterwards (another voice, edited text) and come out longer. The voice then runs
+        past the end of its picture - into the next scene's voice (two voices at once) and out
+        of step with every picture after it. Hold the clip's last frame for the missing seconds
+        so the scene is as long as its voice. Best effort, like _trim: a failure keeps the clip.
+        A scene made of several clips is left alone (its parts are sized together).
+        """
+
+        if scene is None or scene.silent or not single_clip or clip.local_file is None:
+            return clip
+
+        narration = scene.real_narration_duration_seconds
+
+        if narration is None:
+            return clip
+
+        shortfall = narration - float(clip.duration_seconds)
+
+        if shortfall <= self._tolerance_seconds:
+            return clip
+
+        source = Path(clip.local_file)
+        target_seconds = math.ceil(narration)
+        held_path = source.with_name(f"{source.stem}_held{source.suffix}")
+
+        try:
+            self._frame_extraction_service.hold_to_duration(
+                video_path=str(source),
+                target_duration_seconds=float(target_seconds),
+                output_path=str(held_path),
+            )
+        except Exception as error:
+            logger.warning(
+                "Holding the last frame failed for scene %s (clip %.1fs, narration %.1fs): "
+                "%s - keeping the clip as it is.",
+                clip.scene_number,
+                float(clip.duration_seconds),
+                narration,
+                type(error).__name__,
+            )
+            warnings.append(
+                f"Scene {clip.scene_number}: the voice ({narration:.1f}s) is longer than "
+                f"its clip ({float(clip.duration_seconds):.1f}s) and the clip could not be "
+                "extended - the voice may run into the next scene."
+            )
+
+            return clip
+
+        warnings.append(
+            f"Scene {clip.scene_number}: the voice ({narration:.1f}s) is longer than its "
+            f"clip ({float(clip.duration_seconds):.1f}s), so the last picture is held for "
+            f"{shortfall:.1f}s. Generate this clip again to fill the time with new motion."
+        )
+
+        return clip.model_copy(
+            update={
+                "local_file": str(held_path),
+                "duration_seconds": target_seconds,
+                "checksum": self._provenance_service.compute_checksum(str(held_path)),
+            }
         )
 
     def _trim(self, *, clip: VideoClip, target_seconds: float) -> VideoClip:

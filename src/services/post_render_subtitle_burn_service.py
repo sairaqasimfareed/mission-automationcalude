@@ -22,7 +22,11 @@ from src.services.media_technical_validation_service import (
 )
 from src.services.production_render_service import ProductionRenderService
 from src.services.subtitle_frame_style import adapt_style_for_frame
-from src.services.subtitle_line_wrap import wrap_for_frame
+from src.services.subtitle_line_wrap import (
+    max_characters_per_line,
+    split_to_single_rows,
+    wrap_for_frame,
+)
 from src.services.video_filter_translation_service import (
     VideoFilterTranslationService,
 )
@@ -145,6 +149,11 @@ class PostRenderSubtitleBurnService:
             fontsize = int(style.get("fontsize", "48"))
         except ValueError:
             fontsize = 48
+
+        # A subtitle shows on ONE row: a line too long for the picture is shown as two or three
+        # short ones one after the other (the time shared by length), instead of stacked rows.
+        if width:
+            cues = self._one_row_cues(cues, width=width, fontsize=fontsize)
 
         clauses: list[str] = []
         current_label = "0:v"
@@ -307,6 +316,39 @@ class PostRenderSubtitleBurnService:
             failure_category=classify_render_failure(failure_stage),
             selected_video_codec=resolved_config.selected_video_codec,
         )
+
+    @staticmethod
+    def _one_row_cues(
+        cues: list[AbsoluteSubtitleCue], *, width: int, fontsize: int
+    ) -> list[AbsoluteSubtitleCue]:
+        maximum = max_characters_per_line(frame_width=width, fontsize=fontsize)
+        result: list[AbsoluteSubtitleCue] = []
+
+        for cue in cues:
+            pieces = split_to_single_rows(cue.text, maximum=maximum)
+
+            if len(pieces) == 1:
+                result.append(cue)
+                continue
+
+            total = sum(len(piece) for piece in pieces)
+            span = cue.end_seconds - cue.start_seconds
+            start = cue.start_seconds
+
+            for index, piece in enumerate(pieces):
+                end = (
+                    cue.end_seconds
+                    if index == len(pieces) - 1
+                    else start + span * len(piece) / total
+                )
+                result.append(
+                    AbsoluteSubtitleCue(
+                        text=piece, start_seconds=start, end_seconds=end
+                    )
+                )
+                start = end
+
+        return result
 
     def _probe_size(self, video_file: str) -> tuple[int | None, int | None]:
         try:

@@ -140,3 +140,23 @@ def test_a_burned_line_in_a_vertical_video_stays_inside_its_margins(
     # clear of the sides: the text (and its outline) keeps at least 8% on each side
     assert min(columns) > 0.08 * width
     assert max(columns) < 0.92 * width
+
+
+def test_a_long_line_is_cut_into_short_one_row_pieces() -> None:
+    from src.services.subtitle_line_wrap import split_to_single_rows
+
+    pieces = split_to_single_rows(
+        "In February, sixty-two churchmen asked her: do you know", maximum=25
+    )
+
+    assert len(pieces) == 3 or len(pieces) == 2
+    assert all(len(piece) <= 25 for piece in pieces)
+    assert " ".join(pieces) == "In February, sixty-two churchmen asked her: do you know"
+
+
+def test_a_line_that_fits_stays_one_piece() -> None:
+    from src.services.subtitle_line_wrap import split_to_single_rows
+
+    assert split_to_single_rows("The court will hear", maximum=25) == [
+        "The court will hear"
+    ]

@@ -154,6 +154,50 @@ class FrameExtractionService:
 
         return str(destination.resolve())
 
+    def hold_to_duration(
+        self,
+        *,
+        video_path: str,
+        target_duration_seconds: float,
+        output_path: str,
+    ) -> str:
+        """
+        Make a real video file at least target_duration_seconds long by holding its LAST
+        frame (a freeze), for a clip whose scene has more narration than the clip has picture.
+        The clip's own picture is untouched; only the end is extended.
+        """
+
+        if target_duration_seconds <= 0.0:
+            raise ValueError("Hold requires a positive target duration.")
+
+        destination = Path(output_path)
+
+        destination.parent.mkdir(parents=True, exist_ok=True)
+
+        command = [
+            self._ffmpeg_path,
+            "-y",
+            "-i",
+            str(Path(video_path).resolve()),
+            "-vf",
+            "tpad=stop_mode=clone:stop_duration=" f"{target_duration_seconds:.3f}",
+            "-t",
+            f"{target_duration_seconds:.3f}",
+            "-an",
+            "-pix_fmt",
+            "yuv420p",
+            str(destination.resolve()),
+        ]
+
+        self._runner(command)
+
+        if not destination.exists():
+            raise RuntimeError(
+                f"ffmpeg reported success but no extended file was written to {destination}."
+            )
+
+        return str(destination.resolve())
+
     def trim_to_duration(
         self,
         *,
