@@ -261,6 +261,17 @@ class ProductionAudioView(QWidget):
             noun="sound effects",
         )
 
+        layout.addWidget(
+            small_muted(
+                "Music mode: "
+                + (
+                    "one continuous track for the whole video"
+                    if job.music_mode == MusicMode.CONTINUOUS
+                    else "separate pieces, one per mood"
+                )
+                + " (change it in Content, Project settings)."
+            )
+        )
         music_planned = (
             f" ({sum(m.status == SoundDesignItemStatus.GENERATED for m in plan.music_segments)}"
             f" of {len(plan.music_segments)} planned segments generated)"

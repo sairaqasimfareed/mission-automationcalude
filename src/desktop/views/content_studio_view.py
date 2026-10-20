@@ -4,7 +4,7 @@ from collections.abc import Callable
 from pathlib import Path
 from uuid import UUID
 
-from PySide6.QtCore import QObject, Qt, QThread, Signal
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -1590,6 +1590,13 @@ class ContentStudioView(QWidget):
             "that is not available the separate pieces are made instead."
         )
         form.addRow("Background music", music_mode_select)
+        # Applied the moment it is chosen: the choice used to count only after "Save settings", and a
+        # project whose choice was never saved kept making separate mood pieces (found live, Joan arc).
+        music_mode_select.currentIndexChanged.connect(
+            lambda _index: self._handle_music_mode_changed(
+                music_mode_select.currentData()
+            )
+        )
 
         approval_mode_select = QComboBox()
         approval_mode_select.addItems(list(_APPROVAL_MODE_PRESETS))
@@ -5822,6 +5829,20 @@ class ContentStudioView(QWidget):
         self._render_recurring_identities_section(layout, job, show_identity_list=False)
 
         return False
+
+    def _handle_music_mode_changed(self, chosen: object) -> None:
+        job = self._current_job()
+
+        try:
+            mode = MusicMode(chosen)  # Qt hands a str-enum back as its plain value
+        except ValueError:
+            return
+
+        if job is None or job.music_mode == mode:
+            return
+
+        job.music_mode = mode
+        QTimer.singleShot(0, self._on_change)
 
     def _handle_reference_mode_changed(self, chosen: object) -> None:
         job = self._current_job()
