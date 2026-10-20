@@ -281,7 +281,7 @@ assert (
             active_only=True,
         )
     )
-    == 16  # REQ-11: +2 (golden_hour_warm, clean_neutral); REQ-12: +1 (top10_rank_badge)
+    == 17  # picture brightness: +1 (lut_moody_lifted); REQ-11: +2 (golden_hour_warm, clean_neutral); REQ-12: +1 (top10_rank_badge)
 )
 
 assert (

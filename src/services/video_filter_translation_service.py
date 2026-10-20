@@ -47,6 +47,8 @@ class _ParametricGradeSpec(NamedTuple):
     contrast: float
     saturation: float
     color_balance: dict[str, str] | None
+    # eq gamma: above 1.0 lifts the shadows without raising the blacks as a brightness offset would.
+    gamma: float = 1.0
 
 
 class VideoFilterTranslationService:
@@ -741,6 +743,7 @@ class VideoFilterTranslationService:
                 contrast=grade_params.contrast,
                 saturation=grade_params.saturation,
                 color_balance=grade_params.color_balance,
+                gamma=grade_params.gamma,
             )
 
             return self._active(
@@ -901,6 +904,14 @@ class VideoFilterTranslationService:
             saturation=0.55,
             color_balance={"bs": "0.05"},
         ),
+        # The "Brighter" picture option's version of the moody grade: same colour, shadows lifted.
+        "visual.lut_moody_lifted": _ParametricGradeSpec(
+            brightness=0.0,
+            contrast=1.0,
+            saturation=0.6,
+            color_balance={"bs": "0.05"},
+            gamma=1.35,
+        ),
         "visual.lut_vibrant_punch": _ParametricGradeSpec(
             brightness=0.02,
             contrast=1.2,
@@ -973,6 +984,7 @@ class VideoFilterTranslationService:
         contrast: float,
         saturation: float,
         color_balance: dict[str, str] | None,
+        gamma: float = 1.0,
     ) -> list[FilterNode]:
         self._require_filter(
             capabilities,
@@ -980,6 +992,16 @@ class VideoFilterTranslationService:
         )
 
         eq_output = f"{output_label}_eq"
+        eq_options = {
+            "brightness": self._number(float(brightness)),
+            "contrast": self._number(float(contrast)),
+            "saturation": self._number(float(saturation)),
+        }
+
+        if gamma != 1.0:
+            eq_options["gamma"] = self._number(float(gamma))
+
+        eq_options["enable"] = enable
 
         filters = [
             FilterNode(
@@ -987,12 +1009,7 @@ class VideoFilterTranslationService:
                 filter_name="eq",
                 input_labels=[input_label],
                 output_labels=[eq_output],
-                options={
-                    "brightness": self._number(float(brightness)),
-                    "contrast": self._number(float(contrast)),
-                    "saturation": self._number(float(saturation)),
-                    "enable": enable,
-                },
+                options=eq_options,
                 source_render_node_id=str(render_node.id),
             )
         ]

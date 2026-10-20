@@ -40,7 +40,10 @@ from src.services.production_render_service import (
     ProductionRenderService,
 )
 from src.services.render_service import RenderService
-from src.services.render_speed_rules import timeline_for_render_speed
+from src.services.render_speed_rules import (
+    timeline_for_picture_brightness,
+    timeline_for_render_speed,
+)
 from src.services.seo.seo_context_builder import SEOContextBuilder
 from src.services.subtitle_cue_resolution_service import (
     resolve_absolute_subtitle_cues,
@@ -334,6 +337,7 @@ class RenderPipelineStage(BasePipelineStage):
 
         video_timeline = self._with_color_corrections(context.job, video_timeline)
         video_timeline = timeline_for_render_speed(context.job, video_timeline)
+        video_timeline = timeline_for_picture_brightness(context.job, video_timeline)
         production_render_service.set_render_preset(
             context.job.render_speed.x264_preset
             if context.job.render_speed != RenderSpeed.FINAL

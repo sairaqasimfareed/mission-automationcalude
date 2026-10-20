@@ -45,6 +45,7 @@ from src.models.muse_generation import MuseGenerationAttempt
 from src.models.music_mode import MusicMode
 from src.models.originality import OriginalityResult
 from src.models.packaging_hypothesis import PackagingHypothesis
+from src.models.picture_brightness import PictureBrightness
 from src.models.policy import PolicyComplianceReport
 from src.models.production_ambiguity import ProductionAmbiguity
 from src.models.production_semantic_brief import ProductionSemanticBrief
@@ -481,6 +482,8 @@ class VideoJob(MissionBaseModel):
     # speaker with no entry, and every unlabelled line, is read by the project's usual narrator voice.
     # How long a render may take (see src/models/render_speed.py). FINAL = the full look, as always.
     render_speed: RenderSpeed = RenderSpeed.FINAL
+    # How bright the picture is (see src/models/picture_brightness.py). STANDARD = the genre's own look.
+    picture_brightness: PictureBrightness = PictureBrightness.STANDARD
 
     # How reference pictures are obtained: automatically from generated clips (the default), or only the
     # pictures the operator uploads (see src/models/reference_mode.py).

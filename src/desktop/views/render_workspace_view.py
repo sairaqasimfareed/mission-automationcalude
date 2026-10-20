@@ -38,6 +38,7 @@ from src.desktop.widgets import (
     subheading,
 )
 from src.models.asset_state import SceneAssetState
+from src.models.picture_brightness import PictureBrightness
 from src.models.render_orchestration_result import RenderOrchestrationResult
 from src.models.render_progress import RenderProgress
 from src.models.render_speed import RenderSpeed
@@ -258,6 +259,7 @@ class RenderWorkspaceView(QWidget):
         self._build_output_resolution_choice(layout, job)
         self._build_render_speed_choice(layout, job)
         self._build_letterbox_choice(layout, job)
+        self._build_brightness_choice(layout, job)
         self._build_subtitles_choice(layout, job)
         layout.addWidget(
             small_muted(
@@ -473,6 +475,40 @@ class RenderWorkspaceView(QWidget):
             return
 
         job.letterbox_enabled = choice
+        self._on_change()
+
+    def _build_brightness_choice(self, layout: QVBoxLayout, job: VideoJob) -> None:
+        """How bright the picture is. The moody genres darken the footage further (a vignette, a brightness
+        cut); Brighter leaves the vignette out and lifts the shadows. Applied to the next render.
+        """
+
+        layout.addWidget(small_muted("Picture brightness"))
+        combo = QComboBox()
+        combo.addItem("Standard - the genre's own look", PictureBrightness.STANDARD)
+        combo.addItem(
+            "Brighter - no vignette, shadows lifted", PictureBrightness.BRIGHTER
+        )
+        combo.setCurrentIndex(max(combo.findData(job.picture_brightness), 0))
+        combo.currentIndexChanged.connect(
+            lambda _index, box=combo: self._handle_brightness_changed(box)
+        )
+        layout.addWidget(combo)
+
+    def _handle_brightness_changed(self, combo: QComboBox) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        try:
+            choice = PictureBrightness(combo.currentData())
+        except ValueError:
+            return
+
+        if choice == job.picture_brightness:
+            return
+
+        job.picture_brightness = choice
         self._on_change()
 
     def _build_render_speed_choice(self, layout: QVBoxLayout, job: VideoJob) -> None:

@@ -806,6 +806,20 @@ class EffectRegistryService:
                 ],
             ),
             EffectPreset(
+                preset_id="visual.lut_moody_lifted",
+                category=EffectCategory.VISUAL,
+                display_name="LUT: Moody, shadows lifted",
+                fallback_preset_id="visual.none",
+                implementation={
+                    "filter": "lut_moody_lifted",
+                },
+                tags=[
+                    "lut",
+                    "mystery",
+                    "brighter",
+                ],
+            ),
+            EffectPreset(
                 preset_id="visual.lut_vibrant_punch",
                 category=EffectCategory.VISUAL,
                 display_name="LUT: Vibrant Punch",
