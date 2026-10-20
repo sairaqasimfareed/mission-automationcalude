@@ -1970,6 +1970,15 @@ class ClipWorkspaceView(QWidget):
         if job is None:
             return
 
+        # "Regenerate" on a scene that already has its clip(s): the generation step treats a finished
+        # scene as done and returns at once, so the old clip(s) are cleared first - the same as pressing
+        # Remove and then Generate. (A split scene is regenerated as a whole, every part.)
+        if any(clip.scene_number == scene_number for clip in job.video_clips):
+            self._bulk_ingestion_service.remove_scene_clip(
+                job=job, scene_number=scene_number
+            )
+            self._job_store.add(job)
+
         self._execute_scene_generation(job, scene_number=scene_number)
 
     def _handle_retry_scene_after_auth(self, scene_number: int) -> None:

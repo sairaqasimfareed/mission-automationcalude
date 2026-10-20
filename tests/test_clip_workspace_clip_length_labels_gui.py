@@ -209,3 +209,35 @@ def test_refresh_only_marks_short_clips_and_never_generates(
     texts = _texts(view)
     # Scenes 1 (9.0 s of voice) and 3 (8.0 s) no longer fit a 6 s clip; scene 2 (4.0 s) does.
     assert any("shorter than their voice: scene 1, 3" in text for text in texts)
+
+
+def test_regenerate_clears_the_scenes_existing_clips_before_generating(
+    qapp: QApplication,  # noqa: F811
+    monkeypatch,  # type: ignore[no-untyped-def]
+) -> None:
+    job = _job(1, 2)
+    job.video_clips = [_clip(1, 6, 0), _clip(1, 6, 1), _clip(2, 6)]
+    view = _build_view(job, service=_FakeSceneVideoGenerationService())
+    view.refresh(job)
+
+    started: list[int | None] = []
+    monkeypatch.setattr(
+        view,
+        "_execute_scene_generation",
+        lambda _job, *, scene_number, **_kw: started.append(scene_number),
+    )
+    removed: list[int] = []
+    monkeypatch.setattr(
+        view._bulk_ingestion_service,  # noqa: SLF001
+        "remove_scene_clip",
+        lambda *, job, scene_number: removed.append(scene_number),
+    )
+
+    view._handle_generate_scene_video(1)  # noqa: SLF001
+
+    assert removed == [1]
+    assert started == [1]
+
+    view._handle_generate_scene_video(3)  # noqa: SLF001  (no clip: nothing to clear)
+
+    assert removed == [1]
