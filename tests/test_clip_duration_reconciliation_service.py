@@ -172,7 +172,12 @@ def test_an_ai_clip_much_longer_than_a_short_voice_is_cut_not_left_at_ten_second
     )
 
     scene = _scene(1, real_narration_duration_seconds=3.0)
-    clip = _clip(1, duration_seconds=10, source_type=SceneSourceType.AI_GENERATE)
+    clip = _clip(
+        1,
+        duration_seconds=10,
+        source_type=SceneSourceType.AI_GENERATE,
+        local_file=str(_real_video_file(tmp_path)),
+    )
 
     result = service.reconcile(scenes=[scene], clips=[clip])
 
