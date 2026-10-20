@@ -8,13 +8,16 @@ from src.models.genre_timeline_pipeline import (
     GenreTimelinePipelineStatus,
 )
 from src.models.resolved_editing_blueprint import (
+    ResolvedAnimationInstruction,
     ResolvedSceneEditingBlueprint,
+    ResolvedVisualEffectInstruction,
 )
 from src.models.scene import Scene
 from src.models.timeline_validation import (
     TimelineValidationResult,
 )
 from src.models.video_clip import VideoClip
+from src.models.video_timeline import VideoTimeline
 from src.services.editing_directive_resolution_service import (
     EditingDirectiveResolutionService,
 )
@@ -137,6 +140,8 @@ class GenreTimelinePipelineService:
             require_all_timeline_scenes=True,
         )
 
+        self._fit_effects_to_clips(timeline)
+
         validation = self.timeline_validation_service.validate(
             timeline,
             require_editing_blueprints=True,
@@ -178,6 +183,56 @@ class GenreTimelinePipelineService:
                 "validation_issue_count": (validation.issue_count),
             },
         )
+
+    @staticmethod
+    def _fit_effects_to_clips(timeline: VideoTimeline) -> None:
+        """Nothing may be timed longer than its own clip. A scene's effects, camera move and animation
+        are timed from the scene's word-count estimate, but a clip can be shorter (a regenerated clip, a
+        stock clip) and the second part of a split scene shares the first part's blueprint: the render
+        rejects an animation longer than its clip ("Animation execution extends beyond scene
+        duration", seen live 2026-10-20). An item that needs it gets its own copy, cut to fit.
+        """
+
+        for item in timeline.items:
+            blueprint = item.editing_blueprint
+
+            if blueprint is None:
+                continue
+
+            limit = float(item.duration_seconds)
+            fitted = blueprint.model_copy(deep=True)
+            changed = False
+
+            timed: list[
+                ResolvedAnimationInstruction | ResolvedVisualEffectInstruction
+            ] = [
+                *fitted.animations,
+                *fitted.visual_effects,
+            ]
+
+            for instruction in timed:
+                if instruction.duration_seconds is None:
+                    continue
+
+                end = instruction.start_offset_seconds + instruction.duration_seconds
+
+                if end > limit and instruction.start_offset_seconds < limit:
+                    instruction.duration_seconds = (
+                        limit - instruction.start_offset_seconds
+                    )
+                    changed = True
+
+            camera = fitted.camera
+
+            if (
+                camera.end_offset_seconds is not None
+                and camera.end_offset_seconds > limit
+            ):
+                camera.end_offset_seconds = limit
+                changed = True
+
+            if changed:
+                item.editing_blueprint = fitted
 
     def _validate_inputs(
         self,

@@ -5005,6 +5005,11 @@ class ContentStudioView(QWidget):
         # available until locked too.
         if not locked:
             self._render_script_intake_section(layout, job)
+        elif job.voice_cast_enabled:
+            # A locked script cannot be re-imported, but who reads each line can still be changed.
+            layout.addWidget(separator())
+            layout.addWidget(muted("Voices"))
+            self._render_voice_cast_controls(layout, job, choices_only=True)
 
         return True
 
@@ -5572,25 +5577,31 @@ class ContentStudioView(QWidget):
 
         return True
 
-    def _render_voice_cast_controls(self, layout: QVBoxLayout, job: VideoJob) -> None:
+    def _render_voice_cast_controls(
+        self, layout: QVBoxLayout, job: VideoJob, *, choices_only: bool = False
+    ) -> None:
         """Read the script with a CAST of voices: lines tagged "JUDGE: ..." or "VOICE (Joan of Arc): ..."
         are read by their own voice, every other line by the narrator. Voice-over only (no lip-sync).
+
+        `choices_only` shows just the voice dropdowns - for a script that is already imported and locked,
+        where the checkbox no longer applies but the voices can still be changed.
         """
 
-        cast_box = QCheckBox("Read this script with a cast of voices")
-        cast_box.setChecked(job.voice_cast_enabled)
-        cast_box.setEnabled(not job.character_oriented)
-        self._voice_cast_box = cast_box
-        cast_box.toggled.connect(self._handle_voice_cast_toggled)
-        layout.addWidget(cast_box)
-        layout.addWidget(
-            small_muted(
-                "Turn this on BEFORE importing. Write one line per beat; start a line with an ALL-CAPS "
-                'name and a colon ("JUDGE: ...") or VOICE (Name): to give it its own voice. Lines '
-                'with no name are read by the narrator, and "[VISUAL 4s] ..." is a shot with no '
-                "voice. Not used in character mode."
+        if not choices_only:
+            cast_box = QCheckBox("Read this script with a cast of voices")
+            cast_box.setChecked(job.voice_cast_enabled)
+            cast_box.setEnabled(not job.character_oriented)
+            self._voice_cast_box = cast_box
+            cast_box.toggled.connect(self._handle_voice_cast_toggled)
+            layout.addWidget(cast_box)
+            layout.addWidget(
+                small_muted(
+                    "Turn this on BEFORE importing. Write one line per beat; start a line with an "
+                    'ALL-CAPS name and a colon ("JUDGE: ...") or VOICE (Name): to give it its own '
+                    'voice. Lines with no name are read by the narrator, and "[VISUAL 4s] ..." is a '
+                    "shot with no voice. Not used in character mode."
+                )
             )
-        )
 
         if not job.voice_cast_enabled:
             return

@@ -318,3 +318,30 @@ def test_the_same_clip_position_twice_is_still_rejected() -> None:
             ],
             genre_id="genre.horror",
         )
+
+
+def test_effects_are_timed_to_the_real_clip_not_the_word_count_estimate() -> None:
+    # The scene was estimated at 8 s but its clip is only 5 s (and the second part of a split scene is
+    # shorter than the first): nothing may be timed longer than its own clip.
+    first = build_clip(scene_number=1, duration_seconds=7)
+    second = build_clip(scene_number=1, duration_seconds=5).model_copy(
+        update={"clip_sequence_index": 1}
+    )
+
+    result = pipeline.build(
+        scenes=[build_scene(scene_number=1, duration_seconds=8)],
+        clips=[first, second],
+        genre_id="genre.mystery",
+    )
+
+    assert result.is_successful is True
+
+    for item in result.timeline.items:
+        blueprint = item.editing_blueprint
+        assert blueprint is not None
+        for animation in blueprint.animations:
+            if animation.duration_seconds is not None:
+                assert (
+                    animation.start_offset_seconds + animation.duration_seconds
+                    <= item.duration_seconds + 0.01
+                )
