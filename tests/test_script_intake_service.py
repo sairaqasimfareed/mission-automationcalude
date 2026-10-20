@@ -401,3 +401,24 @@ def test_dry_run_response_is_itself_parseable() -> None:
     )
 
     assert mismatches == []
+
+
+def test_intake_takes_emotion_tags_out_of_the_script_and_keeps_them_as_cues() -> None:
+    service = _service(_StubLLMService(content=_ALL_FIT_RESPONSE))
+    job = _job()
+    job.voice_cast_enabled = True
+
+    result = service.intake(
+        job=job,
+        raw_text=(
+            "JUDGE: [stern] The court will hear the evidence.\n"
+            "[somber] Six days later: death."
+        ),
+        mode=ScriptIntakeMode.TRUST_MY_SCRIPT,
+    )
+
+    spoken = " ".join(segment.narration for segment in result.script.segments)
+    assert "[" not in spoken
+    assert "The court will hear the evidence." in spoken
+    assert [cue.tag for cue in job.delivery_cues] == ["stern", "somber"]
+    assert job.delivery_cues[0].anchor == "The court will hear the evidence."

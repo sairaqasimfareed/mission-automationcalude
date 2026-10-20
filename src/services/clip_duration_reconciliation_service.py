@@ -118,6 +118,7 @@ class ClipDurationReconciliationService:
         *,
         scenes: list[Scene],
         clips: list[VideoClip],
+        hold_seconds: float = 0.0,
     ) -> ClipDurationReconciliationResult:
         """Trim over-long stock/manual clips; flag ones that run short."""
 
@@ -142,6 +143,7 @@ class ClipDurationReconciliationService:
                         scene=scenes_by_number.get(clip.scene_number),
                         single_clip=clips_per_scene[clip.scene_number] == 1,
                         warnings=warnings,
+                        hold_seconds=hold_seconds,
                     )
                 )
                 continue
@@ -211,6 +213,7 @@ class ClipDurationReconciliationService:
         scene: Scene | None,
         single_clip: bool,
         warnings: list[str],
+        hold_seconds: float = 0.0,
     ) -> VideoClip:
         """
         An AI clip is sized to the narration when it is generated, but the voice can be made
@@ -229,7 +232,7 @@ class ClipDurationReconciliationService:
         if narration is None:
             return clip
 
-        needed = narration + _TRANSITION_ALLOWANCE_SECONDS
+        needed = narration + _TRANSITION_ALLOWANCE_SECONDS + hold_seconds
         shortfall = needed - float(clip.duration_seconds)
 
         if shortfall <= self._tolerance_seconds:

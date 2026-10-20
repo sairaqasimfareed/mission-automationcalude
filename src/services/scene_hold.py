@@ -50,7 +50,10 @@ def hold_seconds(job: VideoJob) -> float:
     if job.scene_hold_seconds is not None:
         return job.scene_hold_seconds
 
-    return GENRE_HOLD_SECONDS.get(job.genre_id, 0.0)
+    return max(
+        0.0,
+        GENRE_HOLD_SECONDS.get(job.genre_id, 0.0) + job.pace.hold_offset_seconds,
+    )
 
 
 def clip_sizing_seconds(

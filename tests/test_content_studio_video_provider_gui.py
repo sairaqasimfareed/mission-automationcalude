@@ -372,3 +372,26 @@ def test_choosing_one_continuous_music_track_counts_without_saving_settings(
     QCoreApplication.processEvents()
 
     assert store.get(job.id).music_mode == MusicMode.CONTINUOUS
+
+
+def test_choosing_a_pace_counts_without_saving_settings(qapp: QApplication) -> None:
+    from PySide6.QtCore import QCoreApplication
+
+    from src.models.project_pace import ProjectPace
+
+    store = InMemoryJobStore()
+    job = _job()
+    store.add(job)
+    view = _view(store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    combo = next(
+        c
+        for c in view.findChildren(QComboBox)
+        if any(c.itemData(i) == ProjectPace.RELAXED for i in range(c.count()))
+    )
+    combo.setCurrentIndex(combo.findData(ProjectPace.RELAXED))
+    QCoreApplication.processEvents()
+
+    assert store.get(job.id).pace == ProjectPace.RELAXED

@@ -17,6 +17,7 @@ from src.models.clip_attachment_verification import ClipAttachmentVerificationRe
 from src.models.content_decision_record import ContentDecisionRecord
 from src.models.continuity_bible import ContinuityBible, ContinuityValidationResult
 from src.models.creative_direction import CreativeDirection
+from src.models.delivery_cue import DeliveryCue
 from src.models.editing_directives import SceneEditingDirectives
 from src.models.editorial_critique import EditorialCritique
 from src.models.editorial_profile import EditorialProfile
@@ -48,6 +49,7 @@ from src.models.policy import PolicyComplianceReport
 from src.models.production_ambiguity import ProductionAmbiguity
 from src.models.production_semantic_brief import ProductionSemanticBrief
 from src.models.project_look import ProjectLook
+from src.models.project_pace import ProjectPace
 from src.models.provider_preferences import ProviderPreferences
 from src.models.re_hook import ReHookPlan
 from src.models.reference_mode import ReferenceMode
@@ -117,6 +119,11 @@ class VideoJob(MissionBaseModel):
     # Seconds the picture stays after each narrated line (see
     # src/services/scene_hold.py). None = the genre's own default; 0 = off.
     scene_hold_seconds: float | None = Field(default=None, ge=0.0, le=3.0)
+    # How much room the video gives the viewer (see src/models/project_pace.py). NORMAL = no change.
+    pace: ProjectPace = ProjectPace.NORMAL
+    # Emotion tags the operator wrote in the script ([stern] ...), taken out of the script text and kept here
+    # (see src/services/delivery_cues.py). Only the voice step puts them back.
+    delivery_cues: list[DeliveryCue] = Field(default_factory=list)
 
     # Character-Oriented Video mode: the project's script is `NAME: line` dialogue spoken on
     # camera by characters (lip-synced by the video provider) instead of narrator voiceover.

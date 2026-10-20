@@ -56,6 +56,7 @@ from src.models.hook import HookCandidate, HookEvaluation
 from src.models.music_mode import MusicMode
 from src.models.production_handoff import ProductionHandoffState
 from src.models.project_look import ProjectLook
+from src.models.project_pace import ProjectPace
 from src.models.reference_mode import ReferenceMode
 from src.models.research import ResearchResult, ResearchSource, SourceStatus
 from src.models.research_evidence import (
@@ -1572,6 +1573,23 @@ class ContentStudioView(QWidget):
             "generated afterwards."
         )
         form.addRow("Pause after each line", hold_select)
+
+        # How much room the video gives the viewer: lengthens the genre's pause after each line and
+        # slows the voice a little (Relaxed), or tightens both (Fast). Applied the moment it is chosen.
+        pace_select = QComboBox()
+        pace_select.addItem("Relaxed - more room, slower voice", ProjectPace.RELAXED)
+        pace_select.addItem("Normal (default)", ProjectPace.NORMAL)
+        pace_select.addItem("Fast - tighter, quicker voice", ProjectPace.FAST)
+        pace_select.setCurrentIndex(max(0, pace_select.findData(job.pace)))
+        pace_select.setToolTip(
+            "Relaxed adds a longer pause after each line (for clips made afterwards and when the "
+            "video is rendered) and slows the voice slightly (for a voiceover made afterwards). "
+            "A pause you set above is never changed by this."
+        )
+        pace_select.currentIndexChanged.connect(
+            lambda _index: self._handle_pace_changed(pace_select.currentData())
+        )
+        form.addRow("Pace", pace_select)
 
         # One composed track for the whole video, or one piece per planned mood.
         music_mode_select = QComboBox()
@@ -5829,6 +5847,20 @@ class ContentStudioView(QWidget):
         self._render_recurring_identities_section(layout, job, show_identity_list=False)
 
         return False
+
+    def _handle_pace_changed(self, chosen: object) -> None:
+        job = self._current_job()
+
+        try:
+            pace = ProjectPace(chosen)  # Qt hands a str-enum back as its plain value
+        except ValueError:
+            return
+
+        if job is None or job.pace == pace:
+            return
+
+        job.pace = pace
+        QTimer.singleShot(0, self._on_change)
 
     def _handle_music_mode_changed(self, chosen: object) -> None:
         job = self._current_job()

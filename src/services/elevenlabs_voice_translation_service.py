@@ -156,8 +156,19 @@ class ElevenLabsVoiceTranslationService:
             speed=clamped_speed,
         )
 
+        # The operator's own emotion tags ([stern]) go to a tag-aware model only; any other model
+        # would speak the bracketed word aloud.
+        has_written_tags = (
+            blueprint.voice_delivery_mode == VoiceDeliveryMode.EMOTION_TAGS
+            and bool(blueprint.delivery_narration)
+        )
+
         marked_up_text, markup_warnings = self._narration_markup_service.apply(
-            blueprint.narration_text,
+            (
+                blueprint.delivery_narration
+                if has_written_tags and blueprint.delivery_narration
+                else blueprint.narration_text
+            ),
             pause_directives=blueprint.pause_directives,
             emphasis_directives=blueprint.emphasis_directives,
         )
@@ -173,7 +184,8 @@ class ElevenLabsVoiceTranslationService:
 
             emotion_tag = _EMOTION_TAG_BY_EMOTION.get(blueprint.emotion)
 
-            if emotion_tag:
+            # A line the operator tagged keeps its own tags, not the genre's default one in front.
+            if emotion_tag and not has_written_tags:
                 marked_up_text = f"[{emotion_tag}] {marked_up_text}"
                 emotion_tag_applied = True
         else:

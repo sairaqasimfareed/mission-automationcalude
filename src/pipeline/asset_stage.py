@@ -24,6 +24,7 @@ from src.services.scene_asset_video_clip_builder_service import (
 from src.services.scene_asset_workflow_service import (
     SceneAssetWorkflowService,
 )
+from src.services.scene_hold import hold_seconds
 
 
 class AssetPipelineStage(BasePipelineStage):
@@ -178,6 +179,7 @@ class AssetPipelineStage(BasePipelineStage):
         reconciliation = self._clip_duration_reconciliation_service.reconcile(
             scenes=scenes,
             clips=context.job.video_clips,
+            hold_seconds=hold_seconds(context.job),
         )
 
         context.job.video_clips = reconciliation.clips

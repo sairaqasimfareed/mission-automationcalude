@@ -278,3 +278,26 @@ def test_an_ai_clip_that_already_covers_its_voice_is_left_alone(
 
     assert result.clips[0].duration_seconds == 10
     assert commands == []
+
+
+def test_the_pause_after_a_line_is_part_of_how_long_an_ai_clip_must_be(
+    tmp_path: Path,
+) -> None:
+    frame_extraction, _commands = _frame_extraction_service(tmp_path)
+    source = _real_video_file(tmp_path)
+    service = ClipDurationReconciliationService(
+        frame_extraction_service=frame_extraction
+    )
+    scene = _scene(1, real_narration_duration_seconds=5.0)
+    clip = _clip(
+        1,
+        duration_seconds=6,
+        source_type=SceneSourceType.AI_GENERATE,
+        local_file=str(source),
+    )
+
+    without_pause = service.reconcile(scenes=[scene], clips=[clip])
+    with_pause = service.reconcile(scenes=[scene], clips=[clip], hold_seconds=1.0)
+
+    assert without_pause.clips[0].duration_seconds == 6
+    assert with_pause.clips[0].duration_seconds == 7

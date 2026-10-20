@@ -111,6 +111,10 @@ class ResolvedVoiceBlueprint(MissionBaseModel):
 
     narration_text: str
 
+    # The same words with the operator's emotion tags put back in (ElevenLabs v3 audio tags), or None.
+    # narration_text stays clean: only the request to a tag-aware voice model uses this.
+    delivery_narration: str | None = None
+
     language: str = "English"
     language_code: str = "en"
 

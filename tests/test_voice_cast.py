@@ -774,3 +774,41 @@ def test_a_greyed_music_button_says_what_to_do_first(qapp) -> None:  # type: ign
 
     texts = [label.text() for label in view.findChildren(QLabel)]
     assert any("Build editing timeline first" in t for t in texts)
+
+
+def test_a_written_emotion_tag_reaches_the_line_and_the_scene_blueprints() -> None:
+    from src.models.delivery_cue import DeliveryCue
+    from src.services.genre_profile_registry_service import GenreProfileRegistryService
+    from src.services.genre_voice_directive_generation_service import (
+        GenreVoiceDirectiveGenerationService,
+    )
+    from src.services.voice_cast_service import attach_line_blueprints
+    from src.services.voice_profile_registry_service import VoiceProfileRegistryService
+    from src.services.voice_resolution_runtime import VoiceResolutionRuntimeFactory
+
+    registry = VoiceProfileRegistryService.with_default_profiles()
+    runtime = VoiceResolutionRuntimeFactory().build(profiles=registry.list_all())
+    directives = GenreVoiceDirectiveGenerationService(
+        genre_registry=GenreProfileRegistryService.with_default_profiles(),
+        voice_profile_registry=runtime.voice_profile_registry,
+    )
+    job = _job_with_cast_scenes({"judge": "voice.tense_suspense"})
+    scene = next(s for s in job.scenes if s.voice_lines)
+    first_line = scene.voice_lines[0].text
+    job.delivery_cues = [
+        DeliveryCue(anchor=" ".join(first_line.split()[:8]), tag="stern")
+    ]
+    blueprint = _blueprint(scene.scene_number, scene.narration, None)
+
+    attach_line_blueprints(
+        job=job,
+        scenes=[scene],
+        blueprints=[blueprint],
+        directive_service=directives,
+        resolution_runtime=runtime,
+        genre_id=job.genre_id,
+        language="English",
+    )
+
+    assert blueprint.line_blueprints[0].delivery_narration == f"[stern] {first_line}"
+    assert blueprint.line_blueprints[0].narration_text == first_line

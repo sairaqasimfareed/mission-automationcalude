@@ -13,6 +13,7 @@ from src.models.dialogue import NARRATOR_NAME
 from src.models.resolved_voice_blueprint import ResolvedVoiceBlueprint
 from src.models.scene import Scene
 from src.models.video_job import VideoJob
+from src.services.delivery_cues import apply_delivery_cues
 from src.services.genre_voice_directive_generation_service import (
     GenreVoiceDirectiveGenerationService,
 )
@@ -72,6 +73,12 @@ def unassigned_speakers(job: VideoJob) -> list[str]:
     return [s for s in cast_speakers(job) if speaker_profile_id(job, s) is None]
 
 
+def _paced_speed(speed: float, job: VideoJob) -> float:
+    """The voice's speed with the project's pace applied (ElevenLabs takes 0.7-1.2)."""
+
+    return round(max(0.7, min(1.2, speed * job.pace.voice_speed_factor)), 3)
+
+
 def attach_line_blueprints(
     *,
     job: VideoJob,
@@ -89,6 +96,11 @@ def attach_line_blueprints(
     scenes_by_number = {scene.scene_number: scene for scene in scenes}
 
     for blueprint in blueprints:
+        # The operator's emotion tags go back in for the voice request only (see delivery_cues).
+        blueprint.delivery_narration = apply_delivery_cues(
+            job.delivery_cues, blueprint.narration_text
+        )
+        blueprint.speed = _paced_speed(blueprint.speed, job)
         scene = scenes_by_number.get(blueprint.scene_number)
 
         if scene is None or not scene.voice_lines:
@@ -110,6 +122,10 @@ def attach_line_blueprints(
                 scene_duration_seconds=None,
                 target_provider=resolution_runtime.target_provider,
             )
+            line_blueprint.delivery_narration = apply_delivery_cues(
+                job.delivery_cues, line.text
+            )
+            line_blueprint.speed = _paced_speed(line_blueprint.speed, job)
             line_blueprint.metadata["speaker"] = line.speaker
             line_blueprints.append(line_blueprint)
 

@@ -10,6 +10,7 @@ from src.models.script_intake import (
 from src.models.story_blueprint import StoryBeatType
 from src.models.video_job import VideoJob
 from src.services.cast_script_parser import CastLine, parse_cast_script
+from src.services.delivery_cues import extract_delivery_cues
 from src.services.dialogue_script_parser import parse_dialogue_script
 from src.services.llm.labeled_block_parser import extract_labeled_field
 from src.services.llm.llm_service import LLMService
@@ -440,6 +441,10 @@ class ScriptIntakeService:
         raw_text: str,
         mode: ScriptIntakeMode,
     ) -> ScriptIntakeResult:
+        # Emotion tags ([stern]) leave the text here: everything below, and everything after the
+        # import, reads the clean words; the voice step gets the tags back from job.delivery_cues.
+        raw_text, job.delivery_cues = extract_delivery_cues(raw_text)
+
         script = self.normalize_text_to_script(
             raw_text=raw_text,
             topic=job.topic,

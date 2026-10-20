@@ -23,6 +23,20 @@ Give the script as plain text. **One line per beat.** Blank lines between lines 
 
 5. **Same speaker, same spelling** - `JUDGE` and `JUDGE` are one voice; `JUDGE` and `THE JUDGE` are two.
 
+6. **An emotion for a line (optional)** - put one or two lowercase words in square brackets right after the
+   speaker name (or at the start of a narrator line, or in front of any sentence inside a line). The tag is
+   given to the voice and is never spoken or shown in the subtitles.
+
+       JUDGE: [stern] The court will hear the evidence.
+       [somber] Six days later: death.
+       VOICE (Joan of Arc): [pleading] All I said and revoked, I said for fear of the fire.
+       The ship was found adrift. [sighs] No one aboard was ever seen again.
+
+   Words that work well: `stern`, `somber`, `sad`, `worried`, `pleading`, `whispers`, `sighs`, `cold`, `angry`.
+   A line with no tag is read with the genre's usual feeling. Tags only act when the project's voice mode
+   supports them (the mystery, horror, storytelling and reaction genres do); in any other mode they are ignored.
+   A tag must be lowercase - `[VISUAL 4s]` is a different thing. Do not put a tag before the speaker name.
+
 ## What to avoid
 
 - **A narration line must not start with an ALL-CAPS word followed by a colon.** `NASA: the agency said...` would be read as a speaker called "Nasa". Write "NASA said..." instead.
