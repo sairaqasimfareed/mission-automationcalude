@@ -121,11 +121,11 @@ class PipelineResumePlannerService:
         current orchestration run.
         """
 
-        referenced: set[PipelineStageName] = {
-            checkpoint.current_stage,
-            *checkpoint.completed_stages,
-            *checkpoint.skipped_stages,
-        }
+        # Only the stage the run would resume FROM has to be registered. A checkpoint also remembers stages
+        # that an earlier, bigger run finished (e.g. research or script before a render-only run); those
+        # are simply not part of this run and must not block it (re-rendering after a change failed on
+        # "research").
+        referenced: set[PipelineStageName] = set()
 
         if checkpoint.failed_stage is not None:
             referenced.add(checkpoint.failed_stage)

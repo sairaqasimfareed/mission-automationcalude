@@ -359,3 +359,26 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+def test_stages_finished_by_an_earlier_bigger_run_do_not_block_this_run() -> None:
+    job = build_job()
+
+    checkpoint = PipelineCheckpoint(
+        job_id=job.id,
+        current_stage=(PipelineStageName.VOICE),
+        completed_stages=[PipelineStageName.RESEARCH, PipelineStageName.SCRIPT],
+        stage_results=[
+            completed(PipelineStageName.RESEARCH),
+            completed(PipelineStageName.SCRIPT),
+        ],
+    )
+
+    plan = PipelineResumePlannerService().create_plan(
+        job=job,
+        checkpoint=checkpoint,
+        stages=build_stages(),
+        settings=AdvancedSettings(),
+    )
+
+    assert PipelineStageName.RESEARCH not in plan.execution_stages
