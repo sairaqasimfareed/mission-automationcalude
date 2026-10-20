@@ -15,6 +15,7 @@ def resolve_absolute_subtitle_cues(
     scene_timings: list[SceneRenderTiming],
     transition_duration_seconds: float = 0.0,
     subtitle_execution_service: SubtitleExecutionService | None = None,
+    narration_seconds_by_scene: dict[int, float] | None = None,
 ) -> list[AbsoluteSubtitleCue]:
     """
     REQ-0: resolve real, absolute-second subtitle cues for a post-
@@ -113,6 +114,19 @@ def resolve_absolute_subtitle_cues(
 
         window_end_seconds = max(window_start_seconds, window_end_seconds)
 
+        # The voice of a scene starts where the scene starts and lasts its real length, whatever the clip
+        # length is. Timed over the clip's window instead, the words ran late against a clip longer than
+        # its voice and early against a shorter one (live, 2026-10-20).
+        narration_seconds = (narration_seconds_by_scene or {}).get(scene_number)
+        timed_to_voice = narration_seconds is not None and narration_seconds > 0.0
+
+        if timed_to_voice:
+            assert narration_seconds is not None
+            window_start_seconds = 0.0
+            window_end_seconds = min(
+                float(item.duration_seconds), max(0.8, narration_seconds + 0.2)
+            )
+
         # Deliberately NOT passed a window based on the scene's real
         # union duration - SubtitleExecution's own validator rejects a
         # cue ending after item.end_time_seconds (sub-clip 0's own
@@ -135,9 +149,13 @@ def resolve_absolute_subtitle_cues(
         scene_real_duration = union_end[scene_number] - scene_real_start
 
         scale_factor = (
-            scene_real_duration / item.duration_seconds
-            if item.duration_seconds > 0
-            else 1.0
+            1.0
+            if timed_to_voice
+            else (
+                scene_real_duration / item.duration_seconds
+                if item.duration_seconds > 0
+                else 1.0
+            )
         )
 
         for execution in executions:

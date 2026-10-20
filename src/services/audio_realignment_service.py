@@ -24,6 +24,10 @@ BASIS_NOMINAL = "nominal"
 # voice / sound-effect / music steps produce) - never adjusted again.
 BASIS_REAL = "real"
 
+# The real start of the track's scene at the time the track was placed on it (sound effects only), so
+# a later pass can carry the effect along if the scene moved.
+PLACED_SCENE_START_KEY = "placed_scene_start"
+
 _CONTIGUITY_TOLERANCE_SECONDS = 0.02
 
 
@@ -52,12 +56,12 @@ def realign_audio_to_scene_timings(
     steps correct for this when they generate; the Audio-tab path never did.
 
     scene_timings are each scene's real start/end in the encoded video (the
-    video-only render's own scene_timings, or the same computation). Only tracks
-    whose position basis says they need it are moved - flagged "sequential" /
-    "nominal" - plus voice tracks with no flag at all that are exactly end to
-    end (a voiceover generated before the flag existed). Each is moved once and
-    marked "real", so calling this again, or on tracks the render made itself,
-    changes nothing. A scene missing from the timings leaves its track alone.
+    video-only render's own scene_timings, or the same computation). Voice goes
+    onto its scene's current real start EVERY time (a clip regenerated, cut or held
+    since an earlier render moves every later scene); music segments are re-spanned
+    from the plan; a sound effect keeps its offset inside its scene and moves with
+    it. Calling this twice with the same timings changes nothing. A scene missing
+    from the timings leaves its tracks alone.
 
     Returns the number of tracks moved.
     """
@@ -73,42 +77,56 @@ def realign_audio_to_scene_timings(
     nominal = _nominal_scene_spans(video_timeline)
     moved = 0
 
-    voice_tracks = [
-        track
-        for track in audio_timeline.tracks
-        if track.track_type == AudioTrackType.VOICEOVER
-        and _scene_number(track) is not None
-    ]
-    unflagged_voice_is_sequential = _is_contiguous(voice_tracks)
+    # Where each scene's voice was before this pass: a sound effect that was placed in real time (and so
+    # carries no record of its scene's start) is carried along with its scene by the same distance.
+    old_voice_start: dict[int, float] = {}
+
+    for track in audio_timeline.tracks:
+        number = _scene_number(track)
+
+        if track.track_type == AudioTrackType.VOICEOVER and number is not None:
+            old_voice_start.setdefault(number, track.start_time_seconds)
 
     for track in audio_timeline.tracks:
         basis = track.metadata.get(POSITION_BASIS_KEY)
-
-        if basis == BASIS_REAL:
-            continue
+        scene_number = _scene_number(track)
 
         if track.track_type == AudioTrackType.VOICEOVER:
-            scene_number = _scene_number(track)
-
-            needs_move = basis == BASIS_SEQUENTIAL or (
-                basis is None and unflagged_voice_is_sequential
-            )
-
-            if scene_number in real and needs_move:
+            # A voice always starts where its scene starts in the picture. A position marked "real" was real
+            # for the clips of THAT render: a clip regenerated, cut or held since then moves every later
+            # scene, and the stored voice stayed behind (live, 2026-10-20: voices up to 16 s ahead of the
+            # picture). So every render puts the voice on the scene's current real start.
+            if scene_number in real:
                 moved += _move(track, start=real[scene_number][0])
 
-        elif track.track_type == AudioTrackType.SOUND_EFFECT and basis == BASIS_NOMINAL:
-            scene_number = _scene_number(track)
+        elif track.track_type == AudioTrackType.SOUND_EFFECT:
+            if scene_number not in real:
+                continue
 
-            if scene_number in real and scene_number in nominal:
-                real_start, real_end = real[scene_number]
+            real_start, real_end = real[scene_number]
+
+            if basis == BASIS_NOMINAL and scene_number in nominal:
                 offset = max(0.0, track.start_time_seconds - nominal[scene_number][0])
                 offset = min(offset, max(0.0, real_end - real_start))
-                moved += _move(track, start=real_start + offset)
+                moved += _move(
+                    track, start=real_start + offset, placed_scene_start=real_start
+                )
+            elif basis == BASIS_REAL:
+                placed = track.metadata.get(PLACED_SCENE_START_KEY)
+                old_start = (
+                    float(placed)
+                    if isinstance(placed, (int, float))
+                    else old_voice_start.get(scene_number)
+                )
+
+                if old_start is not None:
+                    shifted = track.start_time_seconds + (real_start - old_start)
+                    shifted = min(max(shifted, real_start), max(real_start, real_end))
+                    moved += _move(track, start=shifted, placed_scene_start=real_start)
 
         elif (
             track.track_type == AudioTrackType.BACKGROUND_MUSIC
-            and basis == BASIS_NOMINAL
+            and basis in (BASIS_NOMINAL, BASIS_REAL)
             and sound_design_plan is not None
         ):
             segment = next(
@@ -134,8 +152,17 @@ def realign_audio_to_scene_timings(
     return moved
 
 
-def _move(track: AudioTrack, *, start: float, duration: float | None = None) -> int:
+def _move(
+    track: AudioTrack,
+    *,
+    start: float,
+    duration: float | None = None,
+    placed_scene_start: float | None = None,
+) -> int:
     changed = abs(track.start_time_seconds - start) > 1e-6
+
+    if placed_scene_start is not None:
+        track.metadata[PLACED_SCENE_START_KEY] = placed_scene_start
 
     if duration is not None and abs(track.duration_seconds - duration) > 1e-6:
         track.duration_seconds = duration

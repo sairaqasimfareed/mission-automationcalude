@@ -5,6 +5,7 @@ from pathlib import Path
 
 from src.models.audio_inclusion_preferences import AudioInclusionPreferences
 from src.models.audio_timeline import AudioTimeline
+from src.models.audio_track import AudioTrackType
 from src.models.render_result import RenderResult
 from src.models.render_speed import RenderSpeed
 from src.models.resolved_voice_blueprint import (
@@ -677,6 +678,9 @@ class RenderPipelineStage(BasePipelineStage):
                 voice_blueprints=self._voice_blueprints,
                 scene_timings=stage1_result.scene_timings,
                 transition_duration_seconds=self._transition_duration_seconds,
+                narration_seconds_by_scene=_voice_seconds_by_scene(
+                    unfiltered_audio_timeline
+                ),
             )
         except Exception:  # noqa: BLE001
             if self._subtitles_enabled:
@@ -935,3 +939,21 @@ class RenderPipelineStage(BasePipelineStage):
                 "production_render": (self.production_render_enabled),
             },
         )
+
+
+def _voice_seconds_by_scene(audio_timeline: AudioTimeline) -> dict[int, float]:
+    """The real length of each scene's voice file, from the audio timeline."""
+
+    lengths: dict[int, float] = {}
+
+    for track in audio_timeline.tracks:
+        number = track.metadata.get("scene_number")
+
+        if (
+            track.track_type == AudioTrackType.VOICEOVER
+            and isinstance(number, int)
+            and number not in lengths
+        ):
+            lengths[number] = float(track.duration_seconds)
+
+    return lengths

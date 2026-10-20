@@ -7,6 +7,8 @@ per-scene work this whole post-render burn-in service depends on.
 
 from __future__ import annotations
 
+import pytest
+
 from src.models.editing_directives import DirectiveIntensity
 from src.models.media_strategy import SceneSourceStatus, SceneSourceType
 from src.models.render_result import SceneRenderTiming
@@ -314,3 +316,32 @@ def test_two_scenes_stay_ordered_and_within_their_own_real_windows() -> None:
     assert len(scene_1_cues) + len(scene_2_cues) == len(cues)
     assert scene_1_cues
     assert scene_2_cues
+
+
+def test_subtitles_are_timed_to_the_voice_not_to_a_longer_clip() -> None:
+    # A 10 s clip with only 5.5 s of voice: the words must be gone with the voice, starting where the
+    # scene (and so its voice) starts.
+    video_timeline = VideoTimeline(items=[_item(1, start=0.0, duration=10.0)])
+    voice_blueprints = [
+        _voice_blueprint(
+            1,
+            narration_text="One two three four five six seven eight nine ten eleven twelve.",
+            speech_duration=5.5,
+        )
+    ]
+    scene_timings = [
+        SceneRenderTiming(
+            scene_number=1, clip_sequence_index=0, start_seconds=4.0, end_seconds=14.0
+        )
+    ]
+
+    cues = resolve_absolute_subtitle_cues(
+        video_timeline=video_timeline,
+        voice_blueprints=voice_blueprints,
+        scene_timings=scene_timings,
+        narration_seconds_by_scene={1: 5.5},
+    )
+
+    assert cues
+    assert cues[0].start_seconds == pytest.approx(4.0, abs=0.01)
+    assert max(cue.end_seconds for cue in cues) <= 4.0 + 5.5 + 0.25

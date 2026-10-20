@@ -1759,7 +1759,7 @@ def test_the_staged_render_moves_audio_tab_voice_onto_its_real_scene_start(
     assert job.audio_timeline.tracks[0].start_time_seconds == 2.5
 
 
-def test_a_track_the_render_already_placed_in_real_time_is_not_moved_again(
+def test_a_voice_placed_by_an_earlier_render_follows_the_scene_start_of_this_one(
     tmp_path: Path,
 ) -> None:
     from src.services.audio_realignment_service import BASIS_REAL, mark_position_basis
@@ -1788,8 +1788,9 @@ def test_a_track_the_render_already_placed_in_real_time_is_not_moved_again(
         subtitle_burn_service=MagicMock(),
     ).execute(build_context(job))
 
+    # 7.0 was real for the clips of an earlier render; scene 1 now starts at 2.5, and the voice goes there.
     assert (
-        mux.mux.call_args.kwargs["audio_timeline"].tracks[0].start_time_seconds == 7.0
+        mux.mux.call_args.kwargs["audio_timeline"].tracks[0].start_time_seconds == 2.5
     )
 
 

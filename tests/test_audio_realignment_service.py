@@ -173,8 +173,8 @@ class TestVoice:
         assert again == 0
         assert [t.start_time_seconds for t in timeline.tracks] == [0.0, 7.4, 10.8]
 
-    def test_tracks_already_in_real_time_are_never_touched(self) -> None:
-        """What the render's own voice step produced: positions are right."""
+    def test_voice_flagged_real_follows_a_scene_that_moved(self) -> None:
+        """A position that was real for an earlier render's clips goes stale when a clip changes."""
 
         timeline = AudioTimeline(
             tracks=[
@@ -193,8 +193,8 @@ class TestVoice:
             scene_timings=_timings((1, 0.0, 8.0), (2, 99.0, 103.0)),
         )
 
-        assert moved == 0
-        assert timeline.tracks[1].start_time_seconds == 7.4
+        assert moved == 1
+        assert timeline.tracks[1].start_time_seconds == 99.0
 
     def test_an_unflagged_end_to_end_voiceover_is_treated_as_the_audio_tabs(
         self,
@@ -216,8 +216,10 @@ class TestVoice:
 
         assert timeline.tracks[1].start_time_seconds == 7.4
 
-    def test_an_unflagged_voiceover_with_gaps_is_left_alone(self) -> None:
-        """Not end to end => the render's own, crossfade-aware placement."""
+    def test_an_unflagged_voiceover_with_gaps_also_goes_to_the_real_starts(
+        self,
+    ) -> None:
+        """The voice of a scene always starts where its scene starts."""
 
         timeline = AudioTimeline(
             tracks=[
@@ -232,8 +234,8 @@ class TestVoice:
             scene_timings=_timings((1, 0.0, 8.0), (2, 50.0, 54.0)),
         )
 
-        assert moved == 0
-        assert timeline.tracks[1].start_time_seconds == 7.4
+        assert moved == 1
+        assert timeline.tracks[1].start_time_seconds == 50.0
 
     def test_a_scene_missing_from_the_timings_is_left_alone(self) -> None:
         timeline, video = self._three_scenes()
@@ -401,3 +403,50 @@ def test_voice_lands_exactly_on_the_real_scene_starts_for_a_realistic_project() 
         assert track.start_time_seconds == pytest.approx(timing.start_seconds)
 
     assert before > 5.0  # it really was badly out before
+
+
+class TestClipsChangedSinceTheLastRender:
+    """Live, 2026-10-20: clips regenerated, cut and held after a render moved every later scene, but the
+    voice kept the positions of that render - up to 16 s ahead of the picture."""
+
+    def test_voice_and_its_sound_effect_follow_the_scene(self) -> None:
+        voice_1 = _track(
+            AudioTrackType.VOICEOVER, 0.0, 10.3, scene_number=1, basis=BASIS_REAL
+        )
+        voice_2 = _track(
+            AudioTrackType.VOICEOVER, 6.3, 8.9, scene_number=2, basis=BASIS_REAL
+        )
+        sfx_2 = _track(
+            AudioTrackType.SOUND_EFFECT, 7.3, 1.0, scene_number=2, basis=BASIS_REAL
+        )  # 1 s into scene 2, which used to start at 6.3
+        timeline = AudioTimeline(tracks=[voice_1, voice_2, sfx_2])
+
+        realign_audio_to_scene_timings(
+            timeline,
+            video_timeline=_video((1, 0, 13), (2, 13, 23)),
+            scene_timings=_timings((1, 0.0, 13.0), (2, 11.6, 21.6)),
+        )
+
+        assert voice_2.start_time_seconds == pytest.approx(11.6)
+        assert sfx_2.start_time_seconds == pytest.approx(12.6)
+
+    def test_a_second_pass_with_the_same_timings_changes_nothing(self) -> None:
+        voice = _track(
+            AudioTrackType.VOICEOVER, 6.3, 8.9, scene_number=2, basis=BASIS_REAL
+        )
+        sfx = _track(
+            AudioTrackType.SOUND_EFFECT, 7.3, 1.0, scene_number=2, basis=BASIS_REAL
+        )
+        timeline = AudioTimeline(tracks=[voice, sfx])
+        timings = _timings((1, 0.0, 13.0), (2, 11.6, 21.6))
+        video = _video((1, 0, 13), (2, 13, 23))
+
+        realign_audio_to_scene_timings(
+            timeline, video_timeline=video, scene_timings=timings
+        )
+        second = realign_audio_to_scene_timings(
+            timeline, video_timeline=video, scene_timings=timings
+        )
+
+        assert second == 0
+        assert sfx.start_time_seconds == pytest.approx(12.6)
