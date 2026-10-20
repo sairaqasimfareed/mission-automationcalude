@@ -579,3 +579,36 @@ def test_the_clips_tab_flags_a_clip_shorter_than_its_voice() -> None:
     scene.real_narration_duration_seconds = 6.2
 
     assert ClipWorkspaceView._too_short_text(job, scene) is None  # noqa: SLF001
+
+
+def test_a_frame_the_app_picked_is_not_shown_as_used_in_manual_mode(
+    tmp_path: Path,
+) -> None:
+    from src.services.scene_reference_service import SceneReferenceService
+
+    job = _job(_scene(1), _scene(2))
+    job.visual_continuity_bible = _continuity_bible(
+        reference_asset_ids=[], scene_numbers=[1, 2]
+    )
+    service = _service_for(tmp_path)
+    identity = job.visual_continuity_bible.identities[0]
+    service.set_reference_from_file(
+        job, identity.name, str(_picture(tmp_path, "auto.png"))
+    )
+    asset = job.extracted_frame_asset_index.get(identity.reference_asset_ids[0])
+    assert asset is not None
+    asset.metadata["uploaded_by_operator"] = False  # a frame the app picked itself
+    asset.metadata["selection_method"] = "best_face"
+    reader = SceneReferenceService(
+        selection_service=object(),  # type: ignore[arg-type]
+        storage_root=tmp_path / "scene_store",
+    )
+
+    job.reference_mode = ReferenceMode.MANUAL
+    manual = reader.status(job, job.scenes[0])
+    job.reference_mode = ReferenceMode.AUTO
+    automatic = reader.status(job, job.scenes[0])
+
+    assert manual.has_reference is False
+    assert "not used in manual mode" in manual.text
+    assert automatic.has_reference is True

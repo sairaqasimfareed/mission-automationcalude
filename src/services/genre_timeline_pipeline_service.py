@@ -202,8 +202,17 @@ class GenreTimelinePipelineService:
         if len(scene_numbers) != len(set(scene_numbers)):
             raise ValueError("Genre timeline scenes must use " "unique scene numbers.")
 
-        if len(clip_scene_numbers) != len(set(clip_scene_numbers)):
-            raise ValueError("Genre timeline clips must use " "unique scene numbers.")
+        # A scene longer than one clip is several clips with the same scene number, told apart by
+        # clip_sequence_index (multi-clip scenes): only the pair has to be unique.
+        clip_identities = [
+            (clip.scene_number, clip.clip_sequence_index) for clip in clips
+        ]
+
+        if len(clip_identities) != len(set(clip_identities)):
+            raise ValueError(
+                "Genre timeline clips must use unique scene numbers (and clip positions "
+                "within a scene)."
+            )
 
         scene_number_set = set(scene_numbers)
 

@@ -21,6 +21,7 @@ from typing import Protocol
 
 from src.models.scene import ReferencePickSource, Scene
 from src.models.video_job import VideoJob
+from src.models.visual_continuity import CanonicalEntityIdentity
 from src.services.asset_storage_service import AssetStorageService
 from src.services.clip_attachment_verification_service import references_sent
 from src.services.recurring_identity_service import (
@@ -32,6 +33,7 @@ from src.services.reference_frame_selection_service import (
     ReferenceKind,
     ReferenceSelectionStatus,
 )
+from src.services.reference_picture_service import picture_is_attachable
 from src.services.reference_status import reference_status
 from src.services.scene_reference_override import (
     OVERRIDE_LABEL,
@@ -78,6 +80,22 @@ class SceneReferenceStatus:
     image_paths: list[str] = field(default_factory=list)
     # The character or place each entry of image_paths belongs to (same order).
     image_names: list[str] = field(default_factory=list)
+
+
+def _picture_will_attach(job: VideoJob, identity: CanonicalEntityIdentity) -> bool:
+    """Whether the identity's reference picture would really be sent with a clip under the project's
+    reference mode (see picture_is_attachable)."""
+
+    for asset_id in identity.reference_asset_ids:
+        try:
+            asset = job.extracted_frame_asset_index.get(asset_id)
+        except ValueError:
+            continue
+
+        if asset is not None and picture_is_attachable(job, asset):
+            return True
+
+    return False
 
 
 def _normalised_location(job: VideoJob, scene_number: int) -> str | None:
@@ -477,7 +495,13 @@ class SceneReferenceService:
 
             found = reference_status(job, identity)
 
-            if found.has_reference:
+            if found.has_reference and not _picture_will_attach(job, identity):
+                # In manual mode only a picture the operator uploaded or chose goes to the video
+                # provider: a frame the app picked by itself is shown elsewhere but never sent.
+                parts.append(
+                    f"{name} (its picture is not used in manual mode - upload your own)"
+                )
+            elif found.has_reference:
                 with_reference += 1
                 image_path = image_path or found.image_path
 

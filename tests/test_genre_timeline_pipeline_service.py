@@ -287,3 +287,34 @@ else:
 
 
 print("Genre Timeline Pipeline Service tests " "completed successfully.")
+
+
+def test_a_scene_made_of_two_clips_builds_a_timeline() -> None:
+    first = build_clip(scene_number=1, duration_seconds=6)
+    second = build_clip(scene_number=1, duration_seconds=6).model_copy(
+        update={"clip_sequence_index": 1}
+    )
+
+    multi = pipeline.build(
+        scenes=[build_scene(scene_number=1, duration_seconds=12)],
+        clips=[first, second],
+        genre_id="genre.horror",
+    )
+
+    assert multi.is_successful is True
+    assert len(multi.timeline.items) == 2
+    assert [item.clip_sequence_index for item in multi.timeline.items] == [0, 1]
+
+
+def test_the_same_clip_position_twice_is_still_rejected() -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="unique"):
+        pipeline.build(
+            scenes=[build_scene(scene_number=1, duration_seconds=12)],
+            clips=[
+                build_clip(scene_number=1, duration_seconds=6),
+                build_clip(scene_number=1, duration_seconds=6),
+            ],
+            genre_id="genre.horror",
+        )
