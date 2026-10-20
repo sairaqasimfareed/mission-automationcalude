@@ -1267,6 +1267,11 @@ class ClipWorkspaceView(QWidget):
             reference = self._scene_reference_service.status(job, scene)
             self._add_scene_reference_line(row_layout, reference, scene.scene_number)
 
+            too_short = self._too_short_text(job, scene)
+
+            if too_short is not None:
+                row_layout.addWidget(status_label(too_short, role="warning"))
+
             if not sub_clip_statuses:
                 plan_text = self._planned_split_text(job, scene)
 
@@ -1448,7 +1453,7 @@ class ClipWorkspaceView(QWidget):
 
             # One cross per picture: takes just that character or place off this scene.
             cell = QVBoxLayout()
-            cross = QPushButton("✕")
+            cross = QPushButton("×")
             cross.setFixedSize(24, 24)
             cross.setToolTip(f"Remove {name} from this scene")
             cross.setAccessibleName(f"Remove {name} from scene {scene_number}")
@@ -1866,6 +1871,30 @@ class ClipWorkspaceView(QWidget):
             return f"planned {planned}{narration_text}"
 
         return f"planned {rules.single_clip_seconds(seconds):.0f}s{narration_text}"
+
+    @staticmethod
+    def _too_short_text(job: VideoJob, scene: Scene) -> str | None:
+        """A clip made before the voice was (re)generated keeps its old length. Say so when
+        it no longer covers the voice, so it is clear which clips to regenerate."""
+
+        narration = scene.real_narration_duration_seconds
+
+        if scene.silent or narration is None:
+            return None
+
+        lengths = [
+            clip.duration_seconds
+            for clip in job.video_clips
+            if clip.scene_number == scene.scene_number
+        ]
+
+        if not lengths or sum(lengths) >= narration - 0.5:
+            return None
+
+        return (
+            f"The clip ({sum(lengths)}s) is shorter than the voice ({narration:.1f}s) - "
+            "press Regenerate to make it fit. Until then the last picture is held."
+        )
 
     @staticmethod
     def _planned_split_text(job: VideoJob, scene: Scene) -> str | None:

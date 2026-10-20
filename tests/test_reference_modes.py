@@ -551,3 +551,31 @@ def test_removing_one_picture_from_a_scene_keeps_the_other_and_other_scenes() ->
     assert name not in entries[1].entity_names
     assert name not in entries[1].on_screen_entity_names
     assert name in entries[2].on_screen_entity_names
+
+
+def test_the_clips_tab_flags_a_clip_shorter_than_its_voice() -> None:
+    from src.desktop.views.clip_workspace_view import ClipWorkspaceView
+    from src.models.media_strategy import SceneSourceStatus, SceneSourceType
+    from src.models.video_clip import VideoClip, VideoClipStatus
+
+    scene = _scene(1)
+    scene.real_narration_duration_seconds = 8.9
+    job = _job(scene)
+    job.video_clips = [
+        VideoClip(
+            scene_number=1,
+            source_type=SceneSourceType.AI_GENERATE,
+            duration_seconds=6,
+            local_file="clip.mp4",
+            source_status=SceneSourceStatus.READY,
+            status=VideoClipStatus.READY,
+        )
+    ]
+
+    text = ClipWorkspaceView._too_short_text(job, scene)  # noqa: SLF001
+
+    assert text is not None and "shorter than the voice" in text
+
+    scene.real_narration_duration_seconds = 6.2
+
+    assert ClipWorkspaceView._too_short_text(job, scene) is None  # noqa: SLF001
