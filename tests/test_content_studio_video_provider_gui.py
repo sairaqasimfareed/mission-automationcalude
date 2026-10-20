@@ -395,3 +395,26 @@ def test_choosing_a_pace_counts_without_saving_settings(qapp: QApplication) -> N
     QCoreApplication.processEvents()
 
     assert store.get(job.id).pace == ProjectPace.RELAXED
+
+
+def test_the_settings_duration_accepts_less_than_thirty_seconds(
+    qapp: QApplication,
+) -> None:
+    from PySide6.QtWidgets import QSpinBox
+
+    store = InMemoryJobStore()
+    job = _job()
+    job.target_duration_seconds = 15
+    store.add(job)
+    view = _view(store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    spin = next(
+        s
+        for s in view.findChildren(QSpinBox)
+        if s.maximum() == 36000  # the target duration field
+    )
+
+    assert spin.minimum() == 5
+    assert spin.value() == 15

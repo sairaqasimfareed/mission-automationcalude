@@ -186,7 +186,7 @@ class ProjectFormView(QWidget):
         form.addRow("Genre", self._genre)
 
         self._duration_seconds = QSpinBox()
-        self._duration_seconds.setRange(30, 36000)
+        self._duration_seconds.setRange(5, 36000)
         self._duration_seconds.setValue(600)
         form.addRow("Target duration (seconds)", self._duration_seconds)
 

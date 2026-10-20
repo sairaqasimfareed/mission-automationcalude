@@ -1891,6 +1891,9 @@ class PackagingView(QWidget):
         watermark_box.setToolTip(
             "Turn off to add only the end card or your CTA clip, with nothing over the video itself."
         )
+        # Counts the moment it is ticked: it only took effect after "Save CTA settings", and a variant
+        # generated without pressing it still carried the watermark (reported 2026-10-20).
+        watermark_box.toggled.connect(self._handle_watermark_toggled)
         layout.addWidget(watermark_box)
 
         layout.addWidget(small_muted("Watermark image (shown over the video)"))
@@ -1936,6 +1939,15 @@ class PackagingView(QWidget):
             )
         )
         layout.addWidget(save_button, alignment=_LEFT)
+
+    def _handle_watermark_toggled(self, checked: bool) -> None:
+        job = self._current_job()
+
+        if job is None or job.cta_watermark_enabled == checked:
+            return
+
+        job.cta_watermark_enabled = checked
+        self._job_store.add(job)
 
     def _handle_browse_cta_file(
         self, display: QLineEdit, title: str, file_filter: str

@@ -1528,7 +1528,7 @@ class ContentStudioView(QWidget):
         # way to see or change it again afterward anywhere in the app.
         # Matches that form's own QSpinBox range/label exactly.
         duration_seconds_input = QSpinBox()
-        duration_seconds_input.setRange(30, 36000)
+        duration_seconds_input.setRange(5, 36000)
         duration_seconds_input.setValue(job.target_duration_seconds)
         form.addRow("Target duration (seconds)", duration_seconds_input)
 

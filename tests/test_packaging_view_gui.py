@@ -1882,3 +1882,18 @@ def test_the_edited_video_card_uses_a_chosen_file_and_can_bring_the_render_back(
     view._handle_restore_app_render()
 
     assert output.read_bytes() == b"app render"
+
+
+def test_unticking_the_watermark_counts_without_pressing_save(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    view, job = _view_with_render_result(tmp_path, _FakeExportVariantRenderService())
+    box = next(
+        b
+        for b in view.findChildren(QCheckBox)
+        if b.text() == "Show a watermark over the video"
+    )
+
+    box.setChecked(False)
+
+    assert view._job_store.get(job.id).cta_watermark_enabled is False

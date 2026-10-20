@@ -393,3 +393,16 @@ def test_tab_order_follows_the_forms_visual_top_to_bottom_layout(
     ]
 
     assert named_fields_in_chain == expected_named_fields
+
+
+def test_a_target_duration_below_thirty_seconds_can_be_chosen(
+    qapp: QApplication,
+) -> None:
+    """The minimum was 30 s, so a 15 s short could not be set (reported 2026-10-20)."""
+
+    view = _view()
+
+    view._duration_seconds.setValue(15)
+
+    assert view._duration_seconds.value() == 15
+    assert view._duration_seconds.minimum() == 5
