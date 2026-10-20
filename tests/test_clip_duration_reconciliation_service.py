@@ -248,7 +248,7 @@ def test_an_ai_clip_shorter_than_its_voice_is_held_on_its_last_frame(
         ],
     )
 
-    assert result.clips[0].duration_seconds == 10
+    assert result.clips[0].duration_seconds == 11
     assert result.clips[0].local_file is not None
     assert result.clips[0].local_file.endswith("_held.mp4")
     assert "tpad=stop_mode=clone" in " ".join(commands[0])

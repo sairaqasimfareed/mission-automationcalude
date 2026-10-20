@@ -32,6 +32,12 @@ from src.shared.logger import logger
 # shortfall is.
 _TOLERANCE_SECONDS = 0.5
 
+# The next scene's picture - and so its voice - starts this long BEFORE this clip ends (the crossfade
+# between two scenes overlaps them; 0.7 s in the genres' own transitions). A voice therefore has to
+# finish this much before the clip does, or it runs into the next voice (seen live, 2026-10-20: a clip
+# only 0.6 s longer than its voice still overlapped the next one).
+_TRANSITION_ALLOWANCE_SECONDS = 0.7
+
 # Matches DurationMismatchPolicyService's own default severe_ratio -
 # same judgment call (a shortfall exceeding half the scene's real
 # narration length is severe enough to block rather than warn), reused
@@ -223,13 +229,14 @@ class ClipDurationReconciliationService:
         if narration is None:
             return clip
 
-        shortfall = narration - float(clip.duration_seconds)
+        needed = narration + _TRANSITION_ALLOWANCE_SECONDS
+        shortfall = needed - float(clip.duration_seconds)
 
         if shortfall <= self._tolerance_seconds:
             return clip
 
         source = Path(clip.local_file)
-        target_seconds = math.ceil(narration)
+        target_seconds = math.ceil(needed)
         held_path = source.with_name(f"{source.stem}_held{source.suffix}")
 
         try:
