@@ -163,7 +163,9 @@ def test_a_severe_shortfall_produces_a_blocking_error(tmp_path: Path) -> None:
     assert commands == []
 
 
-def test_ai_generated_clips_are_never_reconciled(tmp_path: Path) -> None:
+def test_an_ai_clip_much_longer_than_a_short_voice_is_cut_not_left_at_ten_seconds(
+    tmp_path: Path,
+) -> None:
     frame_extraction, commands = _frame_extraction_service(tmp_path)
     service = ClipDurationReconciliationService(
         frame_extraction_service=frame_extraction
@@ -174,10 +176,10 @@ def test_ai_generated_clips_are_never_reconciled(tmp_path: Path) -> None:
 
     result = service.reconcile(scenes=[scene], clips=[clip])
 
-    assert result.clips == [clip]
-    assert result.warnings == []
+    # 3.0 s of voice + the 0.7 s crossfade overlap = 3.7 s, rounded up to 4 s.
+    assert result.clips[0].duration_seconds == 4
     assert result.errors == []
-    assert commands == []
+    assert len(commands) == 1
 
 
 def test_a_scene_with_no_real_narration_duration_is_skipped(tmp_path: Path) -> None:
@@ -265,7 +267,7 @@ def test_an_ai_clip_that_already_covers_its_voice_is_left_alone(
     )
 
     result = service.reconcile(
-        scenes=[_scene(1, real_narration_duration_seconds=5.5)],
+        scenes=[_scene(1, real_narration_duration_seconds=8.9)],
         clips=[
             _clip(
                 1,
@@ -301,3 +303,84 @@ def test_the_pause_after_a_line_is_part_of_how_long_an_ai_clip_must_be(
 
     assert without_pause.clips[0].duration_seconds == 6
     assert with_pause.clips[0].duration_seconds == 7
+
+
+def _ai_clip(tmp_path: Path, seconds: int) -> VideoClip:
+    return _clip(
+        1,
+        duration_seconds=seconds,
+        source_type=SceneSourceType.AI_GENERATE,
+        local_file=str(_real_video_file(tmp_path)),
+    )
+
+
+def test_an_ai_clip_far_longer_than_its_voice_is_cut_to_voice_plus_pause_and_crossfade(
+    tmp_path: Path,
+) -> None:
+    frame_extraction, commands = _frame_extraction_service(tmp_path)
+    service = ClipDurationReconciliationService(
+        frame_extraction_service=frame_extraction
+    )
+
+    # 5.5 s of voice, a 0.4 s pause and the 0.7 s crossfade overlap: 6.6 s, rounded up to 7 s.
+    result = service.reconcile(
+        scenes=[_scene(1, real_narration_duration_seconds=5.5)],
+        clips=[_ai_clip(tmp_path, 10)],
+        hold_seconds=0.4,
+    )
+
+    assert result.clips[0].duration_seconds == 7
+    assert result.clips[0].local_file is not None
+    assert result.clips[0].local_file.endswith("_trimmed.mp4")
+    assert "-t" in commands[0] and commands[0][commands[0].index("-t") + 1] == "7.000"
+    assert any("cut to 7s" in warning for warning in result.warnings)
+
+
+def test_an_ai_clip_within_a_second_of_what_it_needs_is_left_alone(
+    tmp_path: Path,
+) -> None:
+    frame_extraction, commands = _frame_extraction_service(tmp_path)
+    service = ClipDurationReconciliationService(
+        frame_extraction_service=frame_extraction
+    )
+
+    result = service.reconcile(
+        scenes=[_scene(1, real_narration_duration_seconds=8.4)],
+        clips=[_ai_clip(tmp_path, 10)],
+    )
+
+    assert result.clips[0].duration_seconds == 10
+    assert commands == []
+
+
+def test_a_visual_only_scenes_ai_clip_is_cut_to_its_planned_length_plus_two_seconds(
+    tmp_path: Path,
+) -> None:
+    frame_extraction, _commands = _frame_extraction_service(tmp_path)
+    service = ClipDurationReconciliationService(
+        frame_extraction_service=frame_extraction
+    )
+    scene = _scene(1, real_narration_duration_seconds=None)
+    scene.silent = True
+    scene.estimated_duration_seconds = 3
+
+    result = service.reconcile(scenes=[scene], clips=[_ai_clip(tmp_path, 10)])
+
+    assert result.clips[0].duration_seconds == 5
+
+
+def test_a_failed_cut_keeps_the_long_clip_instead_of_failing(tmp_path: Path) -> None:
+    def failing_runner(command: list[str]) -> None:
+        raise TimeoutError("too slow")
+
+    service = ClipDurationReconciliationService(
+        frame_extraction_service=FrameExtractionService(runner=failing_runner)
+    )
+
+    result = service.reconcile(
+        scenes=[_scene(1, real_narration_duration_seconds=5.5)],
+        clips=[_ai_clip(tmp_path, 10)],
+    )
+
+    assert result.clips[0].duration_seconds == 10
+    assert result.errors == []

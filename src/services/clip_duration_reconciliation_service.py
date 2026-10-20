@@ -38,6 +38,9 @@ _TOLERANCE_SECONDS = 0.5
 # only 0.6 s longer than its voice still overlapped the next one).
 _TRANSITION_ALLOWANCE_SECONDS = 0.7
 
+# A visual-only scene's clip may run this much past its planned length before it is cut back.
+_SILENT_SCENE_SLACK_SECONDS = 2.0
+
 # Matches DurationMismatchPolicyService's own default severe_ratio -
 # same judgment call (a shortfall exceeding half the scene's real
 # narration length is severe enough to block rather than warn), reused
@@ -206,6 +209,32 @@ class ClipDurationReconciliationService:
             errors=errors,
         )
 
+    def _trim_long_ai_clip(
+        self,
+        *,
+        clip: VideoClip,
+        limit_seconds: float,
+        warnings: list[str],
+        reason: str,
+    ) -> VideoClip:
+        """Muse makes a 10 s clip whatever length the prompt states, and its own trim can fail. A clip
+        longer than its scene needs (its voice + the pause + the crossfade, or a visual-only scene's
+        planned length + 2 s) is cut down to that - never below it. Best effort: a failure keeps the clip.
+        """
+
+        if float(clip.duration_seconds) <= limit_seconds + self._tolerance_seconds:
+            return clip
+
+        trimmed = self._trim(clip=clip, target_seconds=limit_seconds)
+
+        if trimmed is not clip:
+            warnings.append(
+                f"Scene {clip.scene_number}: the clip ({float(clip.duration_seconds):.0f}s) was longer "
+                f"than {reason}, so it was cut to {limit_seconds:.0f}s."
+            )
+
+        return trimmed
+
     def _hold_short_ai_clip(
         self,
         *,
@@ -224,13 +253,34 @@ class ClipDurationReconciliationService:
         A scene made of several clips is left alone (its parts are sized together).
         """
 
-        if scene is None or scene.silent or not single_clip or clip.local_file is None:
+        if scene is None or not single_clip or clip.local_file is None:
             return clip
+
+        if scene.silent:
+            return self._trim_long_ai_clip(
+                clip=clip,
+                limit_seconds=float(scene.estimated_duration_seconds)
+                + _SILENT_SCENE_SLACK_SECONDS,
+                warnings=warnings,
+                reason="a visual-only scene's planned length",
+            )
 
         narration = scene.real_narration_duration_seconds
 
         if narration is None:
             return clip
+
+        limit = math.ceil(
+            narration + _TRANSITION_ALLOWANCE_SECONDS + max(0.0, hold_seconds)
+        )
+
+        if float(clip.duration_seconds) > limit + self._tolerance_seconds:
+            return self._trim_long_ai_clip(
+                clip=clip,
+                limit_seconds=float(limit),
+                warnings=warnings,
+                reason="its voice, the pause and the crossfade",
+            )
 
         needed = narration + _TRANSITION_ALLOWANCE_SECONDS + hold_seconds
         shortfall = needed - float(clip.duration_seconds)

@@ -246,6 +246,16 @@ class FrameExtractionService:
             str(Path(video_path).resolve()),
             "-t",
             f"{target_duration_seconds:.3f}",
+            # A fast encode: the default preset took 55 s for a 10 s clip on a busy machine and the
+            # cut was given up on (live, 2026-10-19: clips of scenes 5, 7, 8 and 9 stayed 10 s long).
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-crf",
+            "18",
+            "-pix_fmt",
+            "yuv420p",
             str(destination.resolve()),
         ]
 
