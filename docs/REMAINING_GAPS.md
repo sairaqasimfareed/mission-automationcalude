@@ -1105,6 +1105,15 @@ ElevenLabs credits; ElevenLabs was at zero on 2026-10-07).
   only the labelled duplicate sections were removed.
   Whether the video generators now hold the series style in flashbacks (Joan arc clip 6 drifted before this) is not yet re-tested on a real clip; attaching a style frame from the first clip to every clip was suggested, not built.
 
+- **Compact / Full prompt option (LOCKED for a later build, 2026-10-21, not built):** a per-project "Prompt length" choice on the Prompts tab,
+  Full (today's, the default) or Compact. Compact trims the joined prompt by fixed rules, no Claude calls: the look line cut to the palette and
+  linework (about 150-200 characters, currently about 440), one short line per character / place VISIBLE in the shot and none when a reference
+  picture is attached, the timed beats skipped for clips of 6 s or less, a shorter "no text" line, a total cap of about 1,200 characters
+  (Joan arc averages 2,064 with scene detail paragraphs and 2,730 without them; scene 11 stays 3,109 either way - its paragraph is not
+  used, cause not found). Applies when prompts are compiled again; existing clips are not changed. Not yet shown to give better clips:
+  generate one scene both ways first (about two Muse credits). Until then the operator can shorten the Project look's Colour palette and
+  Camera feel fields by hand (saves about 200 characters per prompt).
+
 - Render speed (2026-10-19): measured on a CPU-only 2-core laptop with other work running, so absolute speeds vary. FINAL is still slow
   (the grain). Not done: a cheaper grain that still changes every frame (a pre-made grain loop blended per frame measured +40 CPU-s, not a win),
   rendering the effects at the clips' own 720x1280 before scaling, hardware encoding (this machine has no NVIDIA card; Intel Quick Sync was

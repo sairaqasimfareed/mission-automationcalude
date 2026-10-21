@@ -1163,3 +1163,27 @@ def test_observe_prefers_a_real_video_over_any_text_in_the_reply(
     result = adapter.observe(submitted)
 
     assert result.state == MuseGenerationState.READY_TO_DOWNLOAD
+
+
+def test_a_prompt_with_line_breaks_is_typed_as_one_line_so_enter_sends_it_once(
+    tmp_path: Path,
+) -> None:
+    """A line break is typed as Enter, which sends the message in Muse's chat box: the portrait sentence
+    after the blank line went out as a second message on one machine and into a busy box on another.
+    """
+
+    page = _authenticated_page()
+    adapter = _adapter(page, tmp_path=tmp_path)
+    prompt = (
+        "A candle gutters in a small room. Duration: 6 seconds.\n\n"
+        "Vertical 9:16 portrait video, true full-frame vertical composition."
+    )
+    request = _request(prompt=prompt)
+
+    adapter.submit(request, _attempt(request))
+
+    assert page.keyboard.typed == [
+        "A candle gutters in a small room. Duration: 6 seconds. "
+        "Vertical 9:16 portrait video, true full-frame vertical composition."
+    ]
+    assert page.keyboard.pressed == ["Enter"]  # one send, at the very end

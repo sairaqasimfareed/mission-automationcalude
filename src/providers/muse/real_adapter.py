@@ -277,7 +277,12 @@ class MuseRealUIAdapter(MuseUIProvider):
                 )
 
                 message_box.click(timeout=self._action_timeout_ms)
-                page.keyboard.type(request.prompt, delay=10)
+                # One line, always: typing a line break presses Enter, and in Muse's chat box Enter SENDS.
+                # The prompt ends with a blank line and the portrait sentence ("Vertical 9:16 ..."), so
+                # on one computer the main prompt went out first and the portrait sentence followed as a
+                # second message, and on another the box was still busy and it was typed into nothing
+                # (reported 2026-10-21: the sentence added as its own message / not sent at all).
+                page.keyboard.type(" ".join(request.prompt.split()), delay=10)
 
                 # Persisted BEFORE the operation that may spend
                 # provider credit - same credit-sensitive-state rule
