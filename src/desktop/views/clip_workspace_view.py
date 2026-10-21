@@ -1475,7 +1475,7 @@ class ClipWorkspaceView(QWidget):
                 else None
             )
 
-            if name is None:
+            if not name:
                 line.addWidget(picture)
                 continue
 

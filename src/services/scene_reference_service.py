@@ -33,7 +33,10 @@ from src.services.reference_frame_selection_service import (
     ReferenceKind,
     ReferenceSelectionStatus,
 )
-from src.services.reference_picture_service import picture_is_attachable
+from src.services.reference_picture_service import (
+    is_operator_picture,
+    picture_is_attachable,
+)
 from src.services.reference_status import reference_status
 from src.services.scene_reference_override import (
     OVERRIDE_LABEL,
@@ -567,6 +570,39 @@ class SceneReferenceService:
             text += " This scene's clip was made without it - regenerate to use it."
             role = "warning"
 
+        # The pictures the operator uploaded for characters / places in this scene go with the picked one.
+        extra_names: list[str] = []
+        extra_paths: list[str] = []
+        bible = job.visual_continuity_bible
+
+        if bible is not None:
+            on_screen = effective_on_screen_names(bible, scene)
+
+            for identity in bible.identities:
+                if identity.name not in on_screen:
+                    continue
+
+                for asset_id in identity.reference_asset_ids:
+                    try:
+                        asset = job.extracted_frame_asset_index.get(asset_id)
+                    except ValueError:
+                        continue
+
+                    if (
+                        asset is not None
+                        and is_operator_picture(asset)
+                        and Path(asset.file_path).is_file()
+                    ):
+                        extra_names.append(identity.name)
+                        extra_paths.append(asset.file_path)
+
+                        break
+
+        if extra_names:
+            text += (
+                " Also sent: " + ", ".join(extra_names) + " (your uploaded pictures)."
+            )
+
         return SceneReferenceStatus(
             text=text,
             role=role,
@@ -574,6 +610,8 @@ class SceneReferenceService:
             needs_reference=False,
             has_override=True,
             image_path=override.source_path,
+            image_paths=[override.source_path, *extra_paths],
+            image_names=["", *extra_names],
         )
 
     def scenes_needing_reference(self, job: VideoJob) -> list[int]:

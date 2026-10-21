@@ -612,3 +612,179 @@ def test_a_frame_the_app_picked_is_not_shown_as_used_in_manual_mode(
     assert manual.has_reference is False
     assert "not used in manual mode" in manual.text
     assert automatic.has_reference is True
+
+
+def test_a_picture_uploaded_for_a_character_goes_with_the_scenes_own_picked_picture(
+    tmp_path: Path,
+) -> None:
+    """Joan arc, 2026-10-21: scene 7 had its own picked picture, which used to replace everything - the
+    picture uploaded for Joan and marked on scene 7 by hand was never sent to the video provider.
+    """
+
+    from src.models.video_job import VideoJob  # noqa: F401
+    from src.services.asset_storage_service import AssetStorageService
+    from src.services.muse_scene_video_generation_service import (
+        MuseSceneVideoGenerationService,
+    )
+    from src.services.reference_picture_service import set_scenes_of
+    from src.services.scene_reference_service import SceneReferenceService
+
+    job = _job(_scene(1), _scene(2))
+    job.reference_mode = ReferenceMode.MANUAL
+    job.visual_continuity_bible = _continuity_bible(
+        reference_asset_ids=[], scene_numbers=[1, 2]
+    )
+    service = _service_for(tmp_path)
+    identity = job.visual_continuity_bible.identities[0]
+    service.set_reference_from_file(
+        job, identity.name, str(_picture(tmp_path, "joan.png"))
+    )
+    set_scenes_of(job, identity.name, [2])
+
+    storage = AssetStorageService(
+        storage_root=tmp_path / "other", asset_index=job.extracted_frame_asset_index
+    )
+    picked = storage.store_extracted_frame(
+        source_path=_picture(tmp_path, "picked.png", red=90),
+        project_id=str(job.id),
+        scene_number=2,
+        title="picked",
+        metadata={"scene_number": 1},
+    )
+    assert picked.asset is not None
+    job.scenes[1].reference_override_asset_id = str(picked.asset.id)
+
+    muse = object.__new__(MuseSceneVideoGenerationService)
+    muse._asset_storage_service = storage  # noqa: SLF001
+    names = [
+        r.identity_name
+        for r in muse._resolve_reference_assets(job, job.scenes[1])  # noqa: SLF001
+    ]
+
+    assert names[0] == "Reference you picked for this scene"
+    assert identity.name in names
+
+    status = SceneReferenceService(
+        selection_service=object(),  # type: ignore[arg-type]
+        storage_root=tmp_path / "scene_store",
+    ).status(job, job.scenes[1])
+
+    assert "Also sent" in status.text and identity.name in status.text
+    assert len(status.image_paths) == 2
+
+
+def test_a_frame_the_app_picked_does_not_join_the_scenes_own_picked_picture(
+    tmp_path: Path,
+) -> None:
+    from src.services.asset_storage_service import AssetStorageService
+    from src.services.muse_scene_video_generation_service import (
+        MuseSceneVideoGenerationService,
+    )
+
+    job = _job(_scene(1), _scene(2))
+    job.reference_mode = ReferenceMode.AUTO
+    job.visual_continuity_bible = _continuity_bible(
+        reference_asset_ids=[], scene_numbers=[1, 2]
+    )
+    service = _service_for(tmp_path)
+    identity = job.visual_continuity_bible.identities[0]
+    service.set_reference_from_file(
+        job, identity.name, str(_picture(tmp_path, "auto.png"))
+    )
+    asset = job.extracted_frame_asset_index.get(identity.reference_asset_ids[0])
+    assert asset is not None
+    asset.metadata["uploaded_by_operator"] = False
+    asset.metadata["chosen_by_operator"] = False
+    storage = AssetStorageService(
+        storage_root=tmp_path / "other", asset_index=job.extracted_frame_asset_index
+    )
+    picked = storage.store_extracted_frame(
+        source_path=_picture(tmp_path, "picked.png", red=90),
+        project_id=str(job.id),
+        scene_number=2,
+        title="picked",
+        metadata={"scene_number": 1},
+    )
+    assert picked.asset is not None
+    job.scenes[1].reference_override_asset_id = str(picked.asset.id)
+    muse = object.__new__(MuseSceneVideoGenerationService)
+    muse._asset_storage_service = storage  # noqa: SLF001
+
+    names = [
+        r.identity_name
+        for r in muse._resolve_reference_assets(job, job.scenes[1])  # noqa: SLF001
+    ]
+
+    assert names == ["Reference you picked for this scene"]
+
+
+def test_stopping_typing_applies_a_complete_scene_list_without_enter(qapp) -> None:  # type: ignore[no-untyped-def]
+    import time
+
+    from PySide6.QtCore import QCoreApplication
+    from PySide6.QtWidgets import QLineEdit, QVBoxLayout, QWidget
+
+    from tests.test_scene_detail import _job as scene_job
+    from tests.test_suggestions import _studio
+
+    view, job, _errors = _studio(scene_job(3))
+    job.visual_continuity_bible = _continuity_bible(
+        reference_asset_ids=[], scene_numbers=[1, 2, 3]
+    )
+    name = job.visual_continuity_bible.identities[0].name
+    set_scenes_of(job, name, [])
+    job.reference_mode = ReferenceMode.MANUAL
+    holder = QWidget()
+    view._render_references_panel(QVBoxLayout(holder), job)  # noqa: SLF001
+    field = next(
+        f
+        for f in holder.findChildren(QLineEdit)
+        if f.placeholderText() == "e.g. 1-3, 7"
+    )
+
+    field.setText("2")
+    field.textEdited.emit("2")  # what typing does; setText alone is silent
+    deadline = time.time() + 5
+
+    while time.time() < deadline and scenes_of(view._current_job(), name) != [
+        2
+    ]:  # noqa: SLF001
+        QCoreApplication.processEvents()
+        time.sleep(0.05)
+
+    assert scenes_of(view._current_job(), name) == [2]  # noqa: SLF001
+
+
+def test_an_incomplete_scene_list_is_left_alone_until_enter(qapp) -> None:  # type: ignore[no-untyped-def]
+    import time
+
+    from PySide6.QtCore import QCoreApplication
+    from PySide6.QtWidgets import QLineEdit, QVBoxLayout, QWidget
+
+    from tests.test_scene_detail import _job as scene_job
+    from tests.test_suggestions import _studio
+
+    view, job, _errors = _studio(scene_job(3))
+    job.visual_continuity_bible = _continuity_bible(
+        reference_asset_ids=[], scene_numbers=[1, 2, 3]
+    )
+    name = job.visual_continuity_bible.identities[0].name
+    set_scenes_of(job, name, [])
+    job.reference_mode = ReferenceMode.MANUAL
+    holder = QWidget()
+    view._render_references_panel(QVBoxLayout(holder), job)  # noqa: SLF001
+    field = next(
+        f
+        for f in holder.findChildren(QLineEdit)
+        if f.placeholderText() == "e.g. 1-3, 7"
+    )
+
+    field.setText("1-")
+    field.textEdited.emit("1-")
+    deadline = time.time() + 2.2
+
+    while time.time() < deadline:
+        QCoreApplication.processEvents()
+        time.sleep(0.05)
+
+    assert scenes_of(view._current_job(), name) == []  # noqa: SLF001

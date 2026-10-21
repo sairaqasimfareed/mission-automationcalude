@@ -53,6 +53,7 @@ from src.services.reference_frame_selection_service import (
 )
 from src.services.reference_picture_service import (
     automatic_references_enabled,
+    is_operator_picture,
     picture_is_attachable,
 )
 from src.services.scene_asset_video_clip_builder_service import (
@@ -1365,14 +1366,15 @@ class MuseSceneVideoGenerationService:
         if self._asset_storage_service is None:
             return []
 
-        # A picture the operator picked for this scene replaces everything automatic:
-        # exactly one image goes with the scene.
+        # A picture the operator picked for this scene replaces everything AUTOMATIC. A picture the
+        # operator uploaded for a character or place in the scene is theirs too and goes with it - it
+        # used to be dropped, so a picture added to a scene that already had its own picked one was
+        # never sent.
         override = override_reference_for_scene(
             self._asset_storage_service.asset_index, scene
         )
-
-        if override is not None:
-            return [
+        picked: list[MuseReferenceAsset] = (
+            [
                 MuseReferenceAsset(
                     source_path=override.source_path,
                     checksum=override.checksum,
@@ -1380,16 +1382,19 @@ class MuseSceneVideoGenerationService:
                     identity_name=OVERRIDE_LABEL,
                 )
             ]
+            if override is not None
+            else []
+        )
 
         bible = job.visual_continuity_bible
 
         if bible is None:
-            return []
+            return picked
 
         on_screen_names = effective_on_screen_names(bible, scene)
 
         if not on_screen_names:
-            return []
+            return picked
 
         featured_identities = [
             identity
@@ -1421,7 +1426,11 @@ class MuseSceneVideoGenerationService:
 
                     continue
 
-                if not picture_is_attachable(job, asset):
+                if override is not None:
+                    # Beside the scene's own picked picture only the operator's own pictures go.
+                    if not is_operator_picture(asset):
+                        continue
+                elif not picture_is_attachable(job, asset):
                     continue
 
                 asset_path = Path(asset.file_path)
@@ -1452,4 +1461,4 @@ class MuseSceneVideoGenerationService:
                     )
                 )
 
-        return resolved
+        return picked + resolved
