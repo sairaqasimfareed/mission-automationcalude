@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QApplication, QMainWindow, QStackedWidget, QToolBa
 from src.desktop import services
 from src.desktop.icons import app_icon, primary_icon
 from src.desktop.job_store import JobStore
+from src.desktop.notifications import NotificationCenter, install
 from src.desktop.theme import ThemeMode, apply_theme
 from src.desktop.views.dashboard_view import DashboardView
 from src.desktop.views.google_flow_provider_panel_view import (
@@ -79,6 +80,11 @@ class MainWindow(QMainWindow):
 
         self._stack = QStackedWidget()
         self.setCentralWidget(self._stack)
+
+        # Messages in the corner and the working bar at the bottom (see src/desktop/notifications.py).
+        self._notifications = NotificationCenter(self)
+        install(self._notifications)
+        self.destroyed.connect(lambda *_args: install(None))
 
         self._dashboard_view = DashboardView(
             job_store=self._job_store,

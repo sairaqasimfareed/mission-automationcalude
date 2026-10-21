@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.desktop.job_store import JobStore
+from src.desktop.notifications import begin_busy, end_busy, notify_success
 from src.desktop.recovery_dialog import show_recoverable_error
 from src.desktop.scroll_preservation import keep_scroll_on_refresh
 from src.desktop.widgets import (
@@ -438,6 +439,8 @@ class PackagingView(QWidget):
         # rather than crashing.
         self._opening_title_card_service = opening_title_card_service
         self._edited_video_service = edited_video_service or EditedVideoService()
+        # The window-wide working bar's entries for what runs here, by (action, project).
+        self._busy_tokens: dict[tuple[str, UUID], int] = {}
         self._job_id: UUID | None = None
 
         # Real-world finding, 2026-10-01: both export-variant and
@@ -1004,6 +1007,9 @@ class PackagingView(QWidget):
 
         self._title_card_threads[job_id] = (thread, worker)
         self._generating_title_card_job_ids.add(job_id)
+        self._busy_tokens[("title", job_id)] = begin_busy(
+            "Working: making the title card..."
+        )
 
         # Show the in-progress state immediately - nothing else
         # refreshes this workspace until generation finishes (see
@@ -1045,8 +1051,13 @@ class PackagingView(QWidget):
 
         job_id = worker.job_id
         self._generating_title_card_job_ids.discard(job_id)
+        end_busy(self._busy_tokens.pop(("title", job_id), 0))
+        end_busy(self._busy_tokens.pop(("title", job_id), 0))
 
         job = self._job_store.get(job_id)
+
+        if result.success:
+            notify_success("Title card added")
 
         if not result.success:
             message = result.error_message or "Title card generation failed."
@@ -1078,6 +1089,7 @@ class PackagingView(QWidget):
 
         job_id = worker.job_id
         self._generating_title_card_job_ids.discard(job_id)
+        end_busy(self._busy_tokens.pop(("title", job_id), 0))
 
         job = self._job_store.get(job_id)
 
@@ -1179,6 +1191,7 @@ class PackagingView(QWidget):
         job.title_card_image_path = None if clip_path else (image_path or None)
 
         self._on_change()
+        notify_success("Title card settings saved")
 
     def _build_thumbnail_card(self, job: VideoJob) -> None:
         frame, layout = card("Thumbnail", icon_name="image")
@@ -1561,6 +1574,9 @@ class PackagingView(QWidget):
 
         self._subtitle_threads[job.id] = (thread, worker)
         self._burning_subtitle_job_ids.add(job.id)
+        self._busy_tokens[("burn", job.id)] = begin_busy(
+            "Working: burning the subtitles..."
+        )
         self._subtitle_notices.pop(job.id, None)
         self._subtitle_notice_section[job.id] = section
         self._rebuild_all(job)
@@ -1575,8 +1591,10 @@ class PackagingView(QWidget):
 
         job_id = worker.job_id
         self._burning_subtitle_job_ids.discard(job_id)
+        end_busy(self._busy_tokens.pop(("burn", job_id), 0))
 
         if result.success and result.output_file:
+            notify_success("Subtitles burned into a copy")
             self._subtitle_notices[job_id] = (
                 "success",
                 f"Subtitles burned into a copy: {result.output_file}",
@@ -1600,6 +1618,7 @@ class PackagingView(QWidget):
 
         job_id = worker.job_id
         self._burning_subtitle_job_ids.discard(job_id)
+        end_busy(self._busy_tokens.pop(("burn", job_id), 0))
         self._subtitle_notices[job_id] = (
             "error",
             f"Subtitles were not burned: {message}",
@@ -1703,6 +1722,7 @@ class PackagingView(QWidget):
             return
 
         self._store_render_result_change(job, updated)
+        notify_success("Your edited video is now the finished video")
 
     def _handle_restore_app_render(self) -> None:
         job = self._current_job()
@@ -1718,6 +1738,7 @@ class PackagingView(QWidget):
             return
 
         self._store_render_result_change(job, updated)
+        notify_success("The app's own render is back")
 
     def _store_render_result_change(self, job: VideoJob, updated: RenderResult) -> None:
         assert self._job_id is not None
@@ -1891,9 +1912,7 @@ class PackagingView(QWidget):
         watermark_box.setToolTip(
             "Turn off to add only the end card or your CTA clip, with nothing over the video itself."
         )
-        # Counts the moment it is ticked: it only took effect after "Save CTA settings", and a variant
-        # generated without pressing it still carried the watermark (reported 2026-10-20).
-        watermark_box.toggled.connect(self._handle_watermark_toggled)
+        # Takes effect when "Save CTA settings" is pressed, like the other settings.
         layout.addWidget(watermark_box)
 
         layout.addWidget(small_muted("Watermark image (shown over the video)"))
@@ -1940,15 +1959,6 @@ class PackagingView(QWidget):
         )
         layout.addWidget(save_button, alignment=_LEFT)
 
-    def _handle_watermark_toggled(self, checked: bool) -> None:
-        job = self._current_job()
-
-        if job is None or job.cta_watermark_enabled == checked:
-            return
-
-        job.cta_watermark_enabled = checked
-        self._job_store.add(job)
-
     def _handle_browse_cta_file(
         self, display: QLineEdit, title: str, file_filter: str
     ) -> None:
@@ -1977,6 +1987,7 @@ class PackagingView(QWidget):
         job.cta_watermark_enabled = watermark_box.isChecked()
 
         self._on_change()
+        notify_success("CTA settings saved")
 
     def _build_export_variant_progress_state(self, layout: QVBoxLayout) -> None:
         layout.addWidget(subheading("Generating export variant..."))
@@ -2282,6 +2293,9 @@ class PackagingView(QWidget):
 
         self._export_variant_threads[job_id] = (thread, worker)
         self._generating_export_variant_job_ids.add(job_id)
+        self._busy_tokens[("variant", job_id)] = begin_busy(
+            "Working: making the export variant..."
+        )
 
         self._rebuild_all(job)
 
@@ -2320,6 +2334,8 @@ class PackagingView(QWidget):
 
         job_id = worker.job_id
         self._generating_export_variant_job_ids.discard(job_id)
+        end_busy(self._busy_tokens.pop(("variant", job_id), 0))
+        notify_success("Export variant ready")
 
         existing = self._job_store.get_export_variants(job_id)
         variants = list(existing.variants) if existing is not None else []
@@ -2340,6 +2356,7 @@ class PackagingView(QWidget):
 
         job_id = worker.job_id
         self._generating_export_variant_job_ids.discard(job_id)
+        end_busy(self._busy_tokens.pop(("variant", job_id), 0))
 
         job = self._job_store.get(job_id)
 

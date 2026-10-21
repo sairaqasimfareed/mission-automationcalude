@@ -4,7 +4,7 @@ from collections.abc import Callable
 from pathlib import Path
 from uuid import UUID
 
-from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QObject, Qt, QThread, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -33,6 +33,7 @@ from src.desktop.approval_mode_labels import (
 )
 from src.desktop.error_log_text import format_error_log
 from src.desktop.job_store import JobStore
+from src.desktop.notifications import begin_busy, end_busy, notify_success
 from src.desktop.recovery_dialog import show_recoverable_error
 from src.desktop.scroll_preservation import ScrollKeeper
 from src.desktop.views.reference_candidates_dialog import ReferenceCandidatesDialog
@@ -204,6 +205,12 @@ _MANUAL_HIDDEN_CI_STAGE_KEYS = _UPSTREAM_CI_STAGE_KEYS | frozenset(
 
 # Stages whose panel has its own buttons: no generic Run / Review row under them.
 _PANEL_ONLY_STAGES = frozenset({"scene_visuals", "references"})
+
+
+def _done_text(label: str) -> str:
+    """ "visual continuity bible" -> "Visual continuity bible - done"."""
+
+    return f"{label[:1].upper()}{label[1:]} - done"
 
 
 def _is_manual_content_mode(job: VideoJob) -> bool:
@@ -425,6 +432,9 @@ class ContentStudioView(QWidget):
         self._stage_threads: dict[UUID, tuple[QThread, _StageWorker]] = {}
         self._stage_done_callbacks: dict[UUID, Callable[[], None]] = {}
         self._stage_labels: dict[UUID, str] = {}
+        # The window-wide working bar's entries for the stages / automation running here.
+        self._busy_tokens: dict[UUID, int] = {}
+        self._automation_busy_tokens: dict[UUID, int] = {}
 
         # When supplied, the cinematic prompt section shows each scene as it
         # would actually be generated (split into clips, sized and worded
@@ -1583,7 +1593,7 @@ class ContentStudioView(QWidget):
         form.addRow("Pause after each line", hold_select)
 
         # How much room the video gives the viewer: lengthens the genre's pause after each line and
-        # slows the voice a little (Relaxed), or tightens both (Fast). Applied the moment it is chosen.
+        # slows the voice a little (Relaxed), or tightens both (Fast). Applied when "Save settings" is pressed.
         pace_select = QComboBox()
         pace_select.addItem("Relaxed - more room, slower voice", ProjectPace.RELAXED)
         pace_select.addItem("Normal (default)", ProjectPace.NORMAL)
@@ -1593,9 +1603,6 @@ class ContentStudioView(QWidget):
             "Relaxed adds a longer pause after each line (for clips made afterwards and when the "
             "video is rendered) and slows the voice slightly (for a voiceover made afterwards). "
             "A pause you set above is never changed by this."
-        )
-        pace_select.currentIndexChanged.connect(
-            lambda _index: self._handle_pace_changed(pace_select.currentData())
         )
         form.addRow("Pace", pace_select)
 
@@ -1616,14 +1623,6 @@ class ContentStudioView(QWidget):
             "that is not available the separate pieces are made instead."
         )
         form.addRow("Background music", music_mode_select)
-        # Applied the moment it is chosen: the choice used to count only after "Save settings", and a
-        # project whose choice was never saved kept making separate mood pieces (found live, Joan arc).
-        music_mode_select.currentIndexChanged.connect(
-            lambda _index: self._handle_music_mode_changed(
-                music_mode_select.currentData()
-            )
-        )
-
         approval_mode_select = QComboBox()
         approval_mode_select.addItems(list(_APPROVAL_MODE_PRESETS))
         approval_mode_select.setCurrentText(_approval_mode_label(job.approval_policy))
@@ -1671,6 +1670,7 @@ class ContentStudioView(QWidget):
                 target_country_input=target_country_input,
                 hold_select=hold_select,
                 music_mode_select=music_mode_select,
+                pace_select=pace_select,
             )
         )
         layout.addWidget(save_button, alignment=_LEFT)
@@ -1834,6 +1834,7 @@ class ContentStudioView(QWidget):
                 return
 
             self._on_change()
+            notify_success(_done_text(label))
 
             if on_done is not None:
                 on_done()
@@ -1864,6 +1865,7 @@ class ContentStudioView(QWidget):
 
         self._stage_threads[job.id] = (thread, worker)
         self._stage_labels[job.id] = label
+        self._busy_tokens[job.id] = begin_busy(f"Working: {label}...")
 
         self._on_change()
 
@@ -1876,9 +1878,13 @@ class ContentStudioView(QWidget):
             return
 
         job_id = worker.job_id
-        self._stage_labels.pop(job_id, None)
+        label = self._stage_labels.pop(job_id, None)
+        end_busy(self._busy_tokens.pop(job_id, 0))
         self._job_store.add(worker.job)
         on_done = self._stage_done_callbacks.pop(job_id, None)
+
+        if label:
+            notify_success(_done_text(label))
 
         if job_id == self._job_id:
             self._on_change()
@@ -1894,6 +1900,7 @@ class ContentStudioView(QWidget):
 
         job_id = worker.job_id
         self._stage_labels.pop(job_id, None)
+        end_busy(self._busy_tokens.pop(job_id, 0))
         self._stage_done_callbacks.pop(job_id, None)
         # Whatever the stage changed before failing is kept, as when it ran inline.
         self._job_store.add(worker.job)
@@ -1967,6 +1974,9 @@ class ContentStudioView(QWidget):
 
         self._automation_threads[job.id] = (thread, worker)
         self._automation_job_ids.add(job.id)
+        self._automation_busy_tokens[job.id] = begin_busy(
+            "Working: running the content stages..."
+        )
         self._automation_progress[job.id] = (
             "Running - each stage is saved as soon as it finishes."
         )
@@ -2008,8 +2018,10 @@ class ContentStudioView(QWidget):
 
         job_id = worker.job_id
         self._automation_job_ids.discard(job_id)
+        end_busy(self._automation_busy_tokens.pop(job_id, 0))
         self._automation_progress.pop(job_id, None)
         self._job_store.add(worker.job)
+        notify_success("Content stages finished")
 
         if job_id == self._job_id:
             self._on_change()
@@ -2022,6 +2034,7 @@ class ContentStudioView(QWidget):
 
         job_id = worker.job_id
         self._automation_job_ids.discard(job_id)
+        end_busy(self._automation_busy_tokens.pop(job_id, 0))
         self._automation_progress.pop(job_id, None)
 
         # Whatever the run finished before failing is kept: the failed job is the
@@ -5888,34 +5901,6 @@ class ContentStudioView(QWidget):
 
         return False
 
-    def _handle_pace_changed(self, chosen: object) -> None:
-        job = self._current_job()
-
-        try:
-            pace = ProjectPace(chosen)  # Qt hands a str-enum back as its plain value
-        except ValueError:
-            return
-
-        if job is None or job.pace == pace:
-            return
-
-        job.pace = pace
-        QTimer.singleShot(0, self._on_change)
-
-    def _handle_music_mode_changed(self, chosen: object) -> None:
-        job = self._current_job()
-
-        try:
-            mode = MusicMode(chosen)  # Qt hands a str-enum back as its plain value
-        except ValueError:
-            return
-
-        if job is None or job.music_mode == mode:
-            return
-
-        job.music_mode = mode
-        QTimer.singleShot(0, self._on_change)
-
     def _handle_reference_mode_changed(self, chosen: object) -> None:
         job = self._current_job()
 
@@ -7699,6 +7684,7 @@ class ContentStudioView(QWidget):
         video_provider_select: QComboBox | None = None,
         hold_select: QComboBox | None = None,
         music_mode_select: QComboBox | None = None,
+        pace_select: QComboBox | None = None,
     ) -> None:
         job = self._current_job()
 
@@ -7734,6 +7720,8 @@ class ContentStudioView(QWidget):
                 job.scene_hold_seconds = hold_select.currentData()
             if music_mode_select is not None:
                 job.music_mode = MusicMode(music_mode_select.currentData())
+            if pace_select is not None:
+                job.pace = ProjectPace(pace_select.currentData())
             job.approval_policy = _APPROVAL_MODE_PRESETS[
                 approval_mode_select.currentText()
             ]()
@@ -7756,12 +7744,14 @@ class ContentStudioView(QWidget):
                     target_country_input=target_country_input,
                     hold_select=hold_select,
                     music_mode_select=music_mode_select,
+                    pace_select=pace_select,
                 ),
             )
 
             return
 
         self._on_change()
+        notify_success("Project settings saved")
 
     def _handle_plan_scenes(self) -> None:
         job = self._current_job()

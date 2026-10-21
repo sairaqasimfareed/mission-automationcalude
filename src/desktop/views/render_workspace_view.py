@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.desktop.job_store import JobStore
+from src.desktop.notifications import begin_busy, end_busy, notify_success
 from src.desktop.recovery_dialog import show_recoverable_error
 from src.desktop.scroll_preservation import keep_scroll_on_refresh
 from src.desktop.widgets import (
@@ -193,6 +194,7 @@ class RenderWorkspaceView(QWidget):
         self._policy_service = PolicyService()
         self._render_threads: dict[UUID, tuple[QThread, _RenderWorker]] = {}
         self._rendering_job_ids: set[UUID] = set()
+        self._busy_tokens: dict[UUID, int] = {}
 
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -1028,6 +1030,7 @@ class RenderWorkspaceView(QWidget):
 
         self._render_threads[job_id] = (thread, worker)
         self._rendering_job_ids.add(job_id)
+        self._busy_tokens[job_id] = begin_busy("Working: rendering the video...")
 
         # Show the in-progress state immediately - nothing else will
         # refresh this workspace until the render finishes.
@@ -1071,6 +1074,10 @@ class RenderWorkspaceView(QWidget):
             return
 
         self._rendering_job_ids.discard(job_id)
+        end_busy(self._busy_tokens.pop(job_id, 0))
+
+        if result.success:
+            notify_success("Render finished")
 
         if result.success:
             # Run the quality/policy check automatically as soon as
@@ -1100,6 +1107,7 @@ class RenderWorkspaceView(QWidget):
         job_id = worker.job_id
         user_input = worker.user_input
         self._rendering_job_ids.discard(job_id)
+        end_busy(self._busy_tokens.pop(job_id, 0))
 
         job = self._job_store.get(job_id)
 

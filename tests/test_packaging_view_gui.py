@@ -1884,7 +1884,7 @@ def test_the_edited_video_card_uses_a_chosen_file_and_can_bring_the_render_back(
     assert output.read_bytes() == b"app render"
 
 
-def test_unticking_the_watermark_counts_without_pressing_save(
+def test_unticking_the_watermark_takes_effect_only_when_saved(
     qapp: QApplication, tmp_path: Path
 ) -> None:
     view, job = _view_with_render_result(tmp_path, _FakeExportVariantRenderService())
@@ -1895,5 +1895,11 @@ def test_unticking_the_watermark_counts_without_pressing_save(
     )
 
     box.setChecked(False)
+
+    assert view._job_store.get(job.id).cta_watermark_enabled is True
+
+    next(
+        b for b in view.findChildren(QPushButton) if b.text() == "Save CTA settings"
+    ).click()
 
     assert view._job_store.get(job.id).cta_watermark_enabled is False

@@ -7,6 +7,7 @@ from uuid import UUID
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QFrame,
     QHBoxLayout,
@@ -17,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.desktop.job_store import JobStore
+from src.desktop.notifications import begin_busy, end_busy, notify_success
 from src.desktop.recovery_dialog import show_recoverable_error
 from src.desktop.scroll_preservation import keep_scroll_on_refresh
 from src.desktop.widgets import (
@@ -64,6 +66,35 @@ _COMPONENT_STATUS_ROLE = {
     AudioComponentStatus.MANUAL_REQUIRED: "warning",
     AudioComponentStatus.FAILED: "error",
 }
+
+
+def _announced(label: str, done: str):
+    """Show "Working: <label>..." in the window's bar while the action runs (these calls run on the window's own
+    thread, so the bar is painted first) and a "<done>" message afterwards - unless the action recorded an
+    error, which has its own dialog."""
+
+    def decorate(action):
+        def wrapper(self, *args, **kwargs):
+            job = self._current_job()
+            errors_before = len(job.errors) if job is not None else 0
+            token = begin_busy(f"Working: {label}...")
+            QApplication.processEvents()
+
+            try:
+                result = action(self, *args, **kwargs)
+            finally:
+                end_busy(token)
+
+            job = self._current_job()
+
+            if job is None or len(job.errors) == errors_before:
+                notify_success(done)
+
+            return result
+
+        return wrapper
+
+    return decorate
 
 
 class ProductionAudioView(QWidget):
@@ -750,6 +781,7 @@ class ProductionAudioView(QWidget):
 
         return segment.estimated_cost_usd(segment_duration_seconds=span_seconds)
 
+    @_announced("generating the sound effect", "Sound effect generated")
     def _handle_generate_sfx_cue(self, job: VideoJob, cue_id: str) -> None:
         try:
             self._media_generation_pipeline.generate_single_sfx_cue(job, cue_id)
@@ -760,6 +792,7 @@ class ProductionAudioView(QWidget):
 
         self._on_change()
 
+    @_announced("generating the sound effects", "Sound effects generated")
     def _handle_generate_all_sfx(self, job: VideoJob) -> None:
         plan = job.sound_design_plan
 
@@ -782,6 +815,7 @@ class ProductionAudioView(QWidget):
 
         self._on_change()
 
+    @_announced("generating the music piece", "Music piece generated")
     def _handle_generate_music_segment(self, job: VideoJob, segment_id: str) -> None:
         try:
             self._media_generation_pipeline.generate_single_music_segment(
@@ -861,6 +895,7 @@ class ProductionAudioView(QWidget):
             if str(track.id) != audio_track_id
         ]
 
+    @_announced("generating the music", "Music generated")
     def _handle_generate_all_music(self, job: VideoJob) -> None:
         plan = job.sound_design_plan
 
@@ -1021,6 +1056,7 @@ class ProductionAudioView(QWidget):
             "Sound effect generation",
         )
 
+    @_announced("generating the voiceover, music and sound effects", "Audio generated")
     def _handle_run_all_audio(self) -> None:
         job = self._current_job()
 
@@ -1041,9 +1077,13 @@ class ProductionAudioView(QWidget):
         if job is None:
             return
 
+        token = begin_busy(f"Working: {label.lower()}...")
+        QApplication.processEvents()
+
         try:
             stage(job)
         except (RuntimeError, ValueError) as error:
+            end_busy(token)
             self._record_error(
                 job,
                 f"{label} failed: {error}",
@@ -1052,7 +1092,9 @@ class ProductionAudioView(QWidget):
 
             return
 
+        end_busy(token)
         self._on_change()
+        notify_success(f"{label} finished")
 
     def _current_job(self) -> VideoJob | None:
         if self._job_id is None:

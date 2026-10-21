@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 
 from src.desktop.icons import icon
 from src.desktop.job_store import JobStore
+from src.desktop.notifications import begin_busy, end_busy, notify_success
 from src.desktop.recovery_dialog import show_recoverable_error
 from src.desktop.scroll_preservation import keep_scroll_on_refresh
 from src.desktop.views.reference_candidates_dialog import ReferenceCandidatesDialog
@@ -479,6 +480,7 @@ class ClipWorkspaceView(QWidget):
         # preserve older call sites" convention.
         self._scene_video_generation_service = scene_video_generation_service
         self._generating_job_ids: set[UUID] = set()
+        self._busy_tokens: dict[UUID, int] = {}
         self._generation_threads: dict[
             UUID, tuple[QThread, _SceneVideoGenerationWorker]
         ] = {}
@@ -2067,6 +2069,7 @@ class ClipWorkspaceView(QWidget):
         sync_real_narration_durations(job, overwrite=True)
         self._job_store.add(job)
         self._on_change()
+        notify_success("Clip lengths refreshed")
 
     def _handle_generate_all_scene_videos(self) -> None:
         job = self._current_job()
@@ -2143,6 +2146,7 @@ class ClipWorkspaceView(QWidget):
 
         self._generation_threads[job_id] = (thread, worker)
         self._generating_job_ids.add(job_id)
+        self._busy_tokens[job_id] = begin_busy("Working: generating clips...")
 
         self._rebuild_card(job)
 
@@ -2173,6 +2177,8 @@ class ClipWorkspaceView(QWidget):
 
         job_id = worker.job_id
         self._generating_job_ids.discard(job_id)
+        end_busy(self._busy_tokens.pop(job_id, 0))
+        notify_success("Clip generation finished")
 
         # Unconditional for the same reason as
         # _handle_scene_generation_progress - the worker's job holds
@@ -2192,6 +2198,7 @@ class ClipWorkspaceView(QWidget):
         job_id = worker.job_id
         scene_number = worker.scene_number
         self._generating_job_ids.discard(job_id)
+        end_busy(self._busy_tokens.pop(job_id, 0))
 
         job = worker.job
         job.errors.append(f"Scene video generation failed: {message}")

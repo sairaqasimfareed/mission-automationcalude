@@ -349,7 +349,7 @@ def test_saving_settings_stores_real_enums_not_plain_strings(
         job.model_dump_json()
 
 
-def test_choosing_one_continuous_music_track_counts_without_saving_settings(
+def test_the_music_choice_takes_effect_when_settings_are_saved_not_before(
     qapp: QApplication,
 ) -> None:
     from PySide6.QtCore import QCoreApplication
@@ -371,10 +371,16 @@ def test_choosing_one_continuous_music_track_counts_without_saving_settings(
     combo.setCurrentIndex(combo.findData(MusicMode.CONTINUOUS))
     QCoreApplication.processEvents()
 
+    assert store.get(job.id).music_mode != MusicMode.CONTINUOUS
+
+    _button(view, "Save settings").click()
+
     assert store.get(job.id).music_mode == MusicMode.CONTINUOUS
 
 
-def test_choosing_a_pace_counts_without_saving_settings(qapp: QApplication) -> None:
+def test_the_pace_takes_effect_when_settings_are_saved_not_before(
+    qapp: QApplication,
+) -> None:
     from PySide6.QtCore import QCoreApplication
 
     from src.models.project_pace import ProjectPace
@@ -393,6 +399,10 @@ def test_choosing_a_pace_counts_without_saving_settings(qapp: QApplication) -> N
     )
     combo.setCurrentIndex(combo.findData(ProjectPace.RELAXED))
     QCoreApplication.processEvents()
+
+    assert store.get(job.id).pace == ProjectPace.NORMAL
+
+    _button(view, "Save settings").click()
 
     assert store.get(job.id).pace == ProjectPace.RELAXED
 
