@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 import zipfile
 from collections.abc import Callable
@@ -22,13 +23,23 @@ from src.providers.external_ui_generation_provider import (
     ExternalUIOperation,
 )
 from src.providers.google_flow.locators import GoogleFlowRealAccessibleNames
-from src.shared.logger import logger
 
 # Matches GoogleFlowUIAdapter's own local-storage convention
 # (src/providers/google_flow/adapter.py's DEFAULT_FLOW_DOWNLOAD_ROOT) -
 # a shared download tree for both adapters is intentional, since both
 # ultimately download the same kind of provider-neutral artifact.
 DEFAULT_FLOW_DOWNLOAD_ROOT = Path("data/google_flow_downloads")
+
+
+def _any_label(*labels: str) -> re.Pattern[str]:
+    """A button name that matches exactly any of `labels` (case-insensitive): Flow renamed "Download batch"
+    to "Download" and "Trash batch" to "Move batch to bin" (live, 2026-10-21), and an exact match keeps
+    "Download" from also matching a longer label."""
+
+    return re.compile(
+        "^(" + "|".join(re.escape(label) for label in labels) + ")$", re.IGNORECASE
+    )
+
 
 # Real, verified vocabulary -> the real settings popover's own radio
 # accessible names, per docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md section 4.
@@ -662,7 +673,11 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
                 )
 
             download_button = batch.get_by_role(
-                "button", name=self._names.download_batch_button
+                "button",
+                name=_any_label(
+                    self._names.download_batch_button,
+                    self._names.download_batch_button_legacy,
+                ),
             )
 
             # Real-world symptom observed, 2026-09-28: a real download
@@ -973,12 +988,6 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
                         "without confirming attachment (GF-17)."
                     ) from error
 
-                logger.warning(
-                    "Attaching %s timed out (%s) but the reference is in the prompt box - carrying on.",
-                    source_path.name,
-                    type(error).__name__,
-                )
-
             attached_indicator = page.locator(
                 self._names.reference_attached_indicator_css
             )
@@ -1188,7 +1197,13 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
         topmost = all_batches.first
 
         if (
-            topmost.get_by_role("button", name=self._names.trash_batch_button).count()
+            topmost.get_by_role(
+                "button",
+                name=_any_label(
+                    self._names.trash_batch_button,
+                    self._names.trash_batch_button_legacy,
+                ),
+            ).count()
             == 0
         ):
             # Our own tile exists but has not finished rendering yet -

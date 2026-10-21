@@ -250,12 +250,22 @@ class _FakeBatch:
         self.has_trash_button = has_trash_button
 
     def get_by_role(
-        self, role: str, name: str | None = None, exact: bool = False
+        self, role: str, name: object = None, exact: bool = False
     ) -> _FakeLocator:
-        if (role, name) == ("button", "Download batch"):
+        def named(label: str) -> bool:
+            if hasattr(name, "search"):  # a compiled pattern, as the adapter passes now
+                return bool(name.search(label))  # type: ignore[union-attr]
+
+            return name == label
+
+        if role == "button" and (named("Download batch") or named("Download")):
             return self._download_button
 
-        if (role, name) == ("button", "Trash batch") and self.has_trash_button:
+        if (
+            role == "button"
+            and (named("Trash batch") or named("Move batch to bin"))
+            and self.has_trash_button
+        ):
             return _FakeLocator()
 
         return _MISSING
@@ -1835,3 +1845,15 @@ def test_a_timeout_with_nothing_attached_is_still_refused(tmp_path: Path) -> Non
     result = adapter.submit(request, _attempt(request))
 
     assert result.state == GoogleFlowGenerationState.UI_CHANGED
+
+
+def test_the_renamed_flow_buttons_are_recognised() -> None:
+    from src.providers.google_flow.real_adapter import _any_label
+
+    done = _any_label("Move batch to bin", "Trash batch")
+    download = _any_label("Download", "Download batch")
+
+    assert done.search("Move batch to bin") and done.search("Trash batch")
+    assert not done.search("Reuse prompt")
+    assert download.search("Download") and download.search("Download batch")
+    assert not download.search("Download all")

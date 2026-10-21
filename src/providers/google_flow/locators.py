@@ -259,7 +259,9 @@ class GoogleFlowRealAccessibleNames(BaseModel):
     # element (one per completed batch/tile, alongside sibling
     # "Reuse prompt"/"Trash batch" buttons) - no hover, no submenu,
     # fires a real download on one click.
-    download_batch_button: str = "Download batch"
+    download_batch_button: str = "Download"
+    # The label before Flow renamed it (2026-10-21): still accepted, so an older Flow page keeps working.
+    download_batch_button_legacy: str = "Download batch"
 
     # Real-world finding, 2026-09-28: confirmed via a real DevTools
     # inspection that a still-generating batch's own <flow-batch-info>
@@ -276,7 +278,10 @@ class GoogleFlowRealAccessibleNames(BaseModel):
     # completeness checked on that same tile - never search-then-
     # filter for any completed batch, which can return an older,
     # unrelated one instead).
-    trash_batch_button: str = "Trash batch"
+    trash_batch_button: str = "Move batch to bin"
+    # The label before Flow renamed it (2026-10-21; confirmed from a live page: its buttons are "Reuse
+    # prompt", "Download" and "Move batch to bin"): still accepted.
+    trash_batch_button_legacy: str = "Trash batch"
 
     # Agent settings (docs/GOOGLE_FLOW_REAL_UI_FINDINGS.md section 4a):
     # confirmed to be the SAME "Settings trigger" popover, showing this
