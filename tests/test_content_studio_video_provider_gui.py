@@ -418,3 +418,79 @@ def test_the_settings_duration_accepts_less_than_thirty_seconds(
 
     assert spin.minimum() == 5
     assert spin.value() == 15
+
+
+def _stage_labels(view: ContentStudioView) -> list[str]:
+    labels = {
+        "Audience promise",
+        "Research plan",
+        "Research",
+        "Story angles",
+        "Narrative architecture",
+        "Retention audit",
+        "Hooks",
+        "Directives",
+        "Script",
+        "Continuity bible",
+        "Editorial critique",
+        "Quality gate",
+        "Revision",
+        "Packaging hypothesis",
+        "Scene planning",
+        "Scene visuals",
+        "Characters and places",
+        "Production readiness",
+    }
+
+    return [b.text() for b in view.findChildren(QPushButton) if b.text() in labels]
+
+
+def test_manual_content_mode_hides_the_stages_a_pasted_script_does_not_use(
+    qapp: QApplication,
+) -> None:
+    from PySide6.QtWidgets import QCheckBox
+
+    from src.models.enums import ScriptOrigin
+
+    store = InMemoryJobStore()
+    job = _job()
+    job.script_origin = ScriptOrigin.EXTERNAL
+    store.add(job)
+    view = _view(store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    shown = _stage_labels(view)
+
+    assert "Script" in shown and "Scene planning" in shown
+    for hidden in (
+        "Audience promise",
+        "Research",
+        "Hooks",
+        "Directives",
+        "Editorial critique",
+        "Quality gate",
+        "Revision",
+        "Packaging hypothesis",
+    ):
+        assert hidden not in shown
+
+    next(
+        b for b in view.findChildren(QCheckBox) if b.text() == "Show all stages"
+    ).setChecked(True)
+
+    assert "Research" in _stage_labels(view)
+    assert "Quality gate" in _stage_labels(view)
+
+
+def test_auto_content_mode_keeps_every_stage_tab(qapp: QApplication) -> None:
+    store = InMemoryJobStore()
+    job = _job()
+    store.add(job)
+    view = _view(store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    shown = _stage_labels(view)
+
+    assert "Research" in shown and "Quality gate" in shown and "Script" in shown

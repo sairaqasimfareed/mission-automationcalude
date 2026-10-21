@@ -196,6 +196,12 @@ _UPSTREAM_CI_STAGE_KEYS = frozenset(
 )
 
 
+# Manual Content mode: the tab row hides the stages a pasted script does not use (everything before the
+# script, and the generated-script checks), so the row fits the window. "Show all stages" brings them back.
+_MANUAL_HIDDEN_CI_STAGE_KEYS = _UPSTREAM_CI_STAGE_KEYS | frozenset(
+    {"editorial_critique", "quality_gate", "revision", "packaging_hypothesis"}
+)
+
 # Stages whose panel has its own buttons: no generic Run / Review row under them.
 _PANEL_ONLY_STAGES = frozenset({"scene_visuals", "references"})
 
@@ -435,6 +441,8 @@ class ContentStudioView(QWidget):
         self._on_change = on_change
         self._job_id: UUID | None = None
         self._selected_ci_stage_index = 0
+        # View preference only (not a fact about the video): show every stage tab in Manual Content mode.
+        self._show_all_ci_stages = False
         # Tracked separately from _job_id (which set_job() already
         # updates before refresh() runs) - see refresh()'s own
         # docstring for why this distinction is what makes scroll-
@@ -1681,10 +1689,31 @@ class ContentStudioView(QWidget):
 
         self._render_automation_status(layout, job)
 
+        hide_stages = _is_manual_content_mode(job) and not self._show_all_ci_stages
+
+        if hide_stages and _CI_STAGES[self._selected_ci_stage_index][0] in (
+            _MANUAL_HIDDEN_CI_STAGE_KEYS
+        ):
+            self._selected_ci_stage_index = next(
+                i for i, (key, _label) in enumerate(_CI_STAGES) if key == "script"
+            )
+
+        if _is_manual_content_mode(job):
+            show_all_box = QCheckBox("Show all stages")
+            show_all_box.setChecked(self._show_all_ci_stages)
+            show_all_box.setToolTip(
+                "Manual Content mode hides the stages a pasted script does not use."
+            )
+            show_all_box.toggled.connect(self._handle_show_all_stages_toggled)
+            layout.addWidget(show_all_box)
+
         stage_row = QHBoxLayout()
         stage_row.setSpacing(6)
 
-        for index, (_key, label) in enumerate(_CI_STAGES):
+        for index, (key, label) in enumerate(_CI_STAGES):
+            if hide_stages and key in _MANUAL_HIDDEN_CI_STAGE_KEYS:
+                continue
+
             is_selected = index == self._selected_ci_stage_index
             stage_button = button(label, variant="primary" if is_selected else "ghost")
             stage_button.clicked.connect(
@@ -6841,6 +6870,13 @@ class ContentStudioView(QWidget):
             return
 
         self._on_change()
+
+    def _handle_show_all_stages_toggled(self, checked: bool) -> None:
+        self._show_all_ci_stages = checked
+        job = self._current_job()
+
+        if job is not None:
+            self.refresh(job)
 
     def _handle_select_ci_stage(self, index: int) -> None:
         self._selected_ci_stage_index = index
