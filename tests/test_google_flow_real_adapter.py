@@ -1770,3 +1770,68 @@ def test_orchestrator_reports_auth_required_via_a_real_adapter() -> None:
     assert (
         job.flow_generation_attempts[0].state == GoogleFlowGenerationState.AUTH_REQUIRED
     )
+
+
+class _ChipThatAppearsOnClick(_FakeLocator):
+    """The attached-reference chip: absent until the 'Add to prompt' click, like the real page."""
+
+    def __init__(self) -> None:
+        super().__init__(count=0)
+
+    def appear(self) -> None:
+        self._count = 1
+
+
+class _ClickThatWorksButTimesOut(_FakeLocator):
+    """Clicking works (the chip shows up) but Playwright's follow-up checks time out - a throttled laptop."""
+
+    def __init__(self, chip: _ChipThatAppearsOnClick) -> None:
+        super().__init__()
+        self._chip = chip
+
+    def click(self, timeout: float | None = None) -> None:
+        self._chip.appear()
+
+        raise PlaywrightError("Timeout 30000ms exceeded.")
+
+
+def test_a_late_timeout_after_the_reference_is_already_in_the_prompt_box_is_not_a_failure(
+    tmp_path: Path,
+) -> None:
+    """Live, 2026-10-21: the picture was in Flow's prompt box, but the click's own timeout stopped the scene."""
+
+    reference_file = tmp_path / "hero.png"
+    reference_file.write_bytes(b"fake reference image bytes")
+
+    page = _authenticated_page()
+    _register_ingredients_flow_controls(page)
+    chip = _ChipThatAppearsOnClick()
+    page.register_css(".prompt-ingredient-bar img.chip-image", chip)
+    page.register_css(".detail-add-to-prompt-btn", _ClickThatWorksButTimesOut(chip))
+    adapter = _adapter(page)
+    request = _request(reference_assets=[_reference_asset(str(reference_file))])
+
+    result = adapter.submit(request, _attempt(request))
+
+    assert result.state == GoogleFlowGenerationState.GENERATING
+
+
+def test_a_timeout_with_nothing_attached_is_still_refused(tmp_path: Path) -> None:
+    reference_file = tmp_path / "hero.png"
+    reference_file.write_bytes(b"fake reference image bytes")
+
+    page = _authenticated_page()
+    _register_ingredients_flow_controls(page)
+    page.register_css(".prompt-ingredient-bar img.chip-image", _FakeLocator(count=0))
+
+    class _AlwaysTimesOut(_FakeLocator):
+        def click(self, timeout: float | None = None) -> None:
+            raise PlaywrightError("Timeout 30000ms exceeded.")
+
+    page.register_css(".detail-add-to-prompt-btn", _AlwaysTimesOut())
+    adapter = _adapter(page)
+    request = _request(reference_assets=[_reference_asset(str(reference_file))])
+
+    result = adapter.submit(request, _attempt(request))
+
+    assert result.state == GoogleFlowGenerationState.UI_CHANGED

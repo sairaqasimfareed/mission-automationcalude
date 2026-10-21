@@ -22,6 +22,7 @@ from src.providers.external_ui_generation_provider import (
     ExternalUIOperation,
 )
 from src.providers.google_flow.locators import GoogleFlowRealAccessibleNames
+from src.shared.logger import logger
 
 # Matches GoogleFlowUIAdapter's own local-storage convention
 # (src/providers/google_flow/adapter.py's DEFAULT_FLOW_DOWNLOAD_ROOT) -
@@ -891,6 +892,9 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
                     "a fallback click sequence (GF-17)."
                 )
 
+            indicator_css = self._names.reference_attached_indicator_css
+            indicators_before = page.locator(indicator_css).count()
+
             try:
                 add_ingredients.click(timeout=self._action_timeout_ms)
 
@@ -953,12 +957,27 @@ class GoogleFlowRealUIAdapter(ExternalUIGenerationProvider):
                     timeout=self._action_timeout_ms
                 )
             except PlaywrightError as error:
-                raise _ReferenceAssetAttachmentFailedError(
-                    f"The real Add ingredients flow did not behave as "
-                    f"confirmed while attaching {source_path} - "
-                    f"{type(error).__name__}. Refusing to proceed "
-                    "without confirming attachment (GF-17)."
-                ) from error
+                # A step can time out AFTER it worked: live, 2026-10-21, a throttled laptop (CPU at 500 MHz)
+                # timed out on the "Add to prompt" click's own follow-up checks while the picture was already
+                # in the prompt box, and the whole scene stopped. Give the page a moment, and only when one
+                # more attached-reference chip really is there than before this reference started carry on
+                # (the chip is the same confirmation GF-17 asks for below); otherwise it is the failure it
+                # always was.
+                page.wait_for_timeout(2000)
+
+                if page.locator(indicator_css).count() <= indicators_before:
+                    raise _ReferenceAssetAttachmentFailedError(
+                        f"The real Add ingredients flow did not behave as "
+                        f"confirmed while attaching {source_path} - "
+                        f"{type(error).__name__}. Refusing to proceed "
+                        "without confirming attachment (GF-17)."
+                    ) from error
+
+                logger.warning(
+                    "Attaching %s timed out (%s) but the reference is in the prompt box - carrying on.",
+                    source_path.name,
+                    type(error).__name__,
+                )
 
             attached_indicator = page.locator(
                 self._names.reference_attached_indicator_css
