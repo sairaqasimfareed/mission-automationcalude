@@ -1886,3 +1886,43 @@ def test_a_render_without_subtitles_still_keeps_their_lines_for_later() -> None:
     assert all(
         cue.end_seconds > cue.start_seconds for cue in job.render_result.subtitle_cues
     )
+
+
+def test_voice_is_on_its_scene_start_before_stage_one_checks_the_audio_against_the_video(
+    tmp_path: Path,
+) -> None:
+    """A fresh project on another machine: voice laid end to end ended later than the picture, and Stage 1's
+    readiness check ("The audio timeline exceeds the video duration") refused to render.
+    """
+
+    job = _staged_job_with_real_cues()
+    job.audio_timeline = AudioTimeline(tracks=[_audio_tab_voice(start=5.0)])
+    target = tmp_path / "final_video.mp4"
+
+    seen_at_stage_one: list[float] = []
+    production = MagicMock()
+    production.output_file = target.as_posix()
+
+    def stage_one(**kwargs: object) -> object:
+        timeline = kwargs["audio_timeline"]
+        seen_at_stage_one.extend(
+            track.start_time_seconds
+            for track in timeline.tracks  # type: ignore[attr-defined]
+        )
+
+        return _staged_stage1_result(output_file=(tmp_path / "x.stage1.mp4").as_posix())
+
+    production.render_video_only.side_effect = stage_one
+    mux = MagicMock()
+    mux.mux.return_value = _ok_result(target.as_posix())
+
+    RenderPipelineStage(
+        production_render_service=production,
+        voice_blueprints=[_staged_voice_blueprint()],
+        subtitles_enabled=False,
+        audio_mux_render_service=mux,
+        subtitle_burn_service=MagicMock(),
+    ).execute(build_context(job))
+
+    # the first scene starts at 0.0 in the picture; the voice must already be there, not at 5.0
+    assert seen_at_stage_one == [0.0]

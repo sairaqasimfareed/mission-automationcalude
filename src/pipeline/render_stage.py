@@ -645,6 +645,25 @@ class RenderPipelineStage(BasePipelineStage):
         Stage 2's result would otherwise have been used.
         """
 
+        # Stage 1 checks that the audio timeline does not run past the picture ("Master edit plan is not ready
+        # for rendering. The audio timeline exceeds the video duration ..."). Voice made on the Audio tab is
+        # laid end to end before any picture exists, so it can end later than the clips do - a clip shorter than
+        # its voice, a silent scene's clip shorter than assumed - and a fresh project on another machine could
+        # not render at all. Put the audio on the scene starts the picture will really have BEFORE that check
+        # (the same placement is made again from the encoded video's own timings below).
+        planned_timings = ProductionRenderService._compute_real_scene_timings(
+            video_timeline=video_timeline,
+            transition_duration_seconds=self._transition_duration_seconds,
+        )
+
+        for timeline in (unfiltered_audio_timeline, muxed_audio_timeline):
+            realign_audio_to_scene_timings(
+                timeline,
+                video_timeline=video_timeline,
+                scene_timings=planned_timings,
+                sound_design_plan=sound_design_plan,
+            )
+
         stage1_output_file = self._stage_output_file(target_output_file, "stage1")
 
         stage1_result = production_render_service.render_video_only(
