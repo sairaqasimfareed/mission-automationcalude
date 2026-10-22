@@ -37,7 +37,7 @@ from src.services.reference_picture_service import (
     is_operator_picture,
     picture_is_attachable,
 )
-from src.services.reference_status import reference_status
+from src.services.reference_status import identities_by_name, reference_status
 from src.services.scene_reference_override import (
     OVERRIDE_LABEL,
     override_reference_for_scene,
@@ -483,7 +483,7 @@ class SceneReferenceService:
                 has_override=False,
             )
 
-        by_name = {identity.name: identity for identity in bible.identities}
+        by_name = identities_by_name(bible.identities)
         parts: list[str] = []
         with_reference = 0
         image_path: str | None = None

@@ -24,6 +24,26 @@ class ReferenceStatus:
     text: str
 
 
+def identities_by_name(
+    identities: list[CanonicalEntityIdentity],
+) -> dict[str, CanonicalEntityIdentity]:
+    """One identity per name. The bible can hold the same name twice (Salem had three
+    "Bridget Bishop"); the one that has a picture wins, so a plain name-to-identity map built
+    in list order no longer lets an empty duplicate hide the picture."""
+
+    found: dict[str, CanonicalEntityIdentity] = {}
+
+    for identity in identities:
+        current = found.get(identity.name)
+
+        if current is None or (
+            not current.reference_asset_ids and identity.reference_asset_ids
+        ):
+            found[identity.name] = identity
+
+    return found
+
+
 def reference_status(
     job: VideoJob, identity: CanonicalEntityIdentity
 ) -> ReferenceStatus:
@@ -50,6 +70,17 @@ def reference_status(
             from_scene=None,
             chosen_by_operator=False,
             text="Reference picture attached, but its image file is missing.",
+        )
+
+    if asset.metadata.get("uploaded_by_operator"):
+        # The operator's own file: no scene it was "taken from" (the stored scene number is only
+        # the scene it was attached under).
+        return ReferenceStatus(
+            has_reference=True,
+            image_path=asset.file_path,
+            from_scene=None,
+            chosen_by_operator=True,
+            text="Reference: the picture you uploaded.",
         )
 
     scene = asset.metadata.get("scene_number")

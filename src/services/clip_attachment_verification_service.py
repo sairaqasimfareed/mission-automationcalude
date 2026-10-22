@@ -29,6 +29,7 @@ from src.services.frame_extraction_service import FrameExtractionService
 from src.services.media_technical_validation_service import (
     MediaTechnicalValidationService,
 )
+from src.services.reference_status import identities_by_name
 from src.services.scene_reference_override import OVERRIDE_LABEL
 from src.services.scene_visual_treatment import effective_on_screen_names
 from src.services.video_provider_rules import MUSE_MIN_CLIP_SECONDS
@@ -380,7 +381,7 @@ class ClipAttachmentVerificationService:
         if sent is None:
             return
 
-        by_name = {identity.name: identity for identity in bible.identities}
+        by_name = identities_by_name(bible.identities)
 
         for name in on_screen_names:
             identity = by_name.get(name)

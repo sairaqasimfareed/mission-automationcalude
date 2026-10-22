@@ -234,3 +234,34 @@ def test_an_identity_in_no_scene_says_so_and_has_no_picker(qapp) -> None:  # typ
 
     assert "Choose a reference frame" not in _buttons(holder)
     assert any("Not in any scene yet" in t for t in _texts(holder))
+
+
+def test_an_uploaded_picture_says_it_is_yours_and_names_no_scene(
+    tmp_path: Path,
+) -> None:
+    job = _job()
+    identity = _identity(job)
+    _attach(job, tmp_path, identity, uploaded_by_operator=True, scene_number=3)
+
+    status = reference_status(job, identity)
+
+    assert status.from_scene is None
+    assert status.chosen_by_operator is True
+    assert status.text == "Reference: the picture you uploaded."
+
+
+def test_the_identity_that_has_a_picture_wins_over_an_empty_duplicate_of_its_name(
+    tmp_path: Path,
+) -> None:
+    from src.services.reference_status import identities_by_name
+
+    job = _job()
+    identity = _identity(job)
+    _attach(job, tmp_path, identity, uploaded_by_operator=True)
+    assert job.visual_continuity_bible is not None
+    duplicate = identity.model_copy(update={"reference_asset_ids": []})
+    job.visual_continuity_bible.identities.append(duplicate)
+
+    found = identities_by_name(job.visual_continuity_bible.identities)
+
+    assert found[identity.name].reference_asset_ids == identity.reference_asset_ids

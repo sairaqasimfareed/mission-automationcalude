@@ -1124,3 +1124,5 @@ ElevenLabs credits; ElevenLabs was at zero on 2026-10-07).
 
 - Google Flow, or any browser automation targeting Google Flow's web UI.
   See `AGENTS.md`.
+
+- **Duplicate identities in the continuity bible (2026-10-22):** Salem's bible had "Bridget Bishop" three times (only one with a picture). Lookups by name now prefer the one with a picture, but the extraction that creates the duplicates was not investigated, and the Content tab still lists each duplicate as its own character.
