@@ -71,6 +71,11 @@ from src.services.scene_reference_override import (
     override_reference_for_scene,
 )
 from src.services.scene_visual_treatment import effective_on_screen_names
+from src.services.split_scene_parts import (
+    best_ready_part_attempts,
+    planned_part_count,
+    scene_is_attached,
+)
 from src.services.video_provider_rules import (
     MUSE_CLIP_DURATION_SECONDS,
     MUSE_MIN_CLIP_SECONDS,
@@ -598,6 +603,43 @@ class MuseSceneVideoGenerationService:
             return None
 
         return result.asset.file_path
+
+    def attach_generated_parts(self, job: VideoJob, scene_number: int) -> bool:
+        """
+        Attach a scene whose parts have all already been generated and
+        downloaded, without calling Muse again. A scene is attached only
+        when every part is ready, and the newest attempt of a part can be a
+        failed one (a Regenerate that went nowhere) even though an earlier
+        try of that same part finished and its file is still on disk - the
+        scene then stays unattached although nothing is missing. This takes
+        each part's latest FINISHED attempt instead. Returns False when
+        the scene is already attached or some part has no finished file.
+        """
+
+        scene = next((s for s in job.scenes if s.scene_number == scene_number), None)
+
+        if scene is None:
+            raise ValueError(f"Job has no scene numbered {scene_number}.")
+
+        if scene_is_attached(job, scene_number):
+            return False
+
+        attempts = best_ready_part_attempts(
+            job.muse_generation_attempts,
+            scene_number,
+            MuseGenerationState.READY,
+            planned_part_count(job, scene),
+        )
+
+        if attempts is None:
+            return False
+
+        if len(attempts) == 1:
+            self._attach(job, scene, attempts[0])
+        else:
+            self._attach_split_scene(job, scene, attempts)
+
+        return True
 
     def _attach_split_scene(
         self,

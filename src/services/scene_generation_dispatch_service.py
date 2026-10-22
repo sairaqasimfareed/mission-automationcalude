@@ -68,6 +68,16 @@ class SceneGenerationDispatchService:
 
         return self._resolve_service(job, scene).generate_one(job, scene_number)
 
+    def attach_generated_parts(self, job: VideoJob, scene_number: int) -> bool:
+        """Attach a scene's already-generated parts (from whichever provider made them) without
+        generating anything. False when there is nothing complete to attach."""
+
+        self._find_scene(job, scene_number)
+
+        return self._flow_service.attach_generated_parts(
+            job, scene_number
+        ) or self._muse_service.attach_generated_parts(job, scene_number)
+
     def generate_all(
         self,
         job: VideoJob,

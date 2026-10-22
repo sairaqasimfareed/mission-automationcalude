@@ -268,6 +268,13 @@ class SceneAssetState(MissionBaseModel):
         default_factory=list,
     )
 
+    # Parts of a split scene the operator uploaded one at a time, by part number (0 = Part 1),
+    # while the scene still lacked some part. Once every part is there they are moved into
+    # selected_candidate / additional_ai_generated_sub_clips and this is emptied.
+    pending_part_uploads: dict[int, AssetCandidate] = Field(
+        default_factory=dict,
+    )
+
     manual_upload_requested: bool = False
     manual_upload_declined: bool = False
     manual_upload_path: str | None = None

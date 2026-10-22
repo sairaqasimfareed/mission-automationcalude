@@ -3,12 +3,18 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from src.models.asset_state import AssetUserDecision, SceneAssetState
+from src.models.asset_state import (
+    AssetCandidate,
+    AssetUserDecision,
+    AssetWorkflowStatus,
+    SceneAssetState,
+)
 from src.models.bulk_clip_ingestion import (
     BulkClipIngestionEntry,
     BulkClipIngestionEntryStatus,
     BulkClipIngestionResult,
 )
+from src.models.media_strategy import SceneSourceType
 from src.models.scene import Scene
 from src.models.video_job import VideoJob
 from src.services.invalidation_service import InvalidationService
@@ -196,6 +202,128 @@ class BulkClipIngestionService:
             self.invalidation_service.on_scene_replaced(job, scene_number=scene_number)
 
         return entry
+
+    def ingest_part(
+        self,
+        *,
+        job: VideoJob,
+        scene_number: int,
+        part_index: int,
+        part_count: int,
+        file_path: Path,
+    ) -> BulkClipIngestionEntry:
+        """
+        Attach one file to ONE PART of a scene that is made of several clips (0 = Part 1).
+        The same validation as ingest_one(); the file is kept against that part only. The
+        scene counts as having a clip once every part is there - until then the uploaded
+        parts wait on the scene's state, and a part already attached (from a generation or an
+        earlier upload) is replaced in place, the other parts untouched.
+        """
+
+        scene = next((s for s in job.scenes if s.scene_number == scene_number), None)
+
+        if scene is None:
+            return BulkClipIngestionEntry(
+                file_name=file_path.name,
+                scene_number=scene_number,
+                status=BulkClipIngestionEntryStatus.NO_MATCHING_SCENE,
+                detail=f"No scene {scene_number} in this project.",
+            )
+
+        if scene.source_locked:
+            return BulkClipIngestionEntry(
+                file_name=file_path.name,
+                scene_number=scene_number,
+                status=BulkClipIngestionEntryStatus.FAILED_VALIDATION,
+                detail=f"Scene {scene_number} is locked - unlock it before reassigning.",
+            )
+
+        if not 0 <= part_index < part_count:
+            raise ValueError(f"Part {part_index + 1} is not one of {part_count} parts.")
+
+        existing = next(
+            (s for s in job.scene_asset_states if s.scene_number == scene_number), None
+        )
+        scratch = (
+            existing.model_copy(deep=True)
+            if existing is not None
+            else self.asset_workflow_service.start(scene)
+        )
+        checked = self.asset_workflow_service.apply_decision(
+            scene=scene,
+            state=scratch,
+            decision=AssetUserDecision.MANUAL_UPLOAD,
+            manual_upload_path=str(file_path),
+            project_id=job.project_name,
+        )
+
+        if not checked.is_ready or checked.selected_candidate is None:
+            return BulkClipIngestionEntry(
+                file_name=file_path.name,
+                scene_number=scene_number,
+                status=BulkClipIngestionEntryStatus.FAILED_VALIDATION,
+                detail=(
+                    checked.active_failure.message
+                    if checked.active_failure is not None
+                    else "Manual upload could not be validated."
+                ),
+            )
+
+        state = existing or self.asset_workflow_service.start(scene)
+        parts: dict[int, AssetCandidate] = dict(state.pending_part_uploads)
+
+        if state.is_ready and state.selected_candidate is not None:
+            parts[0] = state.selected_candidate
+
+            for offset, candidate in enumerate(
+                state.additional_ai_generated_sub_clips, start=1
+            ):
+                parts[offset] = candidate
+
+        parts[part_index] = checked.selected_candidate
+
+        if all(index in parts for index in range(part_count)):
+            state.pending_part_uploads = {}
+            state.selected_candidate = parts[0]
+            state.additional_ai_generated_sub_clips = [
+                parts[index] for index in range(1, part_count)
+            ]
+            state.selected_source = parts[0].source_type
+            state.manual_upload_path = (
+                parts[0].file_path
+                if parts[0].source_type == SceneSourceType.MANUAL_UPLOAD
+                else state.manual_upload_path
+            )
+            state.user_decision = AssetUserDecision.MANUAL_UPLOAD
+            state.clear_active_failure()
+            state.status = AssetWorkflowStatus.READY
+            detail = f"Assigned to scene {scene_number}: all {part_count} parts are in."
+        else:
+            state.pending_part_uploads = parts
+            missing = [
+                str(index + 1) for index in range(part_count) if index not in parts
+            ]
+            detail = (
+                f"Part {part_index + 1} saved for scene {scene_number} - "
+                f"upload part {', '.join(missing)} to finish it."
+            )
+
+        if existing is None:
+            job.scene_asset_states.append(state)
+
+        job.video_clips = self.video_clip_builder_service.build_clips(
+            scenes=job.scenes, states=job.scene_asset_states
+        )
+        self.invalidation_service.clear_stale(job, "scene_asset_states")
+        self.invalidation_service.clear_stale(job, "video_clips")
+        self.invalidation_service.on_scene_replaced(job, scene_number=scene_number)
+
+        return BulkClipIngestionEntry(
+            file_name=file_path.name,
+            scene_number=scene_number,
+            status=BulkClipIngestionEntryStatus.ASSIGNED,
+            detail=detail,
+        )
 
     def _ingest_one(
         self,

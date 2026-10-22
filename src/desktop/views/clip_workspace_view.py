@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -95,6 +96,10 @@ from src.services.scene_hold import clip_sizing_seconds
 from src.services.scene_prompt_export_service import ScenePromptExportService
 from src.services.scene_reference_service import SceneReferenceService
 from src.services.scene_visual_treatment import is_graphic_scene
+from src.services.split_scene_parts import (
+    generated_parts_available,
+    planned_part_count,
+)
 from src.services.video_provider_rules import (
     muse_target_seconds,
     resolve_scene_video_provider,
@@ -139,7 +144,7 @@ def _sub_clip_status_role(status_text: str) -> str:
     if status_text.startswith("needs_attention"):
         return "error"
 
-    if status_text == "ready":
+    if status_text == "ready" or status_text.startswith("attached"):
         return "success"
 
     return "warning"
@@ -1146,7 +1151,8 @@ class ClipWorkspaceView(QWidget):
         """
 
         frame, layout = card(
-            "Automatic scene generation (Google Flow)", icon_name="clapper"
+            f"Automatic scene generation ({self._provider_label(job)})",
+            icon_name="clapper",
         )
 
         service = self._scene_video_generation_service
@@ -1203,6 +1209,17 @@ class ClipWorkspaceView(QWidget):
         self._generate_all_account_combo = account_combo
 
         layout.addLayout(row(all_button, account_combo))
+
+        if job.video_provider == VideoProvider.MUSE and not self._enabled_accounts_of(
+            "muse"
+        ):
+            layout.addWidget(
+                status_label(
+                    "This project uses Muse, but no Muse account is switched on - turn one on "
+                    "in the Muse screen (top bar), or the scenes cannot be generated.",
+                    role="warning",
+                )
+            )
 
         refresh_button = button("Refresh clip lengths", icon_name="clapper")
         refresh_button.setEnabled(not is_generating)
@@ -1291,6 +1308,11 @@ class ClipWorkspaceView(QWidget):
                     )
                 )
 
+            pinned_note = self._pinned_to_other_provider_note(job, scene)
+
+            if pinned_note is not None:
+                row_layout.addWidget(status_label(pinned_note, role="warning"))
+
             self._add_graphic_treatment_row(row_layout, job, scene)
             reference = self._scene_reference_service.status(job, scene)
             self._add_scene_reference_line(row_layout, reference, scene.scene_number)
@@ -1354,11 +1376,38 @@ class ClipWorkspaceView(QWidget):
             # automatically is already being made.
             upload_button = button("Upload...", icon_name="upload")
             upload_button.setEnabled(not is_generating)
-            upload_button.clicked.connect(
-                lambda checked=False, number=scene.scene_number: (
-                    self._handle_upload_scene_clip(number)
+            part_count = planned_part_count(job, scene)
+
+            if part_count > 1:
+                # A scene made of several clips: one file cannot stand for all of them, so the
+                # operator says which part the file is.
+                part_menu = QMenu(upload_button)
+
+                for part_index in range(part_count):
+                    part_menu.addAction(f"Part {part_index + 1}").triggered.connect(
+                        lambda checked=False, number=scene.scene_number, part=part_index, count=part_count: (
+                            self._handle_upload_scene_part(number, part, count)
+                        )
+                    )
+
+                upload_button.setMenu(part_menu)
+            else:
+                upload_button.clicked.connect(
+                    lambda checked=False, number=scene.scene_number: (
+                        self._handle_upload_scene_clip(number)
+                    )
                 )
-            )
+
+            use_generated_button: QPushButton | None = None
+
+            if generated_parts_available(job, scene):
+                use_generated_button = button("Use generated clips", variant="primary")
+                use_generated_button.setEnabled(not is_generating)
+                use_generated_button.clicked.connect(
+                    lambda checked=False, number=scene.scene_number: (
+                        self._handle_use_generated_parts(number)
+                    )
+                )
 
             has_resolved_clip = (
                 entry is not None and entry.status == SceneCompletenessStatus.READY
@@ -1429,6 +1478,7 @@ class ClipWorkspaceView(QWidget):
             row_layout.addLayout(
                 row(
                     primary_button,
+                    *([use_generated_button] if use_generated_button else []),
                     upload_button,
                     remove_button,
                     account_combo,
@@ -1742,6 +1792,45 @@ class ClipWorkspaceView(QWidget):
                 and attempt.state != MuseGenerationState.AUTH_REQUIRED
             ),
             None,
+        )
+
+    @staticmethod
+    def _provider_label(job: VideoJob) -> str:
+        return "Muse" if job.video_provider == VideoProvider.MUSE else "Google Flow"
+
+    def _enabled_accounts_of(self, provider_name: str) -> list[str]:
+        if self._provider_registry is None:
+            return []
+
+        return [
+            profile.profile_id
+            for profile in self._provider_registry.list_by_category(
+                ProviderCategory.EXTERNAL_UI_VIDEO, enabled_only=True
+            )
+            if profile.provider_name.strip().lower() == provider_name
+        ]
+
+    def _pinned_to_other_provider_note(self, job: VideoJob, scene: Scene) -> str | None:
+        """A scene set to one account keeps using that account's provider whatever the project's
+        provider is - say so, since the project setting alone does not move it."""
+
+        if scene.preferred_profile_id is None or self._provider_registry is None:
+            return None
+
+        try:
+            profile = self._provider_registry.get(scene.preferred_profile_id)
+        except KeyError:
+            return None
+
+        pinned_is_muse = profile.provider_name.strip().lower() == "muse"
+
+        if pinned_is_muse == (job.video_provider == VideoProvider.MUSE):
+            return None
+
+        return (
+            f"This scene is set to the {profile.provider_name} account "
+            f"'{profile.display_name}', so it uses {profile.provider_name} although the project "
+            f"uses {self._provider_label(job)}. Choose Auto in the list to follow the project."
         )
 
     def _populate_account_combo(
@@ -2472,6 +2561,61 @@ class ClipWorkspaceView(QWidget):
             )
 
             return
+
+        self._on_change()
+
+    def _handle_upload_scene_part(
+        self, scene_number: int, part_index: int, part_count: int
+    ) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        file_path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            f"Upload part {part_index + 1} of {part_count} for scene {scene_number}",
+            "",
+            "Video files (*.mp4 *.mov *.mkv *.webm *.avi *.m4v)",
+        )
+
+        if not file_path:
+            return
+
+        entry = self._bulk_ingestion_service.ingest_part(
+            job=job,
+            scene_number=scene_number,
+            part_index=part_index,
+            part_count=part_count,
+            file_path=Path(file_path),
+        )
+
+        if entry.status != BulkClipIngestionEntryStatus.ASSIGNED:
+            self._record_error(
+                job,
+                f"Could not attach the clip to scene {scene_number}: {entry.detail}",
+                on_retry=lambda: self._handle_upload_scene_part(
+                    scene_number, part_index, part_count
+                ),
+            )
+
+            return
+
+        notify_success(entry.detail)
+        self._on_change()
+
+    def _handle_use_generated_parts(self, scene_number: int) -> None:
+        job = self._current_job()
+
+        if job is None:
+            return
+
+        service = self._scene_video_generation_service
+
+        if service is not None and service.attach_generated_parts(job, scene_number):
+            notify_success(
+                f"Scene {scene_number}: the clips already generated are attached."
+            )
 
         self._on_change()
 

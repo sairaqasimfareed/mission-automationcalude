@@ -59,6 +59,7 @@ from src.services.scene_video_generation_service import (
     SceneVideoGenerationService,
     _extend_last_beat_to_real_duration,
 )
+from src.services.split_scene_parts import generated_parts_available
 
 _GOOD_PROBE = json.dumps(
     {
@@ -2722,3 +2723,68 @@ def test_a_landscape_project_leaves_flows_aspect_control_alone() -> None:
 
     request = job.flow_generation_attempts[0].request
     assert request.execution_settings.aspect_ratio is None
+
+
+def test_attach_generated_parts_uses_the_finished_attempt_of_each_part(
+    tmp_path: Path,
+) -> None:
+    """A part whose NEWEST attempt failed (a Regenerate that went nowhere) still has an
+    earlier finished attempt with its file on disk - the scene is attached from those files
+    without submitting anything to Flow."""
+
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            GoogleFlowGenerationState.GENERATING,
+            GoogleFlowGenerationState.READY_TO_DOWNLOAD,
+            GoogleFlowGenerationState.GENERATING,
+            GoogleFlowGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    provider.downloaded_file = str(_real_video_file(tmp_path))
+    frame_extraction, _commands = _frame_extraction_service()
+    asset_storage = AssetStorageService(
+        storage_root=tmp_path / "storage", asset_index=AssetIndex()
+    )
+    service = _service(
+        provider,
+        frame_extraction_service=frame_extraction,
+        asset_storage_service=asset_storage,
+    )
+    scene = _scene(1)
+    scene.real_narration_duration_seconds = 14.0
+    job = _job(scene)
+    service.generate_one(job, 1)
+
+    first = job.flow_generation_attempts[0]
+    job.flow_generation_attempts.append(
+        first.model_copy(
+            update={
+                "attempt_number": first.attempt_number + 5,
+                "state": GoogleFlowGenerationState.FAILED,
+                "downloaded_file": None,
+            }
+        )
+    )
+    job.scene_asset_states = []
+    job.video_clips = []
+    submitted_before = len(provider.submitted_requests)
+
+    assert generated_parts_available(job, scene)
+    assert service.attach_generated_parts(job, 1) is True
+    assert len(provider.submitted_requests) == submitted_before
+    assert [c.clip_sequence_index for c in job.video_clips] == [0, 1]
+    assert service.attach_generated_parts(job, 1) is False
+
+
+def test_attach_generated_parts_does_nothing_when_a_part_has_no_finished_file(
+    tmp_path: Path,
+) -> None:
+    provider = _ScriptedProvider(observe_sequence=[])
+    scene = _scene(1)
+    scene.real_narration_duration_seconds = 14.0
+    job = _job(scene)
+    service = _service(provider)
+
+    assert not generated_parts_available(job, scene)
+    assert service.attach_generated_parts(job, 1) is False
+    assert job.video_clips == []

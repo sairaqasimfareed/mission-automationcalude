@@ -1950,3 +1950,52 @@ def test_a_landscape_project_sends_muse_nothing_about_the_shape(tmp_path: Path) 
     service.generate_one(job, 1)
 
     assert "9:16" not in provider.submitted_prompts[0]
+
+
+def test_muse_attach_generated_parts_uses_the_finished_attempt_of_each_part(
+    tmp_path: Path,
+) -> None:
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            MuseGenerationState.GENERATING,
+            MuseGenerationState.READY_TO_DOWNLOAD,
+            MuseGenerationState.GENERATING,
+            MuseGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    provider.downloaded_files = [
+        str(_real_video_file(tmp_path, name="sub_clip_0.mp4")),
+        str(_real_video_file(tmp_path, name="sub_clip_1.mp4")),
+    ]
+    Path(provider.downloaded_files[1]).write_bytes(b"different sub-clip 1 bytes")
+    frame_extraction, _commands = _frame_extraction_service(tmp_path)
+    asset_storage = AssetStorageService(
+        storage_root=tmp_path / "storage", asset_index=AssetIndex()
+    )
+    service = _service(
+        provider,
+        frame_extraction_service=frame_extraction,
+        asset_storage_service=asset_storage,
+    )
+    scene = _scene(1)
+    scene.real_narration_duration_seconds = 13.0
+    job = _job(scene)
+    service.generate_one(job, 1)
+
+    first = job.muse_generation_attempts[0]
+    job.muse_generation_attempts.append(
+        first.model_copy(
+            update={
+                "attempt_number": first.attempt_number + 5,
+                "state": MuseGenerationState.FAILED,
+                "downloaded_file": None,
+            }
+        )
+    )
+    job.scene_asset_states = []
+    job.video_clips = []
+    submitted_before = len(provider.submitted_requests)
+
+    assert service.attach_generated_parts(job, 1) is True
+    assert len(provider.submitted_requests) == submitted_before
+    assert [c.clip_sequence_index for c in job.video_clips] == [0, 1]

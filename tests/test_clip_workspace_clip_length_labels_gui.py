@@ -241,3 +241,65 @@ def test_regenerate_clears_the_scenes_existing_clips_before_generating(
     view._handle_generate_scene_video(3)  # noqa: SLF001  (no clip: nothing to clear)
 
     assert removed == [1]
+
+
+def _upload_buttons(view):  # type: ignore[no-untyped-def]
+    from PySide6.QtWidgets import QPushButton
+
+    return [b for b in view.findChildren(QPushButton) if b.text() == "Upload..."]
+
+
+def test_a_scene_made_of_two_clips_uploads_by_part(
+    qapp: QApplication,  # noqa: F811
+) -> None:
+    view, _ = _view(VideoProvider.GOOGLE_FLOW, narration=14.0)
+
+    menu = _upload_buttons(view)[0].menu()
+
+    assert menu is not None
+    assert [action.text() for action in menu.actions()] == ["Part 1", "Part 2"]
+
+
+def test_a_one_clip_scene_keeps_the_plain_upload_button(
+    qapp: QApplication,  # noqa: F811
+) -> None:
+    view, _ = _view(VideoProvider.GOOGLE_FLOW, narration=5.0)
+
+    assert _upload_buttons(view)[0].menu() is None
+
+
+def _all_texts(view) -> list[str]:  # type: ignore[no-untyped-def]
+    return [label.text() for label in view.findChildren(QLabel)]
+
+
+def test_the_heading_names_the_projects_provider_and_a_pinned_scene_says_so(
+    qapp: QApplication,  # noqa: F811
+) -> None:
+    from tests.test_clip_workspace_view_scene_generation import (
+        _registry_with_both_providers,
+    )
+
+    job = _job(1)
+    job.video_provider = VideoProvider.MUSE
+    job.scenes[0].preferred_profile_id = "flow.primary"
+    view = _build_view(
+        job,
+        service=_FakeSceneVideoGenerationService(),
+        provider_registry=_registry_with_both_providers(),
+    )
+    view.refresh(job)
+    texts = _all_texts(view)
+
+    assert any("Automatic scene generation (Muse)" in t for t in texts)
+    assert any("although the project uses Muse" in t for t in texts)
+
+
+def test_a_muse_project_without_an_enabled_muse_account_says_so(
+    qapp: QApplication,  # noqa: F811
+) -> None:
+    job = _job(1)
+    job.video_provider = VideoProvider.MUSE
+    view = _build_view(job, service=_FakeSceneVideoGenerationService())
+    view.refresh(job)
+
+    assert any("no Muse account is switched on" in t for t in _all_texts(view))

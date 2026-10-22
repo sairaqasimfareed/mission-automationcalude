@@ -269,3 +269,104 @@ def test_ingest_ignores_files_with_unsupported_extensions(tmp_path: Path) -> Non
 
     assert result.entries == []
     assert result.scenes_still_missing_a_file == [1]
+
+
+def _part_file(tmp_path: Path, name: str) -> Path:
+    path = tmp_path / name
+    path.write_bytes(f"clip-bytes-{name}".encode())
+    return path
+
+
+def test_ingest_part_waits_until_every_part_of_a_split_scene_is_uploaded(
+    tmp_path: Path,
+) -> None:
+    job = _job(_scene(1))
+    service = BulkClipIngestionService(
+        asset_workflow_service=_workflow_service(tmp_path)
+    )
+
+    first = service.ingest_part(
+        job=job,
+        scene_number=1,
+        part_index=1,
+        part_count=2,
+        file_path=_part_file(tmp_path, "part2.mp4"),
+    )
+
+    assert first.status == BulkClipIngestionEntryStatus.ASSIGNED
+    assert "upload part 1" in first.detail
+    assert job.video_clips == []
+
+    second = service.ingest_part(
+        job=job,
+        scene_number=1,
+        part_index=0,
+        part_count=2,
+        file_path=_part_file(tmp_path, "part1.mp4"),
+    )
+
+    assert second.status == BulkClipIngestionEntryStatus.ASSIGNED
+    assert "all 2 parts" in second.detail
+    clips = sorted(job.video_clips, key=lambda clip: clip.clip_sequence_index)
+    assert [clip.clip_sequence_index for clip in clips] == [0, 1]
+    # Part 1 is the file uploaded for part 1, not the one uploaded first.
+    assert clips[0].local_file is not None and "part1" in clips[0].local_file
+    assert clips[1].local_file is not None and "part2" in clips[1].local_file
+    assert job.scene_asset_states[0].pending_part_uploads == {}
+
+
+def test_ingest_part_replaces_one_part_and_keeps_the_others(tmp_path: Path) -> None:
+    job = _job(_scene(1))
+    service = BulkClipIngestionService(
+        asset_workflow_service=_workflow_service(tmp_path)
+    )
+
+    for index, name in enumerate(["a.mp4", "b.mp4"]):
+        service.ingest_part(
+            job=job,
+            scene_number=1,
+            part_index=index,
+            part_count=2,
+            file_path=_part_file(tmp_path, name),
+        )
+
+    service.ingest_part(
+        job=job,
+        scene_number=1,
+        part_index=0,
+        part_count=2,
+        file_path=_part_file(tmp_path, "new_a.mp4"),
+    )
+
+    clips = sorted(job.video_clips, key=lambda clip: clip.clip_sequence_index)
+    assert len(clips) == 2
+    assert clips[0].local_file is not None and "new_a" in clips[0].local_file
+    assert clips[1].local_file is not None and "b" in clips[1].local_file
+
+
+def test_ingest_part_refuses_a_locked_scene_and_a_part_out_of_range(
+    tmp_path: Path,
+) -> None:
+    service = BulkClipIngestionService(
+        asset_workflow_service=_workflow_service(tmp_path)
+    )
+    locked = _job(_scene(1, source_locked=True))
+
+    entry = service.ingest_part(
+        job=locked,
+        scene_number=1,
+        part_index=0,
+        part_count=2,
+        file_path=_part_file(tmp_path, "x.mp4"),
+    )
+
+    assert entry.status == BulkClipIngestionEntryStatus.FAILED_VALIDATION
+
+    with pytest.raises(ValueError):
+        service.ingest_part(
+            job=_job(_scene(1)),
+            scene_number=1,
+            part_index=2,
+            part_count=2,
+            file_path=_part_file(tmp_path, "y.mp4"),
+        )
