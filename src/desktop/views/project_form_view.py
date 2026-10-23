@@ -500,7 +500,7 @@ class ProjectFormView(QWidget):
             job = self._job_mapper.map(specification, niche=self._niche.text())
             job.genre_id = self._genre.currentText()
             job.approval_policy = self._build_approval_policy()
-            job.aspect_ratio = self._aspect_ratio.currentData()
+            job.aspect_ratio = AspectRatio(self._aspect_ratio.currentData())
 
             if job.aspect_ratio == AspectRatio.PORTRAIT:
                 job.output_resolution = PORTRAIT_FULL_HD

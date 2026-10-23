@@ -186,6 +186,18 @@ def test_choosing_9_16_makes_a_vertical_project_rendering_at_1080x1920(
     assert job.output_resolution == "1080x1920"
 
 
+def test_the_chosen_shape_is_stored_as_the_enum_not_as_plain_text(
+    qapp: QApplication,  # noqa: F811
+) -> None:
+    """A combo box hands back a plain "9:16" string; stored as is, saving the project printed
+    "PydanticSerializationUnexpectedValue ... field_name='aspect_ratio'"."""
+
+    job = _create(_form_view(), 1)
+
+    assert type(job.aspect_ratio) is AspectRatio
+    job.model_dump_json(warnings="error")  # raises on a serializer warning
+
+
 def test_choosing_16_9_leaves_the_project_as_it_always_was(
     qapp: QApplication,  # noqa: F811
 ) -> None:
