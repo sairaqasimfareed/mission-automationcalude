@@ -2788,3 +2788,35 @@ def test_attach_generated_parts_does_nothing_when_a_part_has_no_finished_file(
     assert not generated_parts_available(job, scene)
     assert service.attach_generated_parts(job, 1) is False
     assert job.video_clips == []
+
+
+def test_a_split_flow_scene_attaches_when_the_projects_shape_is_plain_text(
+    tmp_path: Path,
+) -> None:
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            GoogleFlowGenerationState.GENERATING,
+            GoogleFlowGenerationState.READY_TO_DOWNLOAD,
+            GoogleFlowGenerationState.GENERATING,
+            GoogleFlowGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    provider.downloaded_file = str(_real_video_file(tmp_path))
+    frame_extraction, _commands = _frame_extraction_service()
+    asset_storage = AssetStorageService(
+        storage_root=tmp_path / "storage", asset_index=AssetIndex()
+    )
+    service = _service(
+        provider,
+        frame_extraction_service=frame_extraction,
+        asset_storage_service=asset_storage,
+    )
+    scene = _scene(1)
+    scene.real_narration_duration_seconds = 14.0
+    job = _job(scene)
+    job.aspect_ratio = "9:16"  # type: ignore[assignment]
+
+    entry = service.generate_one(job, 1)
+
+    assert entry.status == SceneCompletenessStatus.READY
+    assert [c.clip_sequence_index for c in job.video_clips] == [0, 1]

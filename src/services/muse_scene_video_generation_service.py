@@ -28,6 +28,7 @@ from src.models.scene_completeness import (
     SceneCompletenessEntry,
     SceneCompletenessStatus,
 )
+from src.models.specification_enums import AspectRatio
 from src.models.video_job import VideoJob
 from src.models.video_provider import VideoProvider
 from src.models.visual_continuity import CanonicalEntityIdentity, CanonicalEntityType
@@ -713,7 +714,7 @@ class MuseSceneVideoGenerationService:
                         else float(scene.estimated_duration_seconds)
                     ),
                     resolution=job.nominal_clip_resolution,
-                    aspect_ratio=job.aspect_ratio.value,
+                    aspect_ratio=AspectRatio(job.aspect_ratio).value,
                 )
             )
 

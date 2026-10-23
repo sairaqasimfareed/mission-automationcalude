@@ -1999,3 +1999,44 @@ def test_muse_attach_generated_parts_uses_the_finished_attempt_of_each_part(
     assert service.attach_generated_parts(job, 1) is True
     assert len(provider.submitted_requests) == submitted_before
     assert [c.clip_sequence_index for c in job.video_clips] == [0, 1]
+
+
+def test_a_split_muse_scene_attaches_when_the_projects_shape_is_plain_text(
+    tmp_path: Path,
+) -> None:
+    """A project made through the New Project form before 2026-10-23 held its video shape as the
+    plain string "9:16" until it was reloaded; attaching a split scene read `.value` of it and
+    failed with "'str' object has no attribute 'value'" after both parts were downloaded.
+    """
+
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            MuseGenerationState.GENERATING,
+            MuseGenerationState.READY_TO_DOWNLOAD,
+            MuseGenerationState.GENERATING,
+            MuseGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    provider.downloaded_files = [
+        str(_real_video_file(tmp_path, name="sub_clip_0.mp4")),
+        str(_real_video_file(tmp_path, name="sub_clip_1.mp4")),
+    ]
+    Path(provider.downloaded_files[1]).write_bytes(b"different sub-clip 1 bytes")
+    frame_extraction, _commands = _frame_extraction_service(tmp_path)
+    asset_storage = AssetStorageService(
+        storage_root=tmp_path / "storage", asset_index=AssetIndex()
+    )
+    service = _service(
+        provider,
+        frame_extraction_service=frame_extraction,
+        asset_storage_service=asset_storage,
+    )
+    scene = _scene(1)
+    scene.real_narration_duration_seconds = 13.0
+    job = _job(scene)
+    job.aspect_ratio = "9:16"  # type: ignore[assignment]
+
+    entry = service.generate_one(job, 1)
+
+    assert entry.status == SceneCompletenessStatus.READY
+    assert [c.clip_sequence_index for c in job.video_clips] == [0, 1]

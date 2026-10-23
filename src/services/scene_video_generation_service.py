@@ -1068,7 +1068,7 @@ class SceneVideoGenerationService:
                         else float(scene.estimated_duration_seconds)
                     ),
                     resolution=job.nominal_clip_resolution,
-                    aspect_ratio=job.aspect_ratio.value,
+                    aspect_ratio=AspectRatio(job.aspect_ratio).value,
                 )
             )
 
