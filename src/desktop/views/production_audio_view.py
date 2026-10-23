@@ -363,6 +363,19 @@ class ProductionAudioView(QWidget):
             muted(f"{count_text} · {self._format_seconds(total)} total{provider_text}")
         )
 
+        if any(is_dry_run_placeholder(track.source_file) for track in tracks):
+            # Live, 2026-10-23: a key was replaced and a provider added while the app was running;
+            # providers are built once at start-up, so the voices came out as silent placeholders and
+            # the only hint was a small grey note on each row.
+            layout.addWidget(
+                status_label(
+                    "These are placeholders - no real audio. No working provider was loaded for "
+                    "this when the app started. If you just added a provider or changed a key, "
+                    "close and reopen Mission Automation, then generate again.",
+                    role="warning",
+                )
+            )
+
         rows: list[QWidget] = []
 
         for track in tracks:

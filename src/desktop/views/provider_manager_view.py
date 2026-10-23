@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.desktop.notifications import notify_success
 from src.desktop.theme import SPACE_SM
 from src.desktop.widgets import (
     badge,
@@ -848,6 +849,10 @@ class ProviderManagerView(QWidget):
 
         if unusable_message is not None:
             QMessageBox.warning(self, "Provider will not be used", unusable_message)
+        else:
+            notify_success(
+                "Provider saved - close and reopen Mission Automation for it to be used."
+            )
 
     def _handle_test_clicked(self) -> None:
         if self._selected_profile_id is None:

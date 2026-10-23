@@ -192,6 +192,28 @@ def test_a_placeholder_file_is_labelled_and_has_no_play_button(
 
     assert any("placeholder" in t for t in _texts(view))
     assert not _play_buttons(view)
+    # ... and a plain warning above the rows says what to do (2026-10-23).
+    assert any("close and reopen Mission Automation" in t for t in _texts(view))
+
+
+def test_real_files_carry_no_placeholder_warning(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    view = _view(
+        _job(
+            [
+                _track(
+                    AudioTrackType.VOICEOVER,
+                    _file(tmp_path, "a.mp3"),
+                    8.0,
+                    scene_number=1,
+                )
+            ],
+            scenes=1,
+        )
+    )
+
+    assert not any("close and reopen" in t for t in _texts(view))
 
 
 def test_a_missing_file_is_labelled_and_has_no_play_button(
