@@ -4,6 +4,7 @@ from src.models.asset_state import AssetCandidate, SceneAssetState
 from src.models.media_strategy import SceneSourceStatus
 from src.models.scene import Scene
 from src.models.video_clip import VideoClip, VideoClipStatus
+from src.services.clip_real_length import real_clip_seconds
 
 
 class SceneAssetVideoClipBuilderService:
@@ -116,10 +117,19 @@ class SceneAssetVideoClipBuilderService:
         if not file_path:
             return None
 
+        # A manual upload is stored without a length: read the file's own rather than assume the
+        # scene's planned one (a shorter file would then be stored as longer than it is).
+        real_seconds = (
+            real_clip_seconds(file_path) if candidate.duration_seconds <= 0 else None
+        )
         duration_seconds: int = (
             round(candidate.duration_seconds)
             if candidate.duration_seconds > 0
-            else planned_duration_by_scene_number.get(state.scene_number, 0)
+            else (
+                max(1, round(real_seconds))
+                if real_seconds is not None
+                else planned_duration_by_scene_number.get(state.scene_number, 0)
+            )
         )
 
         return VideoClip(

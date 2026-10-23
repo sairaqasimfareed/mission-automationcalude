@@ -1126,3 +1126,5 @@ ElevenLabs credits; ElevenLabs was at zero on 2026-10-07).
   See `AGENTS.md`.
 
 - **Duplicate identities in the continuity bible (2026-10-22):** Salem's bible had "Bridget Bishop" three times (only one with a picture). Lookups by name now prefer the one with a picture, but the extraction that creates the duplicates was not investigated, and the Content tab still lists each duplicate as its own character.
+
+- **No check that the rendered picture matches the audio length (2026-10-23):** a render whose video stream is far shorter than its audio (11 s vs 104 s on Salem) is reported as finished. A post-render probe that fails (or at least warns) when the two differ by more than a few seconds would have caught it at once.

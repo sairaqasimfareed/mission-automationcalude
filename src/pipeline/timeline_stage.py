@@ -15,6 +15,7 @@ from src.pipeline.pipeline_stage import (
 )
 from src.pipeline.stage_context import StageContext
 from src.pipeline.stage_result import StageResult
+from src.services.clip_real_length import correct_short_clip_lengths
 from src.services.genre_timeline_pipeline_service import (
     GenreTimelinePipelineService,
 )
@@ -117,6 +118,9 @@ class TimelinePipelineStage(BasePipelineStage):
                 started_at=start_time,
                 error_message=("Timeline stage requires " "ready video clips."),
             )
+
+        # A clip stored longer than its file would end the picture early (see clip_real_length).
+        correct_short_clip_lengths(context.job.video_clips)
 
         pipeline_result = self._timeline_service.build(
             scenes=list(context.job.scenes),
