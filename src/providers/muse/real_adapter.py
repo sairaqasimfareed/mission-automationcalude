@@ -503,6 +503,21 @@ class MuseRealUIAdapter(MuseUIProvider):
                     "button", name=self._names.download_icon_name
                 ).last
 
+                # Live, 2026-10-24: Muse moved the download into the menu behind a "..." button
+                # that appears on hover. Tried in order: the old direct icon (above), the "..."
+                # menu, then the enlarged view's download arrow. Each is scoped to THIS video's
+                # own message (the menu opens on the page, so it is looked up there right after).
+                if download_button.count() == 0:
+                    download_button = self._download_from_more_menu(
+                        page, message_container
+                    )
+
+                opened_enlarged = False
+
+                if download_button.count() == 0:
+                    download_button = self._download_from_enlarged_view(page, video)
+                    opened_enlarged = True
+
                 if download_button.count() == 0:
                     return attempt.with_transition(
                         MuseGenerationState.UI_CHANGED,
@@ -522,6 +537,10 @@ class MuseRealUIAdapter(MuseUIProvider):
                     timeout=_DOWNLOAD_START_TIMEOUT_SECONDS * 1000
                 ) as download_info:
                     download_button.click(timeout=self._action_timeout_ms)
+
+                if opened_enlarged:
+                    # The enlarged view covers the chat: close it so the next scene can be typed.
+                    page.keyboard.press("Escape")
             except PlaywrightError as error:
                 # Same TargetClosedError-class recovery as submit()/
                 # observe() - see submit()'s own real-world-finding
@@ -644,6 +663,58 @@ class MuseRealUIAdapter(MuseUIProvider):
             return reply
 
         return None
+
+    def _download_from_more_menu(
+        self, page: Page, message_container: Locator
+    ) -> Locator:
+        """Open the hovered video's "..." menu and return its Download item (a locator with
+        count() == 0 when there is no such menu or no such item)."""
+
+        menu_button = None
+
+        for name in self._names.more_menu_button_names:
+            candidate = message_container.get_by_role("button", name=name).last
+
+            if candidate.count() > 0:
+                menu_button = candidate
+
+                break
+
+        if menu_button is None:
+            # Name unknown: the last button of the hovered toolbar (react, reply, "...").
+            candidate = message_container.get_by_role("button").last
+
+            if candidate.count() > 0:
+                menu_button = candidate
+
+        if menu_button is None:
+            return message_container.get_by_role(
+                "button", name=self._names.download_icon_name
+            ).last
+
+        menu_button.click(timeout=self._action_timeout_ms)
+        page.wait_for_timeout(500)
+
+        for role in ("menuitem", "button"):
+            item = page.get_by_role(role, name=self._names.download_icon_name).last
+
+            if item.count() > 0:
+                return item
+
+        # The "..." opened nothing with a Download item: close whatever it opened.
+        page.keyboard.press("Escape")
+
+        return page.get_by_role("menuitem", name=self._names.download_icon_name).last
+
+    def _download_from_enlarged_view(self, page: Page, video: Locator) -> Locator:
+        """Open the video enlarged (clicking it) and return the download arrow in the corner."""
+
+        video.click(timeout=self._action_timeout_ms)
+        page.wait_for_timeout(500)
+
+        return page.get_by_role(
+            "button", name=self._names.lightbox_download_button_name
+        ).last
 
     def _latest_assistant_video(
         self, page: Page, attempt: MuseGenerationAttempt

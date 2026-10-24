@@ -79,6 +79,12 @@ class MuseRealAccessibleNames:
     # accessible name was never read from DevTools. Best-effort.
     download_icon_name: str = "Download"
 
+    # Live, 2026-10-24: Muse moved the download. Hovering a video now shows react / reply and a
+    # "..." button; the Download item is inside the menu that "..." opens (the old direct icon is
+    # gone). The "..." button's accessible name was not read from DevTools: these are tried in
+    # order as substrings of its name, then the last button of the hovered toolbar.
+    more_menu_button_names: tuple[str, ...] = ("More", "Options", "Menu", "Actions")
+
     # Confirmed live: the expanded lightbox view has a download arrow
     # (top-right) and a close (X, top-left) control - accessible names
     # unverified. Best-effort.

@@ -1187,3 +1187,75 @@ def test_a_prompt_with_line_breaks_is_typed_as_one_line_so_enter_sends_it_once(
         "Vertical 9:16 portrait video, true full-frame vertical composition."
     ]
     assert page.keyboard.pressed == ["Enter"]  # one send, at the very end
+
+
+# --- download: Muse moved the download (live, 2026-10-24) ---
+
+
+def _ready_video_page(
+    tmp_path: Path, names: object = None
+) -> tuple[_FakePage, MuseRealUIAdapter, _FakeLocator, MuseGenerationAttempt]:
+    from src.providers.muse.locators import MuseRealAccessibleNames
+
+    page = _authenticated_page()
+    adapter = MuseRealUIAdapter(
+        worker=_FakeWorker(page),  # type: ignore[arg-type]
+        base_url="https://muse.ai",
+        operation_timeout_seconds=5.0,
+        download_root=tmp_path,
+        names=names if isinstance(names, MuseRealAccessibleNames) else None,
+    )
+    request = _request()
+    submitted = adapter.submit(request, _attempt(request))
+    video = _FakeLocator()
+    page.register_css("video:not([aria-hidden='true'])", video)
+
+    return page, adapter, video, adapter.observe(submitted)
+
+
+def test_download_goes_through_the_more_menu_when_the_direct_icon_is_gone(
+    tmp_path: Path,
+) -> None:
+    """Hovering the video now shows react / reply / "..." and Download sits in the menu the
+    "..." opens."""
+
+    page, adapter, _video, ready = _ready_video_page(tmp_path)
+    more = _FakeLocator()
+    page.register_role("button", "More", more)
+    page.register_role("menuitem", "Download", _FakeLocator())
+
+    result = adapter.download(ready)
+
+    assert result.state == MuseGenerationState.DOWNLOADED
+    assert more.click_calls == 1
+    assert Path(result.downloaded_file or "").exists()
+
+
+def test_download_falls_back_to_the_enlarged_views_arrow_and_closes_it(
+    tmp_path: Path,
+) -> None:
+    from src.providers.muse.locators import MuseRealAccessibleNames
+
+    page, adapter, video, ready = _ready_video_page(
+        tmp_path,
+        MuseRealAccessibleNames(download_icon_name="Hover download"),
+    )
+    page.register_role("button", "Download", _FakeLocator())
+
+    result = adapter.download(ready)
+
+    assert result.state == MuseGenerationState.DOWNLOADED
+    assert video.click_calls == 1
+    assert "Escape" in page.keyboard.pressed
+
+
+def test_a_more_menu_without_a_download_item_still_refuses_to_guess(
+    tmp_path: Path,
+) -> None:
+    page, adapter, _video, ready = _ready_video_page(tmp_path)
+    page.register_role("button", "More", _FakeLocator())
+
+    result = adapter.download(ready)
+
+    assert result.state == MuseGenerationState.UI_CHANGED
+    assert "Escape" in page.keyboard.pressed
