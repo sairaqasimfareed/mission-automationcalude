@@ -64,9 +64,11 @@ _CAMERA_MOVES = re.compile(
     r"(?P<lead>\b(?:with|using)\s+)?"
     r"(?:(?:a|an|the)\s+)?"
     r"(?:(?:slow|slowly|gentle|gently|subtle|gradual|steady|patient|slight|deliberate|"
-    r"drifting|smooth|restless|handheld)[,\s]+)*"
+    r"drifting|smooth|restless|handheld|documentary|cinematic|observational|lingering|"
+    r"careful|measured|quiet|sweeping|controlled|dramatic|fluid|floating|creeping|"
+    r"occasional)[,\s]+)*"
     r"(?:push[- ]?ins?|pull[- ]?outs?|pans?|tilts?|dollies|dolly(?:\s+shots?)?|"
-    r"tracking(?:\s+shots?)?|zooms?|handheld(?:\s+movement)?|camera\s+drift)\b",
+    r"tracking(?:\s+shots?)?|zooms?|handheld\s+(?:movement|motion|camera|shake)|camera\s+drift)\b",
     re.IGNORECASE,
 )
 

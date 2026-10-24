@@ -342,3 +342,16 @@ def test_the_compiled_prompt_of_a_scene_in_1692_has_no_present_day() -> None:
 
     assert "In the locked courtroom" in prompt.prompt_text
     assert "present-day" not in prompt.prompt_text
+
+
+def test_a_modifier_before_the_movement_goes_with_it_and_a_style_word_alone_stays() -> (
+    None
+):
+    assert (
+        look_with_fixed_camera(
+            "camera feel: Slow documentary push-ins", camera_is_static=True
+        )
+        == "camera feel: A fixed camera"
+    )
+    style = "camera feel: handheld documentary realism."
+    assert look_with_fixed_camera(style, camera_is_static=True) == style
