@@ -121,3 +121,32 @@ def _drop_repeated_fixed_camera(text: str) -> str:
         result = clause if not result else result + separators[index - 1] + clause
 
     return result
+
+
+_PLACE_LIMIT = 170
+
+
+def short_place_description(description: str, limit: int = _PLACE_LIMIT) -> str:
+    """The first sentence of a place's description, cut at a clause if still long.
+
+    A place is described once for the whole video ("a locked courtroom ... a gold scales motif
+    above the central bench ... a tall window ... the back of the room in shadow"). A close-up or
+    an overhead shot of a hand on the bench shows none of that, and a generator that is told it
+    anyway tries to include it and drifts to a wider shot (Salem: the scales and the room appeared
+    behind a stamp the plan framed as an overhead close-up)."""
+
+    text = " ".join(description.split())
+
+    if len(text) <= limit:
+        return text
+
+    first = _SENTENCE_SPLIT.split(text)[0]
+
+    if len(first) <= limit:
+        return first
+
+    cut = max(first.rfind(", ", 0, limit), first.rfind("; ", 0, limit))
+
+    return (first[:cut] if cut > 40 else first[:limit].rsplit(" ", 1)[0]).rstrip(
+        " ,;"
+    ) + "."

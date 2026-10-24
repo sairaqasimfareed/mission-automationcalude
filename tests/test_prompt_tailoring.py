@@ -196,3 +196,80 @@ def test_the_compiled_prompt_of_a_static_shot_has_no_push_ins_but_a_pan_keeps_th
 
     assert "push-ins" not in static and "A fixed camera on cards" in static
     assert "push-ins" in panning
+
+
+# ------------------------------------------------- a place seen only in part (close / overhead)
+
+from src.models.shot_planning import ShotAngle, ShotSize  # noqa: E402
+from src.services.prompt_tailoring import short_place_description  # noqa: E402
+
+_LONG_PLACE = (
+    "A locked courtroom with dark wooden benches and a bar, set on a cold slate floor. "
+    "A gold scales motif hangs above the central bench. "
+    "A tall window throws a single cold shaft of light across the floor."
+)
+
+
+def test_a_long_place_description_is_cut_to_its_first_sentence() -> None:
+    assert short_place_description(_LONG_PLACE) == (
+        "A locked courtroom with dark wooden benches and a bar, set on a cold slate floor."
+    )
+    assert short_place_description("A tiny room.") == "A tiny room."
+
+
+def test_one_very_long_sentence_is_cut_at_a_clause_not_mid_word() -> None:
+    sentence = (
+        "A courtroom with dark wooden benches and a bar, set on a cold slate floor, with a "
+        "gold scales motif above the central bench, and a tall window with a cold shaft of "
+        "light across the floor and dust turning in the beam."
+    )
+    result = short_place_description(sentence)
+
+    assert len(result) <= 172
+    assert result.endswith(".") and "," not in result[-3:]
+    assert result.startswith("A courtroom with dark wooden benches")
+
+
+def _compile_place(*, size: ShotSize, angle: ShotAngle, person: bool = False) -> str:
+    plan = _shot_plan()
+    plan.shots[0].shot_size = size
+    plan.shots[0].shot_angle = angle
+    bible = _bible(person=person)
+    bible.identities[0].canonical_description = _LONG_PLACE
+    package = CinematicPromptCompilationService().compile(
+        scenes=[_scene(1)],
+        shot_plan=plan,
+        visual_continuity_bible=bible,
+        production_semantic_brief=None,
+        script_lock_hash="hash123",
+    )
+    prompt = package.prompt_for_scene(1)
+    assert prompt is not None
+
+    return prompt.prompt_text
+
+
+def test_a_close_up_or_overhead_shot_carries_only_the_places_first_sentence() -> None:
+    for size, angle in (
+        (ShotSize.CLOSE_UP, ShotAngle.EYE_LEVEL),
+        (ShotSize.EXTREME_CLOSE_UP, ShotAngle.EYE_LEVEL),
+        (ShotSize.MEDIUM, ShotAngle.OVERHEAD),
+    ):
+        text = _compile_place(size=size, angle=angle)
+
+        assert "dark wooden benches" in text
+        assert "scales motif" not in text and "tall window" not in text
+
+
+def test_a_wide_or_medium_shot_keeps_the_whole_place_description() -> None:
+    text = _compile_place(size=ShotSize.WIDE, angle=ShotAngle.EYE_LEVEL)
+
+    assert "scales motif" in text and "tall window" in text
+
+
+def test_a_person_in_a_close_up_keeps_the_full_description() -> None:
+    text = _compile_place(
+        size=ShotSize.CLOSE_UP, angle=ShotAngle.EYE_LEVEL, person=True
+    )
+
+    assert "A stern judge." in text

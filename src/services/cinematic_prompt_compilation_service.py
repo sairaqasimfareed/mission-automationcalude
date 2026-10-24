@@ -12,7 +12,9 @@ from src.models.scene import Scene
 from src.models.scene_detail import SceneDetailPlan
 from src.models.shot_planning import (
     CinematicShotPlan,
+    ShotAngle,
     ShotMovement,
+    ShotSize,
     ShotSpecification,
     TemporalActionBeat,
 )
@@ -27,6 +29,7 @@ from src.services.person_matching import find_person
 from src.services.prompt_tailoring import (
     look_with_fixed_camera,
     look_without_face_rules,
+    short_place_description,
 )
 from src.services.prompt_wording import (
     is_unspecified,
@@ -407,8 +410,19 @@ class CinematicPromptCompilationService:
                     break
 
         identity_names = _identity_names_shown(visual_continuity_bible, continuity)
+        # A close-up or overhead shot shows a place only in part: its long description (windows,
+        # ceilings, the back of the room) is cut to its first sentence, people stay in full.
+        shows_little_of_place = shot is not None and (
+            shot.shot_size in (ShotSize.CLOSE_UP, ShotSize.EXTREME_CLOSE_UP)
+            or shot.shot_angle == ShotAngle.OVERHEAD
+        )
         identities = [
-            _identity_text(identity)
+            (
+                short_place_description(_identity_text(identity))
+                if shows_little_of_place
+                and identity.entity_type == CanonicalEntityType.LOCATION
+                else _identity_text(identity)
+            )
             for identity in visual_continuity_bible.identities
             if identity.name in identity_names
         ]
