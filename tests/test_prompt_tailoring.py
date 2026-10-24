@@ -273,3 +273,72 @@ def test_a_person_in_a_close_up_keeps_the_full_description() -> None:
     )
 
     assert "A stern judge." in text
+
+
+# ------------------------------------------------------ "present-day" in a story set in the past
+
+from src.models.scene_detail import SceneDetail, SceneDetailPlan  # noqa: E402
+from src.services.prompt_tailoring import without_unsupported_present_day  # noqa: E402
+from src.services.scene_detail_source import scene_detail_source_hash  # noqa: E402
+
+_PARAGRAPH = (
+    "In the locked present-day courtroom, a static overhead view looks down on a dark bench. "
+    "A modern-day clerk is not shown."
+)
+
+
+def test_present_day_goes_when_the_setting_names_no_present() -> None:
+    result = without_unsupported_present_day(_PARAGRAPH, "Salem, 1692, in a courtroom")
+
+    assert result.startswith("In the locked courtroom, a static overhead view")
+    assert "present-day" not in result and "modern-day" not in result
+
+
+def test_present_day_stays_when_the_setting_names_a_present_day_frame() -> None:
+    for setting in (
+        "Salem, 1692, told from a present-day museum",
+        "Ancient Egypt framed by a modern archive",
+        "London, 2024, and 1666",
+    ):
+        assert without_unsupported_present_day(_PARAGRAPH, setting) == _PARAGRAPH
+
+
+def test_an_empty_setting_changes_nothing_and_representative_is_not_a_present() -> None:
+    assert without_unsupported_present_day(_PARAGRAPH, "") == _PARAGRAPH
+    assert without_unsupported_present_day(
+        _PARAGRAPH, "A representative town, 1692"
+    ) != (_PARAGRAPH)
+
+
+def test_the_compiled_prompt_of_a_scene_in_1692_has_no_present_day() -> None:
+    scene = _scene(1)
+    plan = _shot_plan()
+    bible = _bible(person=False)
+    shot = plan.shot_for_scene(1)
+    entry = bible.entry_for_scene(1)
+    detail_plan = SceneDetailPlan(
+        details=[
+            SceneDetail(
+                scene_number=1,
+                text=_PARAGRAPH,
+                source_hash=scene_detail_source_hash(
+                    scene=scene, shot=shot, continuity=entry
+                ),
+            )
+        ]
+    )
+
+    package = CinematicPromptCompilationService().compile(
+        scenes=[scene],
+        shot_plan=plan,
+        visual_continuity_bible=bible,
+        production_semantic_brief=None,
+        script_lock_hash="hash123",
+        project_look=ProjectLook(setting="Salem, 1692"),
+        scene_detail_plan=detail_plan,
+    )
+    prompt = package.prompt_for_scene(1)
+    assert prompt is not None
+
+    assert "In the locked courtroom" in prompt.prompt_text
+    assert "present-day" not in prompt.prompt_text

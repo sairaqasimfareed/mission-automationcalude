@@ -150,3 +150,27 @@ def short_place_description(description: str, limit: int = _PLACE_LIMIT) -> str:
     return (first[:cut] if cut > 40 else first[:limit].rsplit(" ", 1)[0]).rstrip(
         " ,;"
     ) + "."
+
+
+_PRESENT_DAY = re.compile(
+    r"\b(?:present|modern)[- ]day\s+|\bcontemporary\s+", re.IGNORECASE
+)
+_NAMES_A_PRESENT = re.compile(
+    r"\b(?:present|modern|contemporary|today|nowadays|20\d\d|21st)\b", re.IGNORECASE
+)
+
+
+def without_unsupported_present_day(text: str, setting: str) -> str:
+    """A scene's paragraph without "present-day" / "modern-day" / "contemporary" when the project's
+    own setting names no present-day time.
+
+    The scene writer uses "present-day" to mark a frame story's present against its flashbacks, and
+    a generator reads it as modern times: Salem's "locked present-day courtroom" in a story set in
+    1692. A project whose style sheet DOES name a present-day frame (a past story told from a
+    museum today) keeps the word - only a setting that names none loses it, and an empty setting
+    (nothing known) changes nothing."""
+
+    if not text or not setting.strip() or _NAMES_A_PRESENT.search(setting):
+        return text
+
+    return _PRESENT_DAY.sub("", text)

@@ -30,6 +30,7 @@ from src.services.prompt_tailoring import (
     look_with_fixed_camera,
     look_without_face_rules,
     short_place_description,
+    without_unsupported_present_day,
 )
 from src.services.prompt_wording import (
     is_unspecified,
@@ -524,6 +525,9 @@ class CinematicPromptCompilationService:
             if scene_detail_plan is not None and graphic_text is None
             else ""
         )
+
+        if detail and project_look is not None:
+            detail = without_unsupported_present_day(detail, project_look.setting)
 
         return _ResolvedSceneFields(
             shot=shot,
