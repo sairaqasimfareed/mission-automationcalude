@@ -23,6 +23,7 @@ from src.models.visual_continuity import (
 )
 from src.services.dialogue_prompt import dialogue_prompt_text, speakers_before
 from src.services.person_matching import find_person
+from src.services.prompt_tailoring import look_without_face_rules
 from src.services.prompt_wording import (
     is_unspecified,
     relative_words_in,
@@ -517,10 +518,17 @@ class CinematicPromptCompilationService:
             camera=camera,
             reveal_note=reveal_note,
             action=action,
-            look=(
-                project_look.as_prompt_sentence(universal_only=bool(detail))
-                if project_look is not None
-                else ""
+            look=look_without_face_rules(
+                (
+                    project_look.as_prompt_sentence(universal_only=bool(detail))
+                    if project_look is not None
+                    else ""
+                ),
+                person_on_screen=any(
+                    identity.entity_type == CanonicalEntityType.PERSON
+                    for identity in visual_continuity_bible.identities
+                    if identity.name in identity_names
+                ),
             ),
             use_beats=use_beats,
             visual=wanted,
