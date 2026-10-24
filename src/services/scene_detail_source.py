@@ -18,7 +18,9 @@ from src.models.visual_continuity import ClipContinuityEntry
 # Bumped when the way the text is written changes, so old text is rewritten.
 # 2: each paragraph states the one place and era its scene is in (a story with a present-day
 # frame had a museum cue in an Egyptian scene).
-DETAIL_WRITING_REVISION = 2
+# 3: action first - who or what is in the shot and what they do, beat by beat; light, camera and
+# sound only as a short closing (the clips showed props and atmosphere, not the narration's action).
+DETAIL_WRITING_REVISION = 3
 
 
 def scene_detail_source_hash(

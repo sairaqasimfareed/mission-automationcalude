@@ -3,9 +3,10 @@
 Lake Nyos prompts ran 380-500 characters of labels ("Environment: Village. Lighting: Natural
 daylight.") and a clip generated from that has nothing to be faithful to. The compiler assembles what
 repeats (the project style sheet, each place's and character's description, the shot plan); this
-service writes what only a writer can supply for each scene - where things stand in the frame, the
-direction and quality of the light, textures and objects, how the camera moves, the mood and the
-sound of the place - in a few batched calls (8 scenes each).
+service writes what only a writer can supply for each scene - who or what is in the frame, what
+they do and how, beat by beat across the clip, then in one short closing the light, camera and
+sound (2026-10-24: it used to be mostly light, textures, camera and mood, and the clips showed
+props and atmosphere instead of the narration's action) - in a few batched calls (8 scenes each).
 
 Only scenes that need it are written: a graphic scene (its words on screen come from the narration)
 is skipped, and a scene that already has a detail written from the same inputs is kept, so a rerun
@@ -44,7 +45,7 @@ BATCH_SIZE = 8
 
 _DRY_RUN_RESPONSE = "NONE"
 
-# A detail shorter than this cannot carry placement, light, texture, camera and sound.
+# A detail shorter than this cannot carry who is in the frame, what they do and the closing light.
 _MIN_USEFUL_CHARACTERS = 120
 
 
@@ -347,11 +348,18 @@ class SceneDetailService:
             + "\n\nFor EACH scene above write one block, blocks separated by a line "
             "of three dashes, in exactly this form:\n"
             "SCENE: <the scene number>\n"
-            "DETAIL: <ONE paragraph on ONE line, 60-90 words, concrete and visual: "
-            "what is in the foreground, middle and background and where; the "
-            "direction, quality and colour of the light; textures, materials and "
-            "small objects; how the camera moves through the shot; the mood; and "
-            "the sound of the place>\n\n"
+            "DETAIL: <ONE paragraph on ONE line, 70-110 words, concrete and visual, "
+            "written in THIS order: (1) the place and the era in one short clause; "
+            "(2) WHO or WHAT is in the shot and WHERE in the frame; (3) WHAT THEY DO "
+            "and HOW, in the order it happens from the first second of the clip to the "
+            "last - the movement, the gesture, the pace, what changes; (4) last, in at "
+            "most TWO short sentences, the light, the camera and the sound>\n\n"
+            "Most of the words go on step 3. The narration's own subject must be "
+            "visible and doing what the narration says (a person acting, an object "
+            "changing), not only a still arrangement of props around it. When the "
+            "narration only states a fact or names a title, show its subject plainly "
+            "and let one small movement carry the clip. Do not spend words on textures, "
+            "materials, mood or colour beyond what step 4 allows.\n\n"
             "The style sheet may name more than one place or era (for example a story "
             "set in the past with a present-day frame). Decide from the narration and "
             "the scene's setting which ONE of them this scene is in, and open the "

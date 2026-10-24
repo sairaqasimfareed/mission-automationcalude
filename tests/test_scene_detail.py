@@ -730,3 +730,36 @@ def test_detail_written_before_the_setting_rule_counts_as_stale() -> None:
         assert source.scene_detail_source_hash(**kwargs) != current  # type: ignore[arg-type]
     finally:
         source.DETAIL_WRITING_REVISION = original
+
+
+def test_the_prompt_asks_for_who_does_what_first_and_light_and_camera_last() -> None:
+    """2026-10-24 (Radium): the paragraph was mostly light, textures, camera and mood, so a
+    scene about "five painters sued" showed five still silhouettes and "researchers examined the
+    plant" showed a table of tools with no researcher. The writer is told the order: place, who
+    or what is in the frame, what they do and how beat by beat, and only then two short sentences
+    of light, camera and sound."""
+
+    job = _job(2)
+    job.cinematic_shot_plan = _shot_plan()
+
+    prompt = SceneDetailService._build_prompt(job, job.scenes[:1])  # noqa: SLF001
+
+    assert "WHO or WHAT is in the shot" in prompt
+    assert "WHAT THEY DO and HOW" in prompt
+    assert "in the order it happens" in prompt
+    assert "at most TWO short sentences, the light, the camera and the sound" in prompt
+    assert "The narration's own subject must be visible" in prompt
+    assert prompt.index("WHAT THEY DO") < prompt.index(
+        "the light, the camera and the sound"
+    )
+    # the old atmosphere-first wording is gone
+    assert "foreground, middle and background" not in prompt
+
+
+def test_text_written_with_the_old_atmosphere_first_instruction_is_rewritten() -> None:
+    """The writing revision moved to 3 with the action-first instruction, so a detail written
+    before it is no longer current and the button writes it again."""
+
+    from src.services import scene_detail_source as source
+
+    assert source.DETAIL_WRITING_REVISION >= 3
