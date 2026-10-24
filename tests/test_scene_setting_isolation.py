@@ -74,8 +74,8 @@ def test_a_scene_with_its_own_paragraph_gets_only_the_universal_style() -> None:
 
     assert _DETAIL in text
     assert "colour palette: Desaturated ochres" in text
-    # The shot here is locked off, so the look's push-ins read "a fixed camera" (2026-10-24).
-    assert "camera feel: A fixed camera" in text
+    # The shot here is locked off, so the look's push-ins read "static framing" (2026-10-24).
+    assert "camera feel: Static framing" in text
     assert "museum" not in text.split("Visual style for the whole video")[1].lower()
     for banned in ("setting:", "buildings and materials", "climate and plants"):
         assert banned not in text.split("Visual style for the whole video")[1]

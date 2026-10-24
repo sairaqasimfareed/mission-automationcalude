@@ -139,7 +139,7 @@ def test_a_locked_shot_replaces_the_looks_camera_movement_words() -> None:
     )
 
     assert (
-        result == "camera feel: A fixed camera on aged-paper cards, close-ups of eyes."
+        result == "camera feel: Static framing on aged-paper cards, close-ups of eyes."
     )
 
 
@@ -149,7 +149,7 @@ def test_a_leading_with_is_kept_and_other_words_are_not_mistaken_for_movement() 
             "Patient 2D framing with slow push-ins on drawn cards.",
             camera_is_static=True,
         )
-        == "Patient 2D framing with a fixed camera on drawn cards."
+        == "Patient 2D framing with static framing on drawn cards."
     )
     plain = "camera feel: panoramic wide frames and panel lighting."
     assert look_with_fixed_camera(plain, camera_is_static=True) == plain
@@ -162,7 +162,7 @@ def test_several_movement_words_become_one_fixed_camera() -> None:
         camera_is_static=True,
     )
 
-    assert result == "camera feel: a fixed camera; palette: slate."
+    assert result == "camera feel: static framing; palette: slate."
 
 
 def test_a_moving_shot_keeps_the_looks_camera_feel() -> None:
@@ -194,7 +194,7 @@ def test_the_compiled_prompt_of_a_static_shot_has_no_push_ins_but_a_pan_keeps_th
     static = _compile_with_movement(ShotMovement.STATIC)
     panning = _compile_with_movement(ShotMovement.PAN)
 
-    assert "push-ins" not in static and "A fixed camera on cards" in static
+    assert "push-ins" not in static and "Static framing on cards" in static
     assert "push-ins" in panning
 
 
@@ -351,7 +351,7 @@ def test_a_modifier_before_the_movement_goes_with_it_and_a_style_word_alone_stay
         look_with_fixed_camera(
             "camera feel: Slow documentary push-ins", camera_is_static=True
         )
-        == "camera feel: A fixed camera"
+        == "camera feel: Static framing"
     )
     style = "camera feel: handheld documentary realism."
     assert look_with_fixed_camera(style, camera_is_static=True) == style
