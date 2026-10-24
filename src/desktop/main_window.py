@@ -132,6 +132,8 @@ class MainWindow(QMainWindow):
             get_configuration=services.get_runtime_configuration,
             get_theme_mode=services.get_theme_preference_store().load,
             on_theme_mode_changed=self._handle_theme_mode_changed,
+            get_style_line=services.get_style_line_store().load,
+            save_style_line=services.get_style_line_store().save,
         )
 
         self._provider_manager_view = ProviderManagerView(

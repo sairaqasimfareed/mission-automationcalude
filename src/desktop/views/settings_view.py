@@ -6,15 +6,18 @@ from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
     QHeaderView,
+    QLineEdit,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
+from src.desktop.notifications import notify_success
 from src.desktop.theme import ThemeMode
-from src.desktop.widgets import muted, small_muted, subheading
+from src.desktop.widgets import button, muted, small_muted, subheading
 from src.services.runtime_configuration_loader import RuntimeConfiguration
+from src.services.style_line_store import MAX_STYLE_LINE_CHARACTERS
 
 _COLUMNS = ["Profile ID", "Provider", "Category", "Enabled", "Health", "Secret"]
 
@@ -41,12 +44,16 @@ class SettingsView(QWidget):
         get_configuration: Callable[[], RuntimeConfiguration],
         get_theme_mode: Callable[[], ThemeMode] | None = None,
         on_theme_mode_changed: Callable[[ThemeMode], None] | None = None,
+        get_style_line: Callable[[], str] | None = None,
+        save_style_line: Callable[[str], str] | None = None,
     ) -> None:
         super().__init__()
 
         self._get_configuration = get_configuration
         self._get_theme_mode = get_theme_mode
         self._on_theme_mode_changed = on_theme_mode_changed
+        self._get_style_line = get_style_line
+        self._save_style_line = save_style_line
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 20, 24, 20)
@@ -79,6 +86,30 @@ class SettingsView(QWidget):
 
         self._theme_combo.currentIndexChanged.connect(self._handle_theme_selected)
 
+        if self._save_style_line is not None:
+            layout.addWidget(subheading("Style line for every clip"))
+            layout.addWidget(
+                small_muted(
+                    "One line added as the very first words of every clip prompt, in every "
+                    "project - for example: Hand-drawn 2D animation, heavy black ink outlines, "
+                    "flat cel colour, never photorealistic or live action. Leave it empty for "
+                    "none. It applies to prompts built from now on; in a project that is already "
+                    "open, press Save project look (Content tab) to rebuild its prompts. Clips "
+                    "that were already generated do not change."
+                )
+            )
+            style_row = QHBoxLayout()
+            self._style_line_edit = QLineEdit()
+            self._style_line_edit.setMaxLength(MAX_STYLE_LINE_CHARACTERS)
+            self._style_line_edit.setPlaceholderText("e.g. Hand-drawn 2D animation ...")
+            if self._get_style_line is not None:
+                self._style_line_edit.setText(self._get_style_line())
+            style_row.addWidget(self._style_line_edit, stretch=1)
+            self._style_line_button = button("Save style line", variant="primary")
+            self._style_line_button.clicked.connect(self._handle_style_line_saved)
+            style_row.addWidget(self._style_line_button)
+            layout.addLayout(style_row)
+
         layout.addWidget(subheading("Provider settings"))
 
         self._dry_run_label = small_muted("")
@@ -93,6 +124,14 @@ class SettingsView(QWidget):
         self._table.setAlternatingRowColors(True)
         self._table.verticalHeader().setVisible(False)
         layout.addWidget(self._table)
+
+    def _handle_style_line_saved(self) -> None:
+        if self._save_style_line is None:
+            return
+
+        kept = self._save_style_line(self._style_line_edit.text())
+        self._style_line_edit.setText(kept)
+        notify_success("Style line saved" if kept else "Style line removed")
 
     def _handle_theme_selected(self, _index: int) -> None:
         if self._on_theme_mode_changed is None:

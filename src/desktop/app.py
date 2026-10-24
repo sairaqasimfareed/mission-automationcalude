@@ -98,12 +98,14 @@ def main() -> int:
     from src.desktop.icons import app_icon
     from src.desktop.main_window import MainWindow
     from src.desktop.theme import apply_theme
+    from src.services.style_line_store import set_style_line_source
 
     app = QApplication(sys.argv)
     app.setApplicationName("Mission Automation")
     app.setWindowIcon(app_icon())
 
     theme_mode = services.get_theme_preference_store().load()
+    set_style_line_source(services.get_style_line_store().load)
     apply_theme(app, theme_mode)
 
     window = MainWindow()

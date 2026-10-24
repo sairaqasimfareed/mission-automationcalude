@@ -100,6 +100,7 @@ from src.services.seo.seo_package_service import SEOPackageService
 from src.services.seo.seo_title_generation_service import (
     SEOTitleGenerationService,
 )
+from src.services.style_line_store import StyleLineStore
 from src.services.thumbnail.thumbnail_concept_generation_service import (
     ThumbnailConceptGenerationService,
 )
@@ -125,6 +126,7 @@ FINAL_EXPORT_STORAGE_ROOT = Path("data/final_exports")
 PROVIDER_PROFILE_STORAGE_PATH = Path("data/provider_profiles.json")
 PROJECTS_STORAGE_ROOT = Path("data/projects")
 THEME_PREFERENCE_STORAGE_PATH = Path("data/desktop_preferences.json")
+STYLE_LINE_STORAGE_PATH = Path("data/style_line.json")
 VOICE_PROVIDER_MAPPING_STORAGE_PATH = Path("data/voice_provider_mappings.json")
 EXTRACTED_FRAME_STORAGE_ROOT = Path("data/extracted_frames")
 
@@ -1127,3 +1129,10 @@ def get_theme_preference_store() -> ThemePreferenceStore:
     """
 
     return ThemePreferenceStore(path=THEME_PREFERENCE_STORAGE_PATH)
+
+
+@lru_cache
+def get_style_line_store() -> StyleLineStore:
+    """The shared store of the style line added in front of every clip prompt (Settings)."""
+
+    return StyleLineStore(path=STYLE_LINE_STORAGE_PATH)

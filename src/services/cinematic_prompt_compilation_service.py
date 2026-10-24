@@ -43,6 +43,7 @@ from src.services.scene_visual_treatment import (
     main_place,
     renders_as_graphic,
 )
+from src.services.style_line_store import with_style_line
 
 
 class _ResolvedSceneFields(NamedTuple):
@@ -540,21 +541,23 @@ class CinematicPromptCompilationService:
             camera=camera,
             reveal_note=reveal_note,
             action=action,
-            look=look_with_fixed_camera(
-                look_without_face_rules(
-                    (
-                        project_look.as_prompt_sentence(universal_only=bool(detail))
-                        if project_look is not None
-                        else ""
+            look=with_style_line(
+                look_with_fixed_camera(
+                    look_without_face_rules(
+                        (
+                            project_look.as_prompt_sentence(universal_only=bool(detail))
+                            if project_look is not None
+                            else ""
+                        ),
+                        person_on_screen=any(
+                            identity.entity_type == CanonicalEntityType.PERSON
+                            for identity in visual_continuity_bible.identities
+                            if identity.name in identity_names
+                        ),
                     ),
-                    person_on_screen=any(
-                        identity.entity_type == CanonicalEntityType.PERSON
-                        for identity in visual_continuity_bible.identities
-                        if identity.name in identity_names
-                    ),
-                ),
-                camera_is_static=shot is not None
-                and shot.movement == ShotMovement.STATIC,
+                    camera_is_static=shot is not None
+                    and shot.movement == ShotMovement.STATIC,
+                )
             ),
             use_beats=use_beats,
             visual=wanted,
