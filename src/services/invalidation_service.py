@@ -41,6 +41,13 @@ _SCENES_REPLANNED_DOWNSTREAM = (
     "render_result",
 )
 
+_VIDEO_SHAPE_DOWNSTREAM = (
+    # The timeline holds the output size and each clip's framing; the render was made at the old
+    # shape. Clips and audio keep what they were generated as.
+    "video_timeline",
+    "render_result",
+)
+
 _AUDIO_REGENERATION_DOWNSTREAM = (
     # video_timeline is deliberately excluded: GenreTimelinePipelineService
     # builds it purely from scenes/clips/genre_id - it embeds no audio
@@ -96,6 +103,16 @@ class InvalidationService:
             _SCENES_REPLANNED_DOWNSTREAM,
             reason=reason,
             triggered_by="scene_replanning",
+        )
+
+    def on_video_shape_changed(
+        self, job: VideoJob, *, reason: str = "The video shape was changed."
+    ) -> list[StaleArtifact]:
+        return self._mark_stale(
+            job,
+            _VIDEO_SHAPE_DOWNSTREAM,
+            reason=reason,
+            triggered_by="video_shape_change",
         )
 
     def on_audio_regenerated(

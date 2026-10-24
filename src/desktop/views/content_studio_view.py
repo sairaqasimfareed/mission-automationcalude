@@ -80,6 +80,7 @@ from src.models.script_selection_edit import (
     SelectionEditRequest,
 )
 from src.models.script_version import ScriptVersionComparison
+from src.models.specification_enums import AspectRatio
 from src.models.story_angle import StoryAngle, StoryAngleStyle
 from src.models.suggestions import IdentitySuggestion, SuggestionStatus
 from src.models.topic_candidate import TopicCandidate
@@ -137,6 +138,7 @@ from src.services.topic_candidate_generation_service import (
     TopicCandidateGenerationService,
 )
 from src.services.video_provider_rules import rules_for
+from src.services.video_shape_service import change_video_shape
 from src.services.voice_cast_service import (
     cast_key,
     cast_speakers,
@@ -1575,6 +1577,27 @@ class ContentStudioView(QWidget):
         )
         form.addRow("Video provider", video_provider_select)
 
+        # The shape was only ever chosen on the New Project form; a project made on the default and
+        # then fed vertical clips (Muse makes them) had no way to be corrected (Radium, 2026-10-24).
+        video_shape_select = QComboBox()
+        video_shape_select.addItem("16:9 - landscape", AspectRatio.LANDSCAPE)
+        video_shape_select.addItem("9:16 - vertical", AspectRatio.PORTRAIT)
+
+        if job.aspect_ratio not in (AspectRatio.LANDSCAPE, AspectRatio.PORTRAIT):
+            video_shape_select.addItem(
+                f"{job.aspect_ratio.value} (as created)", job.aspect_ratio
+            )
+
+        video_shape_select.setCurrentIndex(
+            max(0, video_shape_select.findData(job.aspect_ratio))
+        )
+        video_shape_select.setToolTip(
+            "The shape of the finished video and of the clips asked for. Changing it turns the "
+            "output size to match and marks the timeline and render as out of date. Clips "
+            "already generated keep their own shape - regenerate the ones that do not fit."
+        )
+        form.addRow("Video shape", video_shape_select)
+
         # How long the picture stays after each narrated line (src/services/
         # scene_hold.py): clips are sized to the narration, so without this a video is
         # the narration back to back. The genre's own value unless chosen here.
@@ -1671,6 +1694,7 @@ class ContentStudioView(QWidget):
                 hold_select=hold_select,
                 music_mode_select=music_mode_select,
                 pace_select=pace_select,
+                video_shape_select=video_shape_select,
             )
         )
         layout.addWidget(save_button, alignment=_LEFT)
@@ -7708,6 +7732,7 @@ class ContentStudioView(QWidget):
         hold_select: QComboBox | None = None,
         music_mode_select: QComboBox | None = None,
         pace_select: QComboBox | None = None,
+        video_shape_select: QComboBox | None = None,
     ) -> None:
         job = self._current_job()
 
@@ -7745,6 +7770,9 @@ class ContentStudioView(QWidget):
                 job.music_mode = MusicMode(music_mode_select.currentData())
             if pace_select is not None:
                 job.pace = ProjectPace(pace_select.currentData())
+            shape_changed = video_shape_select is not None and change_video_shape(
+                job, AspectRatio(video_shape_select.currentData())
+            )
             job.approval_policy = _APPROVAL_MODE_PRESETS[
                 approval_mode_select.currentText()
             ]()
@@ -7768,13 +7796,19 @@ class ContentStudioView(QWidget):
                     hold_select=hold_select,
                     music_mode_select=music_mode_select,
                     pace_select=pace_select,
+                    video_shape_select=video_shape_select,
                 ),
             )
 
             return
 
         self._on_change()
-        notify_success("Project settings saved")
+        notify_success(
+            f"Project settings saved - the video is now {job.aspect_ratio.value}. Clips already "
+            "generated keep their shape."
+            if shape_changed
+            else "Project settings saved"
+        )
 
     def _handle_plan_scenes(self) -> None:
         job = self._current_job()

@@ -504,3 +504,42 @@ def test_auto_content_mode_keeps_every_stage_tab(qapp: QApplication) -> None:
     shown = _stage_labels(view)
 
     assert "Research" in shown and "Quality gate" in shown and "Script" in shown
+
+
+def test_the_video_shape_is_changed_in_project_settings_on_save(
+    qapp: QApplication,
+) -> None:
+    """A project made on 16:9 and then given vertical clips (Radium, 2026-10-24) could not be
+    corrected: the shape was only chosen on the New Project form."""
+
+    from PySide6.QtCore import QCoreApplication
+
+    from src.models.specification_enums import AspectRatio
+
+    store = InMemoryJobStore()
+    job = _job()
+    job.output_resolution = "1920x1080"
+    store.add(job)
+    view = _view(store)
+    view.set_job(job.id)
+    view.refresh(job)
+
+    combo = next(
+        c
+        for c in view.findChildren(QComboBox)
+        if any(c.itemData(i) == AspectRatio.PORTRAIT for i in range(c.count()))
+    )
+
+    assert combo.currentData() == AspectRatio.LANDSCAPE
+
+    combo.setCurrentIndex(combo.findData(AspectRatio.PORTRAIT))
+    QCoreApplication.processEvents()
+
+    assert store.get(job.id).aspect_ratio == AspectRatio.LANDSCAPE  # not before Save
+
+    _button(view, "Save settings").click()
+
+    saved = store.get(job.id)
+    assert saved.aspect_ratio == AspectRatio.PORTRAIT
+    assert type(saved.aspect_ratio) is AspectRatio
+    assert saved.output_resolution == "1080x1920"
