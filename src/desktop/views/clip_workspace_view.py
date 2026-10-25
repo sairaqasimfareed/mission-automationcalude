@@ -2466,6 +2466,11 @@ class ClipWorkspaceView(QWidget):
                 job.scenes,
                 Path(destination_path),
                 cinematic_prompt_package=job.cinematic_prompt_package,
+                edited_prompts={
+                    edit.scene_number: edit.text
+                    for edit in job.prompt_edits
+                    if edit.clip_sequence_index == 0
+                },
             )
         except OSError as error:
             self._record_error(

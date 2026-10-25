@@ -3,10 +3,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from uuid import UUID
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QFocusEvent
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
+    QHBoxLayout,
     QScrollArea,
     QTextEdit,
     QVBoxLayout,
@@ -14,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.desktop.job_store import JobStore
+from src.desktop.notifications import notify_success
 from src.desktop.scroll_preservation import keep_scroll_on_refresh
 from src.desktop.widgets import (
     button,
@@ -22,11 +25,29 @@ from src.desktop.widgets import (
     status_label,
     subheading,
 )
+from src.models.enriched_scene_prompt import EnrichedScenePrompt
+from src.models.scene import Scene
 from src.models.video_job import VideoJob
 from src.services.enriched_scene_prompt_service import EnrichedScenePromptService
 from src.services.prompt_completeness_service import PromptCompletenessService
+from src.services.prompt_edit_service import (
+    keep_edit_against_current_prompt,
+    reset_edit,
+    save_edit,
+)
 
 _LEFT = Qt.AlignmentFlag.AlignLeft
+
+
+class _PromptTextEdit(QTextEdit):
+    """A prompt box that says when the operator clicks or tabs out of it, so the edit can be
+    saved without a Save button."""
+
+    focus_lost = Signal()
+
+    def focusOutEvent(self, event: QFocusEvent) -> None:  # noqa: N802 - Qt override
+        super().focusOutEvent(event)
+        self.focus_lost.emit()
 
 
 class CompiledPromptView(QWidget):
@@ -109,8 +130,10 @@ class CompiledPromptView(QWidget):
         layout.addWidget(
             small_muted(
                 "The full generation instruction for each scene - copy one "
-                "and generate that clip manually elsewhere. This never "
-                "changes what the app's own automated generation sends."
+                "and generate that clip manually elsewhere. You can edit any "
+                "prompt: click away from the box and it is saved, and that text "
+                "is then what the app sends for that scene instead of the "
+                "automatic one. Reset to automatic goes back to the generated text."
             )
         )
 
@@ -171,23 +194,116 @@ class CompiledPromptView(QWidget):
                 ):
                     row_layout.addWidget(status_label(finding.message, role="warning"))
 
-                text_area = QTextEdit()
-                text_area.setReadOnly(True)
-                text_area.setPlainText(entry.full_text())
-                text_area.setMinimumHeight(160)
-                row_layout.addWidget(text_area)
-
-                copy_button = button("Copy prompt", icon_name="check")
-                copy_button.clicked.connect(
-                    lambda _checked=False, prompt_entry=entry: (
-                        self._handle_copy(prompt_entry.full_text())
-                    )
-                )
-                row_layout.addWidget(copy_button, alignment=_LEFT)
+                self._add_prompt_editor(job, scene, entry, row_layout)
 
                 layout.addWidget(row)
 
         self._layout.addWidget(frame)
+
+    def _add_prompt_editor(
+        self,
+        job: VideoJob,
+        scene: Scene,
+        entry: EnrichedScenePrompt,
+        row_layout: QVBoxLayout,
+    ) -> None:
+        """The editable prompt box for one scene / part, saved when the operator clicks away,
+        with Copy and "Reset to automatic" beside it. Only the prompt text is editable; the rest
+        (negative constraints, continuity, references, settings) is shown below, read-only.
+        """
+
+        scene_number = scene.scene_number
+        clip_index = entry.clip_sequence_index
+        state = {"saved_text": entry.editable_text}
+
+        text_area = _PromptTextEdit()
+        text_area.setAcceptRichText(False)
+        text_area.setPlainText(entry.editable_text)
+        text_area.setMinimumHeight(160)
+        row_layout.addWidget(text_area)
+
+        status = status_label("", role="warning")
+        row_layout.addWidget(status)
+
+        buttons = QHBoxLayout()
+        buttons.setSpacing(8)
+        copy_button = button("Copy prompt", icon_name="check")
+        reset_button = button("Reset to automatic")
+        keep_button = button("Keep mine", variant="ghost")
+        buttons.addWidget(copy_button)
+        buttons.addWidget(reset_button)
+        buttons.addWidget(keep_button)
+        buttons.addStretch()
+        row_layout.addLayout(buttons)
+
+        def show_state(*, edited: bool, stale: bool) -> None:
+            status.setVisible(edited)
+            reset_button.setEnabled(edited)
+            keep_button.setVisible(edited and stale)
+            status.setText(
+                "Edited by you - the automatic prompt has changed since. Reset to automatic "
+                "to use the new one, or Keep mine."
+                if stale
+                else "Edited by you - this text is sent instead of the automatic prompt."
+            )
+
+        show_state(edited=entry.is_edited, stale=entry.edit_is_stale)
+
+        def save_now() -> None:
+            text = text_area.toPlainText()
+
+            if text == state["saved_text"]:
+                return
+
+            kept = save_edit(
+                job, scene_number, clip_index, text, automatic_text=entry.automatic_text
+            )
+            self._job_store.add(job)
+            state["saved_text"] = text
+            show_state(edited=kept, stale=False)
+            notify_success("Prompt saved" if kept else "Back to the automatic prompt")
+
+        def reset_now() -> None:
+            reset_edit(job, scene_number, clip_index)
+            self._job_store.add(job)
+            notify_success("Prompt reset to automatic")
+            self.refresh(job)
+
+        def keep_now() -> None:
+            keep_edit_against_current_prompt(
+                job, scene_number, clip_index, entry.automatic_text
+            )
+            self._job_store.add(job)
+            show_state(edited=True, stale=False)
+
+        def copy_now() -> None:
+            save_now()
+            fresh = next(
+                (
+                    candidate
+                    for candidate in self._enriched_scene_prompt_service.build_entries(
+                        job=job, scene=scene
+                    )
+                    if candidate.clip_sequence_index == clip_index
+                ),
+                entry,
+            )
+            self._handle_copy(fresh.full_text())
+
+        text_area.focus_lost.connect(save_now)
+        reset_button.clicked.connect(lambda _checked=False: reset_now())
+        keep_button.clicked.connect(lambda _checked=False: keep_now())
+        copy_button.clicked.connect(lambda _checked=False: copy_now())
+
+        details = entry.details_text()
+
+        if details:
+            details_area = QTextEdit()
+            details_area.setReadOnly(True)
+            details_area.setPlainText(details)
+            details_area.setMinimumHeight(110)
+            row_layout.addWidget(small_muted("Sent with it (not editable):"))
+            row_layout.addWidget(details_area)
 
     @staticmethod
     def _handle_copy(text: str) -> None:

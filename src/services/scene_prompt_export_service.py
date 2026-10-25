@@ -56,14 +56,20 @@ class ScenePromptExportService:
         scenes: list[Scene],
         *,
         cinematic_prompt_package: CinematicPromptPackage | None = None,
+        edited_prompts: dict[int, str] | None = None,
     ) -> list[ScenePromptExportEntry]:
+        """edited_prompts: {scene number: the operator's own prompt (Prompts tab)}, used instead
+        of the automatic text for those scenes."""
+
         ordered = sorted(scenes, key=lambda scene: scene.scene_number)
+        edited = edited_prompts or {}
 
         return [
             ScenePromptExportEntry(
                 scene_number=scene.scene_number,
                 suggested_filename=self._suggested_filename(scene),
-                prompt=self._resolve_prompt_text(scene, cinematic_prompt_package),
+                prompt=edited.get(scene.scene_number)
+                or self._resolve_prompt_text(scene, cinematic_prompt_package),
                 camera_direction=scene.camera_direction,
                 estimated_duration_seconds=scene.estimated_duration_seconds,
             )
@@ -75,6 +81,7 @@ class ScenePromptExportService:
         scenes: list[Scene],
         *,
         cinematic_prompt_package: CinematicPromptPackage | None = None,
+        edited_prompts: dict[int, str] | None = None,
     ) -> str:
         blocks = [
             (
@@ -85,7 +92,9 @@ class ScenePromptExportService:
                 f"Target duration: {entry.estimated_duration_seconds}s"
             )
             for entry in self.build_entries(
-                scenes, cinematic_prompt_package=cinematic_prompt_package
+                scenes,
+                cinematic_prompt_package=cinematic_prompt_package,
+                edited_prompts=edited_prompts,
             )
         ]
 
@@ -100,9 +109,14 @@ class ScenePromptExportService:
         destination: Path,
         *,
         cinematic_prompt_package: CinematicPromptPackage | None = None,
+        edited_prompts: dict[int, str] | None = None,
     ) -> None:
         destination.write_text(
-            self.to_text(scenes, cinematic_prompt_package=cinematic_prompt_package),
+            self.to_text(
+                scenes,
+                cinematic_prompt_package=cinematic_prompt_package,
+                edited_prompts=edited_prompts,
+            ),
             encoding="utf-8",
         )
 

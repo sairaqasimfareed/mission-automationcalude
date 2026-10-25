@@ -2820,3 +2820,37 @@ def test_a_split_flow_scene_attaches_when_the_projects_shape_is_plain_text(
 
     assert entry.status == SceneCompletenessStatus.READY
     assert [c.clip_sequence_index for c in job.video_clips] == [0, 1]
+
+
+def test_generate_one_sends_the_operators_own_prompt_instead_of_the_automatic_one() -> (
+    None
+):
+    """Prompts tab edits (2026-10-24): what the operator wrote is sent."""
+
+    from src.services.prompt_edit_service import save_edit
+
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            GoogleFlowGenerationState.GENERATING,
+            GoogleFlowGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    service = _service(provider)
+    job = _job(_scene(1))
+    job.cinematic_prompt_package = CinematicPromptPackage(
+        script_lock_hash="a" * 64,
+        prompts=[
+            ResolvedCinematicPrompt(
+                scene_number=1,
+                script_lock_hash="a" * 64,
+                prompt_text="The automatic prompt.",
+            )
+        ],
+    )
+    save_edit(job, 1, 0, "My own wording.", automatic_text="The automatic prompt.")
+
+    service.generate_one(job, 1)
+
+    assert len(provider.submitted_prompts) == 1
+    assert provider.submitted_prompts[0].startswith("My own wording.")
+    assert "automatic" not in provider.submitted_prompts[0]

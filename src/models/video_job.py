@@ -51,6 +51,7 @@ from src.models.production_ambiguity import ProductionAmbiguity
 from src.models.production_semantic_brief import ProductionSemanticBrief
 from src.models.project_look import ProjectLook
 from src.models.project_pace import ProjectPace
+from src.models.prompt_edit import PromptEdit
 from src.models.provider_preferences import ProviderPreferences
 from src.models.re_hook import ReHookPlan
 from src.models.reference_mode import ReferenceMode
@@ -553,6 +554,10 @@ class VideoJob(MissionBaseModel):
     # survives a restart. A detail written from a narration/shot/setting that has since
     # changed is stale and the compiler ignores it. None = not written yet.
     scene_detail_plan: SceneDetailPlan | None = None
+
+    # Prompts the operator wrote by hand in the Prompts tab (one per scene and clip part); sent
+    # instead of the automatic prompt, which is never overwritten.
+    prompt_edits: list[PromptEdit] = Field(default_factory=list)
 
     # What the operator wants each scene to SHOW (pasted or typed), treated as an instruction by
     # the continuity bible, shot plan, scene text and compiled prompt. A visual written for

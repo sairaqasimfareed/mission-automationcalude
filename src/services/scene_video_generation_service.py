@@ -55,6 +55,7 @@ from src.services.google_flow_generation_orchestrator_service import (
 from src.services.narration_duration_sync_service import (
     sync_real_narration_durations,
 )
+from src.services.prompt_edit_service import edited_text_for
 from src.services.provider_profile_management_service import (
     ProviderProfileManagementService,
 )
@@ -1138,6 +1139,9 @@ class SceneVideoGenerationService:
                 scene, job.cinematic_prompt_package
             )
         )
+        # The operator's own wording (Prompts tab) is sent instead of the automatic text; the
+        # duration / last-beat corrections below still apply to it.
+        prompt = edited_text_for(job, scene.scene_number, clip_sequence_index) or prompt
 
         if duration_override is not None:
             target_seconds: float = duration_override

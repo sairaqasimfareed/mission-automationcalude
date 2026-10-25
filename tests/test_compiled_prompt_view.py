@@ -10,7 +10,10 @@ import pytest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QTextEdit  # noqa: E402
 
 from src.desktop.job_store import InMemoryJobStore  # noqa: E402
-from src.desktop.views.compiled_prompt_view import CompiledPromptView  # noqa: E402
+from src.desktop.views.compiled_prompt_view import (  # noqa: E402
+    CompiledPromptView,
+    _PromptTextEdit,
+)
 from src.models.cinematic_prompt import (  # noqa: E402
     CinematicPromptPackage,
     ResolvedCinematicPrompt,
@@ -130,7 +133,7 @@ def test_shows_one_row_per_scene_with_the_real_compiled_prompt_text(
     view.set_job(job.id)
     view.refresh(job)
 
-    text_edits = view.findChildren(QTextEdit)
+    text_edits = view.findChildren(_PromptTextEdit)
 
     assert len(text_edits) == 1
     assert "The real compiled prompt for scene one." in text_edits[0].toPlainText()
@@ -145,11 +148,15 @@ def test_shows_multiple_scenes_in_scene_number_order(qapp: QApplication) -> None
     view.set_job(job.id)
     view.refresh(job)
 
-    text_edits = view.findChildren(QTextEdit)
+    assert len(view.findChildren(_PromptTextEdit)) == 2
 
-    assert len(text_edits) == 2
-    assert "Scene 1" in text_edits[0].toPlainText()
-    assert "Scene 2" in text_edits[1].toPlainText()
+    headings = [
+        label.text()
+        for label in view.findChildren(QLabel)
+        if label.property("role") == "subheading" and label.text().startswith("#")
+    ]
+
+    assert [text.split()[0] for text in headings] == ["#1", "#2"]
 
 
 def test_copy_button_puts_the_full_prompt_text_on_the_clipboard(
@@ -205,7 +212,7 @@ def test_shows_one_row_per_sub_clip_for_a_scene_that_needs_splitting(
     view.set_job(job.id)
     view.refresh(job)
 
-    text_edits = view.findChildren(QTextEdit)
+    text_edits = view.findChildren(_PromptTextEdit)
 
     assert len(text_edits) == 2
     assert "Part one text." in text_edits[0].toPlainText()

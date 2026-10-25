@@ -48,6 +48,7 @@ from src.services.muse_generation_orchestrator_service import (
 from src.services.narration_duration_sync_service import (
     sync_real_narration_durations,
 )
+from src.services.prompt_edit_service import edited_text_for
 from src.services.reference_frame_selection_service import (
     ReferenceFrameSelectionService,
     extract_references_for_identities,
@@ -1076,6 +1077,9 @@ class MuseSceneVideoGenerationService:
                 scene, job.cinematic_prompt_package
             )
         )
+        # The operator's own wording (Prompts tab) is sent instead of the automatic text; the
+        # duration and vertical-shape wording below are still added to it.
+        prompt = edited_text_for(job, scene.scene_number, clip_sequence_index) or prompt
 
         target_seconds = self._resolve_target_duration_seconds(
             job, scene, duration_override=duration_override

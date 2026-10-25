@@ -11,6 +11,7 @@ from src.providers.google_flow.clip_profile import flow_clip_profile_for
 from src.services.narration_duration_sync_service import (
     sync_real_narration_durations,
 )
+from src.services.prompt_edit_service import edit_for, is_stale
 from src.services.scene_hold import clip_sizing_seconds
 from src.services.scene_video_generation_service import SceneVideoGenerationService
 from src.services.video_provider_rules import (
@@ -149,11 +150,18 @@ class EnrichedScenePromptService:
         rules: VideoProviderRules,
         has_seam_reference: bool = False,
     ) -> EnrichedScenePrompt:
-        base_prompt_text = (
+        automatic_text = (
             resolved_prompt.prompt_text
             if resolved_prompt is not None
             else scene.visual_prompt
         )
+        clip_index = (
+            resolved_prompt.clip_sequence_index if resolved_prompt is not None else 0
+        )
+        edit = edit_for(job, scene.scene_number, clip_index)
+        # What the operator wrote (if anything) is what gets sent, so it is also what is shown.
+        base_prompt_text = edit.text if edit is not None else automatic_text
+        editable_text = base_prompt_text
 
         shot = (
             job.cinematic_shot_plan.shot_for_scene(scene.scene_number)
@@ -206,6 +214,10 @@ class EnrichedScenePromptService:
                 else 0
             ),
             base_prompt_text=base_prompt_text,
+            editable_text=editable_text,
+            automatic_text=automatic_text,
+            is_edited=edit is not None,
+            edit_is_stale=edit is not None and is_stale(edit, automatic_text),
             negative_constraints=(
                 list(resolved_prompt.negative_constraints)
                 if resolved_prompt is not None

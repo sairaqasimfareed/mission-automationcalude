@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from src.models.base import MissionBaseModel
 from src.models.google_flow_generation import GoogleFlowReferenceAsset
@@ -29,6 +29,13 @@ class EnrichedScenePrompt(MissionBaseModel):
     clip_sequence_index: int = Field(default=0, ge=0)
 
     base_prompt_text: str
+
+    # The text the Prompts tab lets the operator edit (their own text, else the automatic one),
+    # the automatic prompt it is compared with, and whether an edit exists / has fallen behind.
+    editable_text: str = ""
+    automatic_text: str = ""
+    is_edited: bool = False
+    edit_is_stale: bool = False
 
     negative_constraints: list[str] = Field(default_factory=list)
 
@@ -63,6 +70,17 @@ class EnrichedScenePrompt(MissionBaseModel):
 
     is_blocked: bool | None = None
 
+    @model_validator(mode="after")
+    def default_editable_and_automatic_text(self) -> EnrichedScenePrompt:
+        # An entry built without them (older callers, tests) shows its base prompt as both.
+        if not self.editable_text:
+            self.editable_text = self.base_prompt_text
+
+        if not self.automatic_text:
+            self.automatic_text = self.base_prompt_text
+
+        return self
+
     def full_text(self) -> str:
         """
         Render every field into one readable, copyable text block -
@@ -70,11 +88,20 @@ class EnrichedScenePrompt(MissionBaseModel):
         the clipboard.
         """
 
-        lines: list[str] = [
-            f"Scene {self.scene_number}",
-            "",
-            self.base_prompt_text,
-        ]
+        return "\n".join(
+            [f"Scene {self.scene_number}", "", self.base_prompt_text]
+            + self._detail_lines()
+        )
+
+    def details_text(self) -> str:
+        """Everything but the prompt itself (negative constraints, transitions, continuity,
+        references, settings, scores) - the part of the Prompts tab that is not editable.
+        """
+
+        return "\n".join(self._detail_lines()).strip()
+
+    def _detail_lines(self) -> list[str]:
+        lines: list[str] = []
 
         if self.negative_constraints:
             lines.append("")
@@ -139,7 +166,7 @@ class EnrichedScenePrompt(MissionBaseModel):
             lines.append("")
             lines.append("Quality scores: not yet scored.")
 
-        return "\n".join(lines)
+        return lines
 
     @staticmethod
     def _render_visual_state(state: VisualState) -> str:

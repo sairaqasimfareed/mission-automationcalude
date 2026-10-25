@@ -2040,3 +2040,24 @@ def test_a_split_muse_scene_attaches_when_the_projects_shape_is_plain_text(
 
     assert entry.status == SceneCompletenessStatus.READY
     assert [c.clip_sequence_index for c in job.video_clips] == [0, 1]
+
+
+def test_muse_sends_the_operators_own_prompt_instead_of_the_automatic_one(
+    tmp_path: Path,
+) -> None:
+    from src.services.prompt_edit_service import save_edit
+
+    provider = _ScriptedProvider(
+        observe_sequence=[
+            MuseGenerationState.GENERATING,
+            MuseGenerationState.READY_TO_DOWNLOAD,
+        ]
+    )
+    provider.downloaded_file = str(_real_video_file(tmp_path))
+    service = _service(provider)
+    job = _job(_scene(1))
+    save_edit(job, 1, 0, "My own wording for Muse.", automatic_text="Something else.")
+
+    service.generate_one(job, 1)
+
+    assert provider.submitted_prompts[0].startswith("My own wording for Muse.")
