@@ -274,6 +274,7 @@ class ProductionAudioView(QWidget):
             labeler=lambda track: self._voice_label(track),
             empty_text="No voiceover generated yet - use Generate voiceover above.",
             noun="voiceover files",
+            caption=lambda track: self._spoken_text(job, track),
         )
 
         sfx_planned = (
@@ -347,6 +348,7 @@ class ProductionAudioView(QWidget):
         labeler: Callable[[AudioTrack], str],
         empty_text: str,
         noun: str = "files",
+        caption: Callable[[AudioTrack], str | None] | None = None,
     ) -> None:
         layout.addWidget(subheading(title))
 
@@ -380,7 +382,21 @@ class ProductionAudioView(QWidget):
 
         for track in tracks:
             row_widget = QWidget()
-            row_widget.setLayout(self._audio_file_row(track, labeler(track)))
+            stack = QVBoxLayout(row_widget)
+            stack.setContentsMargins(0, 0, 0, 0)
+            stack.setSpacing(2)
+            stack.addLayout(self._audio_file_row(track, labeler(track)))
+
+            spoken = caption(track) if caption is not None else None
+
+            if spoken:
+                spoken_label = small_muted(f"“{spoken}”")
+                spoken_label.setWordWrap(True)
+                spoken_label.setTextInteractionFlags(
+                    Qt.TextInteractionFlag.TextSelectableByMouse
+                )
+                stack.addWidget(spoken_label)
+
             rows.append(row_widget)
 
         # A long project has one row per scene per category - show the
@@ -419,6 +435,18 @@ class ProductionAudioView(QWidget):
     @staticmethod
     def _open_audio_file(path: str) -> None:
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(path).resolve())))
+
+    @staticmethod
+    def _spoken_text(job: VideoJob, track: AudioTrack) -> str | None:
+        """What the voice says in this file: the narration of the scene it was made for."""
+
+        scene_number = track.metadata.get("scene_number")
+
+        for scene in job.scenes:
+            if scene.scene_number == scene_number:
+                return " ".join(scene.narration.split()) or None
+
+        return None
 
     @staticmethod
     def _voice_label(track: AudioTrack) -> str:

@@ -307,3 +307,24 @@ def test_tracks_without_a_plan_still_get_a_readable_label(
     sfx = _track(AudioTrackType.SOUND_EFFECT, _file(tmp_path, "s.mp3"), 1.5, start=12.0)
 
     assert any(t.startswith("Effect at 12.0s") for t in _texts(_view(_job([sfx]))))
+
+
+def test_each_voiceover_row_shows_the_words_spoken_in_it(
+    qapp: QApplication, tmp_path: Path
+) -> None:
+    tracks = [
+        _track(
+            AudioTrackType.VOICEOVER,
+            _file(tmp_path, f"v{n}.mp3"),
+            5.0,
+            start=5.0 * n,
+            scene_number=n,
+        )
+        for n in (1, 2)
+    ]
+    texts = _texts(_view(_job(tracks, scenes=3)))
+
+    assert "“Narration 1.”" in texts
+    assert "“Narration 2.”" in texts
+    # no voiceover for scene 3, so nothing is shown for it
+    assert "“Narration 3.”" not in texts
