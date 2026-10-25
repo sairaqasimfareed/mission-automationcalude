@@ -402,3 +402,46 @@ def test_clip_length_notes_are_recognised_so_old_ones_can_be_dropped() -> None:
     assert not is_clip_length_warning(
         "Scene 1: no usable reference frame found for The judges"
     )
+
+
+def test_uploaded_parts_of_a_split_scene_are_judged_by_their_total_not_one_by_one(
+    tmp_path: Path,
+) -> None:
+    """Live, 2026-10-25: scene 7 (12.1 s of voice) had parts of 8 s and 6 s uploaded by hand; each
+    part was compared with the whole narration, so the 6 s part blocked the render."""
+
+    frame_extraction, commands = _frame_extraction_service(tmp_path)
+    service = ClipDurationReconciliationService(
+        frame_extraction_service=frame_extraction
+    )
+    scene = _scene(7, real_narration_duration_seconds=12.1)
+    clips = [
+        _clip(7, duration_seconds=8, source_type=SceneSourceType.MANUAL_UPLOAD),
+        _clip(7, duration_seconds=6, source_type=SceneSourceType.MANUAL_UPLOAD),
+    ]
+
+    result = service.reconcile(scenes=[scene], clips=clips)
+
+    assert result.errors == []
+    assert result.warnings == []
+    assert result.clips == clips
+    assert commands == []
+
+
+def test_parts_that_together_are_too_short_are_reported_once_for_the_scene(
+    tmp_path: Path,
+) -> None:
+    frame_extraction, _ = _frame_extraction_service(tmp_path)
+    service = ClipDurationReconciliationService(
+        frame_extraction_service=frame_extraction
+    )
+    scene = _scene(7, real_narration_duration_seconds=12.1)
+    clips = [
+        _clip(7, duration_seconds=3, source_type=SceneSourceType.MANUAL_UPLOAD),
+        _clip(7, duration_seconds=2, source_type=SceneSourceType.MANUAL_UPLOAD),
+    ]
+
+    result = service.reconcile(scenes=[scene], clips=clips)
+
+    assert len(result.errors) == 1
+    assert "together" in result.errors[0]

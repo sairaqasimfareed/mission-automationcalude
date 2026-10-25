@@ -142,6 +142,7 @@ class ClipDurationReconciliationService:
         errors: list[str] = []
 
         clips_per_scene: dict[int, int] = {}
+        judged_multi_part_scenes: set[int] = set()
 
         for clip in clips:
             clips_per_scene[clip.scene_number] = (
@@ -180,6 +181,28 @@ class ClipDurationReconciliationService:
 
             narration_seconds = target
             clip_seconds = float(clip.duration_seconds)
+
+            if clips_per_scene[clip.scene_number] > 1:
+                # A scene made of several clips (parts) is sized together: each part is only a piece
+                # of the narration, so judge the parts' total once, and never trim a single part.
+                updated_clips.append(clip)
+
+                if clip.scene_number not in judged_multi_part_scenes:
+                    judged_multi_part_scenes.add(clip.scene_number)
+                    self._judge_parts_total(
+                        scene_number=clip.scene_number,
+                        total_seconds=sum(
+                            float(other.duration_seconds)
+                            for other in clips
+                            if other.scene_number == clip.scene_number
+                        ),
+                        narration_seconds=narration_seconds,
+                        warnings=warnings,
+                        errors=errors,
+                    )
+
+                continue
+
             difference = clip_seconds - narration_seconds
 
             if difference > self._tolerance_seconds:
@@ -218,6 +241,36 @@ class ClipDurationReconciliationService:
             warnings=warnings,
             errors=errors,
         )
+
+    def _judge_parts_total(
+        self,
+        *,
+        scene_number: int,
+        total_seconds: float,
+        narration_seconds: float,
+        warnings: list[str],
+        errors: list[str],
+    ) -> None:
+        shortfall = narration_seconds - total_seconds
+
+        if shortfall <= self._tolerance_seconds:
+            return
+
+        message = (
+            f"Scene {scene_number}: its clips together ({total_seconds:.1f}s) are "
+            f"{shortfall:.1f}s shorter than its real narration ({narration_seconds:.1f}s)"
+        )
+
+        if shortfall > narration_seconds * self._severe_shortfall_ratio:
+            errors.append(
+                message + " - add or choose longer clips or shorten the narration "
+                "before rendering."
+            )
+        else:
+            warnings.append(
+                message + " - narration may run past this scene's video into the "
+                "next scene."
+            )
 
     def _trim_long_ai_clip(
         self,
