@@ -206,9 +206,35 @@ class ClipDurationReconciliationService:
             difference = clip_seconds - narration_seconds
 
             if difference > self._tolerance_seconds:
-                updated_clips.append(
-                    self._trim(clip=clip, target_seconds=narration_seconds)
+                if (
+                    clip.source_type == SceneSourceType.MANUAL_UPLOAD
+                    and not scene.silent
+                ):
+                    # The operator chose this file and its length (a visual-only scene's fixed length still applies); the voice follows the picture
+                    # (it starts where the scene starts), so a longer clip is only a silent tail.
+                    updated_clips.append(clip)
+                    continue
+
+                # Leave room for the crossfade into the next scene: its picture - and voice - starts
+                # that long BEFORE this clip ends, so a clip cut to exactly the narration made the two
+                # voices overlap (live, 2026-10-25, Radium scene 1: an 8 s upload cut to 6 s).
+                limit = (
+                    narration_seconds
+                    if scene.silent
+                    else math.ceil(
+                        narration_seconds
+                        + _TRANSITION_ALLOWANCE_SECONDS
+                        + max(0.0, hold_seconds)
+                    )
                 )
+
+                if clip_seconds <= limit + self._tolerance_seconds:
+                    updated_clips.append(clip)
+                else:
+                    updated_clips.append(
+                        self._trim(clip=clip, target_seconds=float(limit))
+                    )
+
                 continue
 
             if difference < -self._tolerance_seconds:

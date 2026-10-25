@@ -97,7 +97,8 @@ def test_a_clip_longer_than_narration_is_trimmed(tmp_path: Path) -> None:
 
     assert len(commands) == 1
     trimmed = result.clips[0]
-    assert trimmed.duration_seconds == 7
+    # the voice plus the crossfade into the next scene (0.7 s), rounded up
+    assert trimmed.duration_seconds == 8
     assert trimmed.local_file != clip.local_file
     assert trimmed.local_file is not None
     assert Path(trimmed.local_file).exists()
@@ -445,3 +446,42 @@ def test_parts_that_together_are_too_short_are_reported_once_for_the_scene(
 
     assert len(result.errors) == 1
     assert "together" in result.errors[0]
+
+
+def test_a_manual_upload_longer_than_its_voice_is_kept_whole(tmp_path: Path) -> None:
+    """Live, 2026-10-25: an 8 s upload for a 5.98 s voice was cut to 6 s, so the next scene's voice
+    (which starts at the crossfade) overlapped this one."""
+
+    real_file = _real_video_file(tmp_path)
+    frame_extraction, commands = _frame_extraction_service(tmp_path)
+    service = ClipDurationReconciliationService(
+        frame_extraction_service=frame_extraction
+    )
+    scene = _scene(1, real_narration_duration_seconds=5.98)
+    clip = _clip(
+        1,
+        duration_seconds=8,
+        source_type=SceneSourceType.MANUAL_UPLOAD,
+        local_file=str(real_file),
+    )
+
+    result = service.reconcile(scenes=[scene], clips=[clip])
+
+    assert result.clips == [clip]
+    assert commands == []
+
+
+def test_a_stock_clip_is_cut_to_its_voice_plus_the_crossfade_not_to_the_voice_alone(
+    tmp_path: Path,
+) -> None:
+    real_file = _real_video_file(tmp_path)
+    frame_extraction, _ = _frame_extraction_service(tmp_path)
+    service = ClipDurationReconciliationService(
+        frame_extraction_service=frame_extraction
+    )
+    scene = _scene(1, real_narration_duration_seconds=5.98)
+    clip = _clip(1, duration_seconds=12, local_file=str(real_file))
+
+    result = service.reconcile(scenes=[scene], clips=[clip])
+
+    assert result.clips[0].duration_seconds == 7

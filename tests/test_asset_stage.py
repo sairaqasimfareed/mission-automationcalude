@@ -631,8 +631,8 @@ def test_a_stock_clip_longer_than_real_narration_is_trimmed(tmp_path: Path) -> N
     job.scenes[1].real_narration_duration_seconds = 7.0  # scene 1
 
     candidate = AssetCandidate(
-        title="Manual upload for scene 1",
-        source_type=SceneSourceType.MANUAL_UPLOAD,
+        title="Stock clip for scene 1",
+        source_type=SceneSourceType.STOCK_FOOTAGE,
         file_path=str(real_file),
         duration_seconds=12.0,
         approved=True,
@@ -640,7 +640,7 @@ def test_a_stock_clip_longer_than_real_narration_is_trimmed(tmp_path: Path) -> N
 
     state = build_state(scene_number=1, status=AssetWorkflowStatus.READY)
     state.selected_candidate = candidate
-    state.selected_source = SceneSourceType.MANUAL_UPLOAD
+    state.selected_source = SceneSourceType.STOCK_FOOTAGE
 
     other_state = build_state(scene_number=2, status=AssetWorkflowStatus.READY)
 
@@ -661,7 +661,8 @@ def test_a_stock_clip_longer_than_real_narration_is_trimmed(tmp_path: Path) -> N
     assert len(received_commands) == 1
 
     trimmed_clip = next(c for c in job.video_clips if c.scene_number == 1)
-    assert trimmed_clip.duration_seconds == 7
+    # the voice plus the crossfade into the next scene (0.7 s), rounded up
+    assert trimmed_clip.duration_seconds == 8
     assert trimmed_clip.local_file != str(real_file)
 
 
