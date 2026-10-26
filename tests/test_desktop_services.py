@@ -305,3 +305,34 @@ def test_production_runtime_resolves_a_genre_specific_voice_profile() -> None:
         )
     finally:
         _clear_caches()
+
+
+def test_a_fresh_install_with_no_provider_profiles_still_builds_the_runtime(
+    monkeypatch,
+) -> None:
+    """
+    Live, 2026-10-26: on a new machine the app closed at start with "Production application
+    requires at least one provider profile", because nothing had been set up yet and the
+    operator could not even reach the Providers screen to add one.
+    """
+
+    from src.config.settings import settings as real_settings
+
+    class _EmptyRepository:
+        def load_all(self) -> list:
+            return []
+
+    monkeypatch.setattr(real_settings, "OPENAI_API_KEY", "")
+    monkeypatch.setattr(real_settings, "CLAUDE_API_KEY", "")
+    monkeypatch.setattr(real_settings, "GOOGLE_API_KEY", "")
+    monkeypatch.setattr(real_settings, "MISSION_AUTOMATION_DRY_RUN", False)
+    monkeypatch.setattr(services, "_get_provider_profile_repository", _EmptyRepository)
+
+    _clear_caches()
+
+    try:
+        runtime = services.get_production_runtime()
+
+        assert runtime is not None
+    finally:
+        _clear_caches()

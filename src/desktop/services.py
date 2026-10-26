@@ -173,6 +173,21 @@ def get_runtime_configuration() -> RuntimeConfiguration:
     return configuration
 
 
+def _not_set_up_llm_profile() -> ProviderProfile:
+    """A disabled stand-in used when no provider has been set up yet (a fresh install), so the
+    app can open and the operator can add one in Providers. Seen live, 2026-10-26: "Production
+    application requires at least one provider profile" closed the app on a new machine.
+    """
+
+    return ProviderProfile(
+        profile_id="provider.llm.not_set_up",
+        display_name="No AI provider set up yet",
+        provider_name="openai",
+        category=ProviderCategory.LLM,
+        enabled=False,
+    )
+
+
 @lru_cache
 def get_production_runtime() -> ProductionApplicationRuntime:
     """
@@ -288,7 +303,9 @@ def get_production_runtime() -> ProductionApplicationRuntime:
         # silently skipping them. `or None` on a fresh install with no
         # profiles configured yet falls back to the loader's own
         # dry-run placeholder, exactly like every other override here.
-        provider_profiles=(None if dry_run else (desktop_profiles or None)),
+        provider_profiles=(
+            None if dry_run else (desktop_profiles or [_not_set_up_llm_profile()])
+        ),
         # Real bug found and fixed 2026-09-23: this comment's own
         # stated intent ("falls back to the loader's own dry-run
         # placeholder") only actually happens when dry_run=True -
