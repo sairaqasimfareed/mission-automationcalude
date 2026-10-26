@@ -219,7 +219,14 @@ class JsonJobStore:
             except ValueError:
                 continue
 
-            self.get(job_id)
+            try:
+                self.get(job_id)
+            except JobStoreError:
+                # One unreadable project file must not stop the app from starting (seen live,
+                # 2026-10-26: a project saved with an audio timeline but no voiceover file).
+                logger.warning(
+                    "Skipping the unreadable project file %s.", path.name, exc_info=True
+                )
 
         return sorted(
             self._jobs.values(),

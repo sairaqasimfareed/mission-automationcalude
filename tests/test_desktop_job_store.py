@@ -902,3 +902,72 @@ def test_json_store_thumbnail_round_trips_all_step_2_provenance_fields(
     assert restored.version_number == 2
     assert restored.source_genre_id == "genre.documentary"
     assert restored.source_scene_count == 3
+
+
+def _saved_job_without_voice_file(tmp_path: Path, *, failed: bool) -> tuple[Path, str]:
+    """A project as the failed-voice path used to leave it: an audio timeline, no voice_file."""
+
+    from src.models.audio_timeline import AudioTimeline
+    from src.models.audio_track import AudioTrack, AudioTrackStatus, AudioTrackType
+    from src.models.media_strategy import VoiceStatus
+
+    job = _job()
+    job.voice_file = "assets/voice.mp3"
+    job.audio_timeline = AudioTimeline(
+        tracks=[
+            AudioTrack(
+                track_type=AudioTrackType.VOICEOVER,
+                source_file="assets/scene_1.mp3",
+                duration_seconds=5.0,
+                status=AudioTrackStatus.READY,
+            )
+        ]
+    )
+    data = json.loads(job.model_dump_json())
+    data["voice_file"] = None
+    data["voice_status"] = (VoiceStatus.FAILED if failed else VoiceStatus.PENDING).value
+    path = tmp_path / f"{job.id}.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    return path, str(job.id)
+
+
+def test_a_project_saved_with_an_audio_timeline_but_no_voice_file_opens(
+    tmp_path: Path,
+) -> None:
+    """Live, 2026-10-26: the app would not start on another machine - "Audio timeline requires a
+    voiceover file" - because a failed voice run cleared voice_file and left the old timeline.
+    """
+
+    _, job_id = _saved_job_without_voice_file(tmp_path, failed=False)
+
+    jobs = JsonJobStore(storage_root=tmp_path).list_all()
+
+    assert [str(j.id) for j in jobs] == [job_id]
+    assert jobs[0].voice_file == "assets/scene_1.mp3"
+    assert jobs[0].audio_timeline is not None
+
+
+def test_a_failed_voice_drops_the_stale_audio_timeline_when_the_project_opens(
+    tmp_path: Path,
+) -> None:
+    _saved_job_without_voice_file(tmp_path, failed=True)
+
+    jobs = JsonJobStore(storage_root=tmp_path).list_all()
+
+    assert len(jobs) == 1
+    assert jobs[0].audio_timeline is None
+    assert jobs[0].voice_file is None
+
+
+def test_one_unreadable_project_file_does_not_stop_the_others_from_listing(
+    tmp_path: Path,
+) -> None:
+    store = JsonJobStore(storage_root=tmp_path)
+    good = _job("Good")
+    store.add(good)
+    (tmp_path / f"{uuid4()}.json").write_text("not valid json", encoding="utf-8")
+
+    listed = JsonJobStore(storage_root=tmp_path).list_all()
+
+    assert [j.id for j in listed] == [good.id]

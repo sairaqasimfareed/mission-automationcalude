@@ -11,6 +11,7 @@ from src.models.asset_state import SceneAssetState
 from src.models.audience_promise import AudiencePromise
 from src.models.audio_inclusion_preferences import AudioInclusionPreferences
 from src.models.audio_timeline import AudioTimeline
+from src.models.audio_track import AudioTrackType
 from src.models.base import MissionBaseModel
 from src.models.cinematic_prompt import CinematicPromptPackage
 from src.models.clip_attachment_verification import ClipAttachmentVerificationReport
@@ -762,7 +763,28 @@ class VideoJob(MissionBaseModel):
             raise ValueError("Generated voiceover cannot be READY without a file.")
 
         if self.audio_timeline is not None and not self.voice_file:
-            raise ValueError("Audio timeline requires a voiceover file.")
+            # A failed voice run clears voice_file but used to leave the earlier run's timeline
+            # behind; the saved project then could not be opened at all (live, 2026-10-26). Repair
+            # it on load: a failed voice drops the stale timeline, otherwise the file of the first
+            # voiceover track stands in; a timeline with no voice track at all is dropped.
+            stand_in = (
+                None
+                if self.voice_status == VoiceStatus.FAILED
+                else next(
+                    (
+                        track.source_file
+                        for track in self.audio_timeline.tracks
+                        if track.track_type == AudioTrackType.VOICEOVER
+                        and track.source_file
+                    ),
+                    None,
+                )
+            )
+
+            if stand_in:
+                self.voice_file = stand_in
+            else:
+                self.audio_timeline = None
 
         if self.video_timeline is not None and not self.video_clips:
             raise ValueError("Video timeline requires ready video clips.")
