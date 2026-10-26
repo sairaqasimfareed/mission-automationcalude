@@ -514,3 +514,82 @@ class TestEffectsFollowThePlan:
 
         # the crossfade into a scene takes 0.7 s, so the effect starts once it is over
         assert sfx.start_time_seconds == pytest.approx(20.9 + 0.7)
+
+
+class TestMinimumGapBetweenLines:
+    """Live, 2026-10-25 (Radium): the silence between two lines was anything from 0.5 s to 4.5 s,
+    because every clip is rounded to 4/6/8/10 s and the next picture starts at the crossfade.
+    """
+
+    def _voices(self) -> AudioTimeline:
+        return AudioTimeline(
+            tracks=[
+                _track(AudioTrackType.VOICEOVER, 0.0, 6.0, scene_number=1),
+                _track(AudioTrackType.VOICEOVER, 0.0, 8.0, scene_number=2),
+                _track(AudioTrackType.VOICEOVER, 0.0, 3.0, scene_number=3),
+            ]
+        )
+
+    def _starts(self, timeline: AudioTimeline) -> list[float]:
+        return [round(t.start_time_seconds, 2) for t in timeline.tracks]
+
+    def test_without_a_gap_every_voice_stays_on_its_scene_start(self) -> None:
+        timeline = self._voices()
+
+        realign_audio_to_scene_timings(
+            timeline,
+            video_timeline=_video((1, 0, 8), (2, 8, 18), (3, 18, 24)),
+            scene_timings=_timings((1, 0.0, 8.0), (2, 6.3, 16.3), (3, 15.6, 22.6)),
+        )
+
+        assert self._starts(timeline) == [0.0, 6.3, 15.6]
+
+    def test_a_voice_that_would_start_too_soon_after_the_last_line_is_started_a_little_later(
+        self,
+    ) -> None:
+        timeline = self._voices()
+
+        realign_audio_to_scene_timings(
+            timeline,
+            video_timeline=_video((1, 0, 8), (2, 8, 18), (3, 18, 24)),
+            scene_timings=_timings((1, 0.0, 8.0), (2, 6.3, 16.3), (3, 15.6, 22.6)),
+            minimum_voice_gap_seconds=1.0,
+        )
+
+        # line 1 ends at 6.0, line 2 would start at 6.3 -> 7.0 would be needed, but a voice is
+        # never delayed by more than half a second
+        assert self._starts(timeline)[:2] == [0.0, 6.8]
+        # line 2 ends at 14.8; line 3 starts at 15.6, which is already 0.8 later -> 15.8 (a 1.0 gap)
+        assert self._starts(timeline)[2] == 15.8
+
+    def test_a_voice_is_never_pushed_past_the_end_of_its_own_scene(self) -> None:
+        timeline = AudioTimeline(
+            tracks=[
+                _track(AudioTrackType.VOICEOVER, 0.0, 6.0, scene_number=1),
+                _track(AudioTrackType.VOICEOVER, 0.0, 9.8, scene_number=2),
+            ]
+        )
+
+        realign_audio_to_scene_timings(
+            timeline,
+            video_timeline=_video((1, 0, 8), (2, 8, 18)),
+            scene_timings=_timings((1, 0.0, 8.0), (2, 6.3, 16.3)),
+            minimum_voice_gap_seconds=1.0,
+        )
+
+        # the scene has only 10 s and the line is 9.8 s: at most 0.2 s of delay fits
+        assert self._starts(timeline)[1] == 6.5
+
+    def test_running_it_twice_changes_nothing(self) -> None:
+        timeline = self._voices()
+        kwargs = {
+            "video_timeline": _video((1, 0, 8), (2, 8, 18), (3, 18, 24)),
+            "scene_timings": _timings((1, 0.0, 8.0), (2, 6.3, 16.3), (3, 15.6, 22.6)),
+            "minimum_voice_gap_seconds": 1.0,
+        }
+
+        realign_audio_to_scene_timings(timeline, **kwargs)
+        first = self._starts(timeline)
+
+        assert realign_audio_to_scene_timings(timeline, **kwargs) == 0
+        assert self._starts(timeline) == first

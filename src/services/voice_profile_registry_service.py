@@ -228,7 +228,7 @@ class VoiceProfileRegistryService:
                     default_volume_gain_db=0.0,
                     default_stability=0.5,
                     default_similarity_boost=0.75,
-                    default_style_strength=0.0,
+                    default_style_strength=0.25,
                     default_speaker_boost=True,
                     provider_mappings={
                         "elevenlabs": {
@@ -294,7 +294,7 @@ class VoiceProfileRegistryService:
                     default_volume_gain_db=0.0,
                     default_stability=0.75,
                     default_similarity_boost=0.8,
-                    default_style_strength=0.15,
+                    default_style_strength=0.3,
                     default_speaker_boost=True,
                     provider_mappings={
                         "elevenlabs": {
@@ -329,7 +329,7 @@ class VoiceProfileRegistryService:
                     default_volume_gain_db=0.0,
                     default_stability=0.72,
                     default_similarity_boost=0.8,
-                    default_style_strength=0.25,
+                    default_style_strength=0.35,
                     default_speaker_boost=True,
                     provider_mappings={
                         "elevenlabs": {

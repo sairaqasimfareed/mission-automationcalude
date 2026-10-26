@@ -44,6 +44,7 @@ from src.services.render_speed_rules import (
     timeline_for_picture_brightness,
     timeline_for_render_speed,
 )
+from src.services.scene_hold import hold_seconds
 from src.services.seo.seo_context_builder import SEOContextBuilder
 from src.services.subtitle_cue_resolution_service import (
     resolve_absolute_subtitle_cues,
@@ -95,6 +96,8 @@ class RenderPipelineStage(BasePipelineStage):
         self._voice_blueprints = list(voice_blueprints or [])
 
         self._transition_duration_seconds = transition_duration_seconds
+        # Set from the job at the start of each production render.
+        self._voice_gap_seconds = 0.0
 
         # REQ-3 (cinematic letterboxing), 2026-09-22: the caller's own
         # already-resolved choice (genre default + real per-project
@@ -331,6 +334,7 @@ class RenderPipelineStage(BasePipelineStage):
             raise RuntimeError("Production render service " "is not configured.")
 
         video_timeline = context.job.video_timeline
+        self._voice_gap_seconds = hold_seconds(context.job)
 
         if video_timeline is None:
             raise RuntimeError("Production render requires " "VideoJob.video_timeline.")
@@ -482,6 +486,7 @@ class RenderPipelineStage(BasePipelineStage):
                 video_timeline=video_timeline,
                 scene_timings=fallback_timings,
                 sound_design_plan=context.job.sound_design_plan,
+                minimum_voice_gap_seconds=self._voice_gap_seconds,
             )
 
         return production_render_service.render(
@@ -662,6 +667,7 @@ class RenderPipelineStage(BasePipelineStage):
                 video_timeline=video_timeline,
                 scene_timings=planned_timings,
                 sound_design_plan=sound_design_plan,
+                minimum_voice_gap_seconds=self._voice_gap_seconds,
             )
 
         stage1_output_file = self._stage_output_file(target_output_file, "stage1")
@@ -688,6 +694,7 @@ class RenderPipelineStage(BasePipelineStage):
                 video_timeline=video_timeline,
                 scene_timings=stage1_result.scene_timings,
                 sound_design_plan=sound_design_plan,
+                minimum_voice_gap_seconds=self._voice_gap_seconds,
             )
 
         has_muxed_audio = bool(muxed_audio_timeline.tracks)

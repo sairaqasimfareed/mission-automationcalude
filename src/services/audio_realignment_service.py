@@ -43,6 +43,7 @@ def realign_audio_to_scene_timings(
     scene_timings: Iterable[SceneRenderTiming],
     sound_design_plan: SoundDesignPlan | None = None,
     transition_seconds: float = 0.7,
+    minimum_voice_gap_seconds: float = 0.0,
 ) -> int:
     """
     Move audio generated from the Audio tab onto the video's REAL scene timing.
@@ -64,6 +65,13 @@ def realign_audio_to_scene_timings(
     from the plan; a sound effect keeps its offset inside its scene and moves with
     it. Calling this twice with the same timings changes nothing. A scene missing
     from the timings leaves its tracks alone.
+
+    minimum_voice_gap_seconds: how long the silence between one line and the next should be at
+    least. A scene's picture starts at the crossfade, before the previous clip ends, so with clips
+    rounded to 4/6/8/10 s the gap between two lines was anything from 0.5 s to 4 s (live, 2026-10-25:
+    "no natural pauses"). A voice that would start sooner than that after the previous line is
+    started later - never later than half a second (the picture lands first), and never so late that
+    it would run past the end of its own scene. 0 leaves every voice on its scene's start.
 
     Returns the number of tracks moved.
     """
@@ -89,6 +97,12 @@ def realign_audio_to_scene_timings(
         if track.track_type == AudioTrackType.VOICEOVER and number is not None:
             old_voice_start.setdefault(number, track.start_time_seconds)
 
+    voice_starts = _voice_starts_with_gaps(
+        audio_timeline,
+        real=real,
+        minimum_gap_seconds=minimum_voice_gap_seconds,
+    )
+
     for track in audio_timeline.tracks:
         basis = track.metadata.get(POSITION_BASIS_KEY)
         scene_number = _scene_number(track)
@@ -99,7 +113,10 @@ def realign_audio_to_scene_timings(
             # scene, and the stored voice stayed behind (live, 2026-10-20: voices up to 16 s ahead of the
             # picture). So every render puts the voice on the scene's current real start.
             if scene_number in real:
-                moved += _move(track, start=real[scene_number][0])
+                moved += _move(
+                    track,
+                    start=voice_starts.get(id(track), real[scene_number][0]),
+                )
 
         elif track.track_type == AudioTrackType.SOUND_EFFECT:
             if scene_number not in real:
@@ -167,6 +184,52 @@ def realign_audio_to_scene_timings(
                     moved += _move(track, start=start, duration=span)
 
     return moved
+
+
+# A voice is never started later than this after its scene's picture starts.
+_MAXIMUM_VOICE_DELAY_SECONDS = 0.5
+
+
+def _voice_starts_with_gaps(
+    audio_timeline: AudioTimeline,
+    *,
+    real: dict[int, tuple[float, float]],
+    minimum_gap_seconds: float,
+) -> dict[int, float]:
+    """Start of each voice track (keyed by id(track)) when a minimum silence is kept between lines.
+    Empty when no gap is asked for."""
+
+    if minimum_gap_seconds <= 0:
+        return {}
+
+    voices = sorted(
+        (
+            track
+            for track in audio_timeline.tracks
+            if track.track_type == AudioTrackType.VOICEOVER
+            and _scene_number(track) in real
+        ),
+        key=lambda track: real[_scene_number(track) or 0][0],
+    )
+    starts: dict[int, float] = {}
+    previous_end: float | None = None
+
+    for track in voices:
+        scene_start, scene_end = real[_scene_number(track) or 0]
+        start = scene_start
+
+        if previous_end is not None and start < previous_end + minimum_gap_seconds:
+            wanted = previous_end + minimum_gap_seconds
+            room = scene_end - track.duration_seconds
+            start = max(
+                scene_start,
+                min(wanted, scene_start + _MAXIMUM_VOICE_DELAY_SECONDS, room),
+            )
+
+        starts[id(track)] = start
+        previous_end = start + track.duration_seconds
+
+    return starts
 
 
 def _planned_effect_start(
