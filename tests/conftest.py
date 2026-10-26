@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 from collections.abc import Generator
 from pathlib import Path
 
 import pytest
+
+# A test run is ALWAYS a dry run, whatever the developer's .env says (it says false once the real
+# providers are in use): a plain `pytest` there made real ElevenLabs calls from tests that build the
+# desktop runtime (2026-10-26) and, earlier, real Anthropic ones (2026-09-30). The environment variable
+# wins over .env, and this runs before anything imports the settings.
+os.environ["MISSION_AUTOMATION_DRY_RUN"] = "true"
 
 
 @pytest.fixture(autouse=True)
