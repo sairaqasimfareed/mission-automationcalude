@@ -120,6 +120,9 @@ from src.services.visual_continuity_validation_service import (
 from src.services.writing_directives_service import WritingDirectivesService
 from src.shared.logger import logger
 
+# The longest one scene's narration in a project set to short scenes.
+SHORT_SCENE_MAX_SECONDS = 6.0
+
 
 class ContentIntelligencePipeline:
     """
@@ -774,6 +777,7 @@ class ContentIntelligencePipeline:
             winning_hook=job.selected_hook,
             re_hook_plan=job.re_hook_plan,
             writing_directives=job.writing_directives,
+            short_sentences=job.short_scenes,
         )
 
         job.generated_script = self.narrative_compression_service.compress(script)
@@ -2020,15 +2024,20 @@ class ContentIntelligencePipeline:
         """The longest one scene is planned for: Flow's 8 s unless the project uses the Omni model."""
 
         if job.video_provider == VideoProvider.GOOGLE_FLOW_OMNI:
-            return flow_clip_profile_for(job.video_provider).max_seconds
+            longest = flow_clip_profile_for(job.video_provider).max_seconds
+        else:
+            longest = 8.0
 
-        return 8.0
+        # Short scenes: cut at about 6 s of narration, at a sentence end (a single sentence longer
+        # than that stays whole).
+        return min(longest, SHORT_SCENE_MAX_SECONDS) if job.short_scenes else longest
 
     @staticmethod
     def scene_merge_settings(job: VideoJob) -> MergeSettings | None:
         """None (the normal plan) unless the project has asked for short scenes to be merged."""
 
-        if not job.merge_short_scenes:
+        # Short scenes and merging pull in opposite directions: short scenes wins.
+        if not job.merge_short_scenes or job.short_scenes:
             return None
 
         return MergeSettings(

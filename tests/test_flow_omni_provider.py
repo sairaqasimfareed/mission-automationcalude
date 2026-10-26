@@ -210,3 +210,29 @@ def test_an_omni_scene_of_nine_seconds_is_one_ten_second_clip(tmp_path: Path) ->
 
     assert len(provider.submitted_requests) == 1
     assert provider.submitted_requests[0].execution_settings.duration_seconds == 10.0
+
+
+def test_short_scenes_plan_at_six_seconds_and_ignore_merging() -> None:
+    job = _job(_scene(1))
+    job.merge_short_scenes = True
+
+    assert ContentIntelligencePipeline.scene_merge_settings(job) is not None
+
+    job.short_scenes = True
+
+    assert ContentIntelligencePipeline._max_scene_seconds(job) == 6.0  # noqa: SLF001
+    assert ContentIntelligencePipeline.scene_merge_settings(job) is None
+    job.video_provider = _OMNI
+    assert ContentIntelligencePipeline._max_scene_seconds(job) == 6.0  # noqa: SLF001
+
+
+def test_a_six_second_ceiling_groups_sentences_into_shorter_scenes() -> None:
+    sentences = ["The clerk read the charge aloud."] * 6
+    agent = ScenePlannerAgent()
+
+    normal = agent._split_chunk_to_fit_ceiling(sentences, 8.0)  # noqa: SLF001
+    short = agent._split_chunk_to_fit_ceiling(sentences, 6.0)  # noqa: SLF001
+
+    assert len(short) > len(normal)
+    assert all(seconds <= 6 for _, seconds in short)
+    assert [x for group, _ in short for x in group] == sentences

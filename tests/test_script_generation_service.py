@@ -570,3 +570,30 @@ def test_generate_includes_writing_directives_in_prompt_when_supplied() -> None:
     assert (
         "Never state a claim the research does not support." in stub.last_request.prompt
     )
+
+
+def test_short_scenes_adds_the_short_sentence_rule_to_the_writers_instructions() -> (
+    None
+):
+    def system_prompt(short: bool) -> str:
+        stub = _StubLLMService(content=_THREE_SEGMENT_RESPONSE)
+        _generate(stub).generate(
+            topic="The Mary Celeste",
+            editorial_profile=_editorial_profile(),
+            research=_research(),
+            audience_promise=_promise(),
+            story_angle=_angle(),
+            blueprint=_blueprint(),
+            reveal_map=_reveal_map(),
+            winning_hook=_winning_hook(),
+            re_hook_plan=_re_hook_plan(),
+            short_sentences=short,
+        )
+
+        assert stub.last_request is not None
+        assert stub.last_request.system_prompt is not None
+
+        return stub.last_request.system_prompt
+
+    assert "short scenes" not in system_prompt(False)
+    assert "no sentence longer than about 14 words" in system_prompt(True)

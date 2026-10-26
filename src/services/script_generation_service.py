@@ -21,6 +21,17 @@ from src.shared.llm.request import LLMRequest
 
 _MAXIMUM_SINGLE_SENTENCE_WORDS = round(MAXIMUM_SINGLE_SCENE_SECONDS * WORDS_PER_SECOND)
 
+# Added to the writer's instructions for a project set to short scenes: hurry lives inside long,
+# dense sentences, not only between them (live, 2026-10-26: Radium read 18 words in 7.5 s with
+# no rest). Each sentence becomes a cut, so it also has to end where a picture can change.
+_SHORT_SENTENCES_RULE = (
+    " This project uses short scenes: write short sentences, one idea each - "
+    "no sentence longer than about 14 words - and use commas and full stops "
+    "where a speaker would breathe. Aim for the low end of each segment's "
+    "word count (about 10% under it) so the voice is never squeezed. Never "
+    "join two ideas with 'and' or 'but' when two sentences would do."
+)
+
 
 def _dry_run_block(segment_number: int) -> str:
     return (
@@ -73,6 +84,7 @@ class ScriptGenerationService:
         winning_hook: HookEvaluation,
         re_hook_plan: ReHookPlan | None = None,
         writing_directives: WritingDirectiveSet | None = None,
+        short_sentences: bool = False,
     ) -> GeneratedScript:
         """
         Write narration for every beat in the blueprint.
@@ -130,7 +142,7 @@ class ScriptGenerationService:
                 "instead of writing one long one. Evidence, quotations, "
                 "proper nouns, and factual claims are never "
                 "slang-transformed, regardless of the genre's slang "
-                "intensity."
+                "intensity." + (_SHORT_SENTENCES_RULE if short_sentences else "")
             ),
             prompt_version="script_generation_prompt_v1.0.0",
             dry_run_response="\n---\n".join(

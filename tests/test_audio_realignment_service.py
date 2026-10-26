@@ -593,3 +593,9 @@ class TestMinimumGapBetweenLines:
 
         assert realign_audio_to_scene_timings(timeline, **kwargs) == 0
         assert self._starts(timeline) == first
+
+
+def test_the_render_never_asks_for_more_than_half_a_second_between_lines() -> None:
+    from src.pipeline.render_stage import _MAXIMUM_VOICE_GAP_SECONDS
+
+    assert _MAXIMUM_VOICE_GAP_SECONDS == 0.5

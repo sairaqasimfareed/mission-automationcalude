@@ -509,6 +509,9 @@ class VideoJob(MissionBaseModel):
     voice_cast: dict[str, str] = Field(default_factory=dict)
 
     merge_short_scenes: bool = False
+    # Short scenes: the script is written in short sentences and the planner cuts scenes at about
+    # 6 s of narration (more, shorter clips; merging is ignored). Off = planning as it always was.
+    short_scenes: bool = False
     keep_beat_lines: bool = True
 
     # Content-aware sound design (scene-specific SFX cues + a music

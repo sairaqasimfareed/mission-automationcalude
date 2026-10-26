@@ -1615,6 +1615,20 @@ class ContentStudioView(QWidget):
         )
         form.addRow("Pause after each line", hold_select)
 
+        # Scene length: Short writes the script in short sentences and plans scenes of about 6 s of
+        # narration (more, shorter clips - more to generate; merging is ignored).
+        scene_length_select = QComboBox()
+        scene_length_select.addItem("Normal (default)", False)
+        scene_length_select.addItem("Short - about 6 s, one idea per sentence", True)
+        scene_length_select.setCurrentIndex(1 if job.short_scenes else 0)
+        scene_length_select.setToolTip(
+            "Short: the script is written in short sentences and scenes are cut at about 6 s "
+            "of narration, so the voice gets natural rests and the picture changes at sentence "
+            "ends. It means more clips to generate. Applies the next time the script is written "
+            "or scenes are planned - scenes already planned are not changed."
+        )
+        form.addRow("Scene length", scene_length_select)
+
         # How much room the video gives the viewer: lengthens the genre's pause after each line and
         # slows the voice a little (Relaxed), or tightens both (Fast). Applied when "Save settings" is pressed.
         pace_select = QComboBox()
@@ -1692,6 +1706,7 @@ class ContentStudioView(QWidget):
                 language_input=language_input,
                 target_country_input=target_country_input,
                 hold_select=hold_select,
+                scene_length_select=scene_length_select,
                 music_mode_select=music_mode_select,
                 pace_select=pace_select,
                 video_shape_select=video_shape_select,
@@ -6057,6 +6072,16 @@ class ContentStudioView(QWidget):
 
         merge_box.toggled.connect(lambda _checked: save_choice())
         beats_box.toggled.connect(lambda _checked: save_choice())
+        if job.short_scenes:
+            merge_box.setEnabled(False)
+            beats_box.setEnabled(False)
+            layout.addWidget(
+                small_muted(
+                    "Merging is off while Scene length is Short (Project settings): short scenes "
+                    "and merged scenes pull in opposite directions."
+                )
+            )
+
         layout.addWidget(merge_box)
         layout.addWidget(beats_box)
         layout.addWidget(
@@ -7730,6 +7755,7 @@ class ContentStudioView(QWidget):
         target_country_input: QLineEdit,
         video_provider_select: QComboBox | None = None,
         hold_select: QComboBox | None = None,
+        scene_length_select: QComboBox | None = None,
         music_mode_select: QComboBox | None = None,
         pace_select: QComboBox | None = None,
         video_shape_select: QComboBox | None = None,
@@ -7766,6 +7792,8 @@ class ContentStudioView(QWidget):
                 job.video_provider = VideoProvider(video_provider_select.currentData())
             if hold_select is not None:
                 job.scene_hold_seconds = hold_select.currentData()
+            if scene_length_select is not None:
+                job.short_scenes = bool(scene_length_select.currentData())
             if music_mode_select is not None:
                 job.music_mode = MusicMode(music_mode_select.currentData())
             if pace_select is not None:
@@ -7794,6 +7822,7 @@ class ContentStudioView(QWidget):
                     language_input=language_input,
                     target_country_input=target_country_input,
                     hold_select=hold_select,
+                    scene_length_select=scene_length_select,
                     music_mode_select=music_mode_select,
                     pace_select=pace_select,
                     video_shape_select=video_shape_select,

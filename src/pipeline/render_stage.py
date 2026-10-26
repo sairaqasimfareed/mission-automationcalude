@@ -52,6 +52,9 @@ from src.services.subtitle_cue_resolution_service import (
 from src.services.top10_countdown_service import Top10CountdownService
 from src.shared.logger import logger
 
+# The silence kept between two lines never asks for more than this.
+_MAXIMUM_VOICE_GAP_SECONDS = 0.5
+
 
 class RenderPipelineStage(BasePipelineStage):
     """
@@ -334,7 +337,10 @@ class RenderPipelineStage(BasePipelineStage):
             raise RuntimeError("Production render service " "is not configured.")
 
         video_timeline = context.job.video_timeline
-        self._voice_gap_seconds = hold_seconds(context.job)
+        # Natural pauses between lines are short; a longer hold is for the picture, not for a gap.
+        self._voice_gap_seconds = min(
+            hold_seconds(context.job), _MAXIMUM_VOICE_GAP_SECONDS
+        )
 
         if video_timeline is None:
             raise RuntimeError("Production render requires " "VideoJob.video_timeline.")

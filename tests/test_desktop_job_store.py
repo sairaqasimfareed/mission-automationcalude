@@ -971,3 +971,17 @@ def test_one_unreadable_project_file_does_not_stop_the_others_from_listing(
     listed = JsonJobStore(storage_root=tmp_path).list_all()
 
     assert [j.id for j in listed] == [good.id]
+
+
+def test_scene_length_is_normal_for_a_project_saved_before_it_existed(
+    tmp_path: Path,
+) -> None:
+    store = JsonJobStore(storage_root=tmp_path)
+    job = _job()
+    store.add(job)
+    path = tmp_path / f"{job.id}.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data.pop("short_scenes")
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    assert JsonJobStore(storage_root=tmp_path).get(job.id).short_scenes is False  # type: ignore[union-attr]
