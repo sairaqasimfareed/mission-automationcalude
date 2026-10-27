@@ -15,6 +15,16 @@ from src.pipeline.pipeline_stage import (
     PipelineStageName,
 )
 
+# Stages that are worked out again on every resume, however far the checkpoint got. The picture side
+# (which clip file each scene uses, and the timeline built from them) can be changed on the Clips tab
+# between a failed render and the next one; resuming at the render stage with the old timeline sent the
+# old file to FFmpeg again (live, 2026-10-27: a damaged Muse clip was regenerated, the render still failed
+# on the old file). Both are quick and call no provider; the voice and music stages, which cost credits,
+# are still skipped.
+_ALWAYS_REDONE_STAGES = frozenset(
+    {PipelineStageName.ASSET_SELECTION, PipelineStageName.VIDEO_TIMELINE}
+)
+
 
 class PipelineResumePlannerService:
     """
@@ -78,6 +88,7 @@ class PipelineResumePlannerService:
                 stage
                 for stage in stage_names[:resume_index]
                 if stage in checkpoint.completed_stages
+                and stage not in _ALWAYS_REDONE_STAGES
             ]
 
             execution_stages = [

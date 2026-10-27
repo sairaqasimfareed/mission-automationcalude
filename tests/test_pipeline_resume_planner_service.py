@@ -124,17 +124,53 @@ def test_failed_stage_resume_plan() -> None:
 
     assert plan.resume_stage == PipelineStageName.VIDEO_TIMELINE
 
-    assert plan.skipped_stages == [
-        PipelineStageName.VOICE,
-        PipelineStageName.ASSET_SELECTION,
-    ]
+    # The voice (it costs credits) is skipped; the picture side - which clip each scene uses and the
+    # timeline built from them - is always worked out again, since the Clips tab can change it between a
+    # failed render and the next one (live, 2026-10-27).
+    assert plan.skipped_stages == [PipelineStageName.VOICE]
 
     assert plan.execution_stages == [
+        PipelineStageName.ASSET_SELECTION,
         PipelineStageName.VIDEO_TIMELINE,
         PipelineStageName.RENDER,
     ]
 
     assert plan.resumed_from_failure is True
+
+
+def test_a_failed_render_resumes_but_redoes_the_clips_and_the_timeline() -> None:
+    job = build_job()
+    checkpoint = PipelineCheckpoint(
+        job_id=job.id,
+        current_stage=PipelineStageName.RENDER,
+        overall_progress=90,
+        completed_stages=[
+            PipelineStageName.VOICE,
+            PipelineStageName.ASSET_SELECTION,
+            PipelineStageName.VIDEO_TIMELINE,
+        ],
+        failed_stage=PipelineStageName.RENDER,
+        stage_results=[
+            completed(PipelineStageName.VOICE),
+            completed(PipelineStageName.ASSET_SELECTION),
+            completed(PipelineStageName.VIDEO_TIMELINE),
+            failed(PipelineStageName.RENDER),
+        ],
+    )
+
+    plan = PipelineResumePlannerService().create_plan(
+        job=job,
+        checkpoint=checkpoint,
+        stages=build_stages(),
+        settings=AdvancedSettings(),
+    )
+
+    assert PipelineStageName.VOICE in plan.skipped_stages
+    assert PipelineStageName.ASSET_SELECTION not in plan.skipped_stages
+    assert PipelineStageName.VIDEO_TIMELINE not in plan.skipped_stages
+    assert PipelineStageName.ASSET_SELECTION in plan.execution_stages
+    assert PipelineStageName.VIDEO_TIMELINE in plan.execution_stages
+    assert PipelineStageName.RENDER in plan.execution_stages
 
 
 def test_waiting_stage_resume_plan() -> None:
