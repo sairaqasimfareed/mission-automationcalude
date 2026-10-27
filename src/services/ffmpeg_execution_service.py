@@ -34,6 +34,11 @@ CancellationCheck = Callable[
 # next poll, including the retries, until the next render clears it.
 _CANCEL_ALL = threading.Event()
 
+# How much of FFmpeg's own error output a failed render keeps: three lines in the message shown to
+# the operator, the last twelve in the log.
+_ERROR_TAIL_LINES = 3
+_LOGGED_STDERR_LINES = 12
+
 
 def request_cancel_all() -> None:
     _CANCEL_ALL.set()
@@ -440,8 +445,13 @@ class FFmpegExecutionService:
             )
 
             logger.error(
-                "FFmpeg render failed with " "exit code %s.",
+                "FFmpeg render failed with exit code %s. FFmpeg said: %s",
                 exit_code,
+                " | ".join(
+                    line.strip()
+                    for line in stderr_text.splitlines()[-_LOGGED_STDERR_LINES:]
+                    if line.strip()
+                ),
             )
 
             return FFmpegExecutionResult.failed(
@@ -1186,9 +1196,11 @@ class FFmpegExecutionService:
         if not stderr_lines:
             return "FFmpeg execution failed with " f"exit code {code_text}."
 
-        last_line = stderr_lines[-1]
+        # The last line alone ("Error opening input files: Invalid data found") never named the
+        # file; the line before it does (live, 2026-10-27), so the last three lines are kept.
+        tail = " | ".join(stderr_lines[-_ERROR_TAIL_LINES:])
 
-        return "FFmpeg execution failed with " f"exit code {code_text}: " f"{last_line}"
+        return "FFmpeg execution failed with " f"exit code {code_text}: " f"{tail}"
 
     @staticmethod
     def _emit_progress(

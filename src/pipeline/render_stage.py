@@ -39,6 +39,7 @@ from src.services.production_render_service import (
     ChunkedRenderRequiredError,
     ProductionRenderService,
 )
+from src.services.render_input_check import unreadable_render_inputs
 from src.services.render_service import RenderService
 from src.services.render_speed_rules import (
     timeline_for_picture_brightness,
@@ -86,6 +87,7 @@ class RenderPipelineStage(BasePipelineStage):
         subtitle_burn_service: PostRenderSubtitleBurnService | None = None,
         render_output_root: Path | str | None = None,
         media_validation_service: MediaTechnicalValidationService | None = None,
+        check_inputs: bool = False,
     ) -> None:
         if production_render_service is not None and not voice_blueprints:
             raise ValueError(
@@ -156,6 +158,9 @@ class RenderPipelineStage(BasePipelineStage):
 
         # Used only to read the finished file's real length - see
         # _with_real_duration().
+        # Probe every clip and audio file before rendering and name the broken ones (off in tests that
+        # render with stand-in files).
+        self._check_inputs = check_inputs
         self._media_validation_service = (
             media_validation_service or MediaTechnicalValidationService()
         )
@@ -228,6 +233,17 @@ class RenderPipelineStage(BasePipelineStage):
                 started_at=start_time,
                 error_message=("Render stage requires a " "non-empty video timeline."),
             )
+
+        if self.production_render_enabled and self._check_inputs:
+            broken = unreadable_render_inputs(
+                timeline, context.job.audio_timeline, self._media_validation_service
+            )
+
+            if broken:
+                return self._failed_result(
+                    started_at=start_time,
+                    error_message="\n".join(broken),
+                )
 
         if self.production_render_enabled:
             render_result = self._with_real_duration(

@@ -379,6 +379,7 @@ class RenderWorkflowStageFactory:
             genre_id=genre_id,
             top10_countdown_service=self._top10_countdown_service,
             render_output_root=self._render_output_root,
+            check_inputs=True,
         )
 
         stages: list[BasePipelineStage] = [

@@ -1926,3 +1926,28 @@ def test_voice_is_on_its_scene_start_before_stage_one_checks_the_audio_against_t
 
     # the first scene starts at 0.0 in the picture; the voice must already be there, not at 5.0
     assert seen_at_stage_one == [0.0]
+
+
+def test_a_render_with_an_unreadable_clip_stops_before_ffmpeg_and_names_it() -> None:
+    """Live, 2026-10-27: eight clips, one of them broken - FFmpeg only said "Invalid data"."""
+
+    job = build_job()
+    job.voice_file = "assets/audio/test_voice.wav"
+    job.audio_timeline = AudioTimeline()
+    fake_production_render_service = _fake_production_render_service()
+
+    validator = MagicMock()
+    validator.validate.return_value.is_readable = False
+
+    stage = RenderPipelineStage(
+        production_render_service=fake_production_render_service,
+        voice_blueprints=[MagicMock()],
+        media_validation_service=validator,
+        check_inputs=True,
+    )
+
+    result = stage.execute(build_context(job))
+
+    assert result.status != PipelineStageStatus.COMPLETED
+    fake_production_render_service.render.assert_not_called()
+    fake_production_render_service.render_video_only.assert_not_called()
